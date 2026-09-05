@@ -445,6 +445,11 @@ def main() -> int:
     ap.add_argument("--run-offset", type=int, default=0, help="Start run numbering here, to add repeats later.")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--limit-per-leader", type=int, default=0,
+                    help="Grade at most N transcripts per leader, chosen by sorted source_id so the "
+                         "choice is deterministic and repeatable. Used for the unblinded arm, which "
+                         "only needs enough transcripts per leader to estimate the reputation halo. "
+                         "What it drops is logged, never silent.")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--errors", default="data/logs/grade_errors.jsonl")
     ap.add_argument("--fable-bin", default="cl",
@@ -465,6 +470,23 @@ def main() -> int:
         paths = sorted(Path(args.transcripts).rglob("*.json"))
     if not paths:
         raise SystemExit("no transcripts found")
+
+    if args.limit_per_leader:
+        from collections import defaultdict as _dd
+        by_leader = _dd(list)
+        for pth in paths:
+            by_leader[json.loads(pth.read_text())["leader_slug"]].append(pth)
+        kept, dropped = [], []
+        for slug in sorted(by_leader):
+            ordered = sorted(by_leader[slug], key=lambda x: x.name)
+            kept.extend(ordered[:args.limit_per_leader])
+            dropped.extend(ordered[args.limit_per_leader:])
+        log(f"--limit-per-leader {args.limit_per_leader}: keeping {len(kept)} transcripts, "
+            f"dropping {len(dropped)} across {len(by_leader)} leaders")
+        if dropped:
+            log("  dropped: " + ", ".join(sorted(p.parent.name + "/" + p.stem for p in dropped)[:12])
+                + (" ..." if len(dropped) > 12 else ""))
+        paths = kept
 
     judges = [j.strip() for j in args.judges.split(",") if j.strip()]
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
