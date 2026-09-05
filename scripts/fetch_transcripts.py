@@ -22,6 +22,7 @@ import argparse
 import concurrent.futures as cf
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -44,27 +45,85 @@ E_OTHER = "other"
 
 _print_lock = threading.Lock()
 
-# YouTube rate-limits caption requests hard, and returns IpBlocked or HTTP 429
-# once it decides you have asked too often. A global minimum interval between
-# caption requests keeps the whole run under that ceiling; without it a burst of
-# parallel workers gets the IP throttled and every later request fails.
-class RateLimiter:
-    def __init__(self, min_interval: float):
-        self.min_interval = min_interval
+# Pacing follows the yt-dlp wiki, which is the only primary source with numbers:
+# a guest session gets roughly 1000 requests an hour, and 5 to 10 seconds between
+# requests is the stated remedy for HTTP 429. The first version of this file used
+# 1.5 seconds, which is about four times too fast, and the IP was blocked within
+# the hour. The rate that triggers a CAPTION block specifically is not documented
+# anywhere; do not invent one.
+DEFAULT_INTERVAL = 6.0
+
+
+class Pacer:
+    """One shared gap between every outbound request, across all threads.
+
+    Jittered, for two reasons. A fixed gap is a machine fingerprint that anti-bot
+    systems can key on. It also resynchronises threads: workers that all back off
+    by exactly the same amount wake in the same instant and produce a burst larger
+    than the one that caused the block.
+    """
+
+    def __init__(self, interval: float, max_interval: float = 90.0):
+        self.interval = interval
+        self.max_interval = max_interval
         self._lock = threading.Lock()
-        self._last = 0.0
+        self._next = 0.0
 
     def wait(self) -> None:
         with self._lock:
             now = time.monotonic()
-            gap = self.min_interval - (now - self._last)
-            if gap > 0:
-                time.sleep(gap)
-            self._last = time.monotonic()
+            start = max(now, self._next)
+            # Reserve the slot under the lock, then sleep outside it, so waiting
+            # threads do not serialise behind one another's sleep.
+            self._next = start + self.interval * random.uniform(0.7, 1.3)
+            sleep_for = start - now
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+    def slow_down(self, factor: float = 2.0) -> float:
+        """Widen permanently. A rate that got pushed back on was too fast."""
+        with self._lock:
+            self.interval = min(self.interval * factor, self.max_interval)
+            return self.interval
 
 
-RETRYABLE = {E_BLOCKED}
-BACKOFF_SEC = [8, 30, 90]
+class Breaker:
+    """Ends the run once the endpoint is plainly refusing us.
+
+    Without this, each thread backs off privately while the others keep hammering,
+    and a hard block reads as "slow" for an hour instead of stopping.
+    """
+
+    def __init__(self, limit: int = 6):
+        self.limit = limit
+        self._lock = threading.Lock()
+        self._consecutive = 0
+        self.open = False
+
+    def record_throttle(self) -> bool:
+        with self._lock:
+            self._consecutive += 1
+            if self._consecutive >= self.limit:
+                self.open = True
+            return self.open
+
+    def record_ok(self) -> None:
+        with self._lock:
+            self._consecutive = 0
+
+
+# Retry only these. Everything else is a fact about the video that will not
+# change, and retrying it spends rate budget on an answer that cannot differ.
+THROTTLE_CLASSES = {"IpBlocked", "RequestBlocked", "TooManyRequests"}
+PERMANENT_CLASSES = {
+    "TranscriptsDisabled", "NoTranscriptFound", "VideoUnavailable", "VideoUnplayable",
+    "AgeRestricted", "InvalidVideoId", "NotTranslatable", "TranslationLanguageNotAvailable",
+}
+AMBIGUOUS_CLASSES = {"PoTokenRequired", "YouTubeRequestFailed"}
+
+BACKOFF_BASE = 10
+BACKOFF_CAP = 240
+MAX_TRIES = 4
 
 
 def log(msg: str) -> None:
@@ -77,34 +136,50 @@ def utcnow() -> str:
 
 
 def classify(exc: Exception) -> str:
+    """Map an exception to the taxonomy by CLASS NAME, not message text.
+
+    Message matching was the first version and it was wrong: "blocked" appears in
+    unrelated messages, and a class name is the library's actual contract.
+    """
     name = type(exc).__name__
-    text = f"{name}: {exc}".lower()
-    if "transcriptsdisabled" in name.lower() or "subtitles are disabled" in text:
+    if name in THROTTLE_CLASSES:
+        return E_BLOCKED
+    if name == "TranscriptsDisabled":
         return E_DISABLED
-    if "notranscriptfound" in name.lower() or "no transcripts were found" in text:
+    if name == "NoTranscriptFound":
         return E_NO_TRANSCRIPT
-    if "videounavailable" in name.lower() or "unavailable" in text or "private" in text:
+    if name in ("VideoUnavailable", "VideoUnplayable", "InvalidVideoId", "AgeRestricted"):
         return E_UNAVAILABLE
-    if ("ipblocked" in name.lower() or "too many requests" in text
-            or "blocked" in text or "429" in text or "ratelimit" in name.lower()):
+    if name in AMBIGUOUS_CLASSES:
         return E_BLOCKED
-    if "requestblocked" in name.lower() or "age" in text and "restrict" in text:
-        return E_BLOCKED
+    if name in PERMANENT_CLASSES:
+        return E_NO_TRANSCRIPT
     return E_OTHER
 
 
-def fetch_metadata(video_id: str) -> dict:
+def fetch_metadata(video_id: str, pacer: "Pacer | None" = None) -> dict:
     """Pull title, channel, duration, upload date and description via yt-dlp.
 
     Metadata failure is non-fatal: the transcript is still usable, we just
     record that the metadata is missing rather than inventing values.
     """
+    # This is a second outbound request per item. Leaving it outside the pacer
+    # made the real request rate roughly double the configured one, which the
+    # limiter could not see and could not correct for.
+    if pacer is not None:
+        pacer.wait()
     try:
         proc = subprocess.run(
             [
                 "yt-dlp",
                 "--skip-download",
                 "--no-warnings",
+                # yt-dlp's own throttling, separate from our pacer. Its wiki
+                # suggests these for HTTP 429; --sleep-interval does NOT cover
+                # metadata extraction, --sleep-requests does.
+                "--sleep-requests", "0.75",
+                "--extractor-retries", "3",
+                "--retry-sleep", "extractor:exp=1:120",
                 "--dump-single-json",
                 f"https://www.youtube.com/watch?v={video_id}",
             ],
@@ -155,7 +230,8 @@ def segments_to_text(segments: list[dict]) -> tuple[str, list[dict]]:
     return text, marks
 
 
-def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool) -> dict:
+def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
+              pacer: "Pacer | None" = None) -> dict:
     slug = src["leader_slug"]
     sid = src["source_id"]
     vid = src["video_id"]
@@ -201,7 +277,7 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool) -> dict:
                 "error_type": E_TOO_SHORT,
                 "detail": f"{words} words < min {min_words}"}
 
-    meta = fetch_metadata(vid)
+    meta = fetch_metadata(vid, pacer)
     duration = meta.get("yt_duration_sec") or (segments[-1]["start"] + segments[-1]["duration"] if segments else None)
 
     record = {
@@ -231,25 +307,36 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool) -> dict:
 
 
 def fetch_with_retry(src: dict, out_dir: Path, min_words: int, force: bool,
-                     limiter: RateLimiter) -> dict:
-    """One source, retried only for throttling. Other failures move on immediately."""
+                     pacer: Pacer, breaker: Breaker) -> dict:
+    """One source. Retried only for throttling; everything else fails immediately."""
     last = None
-    for attempt, wait in enumerate([0] + BACKOFF_SEC):
-        if wait:
-            log(f"    throttled on {src['video_id']}, backing off {wait}s "
-                f"(attempt {attempt + 1}/{len(BACKOFF_SEC) + 1})")
-            time.sleep(wait)
-        limiter.wait()
-        r = fetch_one(src, out_dir, min_words, force)
-        if r["status"] != "failed" or r.get("error_type") not in RETRYABLE:
+    for attempt in range(MAX_TRIES):
+        if breaker.open:
+            return {"status": "failed", "leader_slug": src["leader_slug"],
+                    "source_id": src["source_id"], "error_type": E_BLOCKED,
+                    "detail": "circuit open: endpoint refusing consistently, run aborted"}
+        pacer.wait()
+        r = fetch_one(src, out_dir, min_words, force, pacer)
+        if r["status"] != "failed" or r.get("error_type") != E_BLOCKED:
+            breaker.record_ok()
             return r
         last = r
-    last["detail"] = f"still throttled after {len(BACKOFF_SEC)} retries: {last.get('detail','')}"
+        if breaker.record_throttle():
+            log(f"    CIRCUIT OPEN after {breaker.limit} consecutive throttles; aborting run")
+            r["detail"] = "circuit opened: " + str(r.get("detail", ""))[:200]
+            return r
+        pace = pacer.slow_down()
+        # Full jitter: sleep uniformly in [0, backoff] rather than exactly backoff.
+        delay = random.uniform(0, min(BACKOFF_BASE * 2 ** attempt, BACKOFF_CAP))
+        log(f"    throttled {src['video_id']}: try {attempt + 1}/{MAX_TRIES}, "
+            f"sleeping {delay:.0f}s, pace widened to {pace:.1f}s")
+        time.sleep(delay)
+    last["detail"] = f"still throttled after {MAX_TRIES} tries: {last.get('detail', '')}"[:400]
     return last
 
 
 def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
-                 min_words: int, force: bool, limiter: RateLimiter) -> list[dict]:
+                 min_words: int, force: bool, pacer: Pacer, breaker: Breaker) -> list[dict]:
     """Walk a leader's ranked candidates until `target` transcripts are on disk.
 
     Candidates come pre-ranked by duration. Stopping early is the point: it means
@@ -260,7 +347,9 @@ def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
     for c in candidates:
         if got >= target:
             break
-        r = fetch_with_retry(c, out_dir, min_words, force, limiter)
+        if breaker.open:
+            break
+        r = fetch_with_retry(c, out_dir, min_words, force, pacer, breaker)
         results.append(r)
         if r["status"] in ("ok", "cached"):
             got += 1
@@ -281,9 +370,9 @@ def main() -> int:
     ap.add_argument("--target-per-leader", type=int, default=0,
                     help="Stop after N successful transcripts per leader, walking that leader's "
                          "ranked candidate list in order. 0 fetches every row in the manifest.")
-    ap.add_argument("--min-interval", type=float, default=1.5,
-                    help="Minimum seconds between caption requests across ALL workers. Raise this "
-                         "if the run starts collecting ip_blocked_or_ratelimited errors.")
+    ap.add_argument("--min-interval", type=float, default=DEFAULT_INTERVAL,
+                    help="Minimum seconds between caption requests across ALL workers, jittered. "
+                         "The yt-dlp wiki suggests 5 to 10 seconds as the remedy for HTTP 429.")
     args = ap.parse_args()
 
     out_dir = Path(args.out)
@@ -310,7 +399,8 @@ def main() -> int:
 
     log(f"manifest: {len(sources)} unique sources ({dupes} duplicate video_id rows dropped)")
 
-    limiter = RateLimiter(args.min_interval)
+    pacer = Pacer(args.min_interval)
+    breaker = Breaker()
     results: list[dict] = []
 
     if args.target_per_leader:
@@ -325,7 +415,7 @@ def main() -> int:
         done = 0
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = {ex.submit(fetch_leader, slug, cands, args.target_per_leader,
-                              out_dir, args.min_words, args.force, limiter): slug
+                              out_dir, args.min_words, args.force, pacer, breaker): slug
                     for slug, cands in by_leader.items()}
             for fut in cf.as_completed(futs):
                 rs = fut.result()
@@ -336,7 +426,7 @@ def main() -> int:
     else:
         done = 0
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futs = {ex.submit(fetch_with_retry, s_, out_dir, args.min_words, args.force, limiter): s_
+            futs = {ex.submit(fetch_with_retry, s_, out_dir, args.min_words, args.force, pacer, breaker): s_
                     for s_ in sources}
             for fut in cf.as_completed(futs):
                 r = fut.result()
