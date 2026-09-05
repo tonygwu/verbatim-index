@@ -43,6 +43,15 @@ NONSPEECH_RE = re.compile(r"\[(music|applause|laughter|cheering|silence)\]", re.
 # Thresholds. Chosen to be permissive: the goal is to catch transcripts that
 # are clearly unusable, not to trim borderline ones. Every rejection is
 # reported with the signal that triggered it.
+# A commentary show discussing someone says their name constantly. The person
+# themself, being interviewed, is named at the introduction and then hardly at
+# all. Measured on real transcripts: an interview runs well under 1 mention per
+# 1000 words after the opening, a show about them runs many times that. This is
+# the check that catches a video which passed every title filter and is still
+# not the subject speaking.
+MAX_NAME_PER_1K_AFTER_INTRO = 1.6
+INTRO_FRACTION = 0.12   # the opening where being named repeatedly is normal
+
 MAX_OOV = 0.18
 MAX_LOOP = 6
 MIN_TTR = 0.10
@@ -118,6 +127,22 @@ def analyze(rec: dict, dictionary: set[str], glossary: set[str]) -> dict:
     }
 
 
+def name_density_after_intro(text: str, surname: str) -> tuple[float, int]:
+    """Surname mentions per 1000 words, ignoring the introduction.
+
+    Returns (rate, count). A high rate means the transcript keeps referring to
+    the person in the third person, which is what a show ABOUT them does.
+    """
+    if not surname:
+        return 0.0, 0
+    words = text.split()
+    if len(words) < 200:
+        return 0.0, 0
+    body = " ".join(words[int(len(words) * INTRO_FRACTION):])
+    hits = len(re.findall(r"\b" + re.escape(surname) + r"\b", body, re.I))
+    return (hits / (len(body.split()) / 1000.0)), hits
+
+
 def gate(sig: dict, name_hits: int, company_hits: int) -> tuple[str, list[str]]:
     """Return (verdict, reasons). Verdict is pass, review, or reject."""
     reasons: list[str] = []
@@ -134,6 +159,12 @@ def gate(sig: dict, name_hits: int, company_hits: int) -> tuple[str, list[str]]:
     wpm = sig.get("words_per_minute")
     if wpm is not None and wpm < MIN_WPM:
         reasons.append(f"words_per_minute {wpm} < {MIN_WPM} (mostly non-speech)")
+    rate = sig.get("name_per_1k_after_intro")
+    if rate is not None and rate > MAX_NAME_PER_1K_AFTER_INTRO:
+        reasons.append(
+            f"subject named {rate:.1f} times per 1000 words after the introduction "
+            f"(limit {MAX_NAME_PER_1K_AFTER_INTRO}); this reads as a show ABOUT the "
+            f"subject rather than the subject speaking")
     if reasons:
         return "reject", reasons
 
@@ -186,6 +217,9 @@ def main() -> int:
         name_hits = lower.count(surname) if surname else 0
         company_hits = lower.count(company_word) if company_word else 0
 
+        rate, after_intro_hits = name_density_after_intro(rec.get("text") or "", surname)
+        sig["name_per_1k_after_intro"] = round(rate, 2)
+        sig["name_hits_after_intro"] = after_intro_hits
         verdict, reasons = gate(sig, name_hits, company_hits)
         reports.append({
             "leader_slug": slug,

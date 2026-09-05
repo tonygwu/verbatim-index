@@ -43,6 +43,17 @@ MAX_SEC = 21600         # 6 hours; longer is almost always a livestream loop
 MAX_PER_CHANNEL = 2     # so one interviewer's style cannot dominate a leader
 CANDIDATES_PER_LEADER = 14  # ranked; the fetch step walks this list until N succeed
 
+# Titles written ABOUT the person rather than featuring them. These slip past a
+# surname check, because the surname is right there in the title. Real examples
+# this caught: "John Ternus Replacing Tim Cook", "Tim Cook Steps Down: The Man
+# Who Made Apple". Both are commentary shows discussing him, not him speaking.
+THIRD_PERSON_TITLE = re.compile(
+    r"(\bwho is\b|\bsteps? down\b|\bstepping down\b|\breplac(e|es|ing)\b|"
+    r"\bthe man who\b|\bthe woman who\b|\bthe rise (and fall )?of\b|\bstory of\b|"
+    r"\blife of\b|\bis (leaving|out|gone|done)\b|\bafter [A-Z]|\bwithout [A-Z]|"
+    r"\bsuccessor\b|\bfires?\b|\bousted\b|\bprofile\b|\bhow .* built\b|"
+    r"\bwhat .* thinks\b|\blessons from\b|\bnet worth\b)", re.I)
+
 # Titles that signal the video is not the person speaking at length.
 REJECT_TITLE = re.compile(
     r"\b(best of|highlights?|supercut|compilation|reacts?|reaction|explained|"
@@ -182,6 +193,8 @@ def discover(person: dict, target: int) -> dict:
             why = f"too long ({c['duration'] // 3600}h), likely a livestream loop"
         elif REJECT_TITLE.search(c["title"]):
             why = "title indicates a clip, compilation, or a video about the person"
+        elif THIRD_PERSON_TITLE.search(c["title"]):
+            why = "title is written about the person in the third person, not an appearance by them"
         elif REJECT_CHANNEL.search(c["channel"]) and not FULL_TITLE.search(c["title"]):
             why = f"channel {c['channel']!r} publishes clips"
         elif not (name_in(c["title"], person) or name_in(c["channel"], person)):
@@ -191,25 +204,55 @@ def discover(person: dict, target: int) -> dict:
         else:
             cands.append(c)
 
-    # Longest first: a longer appearance gives the rubric more to observe.
-    cands.sort(key=lambda c: -c["duration"])
+    # Ranking decides the study's format mix, because the fetcher takes the first
+    # candidates that work. Sorting purely by duration looked reasonable and was
+    # wrong: keynotes run two to three hours, so a pure length sort handed one
+    # leader five conference keynotes. That is a measurement bug, not a taste
+    # problem. A keynote cannot show engagement with opposition or adaptive
+    # reasoning, so those criteria come back not-observed and the leader's insight
+    # score drops for reasons of format rather than thinking.
+    #
+    # So: sort longest-first WITHIN each format, then round-robin across formats.
+    # Every leader gets a spread, and length still decides within a format.
+    by_kind: dict[str, list[dict]] = {}
+    for c in cands:
+        by_kind.setdefault(classify_kind(c["title"], c["channel"]), []).append(c)
+    for v in by_kind.values():
+        v.sort(key=lambda c: -c["duration"])
 
-    # Emit a RANKED CANDIDATE LIST rather than a verified final set. Captions are
-    # deliberately not probed here. YouTube rate-limits caption requests hard, and
-    # probing here then fetching later asks for every transcript twice against that
-    # limit. The fetch step walks this list with backoff and stops once it has
-    # enough, so each video costs exactly one caption request.
+    # Interviews and podcasts first in the rotation: they carry the follow-up
+    # questions the rubric most needs to observe.
+    rotation = [k for k in ("interview", "podcast", "fireside", "keynote", "panel") if k in by_kind]
+    interleaved: list[tuple[str, dict]] = []
+    idx = {k: 0 for k in rotation}
+    while len(interleaved) < len(cands):
+        progressed = False
+        for k in rotation:
+            if idx[k] < len(by_kind[k]):
+                interleaved.append((k, by_kind[k][idx[k]]))
+                idx[k] += 1
+                progressed = True
+        if not progressed:
+            break
+
+    def title_key(t: str) -> str:
+        """Normalised title, to catch the same appearance re-uploaded elsewhere."""
+        return re.sub(r"[^a-z0-9]+", "", t.lower())[:48]
+
     chosen: list[dict] = []
     per_channel: Counter = Counter()
-    kinds: Counter = Counter()
-    for c in cands:
+    seen_titles: set[str] = set()
+    for kind, c in interleaved:
         if len(chosen) >= CANDIDATES_PER_LEADER:
             break
         if per_channel[c["channel"]] >= MAX_PER_CHANNEL:
             continue
-        kind = classify_kind(c["title"], c["channel"])
+        tk = title_key(c["title"])
+        if tk in seen_titles:
+            rejected.append({**c, "reason": "same appearance re-uploaded under another channel"})
+            continue
+        seen_titles.add(tk)
         per_channel[c["channel"]] += 1
-        kinds[kind] += 1
         chosen.append({
             "source_id": (re.sub(r"[^a-z0-9]+", "-", c["channel"].lower())[:24].strip("-") or "src")
                          + "-" + c["video_id"][:6].lower(),
@@ -220,7 +263,7 @@ def discover(person: dict, target: int) -> dict:
             "year": 0,
             "duration_min": c["duration"] // 60,
             "captions_confirmed": False,
-            "subject_dominant": kind not in ("panel",),
+            "subject_dominant": kind != "panel",
             "rank": len(chosen) + 1,
             "verification_note": (
                 f"{c['duration'] // 60} min on {c['channel']}. Surname present in "
