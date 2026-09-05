@@ -1,0 +1,120 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "transcript_id", "venue_type", "venue_challenge", "venue_challenge_reason",
+    "subject_speech_share_pct", "attribution_confidence", "attribution_notes",
+    "identity_guess", "identity_confident", "identity_basis",
+    "asr_quality", "asr_notes", "subcriteria", "dimensions", "overall",
+    "coverage", "confidence", "confidence_reason", "salient_claims", "red_flags"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "description": "Always the string 1.0" },
+    "transcript_id": { "type": "string", "description": "Echo the transcript id given in the prompt, exactly." },
+
+    "venue_type": {
+      "type": "string",
+      "enum": ["keynote", "long_form_podcast", "conference_interview", "tv_interview", "fireside_chat", "panel", "internal_talk", "other"],
+      "description": "Format of the appearance, inferred from the transcript itself."
+    },
+    "venue_challenge": {
+      "type": "integer",
+      "description": "1-5. 1 = promotional, no pushback. 3 = substantive interview with real follow-ups. 5 = adversarial or expert questioning that changes premises. Recorded for context; it does not alter the scores."
+    },
+    "venue_challenge_reason": { "type": "string", "description": "One or two sentences citing what in the transcript sets this level." },
+
+    "subject_speech_share_pct": {
+      "type": "integer",
+      "description": "0-100. Your estimate of the share of words in this transcript spoken by the SUBJECT rather than an interviewer, host, or other participant."
+    },
+    "attribution_confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "description": "How confident you are that you correctly separated the subject's speech from everyone else's. Captions carry no speaker labels."
+    },
+    "attribution_notes": { "type": "string", "description": "How you told the turns apart, and where you were unsure." },
+
+    "identity_guess": {
+      "type": "string",
+      "description": "If the transcript is blinded, who or what kind of speaker do you think this is? Write 'unknown' if you genuinely cannot tell. This measures how well the blinding held; it must not influence any score."
+    },
+    "identity_confident": { "type": "boolean", "description": "True only if you are confident you know the specific individual." },
+    "identity_basis": { "type": "string", "description": "What gave the identity away, or why it stayed hidden." },
+
+    "asr_quality": {
+      "type": "string",
+      "enum": ["clean", "minor_corruption", "heavy_corruption"],
+      "description": "How badly automatic speech recognition damaged this transcript. Heavy corruption should lower your stated confidence, not the scores."
+    },
+    "asr_notes": { "type": "string", "description": "Specific corrupted terms you had to read through, and any passage you could not interpret." },
+
+    "subcriteria": {
+      "type": "array",
+      "description": "All 15 sub-criteria, in order: C1 C2 C3 C4 I1 I2 I3 I4 I5 I6 I7 T1 T2 T3 T4.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "score", "justification"],
+        "properties": {
+          "code": { "type": "string", "description": "One of C1 C2 C3 C4 I1 I2 I3 I4 I5 I6 I7 T1 T2 T3 T4" },
+          "score": { "type": "integer", "description": "1 to 5, or 0 meaning NOT OBSERVED because the conversation gave no reasonable opportunity to demonstrate it. Use 0 rather than a middling score to fill a gap." },
+          "justification": { "type": "string", "description": "One or two sentences. If the score is 0, say why the format gave no opportunity." }
+        }
+      }
+    },
+
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["d1_clarity", "d2_insight", "d3_technical_depth"],
+      "properties": {
+        "d1_clarity": { "$ref": "#/$defs/dimension" },
+        "d2_insight": { "$ref": "#/$defs/dimension" },
+        "d3_technical_depth": { "$ref": "#/$defs/dimension" }
+      }
+    },
+
+    "overall": { "type": "number", "description": "0.20*d1 + 0.45*d2 + 0.35*d3, computed from your own dimension scores." },
+    "coverage": { "type": "number", "description": "Share of the 15 sub-criteria you scored rather than marked not observed, as a decimal between 0 and 1." },
+    "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+    "confidence_reason": { "type": "string", "description": "Why this confidence: transcript length, attribution difficulty, speech recognition damage, or coverage." },
+
+    "salient_claims": {
+      "type": "array",
+      "description": "The two to four most substantive specific claims the SUBJECT made, each stated in your own words in one sentence. Not quotes. These let a reader see what the score is about.",
+      "items": { "type": "string" }
+    },
+    "red_flags": {
+      "type": "array",
+      "description": "Anything that should worry a careful listener: a confident technical claim that is wrong on its face, quantities used incoherently, a question dodged and never returned to, a premise accepted uncritically. Empty array if none.",
+      "items": { "type": "string" }
+    }
+  },
+
+  "$defs": {
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "reasoning", "evidence", "counterevidence"],
+      "properties": {
+        "score": { "type": "integer", "description": "1 to 100, anchored by the band descriptions in the rubric." },
+        "reasoning": { "type": "string", "description": "Several sentences in your own words explaining what in the transcript produced this number. This is read by a human auditor who may disagree with you, so make the argument, do not just assert the score." },
+        "evidence": {
+          "type": "array",
+          "description": "Two to four short quotations from the SUBJECT supporting the score.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["quote", "timestamp", "why_it_matters"],
+            "properties": {
+              "quote": { "type": "string", "description": "25 words maximum, verbatim from the transcript. Quote only the fragment you need. Longer quotes will be rejected." },
+              "timestamp": { "type": "string", "description": "Nearest [hh:mm:ss] marker in the transcript, or 'unmarked' if none is near." },
+              "why_it_matters": { "type": "string", "description": "One sentence on what this fragment demonstrates." }
+            }
+          }
+        },
+        "counterevidence": { "type": "string", "description": "The strongest thing in this transcript that argues against the score you gave. If there is genuinely none, say so and explain why." }
+      }
+    }
+  }
+}
