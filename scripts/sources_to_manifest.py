@@ -37,7 +37,7 @@ def main() -> int:
     payload = json.loads(Path(args.sources).read_text())
     leaders = payload["leaders"] if isinstance(payload, dict) else payload
 
-    rows: list[dict] = []
+    rows: list[dict] = []  # candidates, ranked; the fetcher takes the first N that work
     aliases: dict[str, list[str]] = {}
     repairs: dict[str, list[dict]] = {}
     rejected: list[dict] = []
@@ -60,8 +60,6 @@ def main() -> int:
             why = None
             if not VIDEO_ID.match(vid):
                 why = f"video_id {vid!r} is not an 11-character YouTube id"
-            elif not s.get("captions_confirmed"):
-                why = "captions_confirmed is false; the agent could not verify an English track"
             elif vid in seen_global and seen_global[vid] != slug:
                 why = f"video_id already claimed by {seen_global[vid]}"
             if why:
@@ -78,6 +76,11 @@ def main() -> int:
                 "venue": s.get("venue") or "unknown",
                 "kind": kind if kind in KINDS else "interview",
                 "year": int(s.get("year") or 0) or 2024,
+                # Rank carries the discovery ordering through to the fetcher, which
+                # walks a leader's candidates in this order and stops once it has
+                # enough. Without it the fetcher would try all 14 and waste caption
+                # requests that the rate limit makes scarce.
+                "rank": int(s.get("rank") or 999),
             })
 
     # A source_id must be unique within a leader or the fetch step overwrites files.

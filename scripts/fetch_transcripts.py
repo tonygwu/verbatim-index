@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +43,28 @@ E_METADATA = "metadata_fetch_failed"
 E_OTHER = "other"
 
 _print_lock = threading.Lock()
+
+# YouTube rate-limits caption requests hard, and returns IpBlocked or HTTP 429
+# once it decides you have asked too often. A global minimum interval between
+# caption requests keeps the whole run under that ceiling; without it a burst of
+# parallel workers gets the IP throttled and every later request fails.
+class RateLimiter:
+    def __init__(self, min_interval: float):
+        self.min_interval = min_interval
+        self._lock = threading.Lock()
+        self._last = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            gap = self.min_interval - (now - self._last)
+            if gap > 0:
+                time.sleep(gap)
+            self._last = time.monotonic()
+
+
+RETRYABLE = {E_BLOCKED}
+BACKOFF_SEC = [8, 30, 90]
 
 
 def log(msg: str) -> None:
@@ -62,7 +85,8 @@ def classify(exc: Exception) -> str:
         return E_NO_TRANSCRIPT
     if "videounavailable" in name.lower() or "unavailable" in text or "private" in text:
         return E_UNAVAILABLE
-    if "ipblocked" in name.lower() or "too many requests" in text or "blocked" in text:
+    if ("ipblocked" in name.lower() or "too many requests" in text
+            or "blocked" in text or "429" in text or "ratelimit" in name.lower()):
         return E_BLOCKED
     if "requestblocked" in name.lower() or "age" in text and "restrict" in text:
         return E_BLOCKED
@@ -206,6 +230,45 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool) -> dict:
             "words": words, "track": track_kind, "path": str(dest)}
 
 
+def fetch_with_retry(src: dict, out_dir: Path, min_words: int, force: bool,
+                     limiter: RateLimiter) -> dict:
+    """One source, retried only for throttling. Other failures move on immediately."""
+    last = None
+    for attempt, wait in enumerate([0] + BACKOFF_SEC):
+        if wait:
+            log(f"    throttled on {src['video_id']}, backing off {wait}s "
+                f"(attempt {attempt + 1}/{len(BACKOFF_SEC) + 1})")
+            time.sleep(wait)
+        limiter.wait()
+        r = fetch_one(src, out_dir, min_words, force)
+        if r["status"] != "failed" or r.get("error_type") not in RETRYABLE:
+            return r
+        last = r
+    last["detail"] = f"still throttled after {len(BACKOFF_SEC)} retries: {last.get('detail','')}"
+    return last
+
+
+def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
+                 min_words: int, force: bool, limiter: RateLimiter) -> list[dict]:
+    """Walk a leader's ranked candidates until `target` transcripts are on disk.
+
+    Candidates come pre-ranked by duration. Stopping early is the point: it means
+    one caption request per video rather than a probe plus a fetch, which matters
+    because the caption endpoint is the scarcest resource in this pipeline.
+    """
+    results, got = [], 0
+    for c in candidates:
+        if got >= target:
+            break
+        r = fetch_with_retry(c, out_dir, min_words, force, limiter)
+        results.append(r)
+        if r["status"] in ("ok", "cached"):
+            got += 1
+    if got < target:
+        log(f"  {slug}: only {got}/{target} fetched from {len(results)} candidates tried")
+    return results
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True)
@@ -215,6 +278,12 @@ def main() -> int:
     ap.add_argument("--min-words", type=int, default=700,
                     help="Reject transcripts shorter than this; a 3-minute clip has too little signal to score.")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--target-per-leader", type=int, default=0,
+                    help="Stop after N successful transcripts per leader, walking that leader's "
+                         "ranked candidate list in order. 0 fetches every row in the manifest.")
+    ap.add_argument("--min-interval", type=float, default=1.5,
+                    help="Minimum seconds between caption requests across ALL workers. Raise this "
+                         "if the run starts collecting ip_blocked_or_ratelimited errors.")
     args = ap.parse_args()
 
     out_dir = Path(args.out)
@@ -241,17 +310,41 @@ def main() -> int:
 
     log(f"manifest: {len(sources)} unique sources ({dupes} duplicate video_id rows dropped)")
 
+    limiter = RateLimiter(args.min_interval)
     results: list[dict] = []
-    done = 0
-    with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(fetch_one, s, out_dir, args.min_words, args.force): s for s in sources}
-        for fut in cf.as_completed(futs):
-            r = fut.result()
-            results.append(r)
-            done += 1
-            if done % 10 == 0 or done == len(sources):
+
+    if args.target_per_leader:
+        from collections import defaultdict as _dd
+        by_leader: dict[str, list[dict]] = _dd(list)
+        for s_ in sources:
+            by_leader[s_["leader_slug"]].append(s_)
+        for slug in by_leader:
+            by_leader[slug].sort(key=lambda x: x.get("rank", 999))
+        log(f"walking {len(by_leader)} leaders for up to {args.target_per_leader} transcripts each "
+            f"(min {args.min_interval}s between caption requests, {args.workers} workers)")
+        done = 0
+        with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futs = {ex.submit(fetch_leader, slug, cands, args.target_per_leader,
+                              out_dir, args.min_words, args.force, limiter): slug
+                    for slug, cands in by_leader.items()}
+            for fut in cf.as_completed(futs):
+                rs = fut.result()
+                results.extend(rs)
+                done += 1
                 ok = sum(1 for x in results if x["status"] in ("ok", "cached"))
-                log(f"  progress {done}/{len(sources)} attempted | {ok} succeeded | {done - ok} failed")
+                log(f"  leaders done {done}/{len(by_leader)} | {ok} transcripts fetched")
+    else:
+        done = 0
+        with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futs = {ex.submit(fetch_with_retry, s_, out_dir, args.min_words, args.force, limiter): s_
+                    for s_ in sources}
+            for fut in cf.as_completed(futs):
+                r = fut.result()
+                results.append(r)
+                done += 1
+                if done % 10 == 0 or done == len(sources):
+                    ok = sum(1 for x in results if x["status"] in ("ok", "cached"))
+                    log(f"  progress {done}/{len(sources)} attempted | {ok} succeeded | {done - ok} failed")
 
     ok = [r for r in results if r["status"] == "ok"]
     cached = [r for r in results if r["status"] == "cached"]
