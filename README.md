@@ -7,18 +7,41 @@ a score.
 
 ## Status
 
-Everything is built and verified except the transcripts themselves. YouTube's
-caption endpoint is IP-blocked (see `data/logs/BLOCK_STATE.md`). A watcher is
-probing every 30 minutes and will run the rest of the pipeline automatically
-when it clears:
+Everything is built and verified except the transcripts. YouTube's caption
+endpoint is IP-blocked (see `data/logs/BLOCK_STATE.md`).
+
+**Fetching and grading are separate processes that share only files on disk.**
+Fetching is gated by an external rate limit that flickers on and off for hours;
+grading is gated by model quota. Chaining them meant one stall blocked the other
+and a grading failure looked like a fetch failure.
 
 ```bash
-tail -f data/logs/watch.log          # what the watcher is doing
-cat data/logs/watch_state.jsonl      # one line per probe
-pgrep -fl watch_and_run              # is it still alive
+bash scripts/status.sh                # where both halves stand, and what to run next
 ```
 
-Kill and restart it freely. Every stage skips work already on disk.
+### Fetching: a daemon that just accumulates transcripts
+
+```bash
+nohup bash scripts/fetch_loop.sh > data/logs/fetch_loop.log 2>&1 &
+```
+
+Runs on its own loop. Each cycle probes the endpoint, fetches whatever it can,
+and doubles its own sleep when blocked (15 min base, 90 min ceiling), returning
+to the base cadence as soon as a pass gains transcripts. Exits by itself once
+every leader has 5. Safe to kill and restart at any point, since completed
+transcripts are skipped. It knows nothing about grading.
+
+### Grading and rendering: run when there is enough data
+
+```bash
+STAGES="3 4" bash scripts/run_pipeline.sh              # qa + blind
+STAGES="5"   WORKERS=10 bash scripts/run_pipeline.sh   # blinded grading, published score
+STAGES="6"   WORKERS=10 bash scripts/run_pipeline.sh   # unblinded, halo measurement only
+STAGES="7 8" bash scripts/run_pipeline.sh              # aggregate + render
+```
+
+Each is independently resumable and skips completed judge calls, so grading can
+run on a partial corpus and be re-run later as more transcripts arrive.
 
 ## What is scored
 
