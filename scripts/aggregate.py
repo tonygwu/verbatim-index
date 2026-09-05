@@ -263,6 +263,40 @@ def main() -> int:
         "weights": WEIGHTS,
     }
 
+    # Audit payload: everything a human needs to agree or disagree with a score.
+    audit: dict[str, list] = defaultdict(list)
+    for g in usable:
+        gr = g["grade"]
+        audit[g["leader_slug"]].append({
+            "source_id": g["source_id"],
+            "judge": g["judge"],
+            "mode": g["mode"],
+            "venue_type": gr.get("venue_type"),
+            "venue_challenge": gr.get("venue_challenge"),
+            "subject_share_pct": gr.get("subject_speech_share_pct"),
+            "coverage": gr.get("coverage"),
+            "confidence": gr.get("confidence"),
+            "asr_quality": gr.get("asr_quality"),
+            "identity_guess": gr.get("identity_guess"),
+            "identity_confident": gr.get("identity_confident"),
+            "overall": gr.get("overall"),
+            "salient_claims": gr.get("salient_claims", []),
+            "red_flags": gr.get("red_flags", []),
+            "dimensions": {
+                d: {
+                    "score": gr["dimensions"][d]["score"],
+                    "reasoning": gr["dimensions"][d]["reasoning"],
+                    "counterevidence": gr["dimensions"][d]["counterevidence"],
+                    "evidence": gr["dimensions"][d].get("evidence", [])[:3],
+                } for d in DIMS
+            },
+            "subcriteria": {s["code"]: {"score": s["score"], "justification": s["justification"]}
+                            for s in gr.get("subcriteria", [])},
+        })
+    audit_path = Path(args.out).with_name(Path(args.out).stem + "_audit.json")
+    audit_path.write_text(json.dumps(audit, indent=1))
+    print(f"audit detail written to {audit_path}", file=sys.stderr)
+
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps({
         "diagnostics": diagnostics,

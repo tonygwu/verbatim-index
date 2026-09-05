@@ -1,0 +1,665 @@
+#!/usr/bin/env python3
+"""Render the leaderboard HTML from results.json and results_audit.json.
+
+The page is self-contained apart from Google Fonts. Data is embedded as JSON
+so the table can sort and the audit drawers can open without a server.
+
+Usage:
+  build_site.py --results data/results.json --audit data/results_audit.json \
+      --roster data/roster/final.json --calibration data/logs/calibration.json \
+      --out site/index.html
+"""
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+TEMPLATE = r"""<title>Verbatim Index</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#F2F3F5; --surface:#FCFCFB; --surface-2:#E9EBEF;
+  --ink:#15181D; --ink-2:#3C4450; --muted:#5B646F; --faint:#8A929C;
+  --rule:#DCDFE5; --rule-strong:#C3C8D1;
+  --d1:#2E6FC9; --d2:#BA5416; --d3:#00875A;
+  --d1-wash:#2E6FC91A; --d2-wash:#BA54161A; --d3-wash:#00875A1A;
+  --warn:#9A6700; --bad:#A33A2A;
+  --shadow:0 1px 2px #15181D0F, 0 4px 16px #15181D0A;
+}
+:root:not([data-theme="light"]){
+  @media (prefers-color-scheme: dark){
+    --ground:#121417; --surface:#1B1E23; --surface-2:#23272E;
+    --ink:#E9ECF1; --ink-2:#C3C9D2; --muted:#9AA3AE; --faint:#6E7883;
+    --rule:#2C3138; --rule-strong:#3B424B;
+    --d1:#5A96DE; --d2:#D2702C; --d3:#2E9C6E;
+    --d1-wash:#5A96DE26; --d2-wash:#D2702C26; --d3-wash:#2E9C6E26;
+    --warn:#D9A441; --bad:#E0806F;
+    --shadow:0 1px 2px #00000040, 0 4px 16px #00000030;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121417; --surface:#1B1E23; --surface-2:#23272E;
+  --ink:#E9ECF1; --ink-2:#C3C9D2; --muted:#9AA3AE; --faint:#6E7883;
+  --rule:#2C3138; --rule-strong:#3B424B;
+  --d1:#5A96DE; --d2:#D2702C; --d3:#2E9C6E;
+  --d1-wash:#5A96DE26; --d2-wash:#D2702C26; --d3-wash:#2E9C6E26;
+  --warn:#D9A441; --bad:#E0806F;
+  --shadow:0 1px 2px #00000040, 0 4px 16px #00000030;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:15px; line-height:1.55; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1220px; margin:0 auto; padding:0 24px 96px}
+a{color:var(--d1)}
+h1,h2,h3{text-wrap:balance; margin:0}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums}
+
+/* ---------- masthead ---------- */
+header.mast{padding:56px 0 28px; border-bottom:1px solid var(--rule-strong)}
+.eyebrow{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--muted); margin-bottom:14px;
+}
+h1{
+  font-family:"Instrument Serif",Georgia,serif; font-weight:400;
+  font-size:clamp(44px,7vw,76px); line-height:1.02; letter-spacing:-.015em;
+}
+h1 em{font-style:italic; color:var(--d2)}
+.thesis{
+  max-width:62ch; margin-top:18px; font-size:17px; color:var(--ink-2);
+}
+.thesis strong{color:var(--ink); font-weight:600}
+
+/* ---------- method strip ---------- */
+.strip{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:0; border-bottom:1px solid var(--rule-strong); margin-bottom:34px;
+}
+.strip div{padding:16px 18px 18px; border-right:1px solid var(--rule)}
+.strip div:last-child{border-right:none}
+.strip dt{
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint); margin-bottom:6px;
+}
+.strip dd{
+  margin:0; font-family:"IBM Plex Mono",monospace; font-size:22px;
+  font-weight:500; font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+}
+.strip dd small{font-size:12px; color:var(--muted); font-weight:400; margin-left:3px}
+
+/* ---------- section headings ---------- */
+.sec{margin:52px 0 18px}
+.sec h2{
+  font-family:"Instrument Serif",Georgia,serif; font-weight:400;
+  font-size:30px; letter-spacing:-.01em;
+}
+.sec p{margin:8px 0 0; color:var(--muted); max-width:70ch; font-size:14px}
+
+/* ---------- table ---------- */
+.tablecard{
+  background:var(--surface); border:1px solid var(--rule);
+  border-radius:3px; box-shadow:var(--shadow); overflow-x:auto;
+}
+table{border-collapse:collapse; width:100%; min-width:940px}
+thead th{
+  position:sticky; top:0; z-index:2; background:var(--surface);
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:500;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  text-align:left; padding:14px 10px 11px; border-bottom:1px solid var(--rule-strong);
+  white-space:nowrap; cursor:pointer; user-select:none;
+}
+thead th:hover{color:var(--ink)}
+thead th.num{text-align:right}
+thead th .arrow{opacity:.35; margin-left:3px; font-size:9px}
+thead th[aria-sort] .arrow{opacity:1; color:var(--d2)}
+tbody tr.row{border-bottom:1px solid var(--rule); cursor:pointer}
+tbody tr.row:hover{background:var(--surface-2)}
+tbody tr.row:focus-visible{outline:2px solid var(--d1); outline-offset:-2px}
+td{padding:11px 10px; vertical-align:middle}
+td.num{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums}
+
+/* rank + tie bracket: ranks the method cannot separate are bracketed together */
+td.rank{
+  width:62px; padding-left:16px; position:relative;
+  font-family:"IBM Plex Mono",monospace; font-size:15px; color:var(--muted);
+  font-variant-numeric:tabular-nums;
+}
+td.rank .tie{
+  position:absolute; left:6px; top:0; bottom:0; width:5px;
+  border-left:1.5px solid var(--rule-strong);
+}
+tr.tie-start td.rank .tie{border-top:1.5px solid var(--rule-strong); top:6px}
+tr.tie-end td.rank .tie{border-bottom:1.5px solid var(--rule-strong); bottom:6px}
+
+.who{min-width:190px}
+.who .nm{font-weight:600; letter-spacing:-.01em}
+.who .rl{font-size:12px; color:var(--muted); margin-top:1px}
+td.org{color:var(--ink-2); font-size:13.5px; min-width:150px}
+td.org .sector{
+  display:block; font-family:"IBM Plex Mono",monospace; font-size:10px;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--faint); margin-top:2px;
+}
+
+/* score cells: number plus a thin meter, one hue per dimension */
+.score{display:flex; align-items:center; justify-content:flex-end; gap:9px}
+.score .v{
+  font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
+  font-size:14px; font-weight:500; min-width:30px; text-align:right;
+}
+.meter{width:52px; height:5px; border-radius:2px; background:var(--surface-2); overflow:hidden; flex:none}
+.meter i{display:block; height:100%; border-radius:2px}
+.m1 i{background:var(--d1)} .m2 i{background:var(--d2)} .m3 i{background:var(--d3)}
+td.overall .v{font-size:18px; font-weight:600; min-width:42px}
+td.overall{background:var(--surface-2)}
+
+.pill{
+  display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px;
+  letter-spacing:.05em; text-transform:uppercase; padding:2px 6px;
+  border-radius:2px; border:1px solid var(--rule-strong); color:var(--muted);
+}
+.pill.low{color:var(--bad); border-color:currentColor}
+.pill.medium{color:var(--warn); border-color:currentColor}
+.halo{font-size:13px}
+.halo.pos{color:var(--d2)} .halo.neg{color:var(--d3)}
+
+/* ---------- audit drawer ---------- */
+tr.audit>td{padding:0; background:var(--surface-2); border-bottom:1px solid var(--rule-strong)}
+.drawer{padding:20px 22px 26px}
+.drawer h3{
+  font-family:"Instrument Serif",Georgia,serif; font-size:21px; font-weight:400;
+  margin-bottom:3px;
+}
+.drawer .sub{font-size:12.5px; color:var(--muted); margin-bottom:18px}
+.tcard{
+  background:var(--surface); border:1px solid var(--rule); border-radius:3px;
+  padding:15px 17px; margin-bottom:12px;
+}
+.tcard .hdr{
+  display:flex; flex-wrap:wrap; gap:10px; align-items:baseline;
+  padding-bottom:9px; margin-bottom:11px; border-bottom:1px solid var(--rule);
+}
+.tcard .hdr .t{font-weight:600; font-size:14px}
+.tcard .hdr .meta{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted);
+  margin-left:auto; text-align:right;
+}
+.judgegrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px}
+.judge{border-left:2px solid var(--rule-strong); padding-left:13px}
+.judge>.name{
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--muted); margin-bottom:10px;
+}
+.dim{margin-bottom:13px}
+.dim .dh{display:flex; align-items:baseline; gap:8px; margin-bottom:4px}
+.dim .dh b{
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.06em;
+  text-transform:uppercase; font-weight:500;
+}
+.dim.k1 .dh b{color:var(--d1)} .dim.k2 .dh b{color:var(--d2)} .dim.k3 .dh b{color:var(--d3)}
+.dim .dh .s{
+  font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600;
+  margin-left:auto; font-variant-numeric:tabular-nums;
+}
+.dim .why{font-size:13px; color:var(--ink-2); line-height:1.5}
+.dim .counter{
+  font-size:12.5px; color:var(--muted); margin-top:6px; padding-left:9px;
+  border-left:1.5px solid var(--rule-strong);
+}
+.dim .counter em{
+  font-family:"IBM Plex Mono",monospace; font-style:normal; font-size:10px;
+  letter-spacing:.07em; text-transform:uppercase; color:var(--faint);
+  display:block; margin-bottom:2px;
+}
+.quotes{margin:7px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:5px}
+.quotes li{font-size:12.5px; color:var(--ink-2); display:flex; gap:8px}
+.quotes .ts{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--faint);
+  flex:none; padding-top:1px;
+}
+.quotes q{font-style:italic}
+.flags{margin-top:11px; font-size:12.5px}
+.flags .lbl{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.07em;
+  text-transform:uppercase; color:var(--bad); margin-bottom:3px;
+}
+.flags ul{margin:0; padding-left:17px; color:var(--ink-2)}
+.flags li{margin-bottom:2px}
+
+/* ---------- prose ---------- */
+.prose{max-width:72ch}
+.prose h3{
+  font-size:15px; font-weight:600; margin:22px 0 6px; letter-spacing:-.005em;
+}
+.prose p{margin:0 0 11px; color:var(--ink-2); font-size:14.5px}
+.prose ul{margin:0 0 11px; padding-left:19px; color:var(--ink-2); font-size:14.5px}
+.prose li{margin-bottom:5px}
+.prose code{
+  font-family:"IBM Plex Mono",monospace; font-size:12.5px;
+  background:var(--surface-2); padding:1px 4px; border-radius:2px;
+}
+.callout{
+  border-left:2px solid var(--d2); background:var(--surface);
+  padding:14px 17px; margin:16px 0; border-radius:0 3px 3px 0; font-size:14px;
+}
+.callout b{color:var(--ink)}
+.legend{display:flex; flex-wrap:wrap; gap:16px; margin:14px 0 0; font-size:12.5px; color:var(--muted)}
+.legend span{display:flex; align-items:center; gap:6px}
+.legend i{width:11px; height:11px; border-radius:2px; display:block}
+footer{
+  margin-top:60px; padding-top:20px; border-top:1px solid var(--rule);
+  font-size:12.5px; color:var(--faint);
+}
+.toggle{
+  position:fixed; top:14px; right:14px; z-index:9;
+  font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.06em;
+  background:var(--surface); color:var(--muted); border:1px solid var(--rule-strong);
+  border-radius:2px; padding:6px 10px; cursor:pointer;
+}
+.toggle:hover{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
+</style>
+
+<button class="toggle" id="themeBtn" type="button">THEME</button>
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">__RUNDATE__ &middot; Blinded transcripts &middot; Two independent judges</div>
+  <h1>Verbatim <em>Index</em></h1>
+  <p class="thesis">
+    __N_LEADERS__ technology leaders, ranked on the thinking their public speech actually demonstrates.
+    Every score comes from <strong>verbatim transcripts alone</strong> &mdash; no company results,
+    no market capitalisation, no reputation. Two frontier models graded each transcript independently
+    against a 15-criterion rubric, and every score below carries the written reasoning behind it.
+  </p>
+</header>
+
+<dl class="strip">
+  <div><dt>Leaders</dt><dd>__N_LEADERS__</dd></div>
+  <div><dt>Transcripts</dt><dd>__N_TRANSCRIPTS__</dd></div>
+  <div><dt>Words graded</dt><dd>__N_WORDS__</dd></div>
+  <div><dt>Judge calls</dt><dd>__N_CALLS__</dd></div>
+  <div><dt>Tie band</dt><dd>&plusmn;__TIEBAND__<small>pts</small></dd></div>
+  <div><dt>Judge agreement</dt><dd>__CORR__<small>r</small></dd></div>
+</dl>
+
+<div class="sec">
+  <h2>The ranking</h2>
+  <p>
+    Click any row to read the judges' reasoning and the evidence they cited. Sort by any column.
+    Ranks joined by a bracket in the left margin are <strong>statistically tied</strong>: repeat
+    grading of an unchanged transcript moves the overall score by about __NOISE__ points, so gaps
+    smaller than __TIEBAND__ points do not separate two leaders.
+  </p>
+  <div class="legend">
+    <span><i style="background:var(--d2)"></i> Insight &mdash; 45% of composite</span>
+    <span><i style="background:var(--d3)"></i> Technical depth &mdash; 35%</span>
+    <span><i style="background:var(--d1)"></i> Clarity &mdash; 20%</span>
+  </div>
+</div>
+
+<div class="tablecard">
+  <table id="board">
+    <thead><tr>
+      <th data-k="rank" class="num">#<span class="arrow">&#9650;</span></th>
+      <th data-k="name">Leader<span class="arrow">&#9650;</span></th>
+      <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
+      <th data-k="overall" class="num">Composite<span class="arrow">&#9650;</span></th>
+      <th data-k="d2" class="num">Insight<span class="arrow">&#9650;</span></th>
+      <th data-k="d3" class="num">Technical<span class="arrow">&#9650;</span></th>
+      <th data-k="d1" class="num">Clarity<span class="arrow">&#9650;</span></th>
+      <th data-k="n" class="num">Transcripts<span class="arrow">&#9650;</span></th>
+      <th data-k="halo" class="num">Halo<span class="arrow">&#9650;</span></th>
+      <th data-k="conf">Confidence<span class="arrow">&#9650;</span></th>
+    </tr></thead>
+    <tbody id="tb"></tbody>
+  </table>
+</div>
+
+<div class="sec"><h2>How this was measured</h2></div>
+<div class="prose">
+__METHOD__
+</div>
+
+<footer>
+  Generated __RUNDATE__ from __N_TRANSCRIPTS__ transcripts of public appearances.
+  Transcripts are automatic captions of publicly posted recordings; quoted fragments are brief
+  excerpts cited as evidence for a score, each linked to its source. Scores describe one body of
+  recorded speech, not a person.
+</footer>
+</div>
+
+<script>
+const DATA = __DATA__;
+const AUDIT = __AUDIT__;
+const TIE = __TIEBAND__;
+const DIMS = [["d2","Insight","k2"],["d3","Technical depth","k3"],["d1","Clarity","k1"]];
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function meter(v, cls){
+  const w = Math.max(0, Math.min(100, v));
+  return `<div class="score"><span class="v">${v == null ? "&ndash;" : v.toFixed(1)}</span>`
+       + `<span class="meter ${cls}"><i style="width:${w}%"></i></span></div>`;
+}
+
+/* Bracket runs of leaders whose composite scores all sit inside the tie band. */
+function tieGroups(rows){
+  const g = new Array(rows.length).fill(-1);
+  let id = 0, i = 0;
+  while (i < rows.length){
+    let j = i;
+    while (j + 1 < rows.length && Math.abs(rows[i].overall - rows[j + 1].overall) < TIE) j++;
+    if (j > i) for (let k = i; k <= j; k++) g[k] = id;
+    id++; i = j + 1;
+  }
+  return g;
+}
+
+function quoteList(evs){
+  if (!evs || !evs.length) return "";
+  return `<ul class="quotes">` + evs.map(e =>
+    `<li><span class="ts">${esc(e.timestamp)}</span><q>${esc(e.quote)}</q></li>`).join("") + `</ul>`;
+}
+
+function judgeBlock(a){
+  let h = `<div class="judge"><div class="name">${esc(a.judge)} &middot; ${esc(a.mode)} `
+        + `&middot; ${esc(a.venue_type || "")} &middot; challenge ${a.venue_challenge}/5 `
+        + `&middot; coverage ${Math.round((a.coverage || 0) * 100)}%</div>`;
+  for (const [k, label, cls] of DIMS){
+    const key = k === "d1" ? "d1_clarity" : k === "d2" ? "d2_insight" : "d3_technical_depth";
+    const d = a.dimensions[key]; if (!d) continue;
+    h += `<div class="dim ${cls}"><div class="dh"><b>${label}</b><span class="s">${d.score}</span></div>`
+       + `<div class="why">${esc(d.reasoning)}</div>`
+       + quoteList(d.evidence)
+       + (d.counterevidence ? `<div class="counter"><em>Counterevidence</em>${esc(d.counterevidence)}</div>` : "")
+       + `</div>`;
+  }
+  if (a.red_flags && a.red_flags.length){
+    h += `<div class="flags"><div class="lbl">Red flags</div><ul>`
+       + a.red_flags.map(f => `<li>${esc(f)}</li>`).join("") + `</ul></div>`;
+  }
+  h += `</div>`;
+  return h;
+}
+
+function drawer(slug, person){
+  const rows = (AUDIT[slug] || []).filter(a => a.mode === "blinded");
+  const bySrc = {};
+  for (const a of rows) (bySrc[a.source_id] = bySrc[a.source_id] || []).push(a);
+  const ids = Object.keys(bySrc);
+  if (!ids.length) return `<div class="drawer"><div class="sub">No graded transcripts yet.</div></div>`;
+  let h = `<div class="drawer"><h3>${esc(person.name)} &mdash; the evidence</h3>`
+        + `<div class="sub">${ids.length} graded transcript${ids.length > 1 ? "s" : ""}. `
+        + `Each judge read the transcript blinded and wrote its own reasoning. `
+        + `Scores you disagree with are meant to be arguable from what is shown here.</div>`;
+  for (const sid of ids){
+    const set = bySrc[sid], first = set[0];
+    const meta = (person.sources || {})[sid] || {};
+    h += `<div class="tcard"><div class="hdr">`
+       + `<span class="t">${esc(meta.title || sid)}</span>`
+       + `<span class="meta">${esc(meta.venue || "")}${meta.year ? " &middot; " + meta.year : ""}`
+       + (meta.video_id ? ` &middot; <a href="https://www.youtube.com/watch?v=${esc(meta.video_id)}" target="_blank" rel="noopener">source</a>` : "")
+       + `<br>subject spoke ~${first.subject_share_pct}% &middot; captions ${esc(first.asr_quality)}</span>`
+       + `</div><div class="judgegrid">` + set.map(judgeBlock).join("") + `</div></div>`;
+  }
+  return h + `</div>`;
+}
+
+let sortKey = "rank", sortDir = 1;
+function render(){
+  const rows = DATA.slice().sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (typeof x === "string") return sortDir * x.localeCompare(y);
+    return sortDir * ((x == null ? -1e9 : x) - (y == null ? -1e9 : y));
+  });
+  const groups = sortKey === "rank" && sortDir === 1 ? tieGroups(rows) : new Array(rows.length).fill(-1);
+  const tb = document.getElementById("tb");
+  tb.innerHTML = rows.map((r, i) => {
+    const g = groups[i];
+    const cls = ["row", g >= 0 && groups[i - 1] !== g ? "tie-start" : "",
+                 g >= 0 && groups[i + 1] !== g ? "tie-end" : ""].filter(Boolean).join(" ");
+    const haloCls = r.halo == null ? "" : (r.halo > 0 ? "pos" : "neg");
+    const haloTxt = r.halo == null ? "&ndash;" : (r.halo > 0 ? "+" : "") + r.halo.toFixed(1);
+    return `<tr class="${cls}" tabindex="0" data-slug="${esc(r.slug)}">`
+      + `<td class="rank">${g >= 0 ? '<span class="tie"></span>' : ""}${r.rank}</td>`
+      + `<td class="who"><div class="nm">${esc(r.name)}</div><div class="rl">${esc(r.role)}</div></td>`
+      + `<td class="org">${esc(r.company)}<span class="sector">${esc(r.sector)}</span></td>`
+      + `<td class="num overall">${meter(r.overall, "m2")}</td>`
+      + `<td class="num">${meter(r.d2, "m2")}</td>`
+      + `<td class="num">${meter(r.d3, "m3")}</td>`
+      + `<td class="num">${meter(r.d1, "m1")}</td>`
+      + `<td class="num">${r.n}</td>`
+      + `<td class="num halo ${haloCls}">${haloTxt}</td>`
+      + `<td><span class="pill ${r.conf}">${r.conf}</span></td></tr>`;
+  }).join("");
+}
+
+document.addEventListener("click", e => {
+  const th = e.target.closest("thead th");
+  if (th){
+    const k = th.dataset.k;
+    sortDir = sortKey === k ? -sortDir : (k === "name" || k === "company" || k === "conf" || k === "rank" ? 1 : -1);
+    sortKey = k;
+    document.querySelectorAll("thead th").forEach(x => x.removeAttribute("aria-sort"));
+    th.setAttribute("aria-sort", sortDir === 1 ? "ascending" : "descending");
+    render();
+    return;
+  }
+  const tr = e.target.closest("tr.row");
+  if (!tr) return;
+  const nxt = tr.nextElementSibling;
+  if (nxt && nxt.classList.contains("audit")){ nxt.remove(); return; }
+  document.querySelectorAll("tr.audit").forEach(x => x.remove());
+  const slug = tr.dataset.slug;
+  const person = DATA.find(d => d.slug === slug);
+  const row = document.createElement("tr");
+  row.className = "audit";
+  row.innerHTML = `<td colspan="10">${drawer(slug, person)}</td>`;
+  tr.after(row);
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.classList && e.target.classList.contains("row")) e.target.click();
+});
+document.getElementById("themeBtn").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = cur ? cur === "dark"
+    : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+});
+render();
+</script>
+"""
+
+
+def build_method(results: dict, calib: dict, roster: dict) -> str:
+    d = results["diagnostics"]
+    w = d["weights"]
+    leak = d.get("blinding_leakage_rate")
+    corr = d.get("inter_judge_correlation_overall")
+    gap = d.get("mean_abs_judge_gap_overall")
+    raw = d.get("judge_raw_means_blinded", {})
+    head = (calib.get("headline") or {})
+    noise = head.get("mean_within_judge_sd_overall")
+    dropped = roster.get("dropped_for_no_transcripts", [])
+
+    def esc(x):
+        return html.escape(str(x))
+
+    parts = []
+    parts.append(f"""
+<h3>What is being scored</h3>
+<p>Each transcript is graded on three dimensions, each on a 1&ndash;100 scale, supported by
+15 sub-criteria that a judge may also mark <em>not observed</em> when the format gave no
+opportunity to demonstrate them. The composite is
+<code>{w['d2_insight']:.2f}&times;Insight + {w['d3_technical_depth']:.2f}&times;Technical + {w['d1_clarity']:.2f}&times;Clarity</code>.</p>
+<ul>
+<li><b>Insight (45%)</b> &mdash; causal and counterfactual reasoning, originality, strategic
+tradeoffs, understanding of incentives, calibration of confidence, engagement with opposing
+arguments, and whether the speaker recomputes when a premise changes.</li>
+<li><b>Technical depth (35%)</b> &mdash; mechanism, magnitudes and denominators used correctly,
+operational and industry specificity, and movement between strategy and implementation.</li>
+<li><b>Clarity (20%)</b> &mdash; directness, structure, concrete language, economy. Deliberately
+the smallest weight: the rubric explicitly refuses to reward fluency, charisma, or a confident
+delivery, because a polished non-answer is the failure mode being guarded against.</li>
+</ul>
+
+<h3>The pipeline</h3>
+<ul>
+<li>A roster of 40 was built by 12 parallel sector scouts pooling 240 candidates, merged, then
+attacked by four adversarial critics checking fame, availability, factual accuracy, and coverage
+bias. Contested cases were settled by measuring actual long-form supply, not by argument.</li>
+<li>Transcripts are verbatim automatic captions of publicly posted recordings, pulled
+programmatically with timestamps. No model paraphrased or summarised them at any point.</li>
+<li>Every transcript passed deterministic quality gates before grading: out-of-vocabulary rate,
+speech-recognition repetition loops, type-token ratio, words per minute, and minimum length.</li>
+<li>Speaker and company names were replaced with <code>[SUBJECT]</code> and <code>[COMPANY]</code>,
+including speech-recognition manglings of the surname found by phonetic matching. This step is
+covered by tests, after an early version replaced the contraction &ldquo;that&rsquo;s&rdquo; with
+<code>[SUBJECT]</code> 34 times in one transcript.</li>
+<li>Two judges graded every transcript independently: <b>Claude Fable 5.1</b> at maximum reasoning
+effort, and <b>OpenAI GPT-6 Astra</b> at maximum reasoning effort. Model identity was asserted from
+each call's telemetry rather than assumed.</li>
+</ul>
+""")
+
+    parts.append(f"""
+<h3>How reliable is a score?</h3>
+<p>One unchanged transcript was graded five times by each judge under identical conditions. The
+spread that produced is pure method noise.</p>
+<ul>
+<li>Repeat grading moves the composite by about <b>{noise} points</b> of standard deviation.</li>
+<li>So two leaders differing by less than <b>{head.get('least_significant_difference_95pct')} points</b>
+are not distinguishable. The bracket in the rank column marks those groups.</li>
+<li>Coverage and venue-difficulty judgements were <b>perfectly stable</b> across repeats
+(standard deviation 0.00), so the judges read the same conversation the same way every time.</li>
+</ul>
+<div class="callout">
+<b>The two judges disagree in a specific, correctable way.</b>
+Across blinded grades the raw means were Fable {raw.get('fable', {}).get('d2_insight', '&ndash;')} and
+Astra {raw.get('astra', {}).get('d2_insight', '&ndash;')} on insight, a consistent offset rather than
+genuine disagreement about who is impressive. Each judge's distribution is therefore recentred on the
+pooled distribution before averaging, so only real disagreement moves a leader.
+Correlation between judges on the composite: <b>r&nbsp;=&nbsp;{corr}</b>.
+Mean absolute gap: <b>{gap} points</b>.
+</div>
+""")
+
+    leak_pct = f"{leak * 100:.0f}%" if isinstance(leak, (int, float)) else "not measured"
+    parts.append(f"""
+<h3>What this cannot tell you</h3>
+<ul>
+<li><b>Blinding removed the name, not the identity.</b> Judges recognised the speaker anyway in
+<b>{leak_pct}</b> of blinded transcripts, from products, projects, and context. Defeating that
+would mean stripping the technical content the study exists to measure. Every transcript was
+therefore also graded unblinded, and the <em>Halo</em> column reports the gap: how many points a
+leader gains once the judges are told who they are. The published composite is the blinded one.</li>
+<li><b>Captions have no speaker labels.</b> Judges separated the subject's speech from the
+interviewer's by context and reported their confidence and the subject's estimated share of the
+talking. Both are shown in each transcript card.</li>
+<li><b>Venue difficulty is reported, never corrected for.</b> A leader who only sits for friendly
+interviews will score lower on insight, because a soft conversation cannot demonstrate reasoning
+under pressure. Adjusting for that would mean inventing a score for a conversation that never
+happened.</li>
+<li><b>Sampling is not exhaustive.</b> A handful of appearances per leader is a sample of a public
+speaking record, not the whole of it. Leaders marked low confidence have too few transcripts for
+their rank to be trusted.</li>
+<li><b>Judges are language models.</b> Two frontier models with different training agreeing on a
+ranking is meaningful evidence, and it is not the same thing as being correct.</li>
+</ul>
+""")
+
+    if dropped:
+        names = ", ".join(esc(x["name"]) for x in dropped[:12])
+        parts.append(f"""
+<h3>Who was excluded, and why</h3>
+<p>Excluded names are recorded rather than silently omitted, because silence looks like an
+oversight. {len(dropped)} people famous enough for consideration were left out, most for lack of
+retrievable long-form public speech: {names}.</p>
+""")
+    return "\n".join(parts)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--results", required=True)
+    ap.add_argument("--audit", required=True)
+    ap.add_argument("--roster", required=True)
+    ap.add_argument("--calibration", required=True)
+    ap.add_argument("--sources", default=None, help="discovered_sources.json, for titles and links")
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+
+    results = json.loads(Path(args.results).read_text())
+    audit = json.loads(Path(args.audit).read_text())
+    # The drawer only ever renders blinded grades, and sub-criterion justifications
+    # are 15 extra strings per grade that nothing on the page reads. Both stay in
+    # results_audit.json on disk for auditing; neither is embedded in the page.
+    audit = {slug: [{k: v for k, v in a.items() if k != "subcriteria"}
+                    for a in rows if a.get("mode") == "blinded"]
+             for slug, rows in audit.items()}
+    roster = json.loads(Path(args.roster).read_text())
+    calib = json.loads(Path(args.calibration).read_text())
+
+    src_meta: dict[str, dict] = {}
+    if args.sources and Path(args.sources).exists():
+        for led in json.loads(Path(args.sources).read_text()).get("leaders", []):
+            src_meta[led["leader_slug"]] = {s["source_id"]: s for s in led.get("sources", [])}
+
+    rows = []
+    for l in results["leaders"]:
+        b = l.get("blinded") or {}
+        if not b:
+            continue
+        rows.append({
+            "rank": l["rank"], "slug": l["slug"], "name": l["name"], "role": l["role"],
+            "company": l["company"], "sector": l["sector"],
+            "overall": b.get("overall"), "d1": b.get("d1_clarity"),
+            "d2": b.get("d2_insight"), "d3": b.get("d3_technical_depth"),
+            "n": l["n_transcripts"], "conf": l["confidence"],
+            "halo": (l.get("halo") or {}).get("overall"),
+            "sources": src_meta.get(l["slug"], {}),
+        })
+
+    d = results["diagnostics"]
+    head = calib.get("headline") or {}
+    total_words = sum(1 for _ in [])  # replaced below if transcripts are available
+    tdir = Path("data/transcripts")
+    words = 0
+    if tdir.exists():
+        for p in tdir.rglob("*.json"):
+            try:
+                words += json.loads(p.read_text()).get("word_count", 0)
+            except Exception:
+                pass
+
+    html_out = (TEMPLATE
+        .replace("__DATA__", json.dumps(rows))
+        .replace("__AUDIT__", json.dumps(audit))
+        .replace("__METHOD__", build_method(results, calib, roster))
+        .replace("__RUNDATE__", datetime.now(timezone.utc).strftime("%d %B %Y"))
+        .replace("__N_LEADERS__", str(len(rows)))
+        .replace("__N_TRANSCRIPTS__", str(d.get("transcripts_with_blinded_consensus", 0)))
+        .replace("__N_WORDS__", f"{words/1000:.0f}k" if words else "&ndash;")
+        .replace("__N_CALLS__", str(d.get("grades_used", 0)))
+        .replace("__CORR__", str(d.get("inter_judge_correlation_overall") or "&ndash;"))
+        .replace("__NOISE__", str(head.get("mean_within_judge_sd_overall", "1.5")))
+        .replace("__TIEBAND__", str(head.get("least_significant_difference_95pct", 4.3))))
+
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(html_out)
+    print(f"wrote {args.out}  ({len(html_out)/1024:.0f} KB, {len(rows)} leaders)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
