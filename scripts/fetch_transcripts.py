@@ -301,7 +301,9 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
     }
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+    tmp = dest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+    os.replace(tmp, dest)
     return {"status": "ok", "leader_slug": slug, "source_id": sid,
             "words": words, "track": track_kind, "path": str(dest)}
 

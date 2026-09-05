@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from difflib import SequenceMatcher
@@ -285,6 +286,8 @@ def main() -> int:
     entries = []
     skipped = 0
     for path in sorted(Path(args.transcripts).rglob("*.json")):
+        if path.name.endswith(".json.tmp"):
+            continue
         rec = json.loads(path.read_text())
         if "leader_slug" not in rec or "text" not in rec:
             continue  # not a transcript record
@@ -317,7 +320,9 @@ def main() -> int:
         # here in the record for the aggregation step to join on.
         dest = out_root / slug / f"{sid}.json"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(json.dumps(rec_out, ensure_ascii=False, indent=1))
+        tmp = dest.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(rec_out, ensure_ascii=False, indent=1))
+        os.replace(tmp, dest)
 
         entries.append({
             "leader_slug": slug, "source_id": sid,

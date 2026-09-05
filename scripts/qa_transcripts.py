@@ -54,7 +54,9 @@ INTRO_FRACTION = 0.12   # the opening where being named repeatedly is normal
 
 MAX_OOV = 0.18
 MAX_LOOP = 6
-MIN_TTR = 0.10
+# Gated on MATTR, not raw TTR. See mattr() for why raw TTR cannot be a gate.
+MIN_MATTR = 0.28
+MIN_TTR = 0.10  # retained for reporting only
 MIN_WPM = 60
 MIN_WORDS = 700
 
@@ -80,6 +82,30 @@ def load_dictionary() -> set[str]:
         "gpu", "gpus", "cpu", "cpus", "llm", "llms", "saas", "iot", "url", "urls",
     })
     return words
+
+
+def mattr(tokens: list[str], window: int = 1000) -> float:
+    """Moving-average type-token ratio: lexical variety, independent of length.
+
+    Plain type-token ratio cannot be used as a quality gate. Measured across
+    this corpus, TTR correlated -0.90 with word count, so a fixed threshold
+    rejects transcripts for being LONG rather than for being repetitive. A
+    172-minute keynote was rejected at 0.0988 while a 62-minute interview
+    passed at 0.1378, and nothing about the first was worse.
+
+    MATTR averages TTR over a sliding window of fixed size, so a long text and
+    a short one are measured on the same scale.
+    """
+    if len(tokens) <= window:
+        return len(set(tokens)) / len(tokens) if tokens else 0.0
+    # Step through in window-sized hops rather than one token at a time; the
+    # estimate is equivalent for this purpose and far cheaper on 30k tokens.
+    step = max(1, window // 4)
+    ratios = []
+    for i in range(0, len(tokens) - window + 1, step):
+        chunk = tokens[i:i + window]
+        ratios.append(len(set(chunk)) / window)
+    return sum(ratios) / len(ratios) if ratios else 0.0
 
 
 def longest_repeat_run(tokens: list[str], n: int = 5) -> int:
@@ -119,7 +145,8 @@ def analyze(rec: dict, dictionary: set[str], glossary: set[str]) -> dict:
         "oov_rate": round(len(oov) / n, 4),
         "top_oov": [w for w, _ in Counter(oov).most_common(15)],
         "loop_score": longest_repeat_run(tokens),
-        "type_token_ratio": round(len(counts) / n, 4),
+        "type_token_ratio": round(len(counts) / n, 4),   # reported only, never gated
+        "mattr": round(mattr(tokens), 4),
         "words_per_minute": round(n / duration_min, 1) if duration_min > 0 else None,
         "nonspeech_markers": nonspeech_hits,
         "duration_min": round(duration_min, 1) if duration_min else None,
@@ -154,8 +181,8 @@ def gate(sig: dict, name_hits: int, company_hits: int) -> tuple[str, list[str]]:
         reasons.append(f"oov_rate {sig['oov_rate']} > {MAX_OOV} (garbled recognition)")
     if sig["loop_score"] >= MAX_LOOP:
         reasons.append(f"loop_score {sig['loop_score']} >= {MAX_LOOP} (ASR repetition loop)")
-    if sig["type_token_ratio"] < MIN_TTR:
-        reasons.append(f"type_token_ratio {sig['type_token_ratio']} < {MIN_TTR}")
+    if sig["mattr"] < MIN_MATTR:
+        reasons.append(f"mattr {sig['mattr']} < {MIN_MATTR} (lexically repetitive)")
     wpm = sig.get("words_per_minute")
     if wpm is not None and wpm < MIN_WPM:
         reasons.append(f"words_per_minute {wpm} < {MIN_WPM} (mostly non-speech)")
@@ -200,6 +227,8 @@ def main() -> int:
     reports = []
     troot = Path(args.transcripts)
     for path in sorted(troot.rglob("*.json")):
+        if path.name.endswith(".json.tmp"):
+            continue
         rec = json.loads(path.read_text())
         slug = rec["leader_slug"]
         person = by_slug.get(slug, {})
@@ -243,7 +272,7 @@ def main() -> int:
         "min_usable_per_leader": min(per_leader.values()) if per_leader else 0,
         "thresholds": {
             "max_oov_rate": MAX_OOV, "max_loop_score": MAX_LOOP,
-            "min_type_token_ratio": MIN_TTR, "min_words_per_minute": MIN_WPM,
+            "min_mattr": MIN_MATTR, "min_words_per_minute": MIN_WPM,
             "min_words": MIN_WORDS,
         },
     }

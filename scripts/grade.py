@@ -421,7 +421,9 @@ def grade_one(job: dict) -> dict:
         "grade": obj,
     }
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+    tmp = dest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+    os.replace(tmp, dest)
 
     if errs:
         return {"status": "invalid", "id": tid, "judge": job["judge"], "mode": job["mode"],
