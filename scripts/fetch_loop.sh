@@ -139,6 +139,27 @@ while true; do
   printf '{"at":"%s","cycle":%s,"event":"pass","gained":%s,"total":%s}\n' \
     "$(stamp)" "$cycle" "$gained" "$after" >> "$STATE"
 
+  # Make what we just fetched grade-ready immediately. normalize used to run
+  # only at the top of a grade_loop cycle, and a cycle is hours long because it
+  # grades everything available, so newly fetched transcripts sat unusable for
+  # hours: measured 203 fetched against 66 blinded. QA and normalize are cheap
+  # and idempotent, so running them here decouples grade-readiness from the
+  # slow grading pass.
+  if [ "$gained" -gt 0 ]; then
+    $PY scripts/qa_transcripts.py --transcripts data/transcripts \
+        --roster data/roster/final.json --glossaries data/sources/aliases.json \
+        --out data/logs/transcript_qa.json >/dev/null 2>>data/logs/fetch_loop.err
+    for m in blinded open; do
+      out=data/transcripts_blind; [ "$m" = open ] && out=data/transcripts_open
+      $PY scripts/normalize_transcripts.py --mode "$m" \
+          --transcripts data/transcripts --out "$out" \
+          --roster data/roster/final.json --repairs data/sources/repairs.json \
+          --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
+          --log "data/logs/normalize_${m}.json" >/dev/null 2>>data/logs/fetch_loop.err
+    done
+    say "  normalized; $(find data/transcripts_blind -name '*.json' ! -name '*.tmp' | wc -l | tr -d ' ') ready to grade"
+  fi
+
   if [ "$gained" -gt 0 ]; then
     sleep_for=$BASE_SLEEP           # it worked, go back to the normal cadence
     say "  +${gained} transcripts (now ${after}). sleeping ${sleep_for}s"
