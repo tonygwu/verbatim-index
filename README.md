@@ -5,6 +5,21 @@ demonstrates, scored **only** from transcripts of interviews, podcasts and
 keynotes. Nothing about company performance, market value or reputation enters
 a score.
 
+Live leaderboard: **[verbatim-index.tonygwu.com](https://verbatim-index.tonygwu.com)**
+
+This repository is the code: rubric, pipeline, grading harness and the tests
+that guard them (MIT, see `LICENSE`). The transcripts, raw judge output and
+per-leader results live in a separate private repository that the pipeline
+expects to find cloned at `data/`. Without it the scripts still import and the
+test suites run, but there is nothing to grade or render.
+
+```bash
+git clone https://github.com/tonygwu/verbatim-index.git && cd verbatim-index
+uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python scripts/test_grade_harness.py     # 33 pure checks, no model calls
+.venv/bin/python scripts/test_blinding.py
+```
+
 ## Status
 
 Everything is built and verified except the transcripts. YouTube's caption
@@ -113,12 +128,19 @@ Five repeat gradings of one unchanged transcript per judge, `data/logs/calibrati
 .claude/skills/leader-transcript-grader/   rubric, skill, output schema
 .claude/skills/polite-bulk-fetching/       rate-limit discipline, researched
 scripts/                                   pipeline, one stage per file
-data/roster/final.json                     the 40, with exclusions recorded
-data/sources/discovered.json               559 ranked candidates
-data/logs/                                 QA, calibration, errors, block state
-site/index.html                            the leaderboard
+data/                                      PRIVATE repo, cloned here, gitignored
+  roster/final.json                          the 40, with exclusions recorded
+  sources/discovered.json                    559 ranked candidates
+  logs/                                      QA, calibration, errors, block state
+  transcripts*/ grades/ results.json         working data and judge output
+site/index.html                            the leaderboard, rendered, gitignored
 ```
 
-Transcripts under `data/` are working data for the analysis. The published page
-carries only short attributed evidence quotes, capped at 25 words each and
-enforced by the grader's validator, with a link back to each source.
+Transcripts under `data/` are working data for the analysis and are not
+published. The public page carries only short attributed evidence quotes,
+capped at 25 words each and enforced by the grader's validator, with a link
+back to each source.
+
+Judge calls are routed across the operator's Claude subscriptions by
+[llm-quota-router](https://github.com/tonygwu/llm-quota-router), which
+`grade.py` imports as a library. With one account it simply reports one account.

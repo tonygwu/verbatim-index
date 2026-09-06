@@ -5,6 +5,27 @@ Several Claude Code agents work this project at once, one per clone, under
 The `agent-fleet-git` skill governs how you commit; this file records what is
 specific to this repo.
 
+## Two repositories, nested
+
+| Repo | Visibility | Where it is checked out | Holds |
+|---|---|---|---|
+| `tonygwu/verbatim-index` | public | the clone root, `repo-N/` | code, rubric, tests, docs |
+| `tonygwu/verbatim-index-data` | private | `repo-N/data/`, gitignored by the root | transcripts, grades, logs, roster, results |
+
+The root `.gitignore` lists `data/`, so `git status` at the root never shows
+data changes and a public commit cannot sweep in a transcript. Data commits
+are made inside `data/` with `git -C data ...`, by `repo-0` only. Scripts
+address data as `data/...` relative to the root, unchanged from the single-repo
+days. `site/index.html` is a build artifact, rendered from `data/results.json`
+and gitignored; deploy it from disk.
+
+Until 2026-09-06 code and data shared one private repo. Its full history is
+kept read-only as `tonygwu/verbatim-index-archive`.
+
+Author email in every clone, root and `data/`, is the GitHub noreply address
+`446441+tonygwu@users.noreply.github.com`; GitHub rejects pushes carrying the
+personal one.
+
 ## Clone roles
 
 | Clone | Role | What it must not do |
@@ -20,10 +41,17 @@ need new data, ask the operator to pull it through `repo-0`.
 ## Setup in a fresh clone
 
 ```
-uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
-.venv/bin/python scripts/test_grade_harness.py     # 15 pure checks, no quota
+git clone git@github.com:tonygwu/verbatim-index.git repo-N && cd repo-N
+git clone git@github.com:tonygwu/verbatim-index-data.git data
+git config user.email 446441+tonygwu@users.noreply.github.com
+git -C data config user.email 446441+tonygwu@users.noreply.github.com
+uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python scripts/test_grade_harness.py     # 33 pure checks, no quota
 .venv/bin/python scripts/test_blinding.py
 ```
+
+Python 3.12 or newer: `llm-quota-router`, which `grade.py` imports to route
+Fable calls by measured quota, requires it.
 
 ## Daemons (repo-0 only)
 
@@ -45,7 +73,8 @@ score.
 - **Never call the judge through `cl`.** It injects
   `--dangerously-skip-permissions`, which gives the judge tool access to this
   repository, including the roster it is blinded against. `grade.py` uses
-  raw `claude` with `--permission-prompts none`. See commit `9f6c144`.
+  raw `claude` with `--permission-prompts none` and refuses `--fable-bin cl`.
+  Account routing comes from the `quota_router` library, not the launcher.
 - **Never derive time from file mtime or the local clock.** Read
   `fetched_at_utc` out of the record. Loops touch files constantly.
 - **No clone-absolute paths in committed code.** Use
@@ -54,6 +83,9 @@ score.
   logs `attempted / succeeded / failed` with `error_taxonomy`.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
+- **Data commits happen inside `data/`.** The root repo is public; nothing
+  under `data/` may be committed there. `git -C data add <paths>` and
+  `git -C data push`, from `repo-0` only.
 
 ## Where things are
 

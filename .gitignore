@@ -3,3 +3,15 @@ __pycache__/
 *.pyc
 *.superseded
 *.orphaned
+
+# The private data repository (github.com/tonygwu/verbatim-index-data) is
+# cloned INSIDE this checkout at data/. It has its own .git; this repo never
+# tracks it. Transcripts and raw grades are working data and stay private.
+data/
+
+# Build artifact, rendered from data/results.json by scripts/build_site.py and
+# deployed straight from disk with `npx wrangler deploy`.
+site/index.html
+
+# Wrangler's local cache carries the Cloudflare account id.
+.wrangler/

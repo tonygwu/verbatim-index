@@ -369,6 +369,9 @@ __METHOD__
   Transcripts are automatic captions of publicly posted recordings; quoted fragments are brief
   excerpts cited as evidence for a score, each linked to its source. Scores describe one body of
   recorded speech, not a person.
+  The rubric, pipeline and grading harness are open source at
+  <a href="https://github.com/tonygwu/verbatim-index">github.com/tonygwu/verbatim-index</a>;
+  the transcripts and raw grades are not published.
 </footer>
 </div>
 
