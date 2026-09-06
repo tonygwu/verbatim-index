@@ -173,6 +173,38 @@ td.overall{background:var(--surface-2)}
 .halo{font-size:13px}
 .halo.pos{color:var(--d2)} .halo.neg{color:var(--d3)}
 
+/* ---------- (?) affordance + shared tooltip ----------
+   The tooltip is a single element on <body>, positioned with position:fixed.
+   It cannot live inside the header cell: .tablecard sets overflow-x:auto, so
+   overflow-y computes to auto as well and would clip any popover drawn there. */
+button.info{
+  all:unset; box-sizing:border-box; display:inline-grid; place-items:center;
+  width:14px; height:14px; margin-left:5px; border-radius:50%;
+  border:1px solid var(--rule-strong); color:var(--muted);
+  font-family:"IBM Plex Sans",system-ui,sans-serif;
+  font-size:9px; font-weight:600; line-height:1; letter-spacing:0;
+  text-transform:none; cursor:help; vertical-align:middle; flex:none;
+}
+button.info:hover,button.info[aria-expanded="true"]{
+  color:var(--surface); background:var(--d1); border-color:var(--d1);
+}
+button.info:focus-visible{outline:2px solid var(--d1); outline-offset:2px}
+#tip{
+  position:fixed; z-index:60; max-width:310px; padding:12px 14px;
+  background:var(--surface); color:var(--ink-2);
+  border:1px solid var(--rule-strong); border-radius:4px; box-shadow:var(--shadow);
+  font-family:"IBM Plex Sans",system-ui,sans-serif;
+  font-size:12.5px; line-height:1.5; font-weight:400;
+  letter-spacing:0; text-transform:none; text-align:left; white-space:normal;
+}
+#tip[hidden]{display:none}
+#tip b{color:var(--ink); font-weight:600}
+#tip .k{font-family:"IBM Plex Mono",monospace; font-weight:600}
+#tip .k.pos{color:var(--d2)} #tip .k.neg{color:var(--d3)}
+#tip p{margin:0 0 7px}
+#tip p:last-child{margin-bottom:0}
+#tip .note{color:var(--muted); font-size:11.5px}
+
 /* ---------- audit drawer ---------- */
 tr.audit>td{padding:0; background:var(--surface-2); border-bottom:1px solid var(--rule-strong)}
 .drawer{padding:20px 22px 26px}
@@ -319,7 +351,8 @@ footer{
       <th data-k="d3" class="num">Technical<span class="arrow">&#9650;</span></th>
       <th data-k="d1" class="num">Clarity<span class="arrow">&#9650;</span></th>
       <th data-k="n" class="num">Transcripts<span class="arrow">&#9650;</span></th>
-      <th data-k="halo" class="num">Halo<span class="arrow">&#9650;</span></th>
+      <th data-k="halo" class="num">Halo<button class="info" type="button" data-info="halo"
+        aria-expanded="false" aria-label="What does Halo mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="conf">Confidence<span class="arrow">&#9650;</span></th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -338,6 +371,8 @@ __METHOD__
   recorded speech, not a person.
 </footer>
 </div>
+
+<div id="tip" role="tooltip" hidden></div>
 
 <script>
 const DATA = __DATA__;
@@ -444,7 +479,72 @@ function render(){
   }).join("");
 }
 
+/* ---------- (?) tooltips ----------
+   Copy lives here so a column explanation is one string, not markup buried in
+   the header row. Halo is the only one today; the mechanism takes more. */
+const INFO = {
+  halo: `<p><b>Halo &mdash; what the name is worth.</b></p>
+    <p>Every transcript is graded twice. Once with the speaker's name and company
+    hidden, once with them shown. Halo is the second score minus the first.</p>
+    <p><span class="k pos">+2.0</span> knowing who it was pushed the score up.
+    Reputation helped.<br>
+    <span class="k neg">&minus;2.0</span> knowing who it was pushed the score down.</p>
+    <p class="note">The Composite ranking uses the blinded score only, so Halo never
+    moves it. Across the corpus it averages +0.48 points, which is inside noise.</p>`,
+};
+
+const tip = document.getElementById("tip");
+let tipBtn = null;
+
+function hideTip(){
+  if (!tipBtn) return;
+  tipBtn.setAttribute("aria-expanded", "false");
+  tipBtn = null;
+  tip.hidden = true;
+}
+
+function showTip(btn){
+  const body = INFO[btn.dataset.info];
+  if (!body) return;
+  if (tipBtn && tipBtn !== btn) tipBtn.setAttribute("aria-expanded", "false");
+  tipBtn = btn;
+  btn.setAttribute("aria-expanded", "true");
+  tip.innerHTML = body;
+  tip.hidden = false;
+  // Measure after paint, then keep the box inside the viewport on both axes.
+  const b = btn.getBoundingClientRect();
+  const t = tip.getBoundingClientRect();
+  const pad = 8;
+  let left = b.left + b.width / 2 - t.width / 2;
+  left = Math.max(pad, Math.min(left, window.innerWidth - t.width - pad));
+  let top = b.bottom + 6;
+  if (top + t.height > window.innerHeight - pad) top = b.top - t.height - 6;
+  tip.style.left = left + "px";
+  tip.style.top = Math.max(pad, top) + "px";
+}
+
+document.addEventListener("pointerover", e => {
+  const btn = e.target.closest && e.target.closest("button.info");
+  if (btn) showTip(btn);
+  else if (tipBtn && !e.target.closest("#tip")) hideTip();
+});
+document.addEventListener("focusin", e => {
+  const btn = e.target.closest && e.target.closest("button.info");
+  if (btn) showTip(btn); else if (tipBtn) hideTip();
+});
+window.addEventListener("scroll", hideTip, true);
+window.addEventListener("resize", hideTip);
+
 document.addEventListener("click", e => {
+  // Touch has no hover, so the button toggles. It sits inside a sortable
+  // header, so this must run before the sort branch and swallow the event.
+  const info = e.target.closest("button.info");
+  if (info){
+    e.stopPropagation();
+    if (tipBtn === info) hideTip(); else showTip(info);
+    return;
+  }
+  if (tipBtn) hideTip();
   const th = e.target.closest("thead th");
   if (th){
     const k = th.dataset.k;
@@ -468,6 +568,7 @@ document.addEventListener("click", e => {
   tr.after(row);
 });
 document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && tipBtn){ const b = tipBtn; hideTip(); b.blur(); return; }
   if (e.key === "Enter" && e.target.classList && e.target.classList.contains("row")) e.target.click();
 });
 document.getElementById("themeBtn").addEventListener("click", () => {
