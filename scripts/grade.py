@@ -82,6 +82,36 @@ E_BADJSON = "json_parse_error"
 E_SCHEMA = "schema_validation_failed"
 E_MODEL_MISMATCH = "model_identity_mismatch"
 E_AUTH = "auth_or_quota"
+E_REFUSED = "judge_declined_to_score"
+
+# A judge can return valid JSON that is not a grade. GPT-6 Astra declined to
+# score a Palantir CEO transcript, saying it "cannot assign the requested
+# numerical scores to an assessment encompassing U.S. democracy and political
+# issues", and returned qualitative observations instead. Claude Fable scored
+# the same eight transcripts without objection.
+#
+# That is NOT a schema failure and must not be filed as one. A refusal is
+# systematic: it recurs for the same subject, so one leader silently loses a
+# judge while everyone else keeps two. Left buried in a validation-error count,
+# it would quietly turn a two-judge score into a one-judge score for whichever
+# leaders a judge finds objectionable.
+REFUSAL_MARKERS = ("assessment_limit", "refusal", "cannot_comply")
+REFUSAL_PHRASES = ("cannot assign", "can't assign", "unable to assign",
+                   "cannot provide", "can't provide", "decline to")
+
+
+def looks_like_refusal(obj: dict) -> str | None:
+    """Return the judge's stated reason if this is a refusal, else None."""
+    if "dimensions" in obj:
+        return None
+    for key in REFUSAL_MARKERS:
+        if isinstance(obj.get(key), str) and obj[key].strip():
+            return obj[key].strip()
+    for key in ("reason", "status", "note"):
+        val = obj.get(key)
+        if isinstance(val, str) and any(ph in val.lower() for ph in REFUSAL_PHRASES):
+            return val.strip()
+    return None
 
 _lock = threading.Lock()
 
@@ -431,6 +461,24 @@ def grade_one(job: dict) -> dict:
                 "run": job["run"], "error_type": etype, "detail": str(exc)[:400],
                 "raw_path": str(raw_dest)}
 
+    refusal = looks_like_refusal(obj)
+    if refusal:
+        record = {
+            "transcript_id": tid, "leader_slug": rec["leader_slug"],
+            "source_id": rec["source_id"], "judge": job["judge"], "mode": job["mode"],
+            "run": job["run"], "graded_at_utc": utcnow(), "elapsed_sec": elapsed,
+            "telemetry": telemetry, "grading_contract": job["contract"],
+            "refused": True, "refusal_reason": refusal, "grade": obj,
+            "validation_errors": [],
+        }
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+        os.replace(tmp, dest)
+        return {"status": "refused", "id": tid, "judge": job["judge"], "mode": job["mode"],
+                "run": job["run"], "error_type": E_REFUSED, "detail": refusal[:300],
+                "path": str(dest), "elapsed": elapsed}
+
     errs = validate(obj, tid)
     record = {
         "transcript_id": tid,
@@ -566,15 +614,16 @@ def main() -> int:
     ok = [r for r in results if r["status"] == "ok"]
     cached = [r for r in results if r["status"] == "cached"]
     invalid = [r for r in results if r["status"] == "invalid"]
+    refused = [r for r in results if r["status"] == "refused"]
     failed = [r for r in results if r["status"] == "failed"]
 
     Path(args.errors).parent.mkdir(parents=True, exist_ok=True)
     with open(args.errors, "w") as fh:
-        for r in failed + invalid:
+        for r in failed + invalid + refused:
             fh.write(json.dumps(r) + "\n")
 
     tax: dict[str, int] = {}
-    for r in failed + invalid:
+    for r in failed + invalid + refused:
         tax[r.get("error_type", "unknown")] = tax.get(r.get("error_type", "unknown"), 0) + 1
 
     print(json.dumps({
@@ -583,6 +632,7 @@ def main() -> int:
         "newly_graded": len(ok),
         "cached": len(cached),
         "invalid_schema": len(invalid),
+        "judge_refusals": len(refused),
         "failed": len(failed),
         "error_taxonomy": tax,
         "median_elapsed_sec": sorted(r["elapsed"] for r in ok)[len(ok) // 2] if ok else None,

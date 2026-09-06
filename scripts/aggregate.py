@@ -137,6 +137,20 @@ def main() -> int:
     if not grades:
         raise SystemExit("no grades found")
 
+    # A judge that declines to score one subject silently halves that leader's
+    # evidence while everyone else keeps two judges. Count it per leader and per
+    # judge so a one-judge score is never mistaken for a two-judge one.
+    refusals = [g for g in grades if g.get("refused")]
+    grades = [g for g in grades if not g.get("refused")]
+    refusal_breakdown: dict[str, dict] = {}
+    for g in refusals:
+        e = refusal_breakdown.setdefault(g["leader_slug"], {"count": 0, "judges": set(), "reason": ""})
+        e["count"] += 1
+        e["judges"].add(g["judge"])
+        e["reason"] = e["reason"] or (g.get("refusal_reason") or "")[:200]
+    for e in refusal_breakdown.values():
+        e["judges"] = sorted(e["judges"])
+
     excluded = [g for g in grades if g.get("_excluded")]
     usable = [g for g in grades if not g.get("_excluded")]
 
@@ -234,6 +248,8 @@ def main() -> int:
                 halo[dim] = round(o[dim] - b[dim], 1)
             halo["overall"] = round(o["overall"] - b["overall"], 1)
 
+        judges_seen = sorted({g["judge"] for g in usable
+                              if g["leader_slug"] == slug and g["mode"] == "blinded"})
         n = b.get("n_transcripts", 0)
         judge_spread = [t[f"spread_{d}"] for t in blinded for d in DIMS if t.get(f"spread_{d}") is not None]
         leaders_out.append({
@@ -243,7 +259,13 @@ def main() -> int:
             "open": o,
             "halo": halo,
             "n_transcripts": n,
-            "confidence": "high" if n >= 5 else ("medium" if n >= MIN_TRANSCRIPTS_FOR_CONFIDENCE else "low"),
+            "judges_used": judges_seen,
+            "single_judge": len(judges_seen) < 2,
+            "refusals": refusal_breakdown.get(slug),
+            # A leader scored by one judge is less trustworthy than the transcript
+            # count alone suggests, so the confidence label says so.
+            "confidence": ("low" if len(judges_seen) < 2 else
+                           ("high" if n >= 5 else ("medium" if n >= MIN_TRANSCRIPTS_FOR_CONFIDENCE else "low"))),
             "mean_judge_disagreement": round(st.mean(judge_spread), 1) if judge_spread else None,
         })
 
@@ -285,6 +307,8 @@ def main() -> int:
         "mean_abs_judge_gap_overall": round(st.mean([abs(a - b) for a, b in both]), 1) if both else None,
         "blinding_leakage_rate": round(
             sum(1 for t in all_b if t["identity_recognised"]) / len(all_b), 3) if all_b else None,
+        "judge_refusals": len(refusals),
+        "judge_refusals_by_leader": refusal_breakdown,
         "leaders_below_min_transcripts": [l["slug"] for l in scored if l["n_transcripts"] < MIN_TRANSCRIPTS_FOR_CONFIDENCE],
         "calibration_params": {f"{k[0]}|{k[1]}|{k[2]}": v for k, v in params.items()},
         "weights": WEIGHTS,
