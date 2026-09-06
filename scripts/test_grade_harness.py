@@ -17,7 +17,9 @@ import importlib.util
 import itertools
 import json
 import os
+import pathlib
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -215,6 +217,71 @@ def test_tool_block_live(g) -> None:
           f"denials={denials} result={result[:160]!r}")
 
 
+# ---------------------------------------------------------------------------
+# 5. Queue ordering. The starvation bug.
+#
+# Observed 2026-09-06: Fable held blinded grades for exactly the alphabetically
+# first 20 leaders and none of the last 20. grade.py built its queue with
+# itertools.product over a SORTED path list, so every cycle walked the leaders
+# in the same order. Fable ran out of session quota part-way down and stopped
+# in the same place each time, so slugs 21-40 were attempted and rejected in
+# seconds on every cycle. yann-lecun sorts 40th of 40 and never got one grade.
+# Failure split from data/logs/grade_errors_blind.jsonl was prefix 57 /
+# suffix 168: the live quota all went to the prefix.
+# ---------------------------------------------------------------------------
+def test_queue_ordering(g, tmp) -> None:
+    print("\n[5] the queue is ordered breadth-first, so a quota stop truncates evenly")
+
+    fn = getattr(g, "order_breadth_first", None)
+    if fn is None:
+        check("order_breadth_first() exists", False, "function not defined in grade.py")
+        return
+    check("order_breadth_first() exists", True)
+
+    leaders = [f"leader-{n:02d}" for n in range(40)]
+
+    def mkjobs(done_for=None):
+        done_for = done_for or {}
+        jobs = []
+        for slug in leaders:                      # alphabetical, as product() emits
+            for i in range(8):
+                dest = tmp / "fable" / slug / f"tx{i}__fable__blinded__r0.json"
+                if i < done_for.get(slug, 0):
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text("{}")
+                jobs.append({"judge": "fable", "mode": "blinded",
+                             "rec": {"leader_slug": slug}, "dest": str(dest)})
+        return jobs
+
+    jobs = mkjobs()
+    # The regression itself: alphabetical order gives the first 40 slots to 5 leaders.
+    check("the old alphabetical order really did starve the tail",
+          len({j["rec"]["leader_slug"] for j in jobs[:40]}) == 5,
+          f"{len({j['rec']['leader_slug'] for j in jobs[:40]})} leaders in the first 40")
+
+    out = fn(jobs)
+    check("no job is lost or duplicated", len(out) == len(jobs) and
+          {id(j) for j in out} == {id(j) for j in jobs}, f"{len(out)} vs {len(jobs)}")
+    first = [j["rec"]["leader_slug"] for j in out[:40]]
+    check("every leader gets its first grade before any gets a second",
+          sorted(first) == leaders, f"{len(set(first))} distinct leaders in the first 40")
+    check("yann-lecun's position no longer decides whether he is graded",
+          out[39]["rec"]["leader_slug"] == leaders[-1], out[39]["rec"]["leader_slug"])
+
+    # Depth must count grades already on disk, or a well-covered leader keeps
+    # jumping the queue ahead of an uncovered one on the next cycle.
+    deep = {leaders[0]: 7}
+    out2 = fn(mkjobs(done_for=deep))
+    pending = [j for j in out2 if not pathlib.Path(j["dest"]).exists()]
+    check("cached jobs are not counted as pending", len(pending) == 40 * 8 - 7,
+          f"{len(pending)} pending")
+    check("a leader with 7 grades already on disk waits behind leaders with none",
+          pending[0]["rec"]["leader_slug"] != leaders[0], pending[0]["rec"]["leader_slug"])
+    check("free cached jobs are still queued first",
+          all(pathlib.Path(j["dest"]).exists() for j in out2[:7]),
+          "cached work should resolve before quota is spent")
+
+
 def main() -> int:
     g = load_grade()
     print("grading-harness guards")
@@ -222,6 +289,8 @@ def main() -> int:
     test_rotation(g)
     test_limit(g)
     test_tool_block_live(g)
+    with tempfile.TemporaryDirectory() as td:
+        test_queue_ordering(g, pathlib.Path(td))
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))

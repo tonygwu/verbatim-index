@@ -238,6 +238,47 @@ def apply_per_leader_limit(paths, limit, slug_of):
     return kept
 
 
+def order_breadth_first(jobs: list[dict]) -> list[dict]:
+    """Round-robin the queue across leaders instead of walking them alphabetically.
+
+    The queue is built by itertools.product over a SORTED path list, so every
+    cycle presented the leaders in the same order. A judge that runs out of
+    quota part-way down therefore stopped in the same place every time.
+
+    MEASURED 2026-09-06: Fable held blinded grades for exactly the
+    alphabetically first 20 slugs and none of the last 20. Its failures split
+    57 in the prefix against 168 in the suffix, because the live quota was all
+    spent on the prefix and everything after it failed fast on the session
+    limit. yann-lecun sorts 40th of 40 and had 8 transcripts ready and 0 Fable
+    grades, while half the roster kept deepening. That is a coverage bias, not
+    a backlog: re-running the same order can never fix it.
+
+    Ordering by how many grades a leader already has gives every leader its
+    first grade before any leader gets its second, so a quota stop truncates
+    depth evenly across the roster instead of amputating the tail of the
+    alphabet. Grades already on disk count towards that depth, or a
+    well-covered leader would jump the queue again on the next cycle.
+    """
+    done: dict[tuple, int] = {}
+    cached, pending = [], []
+    for job in jobs:
+        key = (job["judge"], job["mode"], job["rec"]["leader_slug"])
+        if Path(job["dest"]).exists():
+            done[key] = done.get(key, 0) + 1
+            cached.append(job)          # costs no quota, so let it resolve first
+        else:
+            pending.append((key, job))
+
+    depth = dict(done)
+    ranked = []
+    for key, job in pending:
+        d = depth.get(key, 0)
+        ranked.append((d, key[2], job))
+        depth[key] = d + 1
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    return cached + [t[2] for t in ranked]
+
+
 def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
     """Work out why the Claude CLI exited non-zero.
 
@@ -778,8 +819,23 @@ def main() -> int:
             "raw_dest": str(Path(args.out) / "_raw" / judge / rec["leader_slug"] / f"{stem}.txt"),
         })
 
+    # Order the queue breadth-first across leaders. A judge that runs out of
+    # quota mid-pass must leave every leader equally shallow, not leave the
+    # tail of the alphabet with no grades at all. See order_breadth_first().
+    jobs = order_breadth_first(jobs)
+
     log(f"{len(jobs)} grading calls queued "
         f"({len(paths)} transcripts x {len(judges)} judges x {len(modes)} modes x {args.repeats} repeats)")
+    pending_jobs = [j for j in jobs if not Path(j["dest"]).exists()]
+    if pending_jobs:
+        lead = []
+        for j in pending_jobs[:len(set(x["rec"]["leader_slug"] for x in pending_jobs))]:
+            if j["rec"]["leader_slug"] not in lead:
+                lead.append(j["rec"]["leader_slug"])
+        log(f"  {len(pending_jobs)} of them are not yet on disk, "
+            f"spanning {len(set(j['rec']['leader_slug'] for j in pending_jobs))} leaders; "
+            f"first to run: {', '.join(lead[:5])}"
+            + (" ..." if len(lead) > 5 else ""))
 
     results = []
     done = 0
