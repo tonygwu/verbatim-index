@@ -93,6 +93,40 @@ def load(root: Path) -> dict[str, list[dict]]:
     return out
 
 
+# Stitching two copies of one appearance is almost never worth it, and this
+# constant is why. Measured across 38 real duplicate decisions: 37 scored
+# containment ~1.0, so the shorter copy is a strict subset and a union adds
+# nothing. The single partial case, Bezos on Lex #405 at 0.579, was the SAME
+# audio transcribed twice: the kept copy runs 21,688 words over 132 minutes,
+# which is 164 words per minute, a normal speaking rate across the whole
+# episode. Nothing was missing. A 5-gram needs five consecutive words to match,
+# so one different filler word breaks it even when the speech is identical.
+#
+# The case where a union WOULD pay is a partial duplicate whose kept copy is
+# actually truncated. That is detectable rather than assumed: a transcript
+# covering its own runtime at a plausible speaking rate is complete, and one
+# well below that lost content. Flag it for a human instead of silently
+# concatenating, because a wrong splice corrupts the document a judge reads.
+TRUNCATION_WPM = 90        # below this, a transcript is not covering its runtime
+PARTIAL_CONTAINMENT = 0.95  # under this, the two copies are not a clean superset
+
+
+def flag_possible_truncation(kept: dict, containment: float) -> str | None:
+    """Return a warning when a union might actually recover lost content."""
+    if containment >= PARTIAL_CONTAINMENT:
+        return None
+    dur_min = (kept.get("duration_sec") or 0) / 60.0
+    if dur_min <= 0:
+        return None
+    wpm = kept.get("word_count", 0) / dur_min
+    if wpm >= TRUNCATION_WPM:
+        return None
+    return (f"partial duplicate (containment {containment:.3f}) AND the kept copy runs "
+            f"{wpm:.0f} words/min over {dur_min:.0f} min, below {TRUNCATION_WPM}. "
+            f"It may be truncated, so the discarded copy could hold content worth "
+            f"recovering. Review by hand; do not auto-splice.")
+
+
 def quality(rec: dict) -> tuple:
     """Rank two copies of one appearance. Higher is better.
 
