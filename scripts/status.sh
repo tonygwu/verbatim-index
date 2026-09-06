@@ -9,23 +9,52 @@ b(){ printf '\n\033[1m%s\033[0m\n' "$*"; }
 BRIEF=0
 [ "${1:-}" = "--brief" ] && BRIEF=1
 
+# The flag file lags reality. It is only written after a failed probe at the
+# TOP of a cycle, so while the loop is mid-pass the flag can read clear for
+# minutes after YouTube has actually blocked us. Observed exactly that: probe
+# said IpBlocked while status.sh showed no banner. So probe live here. It costs
+# one caption request, and when blocked it fails in about a second.
+YT_STATE=$($PY - <<'PYEOF' 2>/dev/null
+from youtube_transcript_api import YouTubeTranscriptApi
+try:
+    l = YouTubeTranscriptApi().list("93piVCwqXz8")
+    try: t = l.find_manually_created_transcript(["en","en-US","en-GB"])
+    except Exception: t = l.find_generated_transcript(["en","en-US","en-GB"])
+    t.fetch(); print("CLEAR")
+except Exception as e: print(type(e).__name__)
+PYEOF
+)
+if [ "$YT_STATE" != "CLEAR" ]; then
+  printf '\n\033[1;31m  >>> ROTATE THE VPN — youtube is %s right now <<<\033[0m\n' "$YT_STATE"
+  printf '  (live probe, not the flag file. The loop resumes on its own within 60s of a new IP.)\n'
+else
+  printf '\n\033[1;32m  youtube: CLEAR\033[0m  (live probe)\n'
+fi
+
 if [ -f data/logs/NEEDS_IP_ROTATION ]; then
-  printf '\n\033[1;31m  >>> ACTION NEEDED: ROTATE THE VPN <<<\033[0m\n'
+  printf '  (loop also has a stale rotation flag from: '
   printf '  %s\n' "$(cat data/logs/NEEDS_IP_ROTATION)"
   printf '  The fetch loop re-probes every 60s and resumes on its own once the IP changes.\n'
 fi
 
 b "PROCESSES"
-if pgrep -f "fetch_loop.sh" >/dev/null; then
-  printf "  fetch loop   RUNNING  pid %s\n" "$(pgrep -f fetch_loop.sh | head -1)"
-else
-  printf "  fetch loop   stopped\n"
-fi
-if pgrep -f "scripts/grade.py" >/dev/null; then
-  printf "  grading      RUNNING  pid %s\n" "$(pgrep -f 'scripts/grade.py' | head -1)"
-else
-  printf "  grading      stopped\n"
-fi
+# Three independent daemons, not one. happyscribe_loop was missing entirely,
+# and "grading" checked for the grade.py SUBPROCESS rather than the daemon, so
+# it read "stopped" in the gaps between judge calls while the loop was alive.
+for L in fetch_loop happyscribe_loop grade_loop; do
+  case "$L" in
+    fetch_loop)       desc="youtube captions (needs VPN)" ;;
+    happyscribe_loop) desc="happyscribe (no VPN needed)" ;;
+    grade_loop)       desc="grading + render" ;;
+  esac
+  if pgrep -f "$L.sh" >/dev/null; then
+    printf "  %-18s RUNNING  pid %-7s %s\n" "$L" "$(pgrep -f "$L.sh" | head -1)" "$desc"
+  else
+    printf "  %-18s stopped           %s\n" "$L" "$desc"
+  fi
+done
+inflight=$(pgrep -f "scripts/grade.py" | wc -l | tr -d ' ')
+printf "  %-18s %s judge call(s) in flight right now\n" "" "$inflight"
 
 b "FETCH"
 $PY - <<'PYEOF'

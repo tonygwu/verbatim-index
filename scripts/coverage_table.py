@@ -36,14 +36,33 @@ def main() -> int:
         for line in mf.read_text().splitlines():
             if line.strip():
                 identified[json.loads(line)["leader_slug"]] += 1
+    # Happy Scribe candidates are part of the pool too. Counting only YouTube
+    # made IDENT look like a ceiling it is not, and would eventually show a
+    # leader with FETCH above IDENT, which reads as a bug rather than a
+    # second source.
+    hsf = Path("data/sources/happyscribe_candidates.json")
+    if hsf.exists():
+        hs = json.loads(hsf.read_text())
+        if isinstance(hs, dict):
+            for slug, rows in hs.items():
+                if isinstance(rows, list):
+                    identified[slug] += len(rows)
 
     # 2. fetched: transcript files actually on disk
     fetched: Counter = Counter()
+    from_yt: Counter = Counter()
+    from_hs: Counter = Counter()
     tdir = Path("data/transcripts")
     if tdir.exists():
         for p in tdir.rglob("*.json"):
-            if not p.name.endswith(".tmp"):
-                fetched[p.parent.name] += 1
+            if p.name.endswith(".tmp"):
+                continue
+            fetched[p.parent.name] += 1
+            try:
+                method = json.loads(p.read_text()).get("fetch_method") or "happyscribe"
+            except Exception:
+                method = "happyscribe"
+            (from_yt if method == "youtube_transcript_api" else from_hs)[p.parent.name] += 1
 
     # 3. gated: QA verdict of pass or review; reject does not reach a judge
     gated: Counter = Counter()
@@ -91,6 +110,8 @@ def main() -> int:
             "company": p["company"],
             "identified": identified.get(s, 0),
             "fetched": fetched.get(s, 0),
+            "yt": from_yt.get(s, 0),
+            "hs": from_hs.get(s, 0),
             "gated": gated.get(s, 0),
             "rejected": rejected.get(s, 0),
             "graded": len(graded_tx.get(s, ())),
@@ -101,19 +122,20 @@ def main() -> int:
 
     w = max(len(r["leader"]) for r in rows)
     c = min(24, max(len(r["company"]) for r in rows))
-    print(f"{'#':>3}  {'LEADER':<{w}}  {'ORGANISATION':<{c}}  {'IDENT':>5} {'FETCH':>5} {'GATED':>5} {'REJ':>4} {'GRADED':>6} {'CALLS':>5}  {'SCORE':>5}")
-    print(f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*5} {'-'*4} {'-'*6} {'-'*5}  {'-'*5}")
+    print(f"{'#':>3}  {'LEADER':<{w}}  {'ORGANISATION':<{c}}  {'IDENT':>5} {'FETCH':>5} {'YT':>3} {'HS':>3} {'GATED':>5} {'REJ':>4} {'GRADED':>6} {'CALLS':>5}  {'SCORE':>5}")
+    print(f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4} {'-'*6} {'-'*5}  {'-'*5}")
     for i, r in enumerate(rows, 1):
         sc = f"{r['overall']:.1f}" if r["overall"] is not None else "-"
         print(f"{i:>3}  {r['leader']:<{w}}  {r['company'][:c]:<{c}}  "
-              f"{r['identified']:>5} {r['fetched']:>5} {r['gated']:>5} {r['rejected']:>4} "
+              f"{r['identified']:>5} {r['fetched']:>5} {r['yt']:>3} {r['hs']:>3} {r['gated']:>5} {r['rejected']:>4} "
               f"{r['graded']:>6} {r['judge_calls']:>5}  {sc:>5}")
 
     tot = {k: sum(r[k] for r in rows) for k in
-           ("identified", "fetched", "gated", "rejected", "graded", "judge_calls")}
-    print(f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*5} {'-'*4} {'-'*6} {'-'*5}  {'-'*5}")
+           ("identified", "fetched", "yt", "hs", "gated", "rejected", "graded", "judge_calls")}
+    print(f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4} {'-'*6} {'-'*5}  {'-'*5}")
     print(f"{'':>3}  {'TOTAL':<{w}}  {'':<{c}}  {tot['identified']:>5} {tot['fetched']:>5} "
-          f"{tot['gated']:>5} {tot['rejected']:>4} {tot['graded']:>6} {tot['judge_calls']:>5}")
+          f"{tot['yt']:>3} {tot['hs']:>3} {tot['gated']:>5} {tot['rejected']:>4} "
+          f"{tot['graded']:>6} {tot['judge_calls']:>5}")
 
     started = sum(1 for r in rows if r["fetched"] > 0)
     print()

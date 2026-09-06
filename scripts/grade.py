@@ -83,6 +83,7 @@ E_SCHEMA = "schema_validation_failed"
 E_MODEL_MISMATCH = "model_identity_mismatch"
 E_AUTH = "auth_or_quota"
 E_REFUSED = "judge_declined_to_score"
+E_TOOL_ATTEMPT = "judge_attempted_tool_use"
 
 # A judge can return valid JSON that is not a grade. GPT-6 Astra declined to
 # score a Palantir CEO transcript, saying it "cannot assign the requested
@@ -140,6 +141,134 @@ def claude_config_dirs() -> list[str]:
     dirs = ["__DEFAULT__"]
     dirs.extend(sorted(str(p) for p in home.glob(".claude-?") if p.is_dir()))
     return dirs
+
+
+def fable_headroom() -> dict[str, float]:
+    """Remaining Fable allowance per account, read from `quotapick status`.
+
+    Returns a config-dir -> remaining-fraction map. An account missing from
+    the output is absent from the map rather than defaulting to healthy: a
+    silent 0-or-1 guess here is what sent every Fable call to an exhausted
+    account for hours. On any failure this returns {} and the caller keeps
+    the plain account order, which is worse but never wrong.
+    """
+    import re
+    import subprocess
+    try:
+        proc = subprocess.run(["quotapick", "status"], capture_output=True,
+                              text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        return {}
+    if proc.returncode != 0:
+        return {}
+
+    home = Path.home()
+    # `quotapick` names accounts claude, claude_b, ... Map those back to the
+    # config dirs this script rotates over.
+    def to_cfg(name: str) -> str:
+        return "__DEFAULT__" if name == "claude" else str(home / name.replace("claude_", ".claude-"))
+
+    out: dict[str, float] = {}
+    current = None
+    for line in (proc.stdout or "").splitlines():
+        m = re.match(r"^(claude(?:_[a-z])?)\s+\[", line)
+        if m:
+            current = to_cfg(m.group(1))
+            continue
+        if current is None:
+            continue
+        m = re.search(r"fable\s+(-?[\d.]+)\s+slack\s*=\s*(-?[\d.]+)\s+remaining", line)
+        if m:
+            out[current] = float(m.group(2))
+            current = None
+    return out
+
+
+def order_accounts_by_fable(accounts: list[str], headroom: dict[str, float],
+                            floor: float = 0.02) -> list[str]:
+    """Richest Fable window first, and drop the ones with nothing left.
+
+    `floor` is the point below which an account is treated as exhausted.
+    Accounts with no measurement keep their original position rather than
+    being dropped, because an unmeasured account is unknown, not empty.
+    """
+    if not headroom:
+        return list(accounts)
+    live = [a for a in accounts if headroom.get(a, 1.0) > floor]
+    if not live:                       # everything is spent; try them all anyway
+        return list(accounts)
+    return sorted(live, key=lambda a: -headroom.get(a, 1.0))
+
+
+def assign_accounts(judge: str, idx: int, accounts: list[str], judges: list[str]) -> str:
+    """Pick the account for one job, counting per judge rather than globally.
+
+    The bug this replaces: jobs are enumerated over product(paths, judges),
+    so with judges = [fable, astra] every Fable job has an even index. Under
+    `accounts[idx % len(accounts)]` that reaches only the even-numbered
+    accounts, which on this machine were the two with no Fable allowance
+    left. Dividing by the judge count restores a per-judge sequence, so
+    Fable walks all of them.
+    """
+    if not accounts:
+        raise ValueError("no accounts to rotate over")
+    n_judges = max(1, len(judges))
+    return accounts[(idx // n_judges) % len(accounts)]
+
+
+def apply_per_leader_limit(paths, limit, slug_of):
+    """Keep at most `limit` transcripts per leader.
+
+    `limit` is None for no cap and 0 for none at all. The old code tested
+    the value for truthiness, so 0 read as "no cap" and a pass meant to be
+    skipped instead graded the whole corpus.
+    """
+    if limit is None:
+        return list(paths)
+    if limit < 0:
+        raise ValueError(f"--limit-per-leader must be >= 0, got {limit}")
+    if limit == 0:
+        return []
+    by_leader: dict[str, list] = {}
+    for p in paths:
+        by_leader.setdefault(slug_of(p), []).append(p)
+    kept = []
+    for slug in sorted(by_leader):
+        kept.extend(sorted(by_leader[slug], key=str)[:limit])
+    return kept
+
+
+def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
+    """Work out why the Claude CLI exited non-zero.
+
+    The CLI puts the reason in STDOUT, not stderr. A quota refusal exits 1
+    with empty stderr and `result` saying "You've reached your Fable limit".
+    A blocked tool call exits 1 with `stop_reason: tool_use`. The old code
+    raised on the return code before reading stdout, so 262 failures across
+    two unrelated causes were all logged as a bare `cli_nonzero_exit` with
+    nothing to tell them apart.
+    """
+    payload = None
+    if stdout and stdout.strip().startswith("{"):
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError:
+            payload = None
+
+    if payload is not None:
+        result = str(payload.get("result") or "")
+        low = result.lower()
+        if any(s in low for s in ("reached your", "usage limit", "rate limit",
+                                  "out of credit", "quota", "upgrade to")):
+            return E_AUTH, f"{E_AUTH}: {result[:400]}"
+        if payload.get("stop_reason") == "tool_use":
+            return E_TOOL_ATTEMPT, (
+                f"{E_TOOL_ATTEMPT}: judge tried to call a tool and the turn budget ended the run. "
+                f"turns={payload.get('num_turns')} denials={len(payload.get('permission_denials') or [])}")
+        if result:
+            return E_CLI, f"{E_CLI}: rc={rc} result={result[:400]}"
+
+    return E_CLI, f"{E_CLI}: rc={rc} stderr={(stderr or '')[:400]}"
 
 
 def build_judge_prompt(rec: dict, mode: str, rubric: str, schema: str) -> str:
@@ -311,7 +440,35 @@ def validate(obj: dict, expect_id: str) -> list[str]:
     return errs
 
 
-def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "cl") -> tuple[str, dict]:
+def fable_command(prompt: str, binary: str) -> list[str]:
+    """The judge invocation, in one place so the tool-block test checks the real thing.
+
+    Two flags here are load-bearing and were both wrong before 2026-09-06.
+
+    `--permission-prompts none` is what actually denies tools. `--allowedTools ""`
+    does NOT: with it alone the judge issued a Read against data/roster/final.json
+    and `permission_denials` came back empty, which means nothing stopped it. A
+    judge that can read the roster can undo the blinding.
+
+    `--max-turns` must leave room to recover. At 1 the run died on the tool
+    attempt itself, which is what produced most of the harness's failures. The
+    denial only helps if the model gets a turn afterwards to answer without it.
+    """
+    return [
+        binary, "-p", prompt,
+        "--model", "claude-fable-5-1",
+        "--effort", "max",
+        "--output-format", "json",
+        "--allowedTools", "",
+        "--permission-prompts", "none",
+        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+        "--setting-sources", "",
+        "--max-turns", "6",
+    ]
+
+
+def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "cl",
+               workdir: str | None = None) -> tuple[str, dict]:
     """Run the Claude Fable 5.1 judge. Returns (text, telemetry).
 
     `cl` is the quota-aware wrapper: it asks quotapick which subscription has
@@ -328,19 +485,16 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "cl") -
         env.pop("CLAUDE_CONFIG_DIR", None)
     else:
         env["CLAUDE_CONFIG_DIR"] = config_dir
-    cmd = [
-        binary, "-p", prompt,
-        "--model", "claude-fable-5-1",
-        "--effort", "max",
-        "--output-format", "json",
-        "--allowedTools", "",
-        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-        "--setting-sources", "",
-        "--max-turns", "1",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    cmd = fable_command(prompt, binary)
+    # Run outside the repository. The judge should not be standing in a
+    # directory that contains the roster it is being blinded against.
+    jail = Path(workdir) if workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "judge-jail"
+    jail.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                          env=env, cwd=str(jail), stdin=subprocess.DEVNULL)
     if proc.returncode != 0:
-        raise RuntimeError(f"{E_CLI}: rc={proc.returncode} stderr={(proc.stderr or '')[:600]}")
+        _etype, detail = classify_cli_failure(proc.returncode, proc.stdout, proc.stderr)
+        raise RuntimeError(detail)
     payload = json.loads(proc.stdout)
     if payload.get("is_error"):
         raise RuntimeError(f"{E_CLI}: {str(payload.get('result'))[:400]}")
@@ -438,7 +592,8 @@ def grade_one(job: dict) -> dict:
     t0 = time.time()
     try:
         if job["judge"] == "fable":
-            text, telemetry = call_fable(prompt, job["config_dir"], job["timeout"], job["fable_bin"])
+            text, telemetry = call_fable(prompt, job["config_dir"], job["timeout"],
+                                         job["fable_bin"], job["workdir"])
         else:
             text, telemetry = call_astra(prompt, job["timeout"], Path(job["workdir"]))
     except subprocess.TimeoutExpired:
@@ -446,7 +601,8 @@ def grade_one(job: dict) -> dict:
                 "run": job["run"], "error_type": E_TIMEOUT, "detail": f"exceeded {job['timeout']}s"}
     except Exception as exc:  # noqa: BLE001
         detail = str(exc)
-        etype = next((e for e in (E_CLI, E_TIMEOUT, E_AUTH, E_MODEL_MISMATCH) if detail.startswith(e)), E_CLI)
+        etype = next((e for e in (E_CLI, E_TIMEOUT, E_AUTH, E_MODEL_MISMATCH, E_TOOL_ATTEMPT)
+                      if detail.startswith(e)), E_CLI)
         return {"status": "failed", "id": tid, "judge": job["judge"], "mode": job["mode"],
                 "run": job["run"], "error_type": etype, "detail": detail[:800]}
 
@@ -525,7 +681,7 @@ def main() -> int:
     ap.add_argument("--run-offset", type=int, default=0, help="Start run numbering here, to add repeats later.")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=1800)
-    ap.add_argument("--limit-per-leader", type=int, default=0,
+    ap.add_argument("--limit-per-leader", type=int, default=None,
                     help="Grade at most N transcripts per leader, chosen by sorted source_id so the "
                          "choice is deterministic and repeatable. Used for the unblinded arm, which "
                          "only needs enough transcripts per leader to estimate the reputation halo. "
@@ -554,18 +710,15 @@ def main() -> int:
     if not paths:
         raise SystemExit("no transcripts found")
 
-    if args.limit_per_leader:
-        from collections import defaultdict as _dd
-        by_leader = _dd(list)
-        for pth in paths:
-            by_leader[json.loads(pth.read_text())["leader_slug"]].append(pth)
-        kept, dropped = [], []
-        for slug in sorted(by_leader):
-            ordered = sorted(by_leader[slug], key=lambda x: x.name)
-            kept.extend(ordered[:args.limit_per_leader])
-            dropped.extend(ordered[args.limit_per_leader:])
+    if args.limit_per_leader is not None:
+        slug_of = {p: json.loads(p.read_text())["leader_slug"] for p in paths}
+        kept = apply_per_leader_limit(paths, args.limit_per_leader, slug_of.get)
+        dropped = [p for p in paths if p not in set(kept)]
         log(f"--limit-per-leader {args.limit_per_leader}: keeping {len(kept)} transcripts, "
-            f"dropping {len(dropped)} across {len(by_leader)} leaders")
+            f"dropping {len(dropped)} across {len(set(slug_of.values()))} leaders")
+        if args.limit_per_leader == 0:
+            log("  limit is 0, so this pass grades nothing and exits")
+            return 0
         if dropped:
             log("  dropped: " + ", ".join(sorted(p.parent.name + "/" + p.stem for p in dropped)[:12])
                 + (" ..." if len(dropped) > 12 else ""))
@@ -573,8 +726,33 @@ def main() -> int:
 
     judges = [j.strip() for j in args.judges.split(",") if j.strip()]
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
-    cfg_dirs = claude_config_dirs()
-    log(f"claude accounts available for rotation: {cfg_dirs}")
+    # Route Fable by measured FABLE headroom, not by cl's general-pool pick.
+    # cl optimises the combined quota and kept landing on the account whose
+    # Fable weekly was exhausted, so every Fable call there failed while Astra
+    # succeeded. Falling back to the plain account list is safe: it is only
+    # worse, never wrong.
+    all_dirs = claude_config_dirs()
+    if args.fable_bin == "cl" and all_dirs:
+        # Two reasons never to use `cl` for a judge call. It picks its own
+        # account, so CLAUDE_CONFIG_DIR is ignored and this rotation cannot
+        # take effect. It also injects --dangerously-skip-permissions
+        # (launcher.py:862), which puts the judge in bypass mode with full
+        # tool access to the repository it is being blinded against.
+        args.fable_bin = "claude"
+        log("using `claude` rather than `cl`: cl ignores the rotation and forces bypass mode")
+    headroom = fable_headroom()
+    cfg_dirs = order_accounts_by_fable(all_dirs, headroom)
+    if headroom:
+        shown = ", ".join(f"{Path(a).name if a != '__DEFAULT__' else 'default'}={headroom.get(a, float('nan')):.2f}"
+                          for a in all_dirs)
+        log(f"fable headroom measured: {shown}")
+        skipped = [a for a in all_dirs if a not in cfg_dirs]
+        if skipped:
+            log(f"  excluded as exhausted: {[Path(a).name if a != '__DEFAULT__' else 'default' for a in skipped]}")
+    else:
+        log("fable headroom unavailable, keeping plain account order")
+    log(f"fable accounts in rotation (richest fable window first): "
+        f"{[Path(a).name if a != '__DEFAULT__' else 'default' for a in cfg_dirs]}")
 
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "grade-work"
     workroot.mkdir(parents=True, exist_ok=True)
@@ -593,7 +771,7 @@ def main() -> int:
             "rec": rec, "judge": judge, "mode": mode, "run": run,
             "rubric": rubric, "schema": schema, "timeout": args.timeout, "force": args.force,
             "contract": contract,
-            "config_dir": cfg_dirs[i % len(cfg_dirs)],
+            "config_dir": assign_accounts(judge, i, cfg_dirs, judges),
             "fable_bin": args.fable_bin,
             "workdir": str(wd),
             "dest": str(Path(args.out) / judge / rec["leader_slug"] / f"{stem}.json"),

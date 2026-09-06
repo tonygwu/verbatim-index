@@ -69,13 +69,19 @@ while true; do
       --workers "$WORKERS" --errors data/logs/grade_errors_blind.jsonl --timeout 2400 \
       >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
 
-  # 3. Unblinded, on a bounded subset. Only needed to size the reputation halo.
-  say "  unblinded grading pass (${OPEN_PER_LEADER}/leader)"
-  $PY scripts/grade.py --transcripts data/transcripts_open --roster data/roster/final.json \
-      --out data/grades --judges fable,astra --modes open --repeats 1 \
-      --limit-per-leader "$OPEN_PER_LEADER" \
-      --workers "$WORKERS" --errors data/logs/grade_errors_open.jsonl --timeout 2400 \
-      >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
+  # 3. Unblinded, on a bounded subset. Only needed to size the reputation halo,
+  #    so it must stay small: it competes with the blinded pass for the same
+  #    Fable quota, and the blinded pass is the published score.
+  if [ "${OPEN_PER_LEADER:-0}" -eq 0 ]; then
+    say "  unblinded grading pass SKIPPED (OPEN_PER_LEADER=0)"
+  else
+    say "  unblinded grading pass (${OPEN_PER_LEADER}/leader)"
+    $PY scripts/grade.py --transcripts data/transcripts_open --roster data/roster/final.json \
+        --out data/grades --judges fable,astra --modes open --repeats 1 \
+        --limit-per-leader "$OPEN_PER_LEADER" \
+        --workers "$WORKERS" --errors data/logs/grade_errors_open.jsonl --timeout 2400 \
+        >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
+  fi
 
   # 4. Always leave a current leaderboard behind, even mid-run.
   $PY scripts/aggregate.py --grades data/grades --roster data/roster/final.json \
