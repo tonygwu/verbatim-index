@@ -28,13 +28,15 @@ uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
 ## Daemons (repo-0 only)
 
 ```
-nohup bash scripts/fetch_loop.sh       >> data/logs/fetch_loop.log       2>&1 &
+TARGET=14 nohup bash scripts/fetch_loop.sh >> data/logs/fetch_loop.log 2>&1 &
 nohup bash scripts/happyscribe_loop.sh >> data/logs/happyscribe_loop.log 2>&1 &
 WORKERS=10 OPEN_PER_LEADER=0 nohup bash scripts/grade_loop.sh >> data/logs/grade_loop.log 2>&1 &
 bash scripts/status.sh                 # live state of all three, plus coverage
 ```
 
-`OPEN_PER_LEADER=0` skips the unblinded control pass. It competes with the
+`TARGET=14` is the transcripts-per-leader goal. Without it the loop defaults
+to 5, sees every leader already there, and exits at once; that happened on
+the 2026-09-06 restart. `OPEN_PER_LEADER=0` skips the unblinded control pass. It competes with the
 blinded pass for the same Fable quota and the blinded pass is the published
 score.
 
