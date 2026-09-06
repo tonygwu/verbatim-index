@@ -96,8 +96,12 @@ E_REFUSED = "judge_declined_to_score"
 # it would quietly turn a two-judge score into a one-judge score for whichever
 # leaders a judge finds objectionable.
 REFUSAL_MARKERS = ("assessment_limit", "refusal", "cannot_comply")
-REFUSAL_PHRASES = ("cannot assign", "can't assign", "unable to assign",
-                   "cannot provide", "can't provide", "decline to")
+# Astra phrased the same refusal three different ways across five calls, under
+# two different keys. Match on the behaviour, not on one wording.
+REFUSAL_PHRASES = ("cannot assign", "can't assign", "can\u2019t assign", "unable to assign",
+                   "cannot complete", "can't complete", "can\u2019t complete",
+                   "cannot provide", "can't provide", "decline to", "scoring schema")
+REFUSAL_TEXT_KEYS = ("reason", "status", "note", "error", "message", "explanation")
 
 
 def looks_like_refusal(obj: dict) -> str | None:
@@ -107,7 +111,7 @@ def looks_like_refusal(obj: dict) -> str | None:
     for key in REFUSAL_MARKERS:
         if isinstance(obj.get(key), str) and obj[key].strip():
             return obj[key].strip()
-    for key in ("reason", "status", "note"):
+    for key in REFUSAL_TEXT_KEYS:
         val = obj.get(key)
         if isinstance(val, str) and any(ph in val.lower() for ph in REFUSAL_PHRASES):
             return val.strip()
