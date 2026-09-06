@@ -21,11 +21,17 @@ PY=.venv/bin/python
 TARGET="${TARGET:-5}"                 # transcripts wanted per leader
 MIN_ACCEPT="${MIN_ACCEPT:-3}"         # below this a leader is reported as thin
 PROBE_VIDEO="${PROBE_VIDEO:-93piVCwqXz8}"
-BASE_SLEEP="${BASE_SLEEP:-900}"       # 15 min between cycles when things work
-MAX_SLEEP="${MAX_SLEEP:-5400}"        # 90 min ceiling when blocked
-PACE="${PACE:-10}"                    # seconds between caption requests
-WORKERS="${WORKERS:-3}"
+# Pacing is deliberately AGGRESSIVE. The operator can rotate the VPN exit on
+# demand, so a block costs one manual switch rather than hours of waiting. That
+# inverts the economics: a 10s pace was right when an IP was irreplaceable, and
+# wasteful once it is not. Fetch fast, trip early, ask for a new IP.
+BASE_SLEEP="${BASE_SLEEP:-120}"       # 2 min between productive cycles
+MAX_SLEEP="${MAX_SLEEP:-900}"         # 15 min ceiling; the fix is a new IP, not patience
+PROBE_EVERY="${PROBE_EVERY:-60}"      # re-probe every minute so a rotation is seen fast
+PACE="${PACE:-2}"                     # seconds between caption requests
+WORKERS="${WORKERS:-6}"
 STATE=data/logs/fetch_loop_state.jsonl
+ROTATE_FLAG=data/logs/NEEDS_IP_ROTATION
 
 stamp(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
 say(){ printf '[%s] %s\n' "$(stamp)" "$*"; }
@@ -90,7 +96,13 @@ while true; do
 
   if ! probe >/dev/null 2>&1; then
     sleep_for=$(( sleep_for * 2 )); [ "$sleep_for" -gt "$MAX_SLEEP" ] && sleep_for=$MAX_SLEEP
-    say "  endpoint blocked. backing off up to ${sleep_for}s, re-probing every ${PROBE_EVERY}s"
+    ip=$(curl -sS --max-time 8 https://api.ipify.org 2>/dev/null || echo unknown)
+    printf '%s\n' "$(stamp) blocked on IP $ip" > "$ROTATE_FLAG"
+    say "  ############################################################"
+    say "  #  BLOCKED on IP ${ip}"
+    say "  #  ROTATE THE VPN TO A NEW EXIT. The loop re-probes every ${PROBE_EVERY}s"
+    say "  #  and resumes automatically the moment a new IP works."
+    say "  ############################################################"
     printf '{"at":"%s","cycle":%s,"event":"blocked","sleep":%s}\n' "$(stamp)" "$cycle" "$sleep_for" >> "$STATE"
     # Poll THROUGH the backoff rather than sleeping it out. Measured over one
     # night: 10 blocked cycles to 1 productive one, because a 90 minute sleep
@@ -101,7 +113,9 @@ while true; do
       sleep "$PROBE_EVERY"
       waited=$(( waited + PROBE_EVERY ))
       if probe >/dev/null 2>&1; then
-        say "  window reopened after ${waited}s of a ${sleep_for}s backoff"
+        rm -f "$ROTATE_FLAG"
+        newip=$(curl -sS --max-time 8 https://api.ipify.org 2>/dev/null || echo unknown)
+        say "  RESUMED after ${waited}s on IP ${newip}"
         printf '{"at":"%s","cycle":%s,"event":"early_clear","after":%s}\n' "$(stamp)" "$cycle" "$waited" >> "$STATE"
         sleep_for=$BASE_SLEEP
         break
@@ -110,8 +124,9 @@ while true; do
     continue
   fi
 
+  rm -f "$ROTATE_FLAG"
   before=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
-  say "  endpoint clear. fetching."
+  say "  endpoint clear. fetching at ${PACE}s pace, ${WORKERS} workers."
   $PY scripts/fetch_transcripts.py \
     --manifest data/sources/all.jsonl \
     --out data/transcripts \

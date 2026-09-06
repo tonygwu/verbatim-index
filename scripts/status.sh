@@ -6,6 +6,12 @@ PY=.venv/bin/python
 
 b(){ printf '\n\033[1m%s\033[0m\n' "$*"; }
 
+if [ -f data/logs/NEEDS_IP_ROTATION ]; then
+  printf '\n\033[1;31m  >>> ACTION NEEDED: ROTATE THE VPN <<<\033[0m\n'
+  printf '  %s\n' "$(cat data/logs/NEEDS_IP_ROTATION)"
+  printf '  The fetch loop re-probes every 60s and resumes on its own once the IP changes.\n'
+fi
+
 b "PROCESSES"
 if pgrep -f "fetch_loop.sh" >/dev/null; then
   printf "  fetch loop   RUNNING  pid %s\n" "$(pgrep -f fetch_loop.sh | head -1)"

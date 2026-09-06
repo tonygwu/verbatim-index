@@ -94,7 +94,7 @@ class Breaker:
     and a hard block reads as "slow" for an hour instead of stopping.
     """
 
-    def __init__(self, limit: int = 6):
+    def __init__(self, limit: int = 4):
         self.limit = limit
         self._lock = threading.Lock()
         self._consecutive = 0
@@ -121,9 +121,11 @@ PERMANENT_CLASSES = {
 }
 AMBIGUOUS_CLASSES = {"PoTokenRequired", "YouTubeRequestFailed"}
 
-BACKOFF_BASE = 10
-BACKOFF_CAP = 240
-MAX_TRIES = 4
+# Retry is now cheap to abandon, because recovery is an IP rotation rather
+# than a wait. Trip fast and hand back rather than grinding through backoff.
+BACKOFF_BASE = 3
+BACKOFF_CAP = 20
+MAX_TRIES = 2
 
 
 def log(msg: str) -> None:
@@ -372,7 +374,7 @@ def main() -> int:
     ap.add_argument("--target-per-leader", type=int, default=0,
                     help="Stop after N successful transcripts per leader, walking that leader's "
                          "ranked candidate list in order. 0 fetches every row in the manifest.")
-    ap.add_argument("--min-interval", type=float, default=DEFAULT_INTERVAL,
+    ap.add_argument("--min-interval", type=float, default=2.0,
                     help="Minimum seconds between caption requests across ALL workers, jittered. "
                          "The yt-dlp wiki suggests 5 to 10 seconds as the remedy for HTTP 429.")
     args = ap.parse_args()
@@ -412,6 +414,21 @@ def main() -> int:
             by_leader[s_["leader_slug"]].append(s_)
         for slug in by_leader:
             by_leader[slug].sort(key=lambda x: x.get("rank", 999))
+
+        # Fewest-first. A circuit trip mid-run leaves everyone still queued with
+        # zero attempts, so a fixed order would starve the same leaders every
+        # cycle and make coverage a function of queue position. Ordering by
+        # current coverage spends each cycle's budget where it is thinnest, and
+        # drops leaders already at target entirely.
+        def _have(slug: str) -> int:
+            return len(list((out_dir / slug).glob("*.json"))) if (out_dir / slug).exists() else 0
+
+        ordered = sorted(by_leader.items(), key=lambda kv: (_have(kv[0]), kv[0]))
+        ordered = [(slug, cands) for slug, cands in ordered if _have(slug) < args.target_per_leader]
+        skipped = len(by_leader) - len(ordered)
+        if skipped:
+            log(f"  {skipped} leaders already at target, skipping them this pass")
+        by_leader = dict(ordered)
         log(f"walking {len(by_leader)} leaders for up to {args.target_per_leader} transcripts each "
             f"(min {args.min_interval}s between caption requests, {args.workers} workers)")
         done = 0
