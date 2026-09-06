@@ -282,6 +282,63 @@ def test_queue_ordering(g, tmp) -> None:
           "cached work should resolve before quota is spent")
 
 
+# ---------------------------------------------------------------------------
+# 6. Fable routing comes from the llm-quota-router library, not a parsed CLI.
+#
+# Observed: fable_headroom() shelled out to `quotapick status` and regex-parsed
+# its human-readable table, so any change to that table silently turned every
+# measurement into "unknown". The library call returns typed rows. The mapping
+# from router rows to this script's config-dir sentinels is pure, so it is
+# tested here without the library installed.
+# ---------------------------------------------------------------------------
+
+def test_quota_routing(g) -> None:
+    print("\n[6] Fable routing uses the router library, and maps its rows faithfully")
+
+    fn = getattr(g, "fable_accounts_from_router", None)
+    if fn is None:
+        check("fable_accounts_from_router() exists", False, "function not defined in grade.py")
+        return
+    check("fable_accounts_from_router() exists", True)
+
+    accounts = [
+        ("claude",   "claude", "/h/.claude",   True),
+        ("claude_b", "claude", "/h/.claude-b", False),
+        ("claude_c", "claude", "/h/.claude-c", False),
+        ("codex",    "codex",  "/h/.codex",    False),
+    ]
+    rows = [
+        {"account": "claude",   "remaining": 0.0,  "eligible": False},
+        {"account": "claude_b", "remaining": 0.41, "eligible": True},
+        {"account": "codex",    "remaining": 0.9,  "eligible": True},
+    ]
+    dirs, headroom = fn(accounts, rows)
+    check("the default account is addressed by the __DEFAULT__ sentinel, never its path",
+          dirs[0] == "__DEFAULT__", f"dirs={dirs}")
+    check("non-Claude providers are not Claude Code accounts",
+          "/h/.codex" not in dirs and "/h/.codex" not in headroom, f"dirs={dirs}")
+    check("configuration order is preserved",
+          dirs == ["__DEFAULT__", "/h/.claude-b", "/h/.claude-c"], f"dirs={dirs}")
+    check("remaining fractions are carried through unchanged",
+          headroom.get("__DEFAULT__") == 0.0 and headroom.get("/h/.claude-b") == 0.41,
+          f"headroom={headroom}")
+    check("an account the router did not measure is unknown, not zero and not full",
+          "/h/.claude-c" not in headroom, f"headroom={headroom}")
+
+    ordered = g.order_accounts_by_fable(dirs, headroom)
+    check("the exhausted account is dropped and the unmeasured one is kept",
+          set(ordered) == {"/h/.claude-b", "/h/.claude-c"}, f"ordered={ordered}")
+    ordered = g.order_accounts_by_fable(
+        dirs, {"__DEFAULT__": 0.0, "/h/.claude-b": 0.41, "/h/.claude-c": 0.7})
+    check("among measured accounts the richest Fable window goes first",
+          ordered == ["/h/.claude-c", "/h/.claude-b"], f"ordered={ordered}")
+
+    src = (REPO / "scripts" / "grade.py").read_text()
+    check("grade.py no longer shells out to quotapick",
+          '"quotapick"' not in src, "found a quotapick subprocess call")
+    check("the judge binary defaults to the plain claude CLI, not the cl wrapper",
+          'default="cl"' not in src, "found --fable-bin default of cl")
+
 def main() -> int:
     g = load_grade()
     print("grading-harness guards")
@@ -291,6 +348,7 @@ def main() -> int:
     test_tool_block_live(g)
     with tempfile.TemporaryDirectory() as td:
         test_queue_ordering(g, pathlib.Path(td))
+    test_quota_routing(g)
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))

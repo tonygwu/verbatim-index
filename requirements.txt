@@ -1,7 +1,8 @@
 # Runtime dependencies for the pipeline scripts. Pinned to what the reference
 # clone (repo-0) ran the published grades with, so every clone resolves the
-# same versions. Recreate a clone's environment with:
-#   uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
+# same versions. Python 3.12 or newer, required by llm-quota-router. Recreate a
+# clone's environment with:
+#   uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 youtube-transcript-api==1.2.4
 requests==2.34.2
 defusedxml==0.7.1
@@ -9,3 +10,8 @@ certifi==2026.7.22
 charset-normalizer==3.5.1
 idna==3.19
 urllib3==2.7.0
+
+# Picks which of the operator's Claude subscriptions runs each Fable judge call,
+# by measured remaining Fable quota. grade.py imports it as a library; with a
+# single Claude account it still installs and simply reports one account.
+llm-quota-router @ git+https://github.com/tonygwu/llm-quota-router@v0.1.0

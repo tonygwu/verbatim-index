@@ -143,45 +143,74 @@ def claude_config_dirs() -> list[str]:
     return dirs
 
 
-def fable_headroom() -> dict[str, float]:
-    """Remaining Fable allowance per account, read from `quotapick status`.
+def fable_accounts_from_router(accounts, rows) -> tuple[list[str], dict[str, float]]:
+    """Map llm-quota-router accounts and pick rows onto this script's config dirs.
 
-    Returns a config-dir -> remaining-fraction map. An account missing from
-    the output is absent from the map rather than defaulting to healthy: a
-    silent 0-or-1 guess here is what sent every Fable call to an exhausted
-    account for hours. On any failure this returns {} and the caller keeps
-    the plain account order, which is worse but never wrong.
+    `accounts` is an iterable of (account_id, provider, config_dir, is_default)
+    in configuration order; `rows` are the `ranked` plus `excluded` entries of
+    one routing decision, each carrying `account` and `remaining`. Only
+    provider "claude" accounts are Claude Code accounts. The default account is
+    returned as the "__DEFAULT__" sentinel because it is selected by UNSETTING
+    CLAUDE_CONFIG_DIR, never by naming its directory.
+
+    An account with no row, or a row with no `remaining`, is left out of the
+    headroom map rather than given 0 or 1: unmeasured is unknown, not empty.
     """
-    import re
-    import subprocess
+    remaining_by_id: dict[str, float] = {}
+    for row in rows:
+        acct = row.get("account")
+        rem = row.get("remaining")
+        if acct is not None and rem is not None and acct not in remaining_by_id:
+            remaining_by_id[acct] = float(rem)
+
+    dirs: list[str] = []
+    headroom: dict[str, float] = {}
+    for account_id, provider, config_dir, is_default in accounts:
+        if provider != "claude":
+            continue
+        key = "__DEFAULT__" if is_default else str(config_dir)
+        dirs.append(key)
+        if account_id in remaining_by_id:
+            headroom[key] = remaining_by_id[account_id]
+    return dirs, headroom
+
+
+def fable_accounts() -> tuple[list[str], dict[str, float], str]:
+    """The Claude accounts that can run the Fable judge, with measured headroom.
+
+    Uses the llm-quota-router library (https://github.com/tonygwu/llm-quota-router)
+    when it is installed: `load_config()` lists the operator's accounts and
+    `select_account(model="fable", record=False)` measures every account's
+    remaining Fable window without booking any quota. Without the library the
+    accounts are the ~/.claude-? directories in plain order and nothing is
+    measured, which is worse but never wrong. The returned note says which of
+    the two happened, so the log never implies a measurement that did not occur.
+    """
     try:
-        proc = subprocess.run(["quotapick", "status"], capture_output=True,
-                              text=True, timeout=30)
-    except Exception:  # noqa: BLE001
-        return {}
-    if proc.returncode != 0:
-        return {}
-
-    home = Path.home()
-    # `quotapick` names accounts claude, claude_b, ... Map those back to the
-    # config dirs this script rotates over.
-    def to_cfg(name: str) -> str:
-        return "__DEFAULT__" if name == "claude" else str(home / name.replace("claude_", ".claude-"))
-
-    out: dict[str, float] = {}
-    current = None
-    for line in (proc.stdout or "").splitlines():
-        m = re.match(r"^(claude(?:_[a-z])?)\s+\[", line)
-        if m:
-            current = to_cfg(m.group(1))
-            continue
-        if current is None:
-            continue
-        m = re.search(r"fable\s+(-?[\d.]+)\s+slack\s*=\s*(-?[\d.]+)\s+remaining", line)
-        if m:
-            out[current] = float(m.group(2))
-            current = None
-    return out
+        from quota_router import select_account
+        from quota_router.config import load_config
+    except ImportError:
+        dirs = claude_config_dirs()
+        return dirs, {}, ("quota_router not installed: rotating over the ~/.claude-? "
+                          "directories in plain order with no headroom measurement")
+    try:
+        cfg = load_config()
+        decision = select_account(model="fable", record=False)
+    except Exception as exc:  # noqa: BLE001 -- the router failing must not stop grading
+        dirs = claude_config_dirs()
+        return dirs, {}, f"quota_router failed ({exc!r}): keeping plain account order"
+    accounts = [(a.id, a.provider, a.config_dir, a.is_default_config_dir)
+                for a in cfg.enabled_accounts()]
+    rows = list(decision.ranked) + list(decision.excluded)
+    dirs, headroom = fable_accounts_from_router(accounts, rows)
+    note = f"fable headroom measured by quota_router for {len(headroom)}/{len(dirs)} Claude accounts"
+    claude_ids = {a[0] for a in accounts if a[1] == "claude"}
+    for w in decision.warnings:
+        # Router warnings are "<account_id>: <text>"; match the id exactly, so a
+        # warning about antigravity_claude is not mistaken for one about claude.
+        if any(w.startswith(f"{cid}:") for cid in claude_ids):
+            note += f"\n  router warning: {w}"
+    return dirs, headroom, note
 
 
 def order_accounts_by_fable(accounts: list[str], headroom: dict[str, float],
@@ -508,21 +537,19 @@ def fable_command(prompt: str, binary: str) -> list[str]:
     ]
 
 
-def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "cl",
+def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude",
                workdir: str | None = None) -> tuple[str, dict]:
     """Run the Claude Fable 5.1 judge. Returns (text, telemetry).
 
-    `cl` is the quota-aware wrapper: it asks quotapick which subscription has
-    the most expiring headroom and routes there, which matters for a run of
-    this size. It prints its routing banner to stderr, so stdout stays clean
-    JSON. When `cl` routes, we must NOT set CLAUDE_CONFIG_DIR ourselves, or we
-    would override the account it just chose. Passing binary="claude" falls
-    back to explicit per-call account rotation.
+    `binary` must be the plain `claude` CLI. The account is chosen here, per
+    call, from the rotation that main() built with the llm-quota-router
+    library; a wrapper that picks its own account (such as the router's `cl`
+    launcher) would override that choice, and `cl` also injects
+    --dangerously-skip-permissions, which hands the judge tool access to the
+    repository it is being blinded against.
     """
     env = dict(os.environ)
-    if binary == "cl":
-        env.pop("CLAUDE_CONFIG_DIR", None)
-    elif config_dir == "__DEFAULT__":
+    if config_dir == "__DEFAULT__":
         env.pop("CLAUDE_CONFIG_DIR", None)
     else:
         env["CLAUDE_CONFIG_DIR"] = config_dir
@@ -729,9 +756,11 @@ def main() -> int:
                          "What it drops is logged, never silent.")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--errors", default="data/logs/grade_errors.jsonl")
-    ap.add_argument("--fable-bin", default="cl",
-                    help="cl routes to the Claude account with the most expiring quota. "
-                         "Use claude to bypass the router and rotate accounts explicitly.")
+    ap.add_argument("--fable-bin", default="claude",
+                    help="Binary that runs the Fable judge. Must be the plain claude CLI: "
+                         "account rotation happens in this script, via the llm-quota-router "
+                         "library, and the cl launcher is refused because it picks its own "
+                         "account and forces bypass-permissions mode.")
     args = ap.parse_args()
 
     rubric = RUBRIC_PATH.read_text()
@@ -767,21 +796,17 @@ def main() -> int:
 
     judges = [j.strip() for j in args.judges.split(",") if j.strip()]
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
-    # Route Fable by measured FABLE headroom, not by cl's general-pool pick.
-    # cl optimises the combined quota and kept landing on the account whose
-    # Fable weekly was exhausted, so every Fable call there failed while Astra
-    # succeeded. Falling back to the plain account list is safe: it is only
-    # worse, never wrong.
-    all_dirs = claude_config_dirs()
-    if args.fable_bin == "cl" and all_dirs:
-        # Two reasons never to use `cl` for a judge call. It picks its own
-        # account, so CLAUDE_CONFIG_DIR is ignored and this rotation cannot
-        # take effect. It also injects --dangerously-skip-permissions
-        # (launcher.py:862), which puts the judge in bypass mode with full
-        # tool access to the repository it is being blinded against.
-        args.fable_bin = "claude"
-        log("using `claude` rather than `cl`: cl ignores the rotation and forces bypass mode")
-    headroom = fable_headroom()
+    if Path(args.fable_bin).name == "cl":
+        raise SystemExit("--fable-bin cl is refused: cl picks its own account, so the "
+                         "Fable rotation cannot take effect, and it injects "
+                         "--dangerously-skip-permissions, which lets the judge read the "
+                         "roster it is blinded against. Use the plain claude CLI.")
+    # Route Fable by measured FABLE headroom. The general-pool number misleads:
+    # an account can have plenty of general quota and no Fable weekly left, and
+    # every Fable call there fails while Astra succeeds. Falling back to the
+    # plain account list is safe: it is only worse, never wrong.
+    all_dirs, headroom, routing_note = fable_accounts()
+    log(routing_note)
     cfg_dirs = order_accounts_by_fable(all_dirs, headroom)
     if headroom:
         shown = ", ".join(f"{Path(a).name if a != '__DEFAULT__' else 'default'}={headroom.get(a, float('nan')):.2f}"
@@ -791,7 +816,7 @@ def main() -> int:
         if skipped:
             log(f"  excluded as exhausted: {[Path(a).name if a != '__DEFAULT__' else 'default' for a in skipped]}")
     else:
-        log("fable headroom unavailable, keeping plain account order")
+        log("no fable headroom measured, keeping plain account order")
     log(f"fable accounts in rotation (richest fable window first): "
         f"{[Path(a).name if a != '__DEFAULT__' else 'default' for a in cfg_dirs]}")
 
