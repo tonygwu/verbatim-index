@@ -140,6 +140,32 @@ def main() -> int:
     # A judge that declines to score one subject silently halves that leader's
     # evidence while everyone else keeps two judges. Count it per leader and per
     # judge so a one-judge score is never mistaken for a two-judge one.
+    # A judge that read the transcript is a better detector of "the subject is
+    # not in this recording" than any keyword heuristic run over the text.
+    #
+    # MEASURED: andy-jassy/tech-news-weekly-qpvhgj is a multi-topic news roundup
+    # where Jassy is discussed and never speaks. The name-density gate passed it
+    # at 0.24 mentions per 1000 words, because a show covering three unrelated
+    # stories does not repeat his name. Astra reported subject_speech_share_pct
+    # of 0 and scored it 1 out of 100.
+    #
+    # Excluding it from the leaderboard is the small part. The damage is that a
+    # score of 1 also entered calibrate(), dragging that judge's mean down and
+    # inflating its spread, which shifts the calibrated score of EVERY leader.
+    # So this filter must run BEFORE calibration, not at presentation time.
+    MIN_SUBJECT_SHARE = 15
+    unscorable = [g for g in grades
+                  if isinstance((g.get("grade") or {}).get("subject_speech_share_pct"), int)
+                  and g["grade"]["subject_speech_share_pct"] < MIN_SUBJECT_SHARE]
+    unscorable_ids = {(g["leader_slug"], g["source_id"], g["judge"], g["mode"]) for g in unscorable}
+    grades = [g for g in grades
+              if (g["leader_slug"], g["source_id"], g["judge"], g["mode"]) not in unscorable_ids]
+    unscorable_report = [{
+        "leader_slug": g["leader_slug"], "source_id": g["source_id"], "judge": g["judge"],
+        "mode": g["mode"], "subject_share_pct": g["grade"]["subject_speech_share_pct"],
+        "score_it_would_have_contributed": g["grade"].get("overall"),
+    } for g in unscorable]
+
     refusals = [g for g in grades if g.get("refused")]
     grades = [g for g in grades if not g.get("refused")]
     refusal_breakdown: dict[str, dict] = {}
@@ -307,6 +333,9 @@ def main() -> int:
         "mean_abs_judge_gap_overall": round(st.mean([abs(a - b) for a, b in both]), 1) if both else None,
         "blinding_leakage_rate": round(
             sum(1 for t in all_b if t["identity_recognised"]) / len(all_b), 3) if all_b else None,
+        "unscorable_subject_absent": len(unscorable),
+        "unscorable_detail": unscorable_report,
+        "min_subject_share_pct": MIN_SUBJECT_SHARE,
         "judge_refusals": len(refusals),
         "judge_refusals_by_leader": refusal_breakdown,
         "leaders_below_min_transcripts": [l["slug"] for l in scored if l["n_transcripts"] < MIN_TRANSCRIPTS_FOR_CONFIDENCE],

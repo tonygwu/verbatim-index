@@ -6,6 +6,9 @@ PY=.venv/bin/python
 
 b(){ printf '\n\033[1m%s\033[0m\n' "$*"; }
 
+BRIEF=0
+[ "${1:-}" = "--brief" ] && BRIEF=1
+
 if [ -f data/logs/NEEDS_IP_ROTATION ]; then
   printf '\n\033[1;31m  >>> ACTION NEEDED: ROTATE THE VPN <<<\033[0m\n'
   printf '  %s\n' "$(cat data/logs/NEEDS_IP_ROTATION)"
@@ -85,6 +88,11 @@ else:
         for (j, m), n in sorted(c.items()):
             print(f"    {j:6} {m:8}   {n}")
 PYEOF
+
+if [ "$BRIEF" -eq 0 ]; then
+  b "PER-LEADER COVERAGE"
+  $PY scripts/coverage_table.py 2>/dev/null | sed 's/^/  /'
+fi
 
 b "NEXT"
 n=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')

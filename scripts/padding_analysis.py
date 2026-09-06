@@ -202,6 +202,11 @@ def collect_baseline(smoke_dir: Path, judges: list[str]) -> dict:
                      for d in DIMS},
             "detection": [detect(x) for x in g],
         }
+        rt = [(r["telemetry"].get("reasoning_output_tokens") if judge == "astra"
+               else r["telemetry"].get("thinking_tokens")) for r in recs]
+        rt = [x for x in rt if x is not None]
+        base[judge]["reasoning_tokens"] = rt
+        base[judge]["reasoning_min"] = min(rt) if rt else None
         base[judge]["detection_mean_hits"] = mean([d["total_hits"] for d in base[judge]["detection"]])
         base[judge]["detection_mean_clarity_hits"] = mean(
             [d["clarity_hits"] for d in base[judge]["detection"]])
@@ -314,6 +319,13 @@ def main() -> int:
             "graded_at_utc": r["graded_at_utc"],
             "elapsed_sec": r["elapsed_sec"],
             "judge_model": r["telemetry"].get("judge_model") or r["telemetry"].get("requested_model"),
+            # Served-effort provenance. grade.py only rejects a call whose
+            # reasoning-token count is zero, so a call can pass identity and
+            # still have run at far less reasoning than the baseline did. Any
+            # probe call below the baseline minimum is flagged rather than
+            # dropped, because dropping it would make the arms asymmetric.
+            "reasoning_tokens": (r["telemetry"].get("reasoning_output_tokens")
+                                 if j == "astra" else r["telemetry"].get("thinking_tokens")),
             "baseline_overall": round(b["overall"]["mean"], 2),
             "padded_overall": g["overall"],
             "delta_overall": round(g["overall"] - b["overall"]["mean"], 2),
@@ -335,6 +347,10 @@ def main() -> int:
                 "confidence_reason": g.get("confidence_reason", ""),
             },
         }
+        row["baseline_reasoning_tokens_min"] = b["reasoning_min"]
+        row["effort_below_baseline_min"] = (
+            row["reasoning_tokens"] is not None and b["reasoning_min"] is not None
+            and row["reasoning_tokens"] < b["reasoning_min"])
         th = thresholds(sds[j]["overall"], 1, b["n_repeats"])
         row["thresholds_overall"] = {k: round(x, 3) for k, x in th.items()}
         row["verdict_overall"] = verdict_for(row["delta_overall"], th)
@@ -432,6 +448,14 @@ def main() -> int:
                 "padded_values": [r["coverage_padded"] for r in jr],
                 "n_rose": sum(1 for r in jr if r["coverage_delta"] > 0),
                 "n_fell": sum(1 for r in jr if r["coverage_delta"] < 0),
+            },
+            "served_effort": {
+                "baseline_reasoning_tokens": b["reasoning_tokens"],
+                "baseline_min": b["reasoning_min"],
+                "padded_reasoning_tokens": {r["variant"]: r["reasoning_tokens"] for r in jr},
+                "n_below_baseline_min": sum(1 for r in jr if r["effort_below_baseline_min"]),
+                "variants_below_baseline_min": [r["variant"] for r in jr
+                                                if r["effort_below_baseline_min"]],
             },
             "detection": {
                 "baseline_mean_hits": round(b["detection_mean_hits"], 2),
@@ -531,6 +555,10 @@ def render(out: dict) -> None:
               f"R2 {pj['slope_r2']}, excludes zero: {pj['slope_excludes_zero']}")
         print(f"       implied over the corpus 11k-30k range (19k words): "
               f"{pj['implied_bias_over_corpus_range_19k_words']:+.1f} composite points")
+        se_ = pj["served_effort"]
+        print(f"       served effort: baseline reasoning tokens {se_['baseline_reasoning_tokens']} "
+              f"(min {se_['baseline_min']}); padded {se_['padded_reasoning_tokens']}; "
+              f"below baseline min: {se_['variants_below_baseline_min'] or 'none'}")
         cov = pj["coverage"]
         print(f"       coverage: baseline {cov['baseline_mean']} "
               f"(at ceiling: {cov['baseline_at_ceiling']}), padded {cov['padded_values']}, "
