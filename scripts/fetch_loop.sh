@@ -90,9 +90,24 @@ while true; do
 
   if ! probe >/dev/null 2>&1; then
     sleep_for=$(( sleep_for * 2 )); [ "$sleep_for" -gt "$MAX_SLEEP" ] && sleep_for=$MAX_SLEEP
-    say "  endpoint blocked. sleeping ${sleep_for}s"
+    say "  endpoint blocked. backing off up to ${sleep_for}s, re-probing every ${PROBE_EVERY}s"
     printf '{"at":"%s","cycle":%s,"event":"blocked","sleep":%s}\n' "$(stamp)" "$cycle" "$sleep_for" >> "$STATE"
-    sleep "$sleep_for"; continue
+    # Poll THROUGH the backoff rather than sleeping it out. Measured over one
+    # night: 10 blocked cycles to 1 productive one, because a 90 minute sleep
+    # kept missing windows that reopened within minutes. A single probe is one
+    # request, so watching costs almost nothing next to what it recovers.
+    waited=0
+    while [ "$waited" -lt "$sleep_for" ]; do
+      sleep "$PROBE_EVERY"
+      waited=$(( waited + PROBE_EVERY ))
+      if probe >/dev/null 2>&1; then
+        say "  window reopened after ${waited}s of a ${sleep_for}s backoff"
+        printf '{"at":"%s","cycle":%s,"event":"early_clear","after":%s}\n' "$(stamp)" "$cycle" "$waited" >> "$STATE"
+        sleep_for=$BASE_SLEEP
+        break
+      fi
+    done
+    continue
   fi
 
   before=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')

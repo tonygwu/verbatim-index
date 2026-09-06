@@ -55,6 +55,41 @@ def apply_repairs(text: str, pairs: list[dict]) -> tuple[str, list[dict]]:
     return text, applied
 
 
+def collapse_loops(text: str, max_repeats: int = 2) -> tuple[str, dict]:
+    """Collapse runs where speech recognition stutters on the same token.
+
+    Measured on real transcripts: an interview contained "you" repeated eight
+    times and another "flo" seventeen times, each a ~40 token artefact of the
+    recogniser hitting music or crosstalk. Both sat inside otherwise clean
+    22,000 word conversations. Discarding those transcripts threw away 99.6%
+    good material to avoid 0.4% noise, so the run is repaired rather than the
+    transcript rejected.
+
+    Only immediate repetition of the SAME token is collapsed, and never below
+    two instances, so genuine emphasis survives. Every removal is counted.
+    """
+    words = text.split()
+    if not words:
+        return text, {"tokens_removed": 0, "runs_collapsed": 0}
+    out: list[str] = []
+    removed = runs = 0
+    i = 0
+    while i < len(words):
+        j = i
+        key = words[i].strip(".,!?").lower()
+        while j + 1 < len(words) and words[j + 1].strip(".,!?").lower() == key:
+            j += 1
+        run_len = j - i + 1
+        if run_len > max_repeats and key:
+            out.extend(words[i:i + max_repeats])
+            removed += run_len - max_repeats
+            runs += 1
+        else:
+            out.extend(words[i:j + 1])
+        i = j + 1
+    return " ".join(out), {"tokens_removed": removed, "runs_collapsed": runs}
+
+
 def name_variants(full_name: str) -> list[str]:
     """Longest first, so 'Jensen Huang' is replaced before 'Huang' alone."""
     parts = [p for p in re.split(r"\s+", full_name.strip()) if p]
@@ -300,6 +335,7 @@ def main() -> int:
             raise SystemExit(f"transcript {slug}/{sid} has no roster entry; refusing to guess identity")
 
         text = rec["text"]
+        text, loopfix = collapse_loops(text)
         text, applied = apply_repairs(text, repairs.get(slug, []))
         blind_counts: dict[str, int] = {}
         if args.mode == "blinded":
@@ -310,6 +346,7 @@ def main() -> int:
         rec_out["text"] = text
         rec_out["normalization"] = {
             "mode": args.mode,
+            "loop_collapse": loopfix,
             "repairs_applied": applied,
             "repair_substitutions": sum(a["count"] for a in applied),
             "repairs_that_matched_nothing": [a["wrong"] for a in applied if a["count"] == 0],
@@ -327,6 +364,7 @@ def main() -> int:
         entries.append({
             "leader_slug": slug, "source_id": sid,
             "repair_substitutions": rec_out["normalization"]["repair_substitutions"],
+            "loop_tokens_removed": loopfix["tokens_removed"],
             "repairs_that_matched_nothing": rec_out["normalization"]["repairs_that_matched_nothing"],
             "blind_total": rec_out["normalization"]["blind_total"],
             "word_count": rec.get("word_count"),
@@ -337,6 +375,7 @@ def main() -> int:
         "written": len(entries),
         "skipped_qa_reject": skipped,
         "total_repair_substitutions": sum(e["repair_substitutions"] for e in entries),
+        "total_loop_tokens_removed": sum(e["loop_tokens_removed"] for e in entries),
         "total_blind_substitutions": sum(e["blind_total"] for e in entries),
         "transcripts_with_zero_blind_hits": [
             f"{e['leader_slug']}/{e['source_id']}" for e in entries if args.mode == "blinded" and e["blind_total"] == 0

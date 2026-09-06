@@ -53,7 +53,11 @@ MAX_NAME_PER_1K_AFTER_INTRO = 1.6
 INTRO_FRACTION = 0.12   # the opening where being named repeatedly is normal
 
 MAX_OOV = 0.18
-MAX_LOOP = 6
+# Fraction of tokens inside a stutter run. Runs below this are repaired by
+# collapse_loops() in normalize, not rejected. Measured artefacts were 0.0018
+# and 0.0038 of their transcripts, so 2% is a wide margin above real noise.
+MAX_LOOP_FRACTION = 0.02
+MAX_LOOP = 6  # reported only, no longer gated
 # Gated on MATTR, not raw TTR. See mattr() for why raw TTR cannot be a gate.
 MIN_MATTR = 0.28
 MIN_TTR = 0.10  # retained for reporting only
@@ -140,8 +144,23 @@ def analyze(rec: dict, dictionary: set[str], glossary: set[str]) -> dict:
     counts = Counter(tokens)
     duration_min = (rec.get("duration_sec") or 0) / 60.0
 
+    # Share of tokens sitting inside a stutter run. This is the honest measure:
+    # the longest single run says nothing about how much of the transcript is
+    # damaged. A 40-token stutter in 22,000 words is a blemish, not a failure.
+    loop_tokens = 0
+    i = 0
+    while i < len(tokens):
+        j = i
+        while j + 1 < len(tokens) and tokens[j + 1] == tokens[i]:
+            j += 1
+        run = j - i + 1
+        if run > 2:
+            loop_tokens += run - 2
+        i = j + 1
+
     return {
         "word_count": n,
+        "loop_token_fraction": round(loop_tokens / n, 5),
         "oov_rate": round(len(oov) / n, 4),
         "top_oov": [w for w, _ in Counter(oov).most_common(15)],
         "loop_score": longest_repeat_run(tokens),
@@ -179,8 +198,10 @@ def gate(sig: dict, name_hits: int, company_hits: int) -> tuple[str, list[str]]:
         reasons.append(f"word_count {sig['word_count']} < {MIN_WORDS}")
     if sig["oov_rate"] > MAX_OOV:
         reasons.append(f"oov_rate {sig['oov_rate']} > {MAX_OOV} (garbled recognition)")
-    if sig["loop_score"] >= MAX_LOOP:
-        reasons.append(f"loop_score {sig['loop_score']} >= {MAX_LOOP} (ASR repetition loop)")
+    if sig["loop_token_fraction"] > MAX_LOOP_FRACTION:
+        reasons.append(
+            f"loop_token_fraction {sig['loop_token_fraction']:.4f} > {MAX_LOOP_FRACTION} "
+            f"(too much of the transcript is stutter to repair)")
     if sig["mattr"] < MIN_MATTR:
         reasons.append(f"mattr {sig['mattr']} < {MIN_MATTR} (lexically repetitive)")
     wpm = sig.get("words_per_minute")
@@ -271,7 +292,7 @@ def main() -> int:
         "leaders_with_usable_transcripts": len(per_leader),
         "min_usable_per_leader": min(per_leader.values()) if per_leader else 0,
         "thresholds": {
-            "max_oov_rate": MAX_OOV, "max_loop_score": MAX_LOOP,
+            "max_oov_rate": MAX_OOV, "max_loop_token_fraction": MAX_LOOP_FRACTION,
             "min_mattr": MIN_MATTR, "min_words_per_minute": MIN_WPM,
             "min_words": MIN_WORDS,
         },
