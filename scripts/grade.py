@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import glob
+import hashlib
 import itertools
 import json
 import os
@@ -43,6 +44,30 @@ REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / ".claude" / "skills" / "leader-transcript-grader"
 RUBRIC_PATH = SKILL / "RUBRIC.md"
 SCHEMA_PATH = SKILL / "judge_output.schema.json"
+
+def grading_contract() -> dict:
+    """Fingerprint the exact text that determines a score.
+
+    Only two files reach a judge: RUBRIC.md and judge_output.schema.json. The
+    grader's SKILL.md never does, so editing it cannot move a number. Hashing
+    these two, and storing the hash in every grade record, is what makes the
+    corpus auditable: without it, editing the rubric mid-run would silently
+    leave a mix of scores from different rubrics with no way to tell them
+    apart after the fact.
+
+    `contract_id` is the hash of both files together, because a score is
+    produced by the pair, not by either alone.
+    """
+    rb = RUBRIC_PATH.read_bytes()
+    sb = SCHEMA_PATH.read_bytes()
+    return {
+        "contract_id": hashlib.sha256(rb + sb).hexdigest()[:12],
+        "rubric_sha256": hashlib.sha256(rb).hexdigest(),
+        "schema_sha256": hashlib.sha256(sb).hexdigest(),
+        "rubric_bytes": len(rb),
+        "schema_bytes": len(sb),
+    }
+
 
 SUBCRITERIA = ["C1", "C2", "C3", "C4", "I1", "I2", "I3", "I4", "I5", "I6", "I7", "T1", "T2", "T3", "T4"]
 WEIGHTS = {"d1_clarity": 0.20, "d2_insight": 0.45, "d3_technical_depth": 0.35}
@@ -415,6 +440,7 @@ def grade_one(job: dict) -> dict:
         "mode": job["mode"],
         "run": job["run"],
         "graded_at_utc": utcnow(),
+        "grading_contract": job["contract"],
         "elapsed_sec": elapsed,
         "telemetry": telemetry,
         "validation_errors": errs,
@@ -461,6 +487,9 @@ def main() -> int:
 
     rubric = RUBRIC_PATH.read_text()
     schema = SCHEMA_PATH.read_text()
+    contract = grading_contract()
+    log(f"grading contract {contract['contract_id']} "
+        f"(rubric {contract['rubric_sha256'][:8]}, schema {contract['schema_sha256'][:8]})")
 
     roster_by_slug: dict[str, dict] = {}
     if args.roster and Path(args.roster).exists():
@@ -511,6 +540,7 @@ def main() -> int:
         jobs.append({
             "rec": rec, "judge": judge, "mode": mode, "run": run,
             "rubric": rubric, "schema": schema, "timeout": args.timeout, "force": args.force,
+            "contract": contract,
             "config_dir": cfg_dirs[i % len(cfg_dirs)],
             "fable_bin": args.fable_bin,
             "workdir": str(wd),

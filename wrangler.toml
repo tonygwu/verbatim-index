@@ -1,0 +1,15 @@
+# Static-asset Worker serving the leaderboard. Cloudflare now recommends Workers
+# over Pages for new projects, and a Worker with an [assets] directory needs no
+# script at all: it just serves the files.
+name = "verbatim-index"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "./site"
+not_found_handling = "single-page-application"
+
+# The domain is already on Cloudflare, so the hostname is claimed directly here
+# rather than through a separate DNS record.
+[[routes]]
+pattern = "verbatim-index.tonygwu.com"
+custom_domain = true

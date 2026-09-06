@@ -125,6 +125,10 @@ def main() -> int:
     ap.add_argument("--roster", required=True)
     ap.add_argument("--transcripts", default=None)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--allow-mixed-rubric", action="store_true",
+                    help="Pool grades made under different rubric versions. Off by default, "
+                         "because averaging scores from different rubrics is a silent "
+                         "correctness failure rather than a loud one.")
     args = ap.parse_args()
 
     roster = json.loads(Path(args.roster).read_text())
@@ -135,6 +139,27 @@ def main() -> int:
 
     excluded = [g for g in grades if g.get("_excluded")]
     usable = [g for g in grades if not g.get("_excluded")]
+
+    # Pooling scores produced by different rubrics is a silent correctness
+    # failure: the numbers still average, they just no longer mean the same
+    # thing. Every grade carries the hash of the rubric and schema that made
+    # it, so a mixed corpus is detected here and refused rather than averaged.
+    contracts: dict[str, int] = defaultdict(int)
+    for g in usable:
+        contracts[(g.get("grading_contract") or {}).get("contract_id") or "unversioned"] += 1
+    known = {k: v for k, v in contracts.items() if k != "unversioned"}
+    if len(known) > 1:
+        detail = ", ".join(f"{k}={v}" for k, v in sorted(contracts.items()))
+        msg = (f"REFUSING TO POOL: grades span {len(known)} different rubric versions ({detail}). "
+               f"Scores from different rubrics are not comparable. Re-grade the older ones with "
+               f"--force, or pass --allow-mixed-rubric to pool anyway and have the split reported "
+               f"in the diagnostics.")
+        if not args.allow_mixed_rubric:
+            raise SystemExit(msg)
+        print("WARNING: " + msg, file=sys.stderr)
+    if contracts:
+        print(f"grading contracts in corpus: {dict(contracts)}", file=sys.stderr)
+
     params = calibrate(usable)
 
     # Per (leader, transcript, mode): consensus of the judges that graded it.
@@ -245,6 +270,8 @@ def main() -> int:
         corr = round(num / den, 3) if den else None
 
     diagnostics = {
+        "grading_contracts": dict(contracts),
+        "rubric_versions_pooled": len(known),
         "grades_loaded": len(grades),
         "grades_used": len(usable),
         "grades_excluded_validation": len(excluded),
