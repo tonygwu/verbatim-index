@@ -178,11 +178,31 @@ def main() -> int:
             sh = shingles(rec["text"])
             best = (0.0, None, None)
             for other, osh in yt_sh + accepted:
+                # A transcript merged on an EARLIER cycle now sits in the corpus
+                # under its own id, so without this guard it matches itself at
+                # containment 1.0, gets declared a duplicate, and supersedes the
+                # copy already merged. The next cycle re-fetches it and does the
+                # same again. Observed live: the corpus cycled 222 -> 214 every
+                # pass, and the churn also spent YouTube's scarce allowance
+                # re-fetching transcripts that were about to be deleted.
+                if other.get("source_id") == rec["source_id"]:
+                    continue
                 c = containment(sh, osh)
                 pair_scores.append(c)
                 if c > best[0]:
                     best = (c, other, "youtube" if (other, osh) in yt_sh else "happyscribe")
             score, match, side = best
+            already = any(o.get("source_id") == rec["source_id"] for o, _ in yt_sh)
+            if already:
+                decisions.append({
+                    "leader_slug": slug, "hs_source_id": rec["source_id"],
+                    "verdict": "already_merged", "containment": None,
+                    "matches": rec["source_id"], "matches_source": "corpus",
+                    "action": "none",
+                    "why": "this exact transcript is already in the corpus from an "
+                           "earlier cycle; nothing to merge and nothing to supersede",
+                })
+                continue
             if score >= args.threshold:
                 keep_hs = quality(rec) > quality(match)
                 decisions.append({
