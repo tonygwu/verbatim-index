@@ -194,7 +194,10 @@ def test_tool_block_live(g) -> None:
 
     cmd = g.fable_command(probe, "claude")
     env = dict(os.environ)
-    env["CLAUDE_CONFIG_DIR"] = "/Users/tonygwu/.claude-b"
+    # Which account pays for the live probe. Override with GRADE_LIVE_CONFIG_DIR;
+    # the default is one that had Fable headroom when this was written.
+    env["CLAUDE_CONFIG_DIR"] = os.environ.get(
+        "GRADE_LIVE_CONFIG_DIR", str(Path.home() / ".claude-b"))
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
                           env=env, cwd=str(jail))
     payload = {}

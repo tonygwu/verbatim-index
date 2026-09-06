@@ -19,7 +19,9 @@ judge accuracy exists, and no debiasing cuts a labelling budget more than 2x ([D
 import json, glob, itertools, numpy as np
 from collections import defaultdict
 from scipy import stats
-ROOT = "/Users/tonygwu/Code/public-leader-speaking-analysis"
+import subprocess
+# Derived at runtime so the loader works from any clone (repo-0, repo-1, ...).
+ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 DIMS = ["d1_clarity", "d2_insight", "d3_technical_depth"]
 
 def grades(mode="blinded"):
