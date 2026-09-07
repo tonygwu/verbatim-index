@@ -136,7 +136,7 @@ def test_aggregate_emits_ci(tmp: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_table_layout() -> None:
-    print("\n[3] the table shows Overall last, in its own colour, on one shared scale")
+    print("\n[3] the table leads with Overall, in its own colour, on one shared scale")
     src = (REPO / "scripts" / "build_site.py").read_text()
 
     heads = re.findall(r'<th data-k="(\w+)"', src)
@@ -146,8 +146,15 @@ def test_table_layout() -> None:
     for k in ("d2", "d3", "d1", "overall"):
         check(f"the header still has a {k} column", k in heads, f"{heads}")
     if all(k in heads for k in ("d2", "d3", "d1", "overall")):
-        check("Overall sits to the RIGHT of all three sub-dimensions",
-              heads.index("overall") > max(heads.index(k) for k in ("d1", "d2", "d3")),
+        # Operator decision 2026-09-07, reversing the earlier "a summary reads
+        # better after its parts": Overall and its interval are the headline
+        # and now sit LEFT of the three dimensions that feed them, right after
+        # Organisation, so the ranking reads before the breakdown.
+        check("Overall sits to the LEFT of all three sub-dimensions",
+              heads.index("overall") < min(heads.index(k) for k in ("d1", "d2", "d3")),
+              f"order={heads}")
+        check("Overall follows Organisation, with nothing between them",
+              heads.index("overall") == heads.index("company") + 1,
               f"order={heads}")
 
     body = re.search(r'return `<tr class=.*?</tr>`;', src, re.S)
@@ -158,8 +165,11 @@ def test_table_layout() -> None:
               "ciPlot" in row, "no ciPlot call in the row")
         check("the sub-dimension cells still render meters",
               row.count("meter(") == 3, f"meter() calls={row.count('meter(')}")
-        check("the Overall cell is emitted after the three meters",
-              row.find("ciPlot") > row.rfind("meter("), "ciPlot precedes a meter")
+        check("the Overall cell is emitted before the three meters",
+              row.find("ciPlot") < row.find("meter("), "a meter precedes ciPlot")
+        check("the interval cell sits immediately after the Overall number",
+              row.find("oscore") < row.find("oci") < row.find("meter("),
+              "the score and its interval are not adjacent")
 
     # ---- the score is its own cell, left-aligned -------------------------
     # It used to share a cell with the band, so the digits drifted sideways
@@ -253,8 +263,12 @@ def test_table_layout() -> None:
     check("exactly one column is flexible, so the scale absorbs the slack",
           cols.count("") == 1, f"flexible columns={cols.count('')}")
     fixed = sum(int(c) for c in cols if c)
-    check("the fixed columns leave room for the scale inside .wrap",
-          fixed + 140 <= 1170, f"fixed widths total {fixed}px of 1170px")
+    # .wrap is 1272px with 24px padding each side, so the table has 1224px.
+    # The floor is 200px rather than 140: the scale now prints an endpoint
+    # number outside each dot, and 176px packed the digits against the
+    # circles. 1224 - 994 of fixed columns leaves 230px, 1.3x the old width.
+    check("the fixed columns leave room for the widened scale inside .wrap",
+          fixed + 200 <= 1224, f"fixed widths total {fixed}px of 1224px")
 
     span = re.search(r'colspan="(\d+)"', src)
     check("the drawer spans every column",

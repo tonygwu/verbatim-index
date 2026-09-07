@@ -71,7 +71,7 @@ body{
   font-size:15px; line-height:1.55; margin:0;
   -webkit-font-smoothing:antialiased;
 }
-.wrap{max-width:1220px; margin:0 auto; padding:0 24px 96px}
+.wrap{max-width:1276px; margin:0 auto; padding:0 24px 96px}
 a{color:var(--d1)}
 h1,h2,h3{text-wrap:balance; margin:0}
 .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums}
@@ -125,7 +125,7 @@ h1 em{font-style:italic; color:var(--d2)}
 /* The natural width of every column below adds up to less than .wrap, so the
    card does not scroll sideways on a desktop. overflow-x on .tablecard is the
    fallback for a narrow window, not the normal state. */
-table{border-collapse:collapse; width:100%; min-width:1120px; table-layout:fixed}
+table{border-collapse:collapse; width:100%; min-width:1224px; table-layout:fixed}
 thead th{
   position:sticky; top:0; z-index:2; background:var(--surface);
   font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:500;
@@ -416,20 +416,20 @@ footer{
   <table id="board">
     <colgroup>
       <col style="width:46px"><col style="width:180px"><col style="width:142px">
+      <col style="width:76px"><col>
       <col style="width:96px"><col style="width:96px"><col style="width:96px">
-      <col style="width:76px"><col><col style="width:96px">
-      <col style="width:70px"><col style="width:96px">
+      <col style="width:96px"><col style="width:70px"><col style="width:96px">
     </colgroup>
     <thead><tr>
       <th data-k="rank">#<span class="arrow">&#9650;</span></th>
       <th data-k="name">Leader<span class="arrow">&#9650;</span></th>
       <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
-      <th data-k="d2">Insight<span class="arrow">&#9650;</span></th>
-      <th data-k="d3">Technical<span class="arrow">&#9650;</span></th>
-      <th data-k="d1">Clarity<span class="arrow">&#9650;</span></th>
       <th data-k="overall">Overall<span class="arrow">&#9650;</span></th>
       <th class="nosort ocih">95% interval<button class="info" type="button" data-info="ci"
         aria-expanded="false" aria-label="What is the 95% interval?">?</button></th>
+      <th data-k="d2">Insight<span class="arrow">&#9650;</span></th>
+      <th data-k="d3">Technical<span class="arrow">&#9650;</span></th>
+      <th data-k="d1">Clarity<span class="arrow">&#9650;</span></th>
       <th data-k="n">Transcripts<span class="arrow">&#9650;</span></th>
       <th data-k="halo">Halo<button class="info" type="button" data-info="halo"
         aria-expanded="false" aria-label="What does Halo mean?">?</button><span class="arrow">&#9650;</span></th>
@@ -592,11 +592,11 @@ function render(){
       + `<td class="rank">${g >= 0 ? '<span class="tie"></span>' : ""}${r.rank}</td>`
       + `<td class="who"><div class="nm">${esc(r.name)}</div><div class="rl">${esc(r.role)}</div></td>`
       + `<td class="org">${esc(r.company)}<span class="sector">${esc(r.sector)}</span></td>`
+      + `<td class="overall oscore">${r.overall == null ? "&ndash;" : `<span class="v">${r.overall.toFixed(1)}</span>`}</td>`
+      + `<td class="overall oci">${ciPlot(r.overall, r.ci_low, r.ci_high)}</td>`
       + `<td class="num">${meter(r.d2, "m2")}</td>`
       + `<td class="num">${meter(r.d3, "m3")}</td>`
       + `<td class="num">${meter(r.d1, "m1")}</td>`
-      + `<td class="overall oscore">${r.overall == null ? "&ndash;" : `<span class="v">${r.overall.toFixed(1)}</span>`}</td>`
-      + `<td class="overall oci">${ciPlot(r.overall, r.ci_low, r.ci_high)}</td>`
       + `<td class="num">${r.n}</td>`
       + `<td class="num halo ${haloCls}">${haloTxt}</td>`
       + `<td><span class="pill ${r.conf}">${r.conf}</span></td></tr>`;
