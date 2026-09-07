@@ -136,7 +136,7 @@ def test_aggregate_emits_ci(tmp: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_table_layout() -> None:
-    print("\n[3] the table shows Overall last, in its own colour, with two dots")
+    print("\n[3] the table shows Overall last, in its own colour, on one shared scale")
     src = (REPO / "scripts" / "build_site.py").read_text()
 
     heads = re.findall(r'<th data-k="(\w+)"', src)
@@ -153,38 +153,108 @@ def test_table_layout() -> None:
     body = re.search(r'return `<tr class=.*?</tr>`;', src, re.S)
     check("the row template was found", body is not None)
     if body:
-        cells = re.findall(r'<td class="num[^"]*"[^>]*>\$\{(\w+)\(', body.group(0))
+        row = body.group(0)
         check("the Overall cell renders the interval, not a plain meter",
-              "ciCell" in body.group(0), f"cells={cells}")
+              "ciPlot" in row, "no ciPlot call in the row")
         check("the sub-dimension cells still render meters",
-              body.group(0).count("meter(") == 3, f"meter() calls={body.group(0).count('meter(')}")
-        i_ov = body.group(0).find("ciCell")
-        i_last_meter = body.group(0).rfind("meter(")
+              row.count("meter(") == 3, f"meter() calls={row.count('meter(')}")
         check("the Overall cell is emitted after the three meters",
-              i_ov > i_last_meter, f"ciCell@{i_ov} last meter@{i_last_meter}")
+              row.find("ciPlot") > row.rfind("meter("), "ciPlot precedes a meter")
 
-    check("Overall has its own neutral colour variable, not the Insight hue",
-          "--d0" in src and "var(--d2)" not in re.search(r'function ciCell.*?\n}', src, re.S).group(0)
-          if re.search(r'function ciCell.*?\n}', src, re.S) else False,
-          "ciCell must not reuse --d2")
-    ci = re.search(r'function ciCell.*?\n}', src, re.S)
-    check("the interval endpoints are printed as small numbers",
-          ci is not None and ci.group(0).count("ci-end") >= 2
-          and "lo.toFixed(1)" in ci.group(0) and "hi.toFixed(1)" in ci.group(0),
-          "no endpoint labels in the markup")
-    check("the endpoints sit OUTSIDE the dots so narrow intervals cannot collide",
-          ci is not None and ci.group(0).index("ci-end") < ci.group(0).index("ci-band")
-          and ci.group(0).rindex("ci-end") > ci.group(0).rindex("dot hi"),
-          "labels are not flanking the band")
-    check("a narrow interval still gets a drawable band",
-          "CI_MIN" in src, "no minimum band width; a 0-width CI would vanish")
-    check("the point estimate is still rendered at full size",
-          "td.overall .v" in src, "the large number styling is gone")
-    check("the Overall header carries a (?) explaining the interval",
+    # ---- the score is its own cell, left-aligned -------------------------
+    # It used to share a cell with the band, so the digits drifted sideways
+    # from row to row and never formed a column.
+    if body:
+        row = body.group(0)
+        check("the score has a cell of its own, separate from the interval",
+              'class="overall oscore"' in row and 'class="overall oci"' in row,
+              "score and interval are still one cell")
+        check("the score cell is emitted before the interval cell",
+              "oscore" in row and "oci" in row and row.index("oscore") < row.index("oci"),
+              "one of the two Overall cells is missing")
+    check("the score cell is left-aligned",
+          re.search(r'td\.oscore\{[^}]*text-align:left', src) is not None,
+          "td.oscore does not set text-align:left")
+    check("the score is still rendered at full size",
+          re.search(r'td\.oscore \.v\{[^}]*font-size:18px', src) is not None,
+          "the large number styling is gone")
+    check("both Overall cells still share the column shading",
+          re.search(r'td\.overall\{[^}]*background:var\(--surface-2\)', src) is not None,
+          "the shaded band behind Overall is gone")
+
+    # ---- one scale shared by every row ----------------------------------
+    # This is the whole point of the redraw. A per-row scale made a high score
+    # and a low score draw the same picture, so rows could not be compared.
+    check("the domain comes from the whole table, not from one row",
+          re.search(r'const CI_DOM = \(\(\) => \{.*?DATA\.map\(r => r\.ci_low\).*?DATA\.map\(r => r\.ci_high\)',
+                    src, re.S) is not None,
+          "CI_DOM is not derived from every row's endpoints")
+    check("the old per-row pixels-per-point scale is gone",
+          "CI_PPP" not in src and "CI_MIN" not in src,
+          "a per-row scale constant survives; rows would not be comparable")
+    plot = re.search(r'function ciPlot\(.*?\n}', src, re.S)
+    check("the plot function was found", plot is not None)
+    if plot:
+        f = plot.group(0)
+        check("low, high and the point estimate all use the shared mapping",
+              f.count("ciPct(") == 3, f"ciPct() calls={f.count('ciPct(')}")
+        check("the plot positions marks in percent of the shared domain",
+              f.count("%") >= 4 and "px" not in f,
+              "marks are placed in pixels, which breaks the shared scale")
+        check("Overall keeps its own neutral colour, not the Insight hue",
+              "--d0" in src and "var(--d2)" not in f, "ciPlot must not reuse --d2")
+        check("the exact endpoints stay reachable, in the cell's tooltip",
+              "title=" in f and "lo.toFixed(1)" in f and "hi.toFixed(1)" in f,
+              "the endpoint numbers are not recoverable anywhere")
+    check("the header carries an axis for the shared scale",
+          'id="ciaxis"' in src and "function ciAxis()" in src,
+          "no axis; a shared scale with no labels cannot be read")
+    check("the axis is drawn before the first render",
+          "ciAxis();" in src and "render();\n</script>" in src
+          and src.index("ciAxis();") < src.index("render();\n</script>"),
+          "ciAxis() never runs")
+    check("the axis ticks and the row rules come from the same tick list",
+          src.count("CI_TICKS.map") == 2, f"CI_TICKS.map uses={src.count('CI_TICKS.map')}")
+
+    # ---- the table must fit its container -------------------------------
+    # It used to be 73px wider than the card, so the last column was reachable
+    # only by scrolling sideways.
+    check("the table has a fixed layout with an explicit colgroup",
+          "table-layout:fixed" in src and "<colgroup>" in src,
+          "column widths are left to content, which overflowed the card")
+    cols = re.findall(r'<col(?: style="width:(\d+)px")?>', src)
+    n_th = len(re.findall(r'<th[ >]', src))
+    check("there is one <col> per header cell",
+          len(cols) == n_th, f"{len(cols)} cols vs {n_th} headers")
+    check("exactly one column is flexible, so the scale absorbs the slack",
+          cols.count("") == 1, f"flexible columns={cols.count('')}")
+    fixed = sum(int(c) for c in cols if c)
+    check("the fixed columns leave room for the scale inside .wrap",
+          fixed + 140 <= 1170, f"fixed widths total {fixed}px of 1170px")
+
+    span = re.search(r'colspan="(\d+)"', src)
+    check("the drawer spans every column",
+          span is not None and span.group(1) == str(n_th),
+          f"colspan={span.group(1) if span else None} vs {n_th} headers")
+
+    # ---- headers ---------------------------------------------------------
+    check("every column header is centred",
+          re.search(r'thead th\{[^}]*text-align:center', src) is not None
+          and "thead th.num{text-align:right}" not in src,
+          "a header is still left- or right-aligned")
+    check("the interval header does not pretend to sort",
+          'class="nosort ocih"' in src and "th && th.dataset.k" in src,
+          "clicking the axis header would sort by undefined")
+
+    check("the Overall interval keeps a (?) explaining it",
           'data-info="ci"' in src, "no affordance to explain the dots")
     check("and the tooltip copy for it exists, so the (?) is not empty",
           re.search(r'const INFO = \{\s*ci:', src) is not None,
           "INFO has no ci entry; clicking the (?) would show nothing")
+    check("the tooltip says the scale is shared",
+          re.search(r'ci: `.*?same\*?\*? ?scale|ci: `.*?<b>same</b> scale', src, re.S) is not None
+          or "same</b> scale" in src,
+          "the tooltip never explains that rows share one scale")
     check("the default sort is still the Overall order",
           'let sortKey = "rank"' in src, "default sort changed")
 

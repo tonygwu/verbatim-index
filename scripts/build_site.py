@@ -122,22 +122,27 @@ h1 em{font-style:italic; color:var(--d2)}
   background:var(--surface); border:1px solid var(--rule);
   border-radius:3px; box-shadow:var(--shadow); overflow-x:auto;
 }
-table{border-collapse:collapse; width:100%; min-width:940px}
+/* The natural width of every column below adds up to less than .wrap, so the
+   card does not scroll sideways on a desktop. overflow-x on .tablecard is the
+   fallback for a narrow window, not the normal state. */
+table{border-collapse:collapse; width:100%; min-width:1120px; table-layout:fixed}
 thead th{
   position:sticky; top:0; z-index:2; background:var(--surface);
   font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:500;
-  letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
-  text-align:left; padding:14px 10px 11px; border-bottom:1px solid var(--rule-strong);
+  letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+  text-align:center; padding:14px 7px 11px; border-bottom:1px solid var(--rule-strong);
   white-space:nowrap; cursor:pointer; user-select:none;
 }
 thead th:hover{color:var(--ink)}
-thead th.num{text-align:right}
+/* The interval header is a scale, not a sort key. */
+thead th.nosort{cursor:default}
+thead th.nosort:hover{color:var(--muted)}
 thead th .arrow{opacity:.35; margin-left:3px; font-size:9px}
 thead th[aria-sort] .arrow{opacity:1; color:var(--d2)}
 tbody tr.row{border-bottom:1px solid var(--rule); cursor:pointer}
 tbody tr.row:hover{background:var(--surface-2)}
 tbody tr.row:focus-visible{outline:2px solid var(--d1); outline-offset:-2px}
-td{padding:11px 10px; vertical-align:middle}
+td{padding:11px 7px; vertical-align:middle}
 td.num{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums}
 
 /* rank + tie bracket: ranks the method cannot separate are bracketed together */
@@ -153,10 +158,10 @@ td.rank .tie{
 tr.tie-start td.rank .tie{border-top:1.5px solid var(--rule-strong); top:6px}
 tr.tie-end td.rank .tie{border-bottom:1.5px solid var(--rule-strong); bottom:6px}
 
-.who{min-width:190px}
+.who{width:180px}
 .who .nm{font-weight:600; letter-spacing:-.01em}
 .who .rl{font-size:12px; color:var(--muted); margin-top:1px}
-td.org{color:var(--ink-2); font-size:13.5px; min-width:150px}
+td.org{color:var(--ink-2); font-size:13.5px; width:142px}
 td.org .sector{
   display:block; font-family:"IBM Plex Mono",monospace; font-size:10px;
   letter-spacing:.06em; text-transform:uppercase; color:var(--faint); margin-top:2px;
@@ -168,44 +173,62 @@ td.org .sector{
   font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
   font-size:14px; font-weight:500; min-width:30px; text-align:right;
 }
-.meter{width:52px; height:5px; border-radius:2px; background:var(--surface-2); overflow:hidden; flex:none}
+.meter{width:42px; height:5px; border-radius:2px; background:var(--surface-2); overflow:hidden; flex:none}
 .meter i{display:block; height:100%; border-radius:2px}
 .m1 i{background:var(--d1)} .m2 i{background:var(--d2)} .m3 i{background:var(--d3)}
-td.overall .v{font-size:18px; font-weight:600; min-width:42px; color:var(--ink)}
 td.overall{background:var(--surface-2)}
 
-/* Overall cell: point estimate, then a 95% interval drawn as two dots.
-   A filled bar would say "more is more" the way the dimension meters do; this
-   number is not a quantity to fill up, it is an estimate with a width.
+/* Overall is two cells: the score, then its 95% interval.
 
-   The band is scaled at a FIXED pixels-per-point, so its drawn width is
-   directly comparable row to row: a leader on 5 transcripts is visibly wider
-   than one on 13. Two earlier attempts failed and are worth recording. An
-   absolute 0-100 scale collapsed every typical interval into a few pixels. And
-   endpoint labels centred under their dots overlapped into "70.574.7" as soon
-   as the interval was narrow, which is most rows. They flank the dots now, so
-   they grow outward and can never collide. */
-.ci{display:flex; align-items:center; justify-content:flex-end; gap:14px}
-.ci-wrap{display:flex; align-items:center; gap:7px; flex:none}
-.ci-end{
+   The score gets its own cell and is left-aligned, so the digits line up down
+   the column. Previously it shared a cell with the band and drifted with it.
+
+   The interval is a dot plot on ONE scale shared by every row. The x position
+   of a dot means the same thing in row 1 and row 40, so intervals can be
+   compared by eye without reading a single number, and the faint rules behind
+   them are a ruler the eye can trace down the column.
+
+   Three earlier layouts failed and are recorded so they are not retried. A
+   per-row band scaled at fixed pixels-per-point made every interval start at
+   the same place, so a high score and a low score drew the same picture. An
+   absolute 0-100 domain collapsed a typical 7-point interval into a few
+   pixels. Endpoint labels centred under their dots overlapped into "70.574.7".
+   The domain is now the data's own range, rounded out to a multiple of 5, and
+   the exact endpoints live in the cell's tooltip instead of beside the dots. */
+td.oscore{
+  text-align:left; padding-left:10px; padding-right:2px;
   font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
-  font-size:10px; letter-spacing:.01em; color:var(--faint); line-height:1; flex:none;
 }
-.ci-band{position:relative; height:9px; flex:none}
-.ci-band .rule{
-  position:absolute; left:4px; right:4px; top:3.5px; height:2px;
-  border-radius:1px; background:var(--d0); opacity:.4;
+td.oscore .v{font-size:18px; font-weight:600; color:var(--ink)}
+td.oci{position:relative; padding-left:12px; padding-right:12px}
+
+/* The rules span the whole cell box, top to bottom, so adjacent rows join them
+   into continuous verticals down the column. */
+.ci-grid{position:absolute; left:12px; right:12px; top:0; bottom:0; pointer-events:none}
+.ci-grid i{position:absolute; top:0; bottom:0; width:1px; background:var(--rule)}
+.ci-track{position:relative; display:block; height:12px}
+.ci-track .rule{
+  position:absolute; top:5px; height:2px; border-radius:1px;
+  background:var(--d0); opacity:.55;
 }
-.ci-band .dot{
-  position:absolute; top:0.5px; width:8px; height:8px; border-radius:50%;
-  background:var(--surface); border:1.5px solid var(--d0); box-sizing:border-box;
+.ci-track .dot{
+  position:absolute; top:2.5px; width:7px; height:7px; margin-left:-3.5px;
+  border-radius:50%; background:var(--surface);
+  border:1.5px solid var(--d0); box-sizing:border-box;
 }
-.ci-band .dot.lo{left:0} .ci-band .dot.hi{right:0}
-.ci-band .pt{
-  position:absolute; top:-2px; width:2px; height:13px; border-radius:1px;
-  background:var(--d0); transform:translateX(-50%);
+.ci-track .pt{
+  position:absolute; top:0; width:2px; height:12px; margin-left:-1px;
+  border-radius:1px; background:var(--ink-2);
 }
-td.overall .ci-none{color:var(--faint); font-size:11px}
+.ci-none{color:var(--faint); font-size:11px}
+
+/* The axis under the interval header, on the same coordinates as the rules. */
+th.ocih{padding-left:12px; padding-right:12px}
+.ci-axis{position:relative; display:block; height:11px; margin-top:6px}
+.ci-axis i{
+  position:absolute; transform:translateX(-50%); font-style:normal;
+  font-size:9px; letter-spacing:.02em; color:var(--faint); line-height:1;
+}
 
 .pill{
   display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px;
@@ -386,17 +409,24 @@ footer{
 
 <div class="tablecard">
   <table id="board">
+    <colgroup>
+      <col style="width:46px"><col style="width:180px"><col style="width:142px">
+      <col style="width:96px"><col style="width:96px"><col style="width:96px">
+      <col style="width:76px"><col><col style="width:96px">
+      <col style="width:70px"><col style="width:96px">
+    </colgroup>
     <thead><tr>
-      <th data-k="rank" class="num">#<span class="arrow">&#9650;</span></th>
+      <th data-k="rank">#<span class="arrow">&#9650;</span></th>
       <th data-k="name">Leader<span class="arrow">&#9650;</span></th>
       <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
-      <th data-k="d2" class="num">Insight<span class="arrow">&#9650;</span></th>
-      <th data-k="d3" class="num">Technical<span class="arrow">&#9650;</span></th>
-      <th data-k="d1" class="num">Clarity<span class="arrow">&#9650;</span></th>
-      <th data-k="overall" class="num">Overall<button class="info" type="button" data-info="ci"
-        aria-expanded="false" aria-label="What is the interval next to Overall?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="n" class="num">Transcripts<span class="arrow">&#9650;</span></th>
-      <th data-k="halo" class="num">Halo<button class="info" type="button" data-info="halo"
+      <th data-k="d2">Insight<span class="arrow">&#9650;</span></th>
+      <th data-k="d3">Technical<span class="arrow">&#9650;</span></th>
+      <th data-k="d1">Clarity<span class="arrow">&#9650;</span></th>
+      <th data-k="overall">Overall<span class="arrow">&#9650;</span></th>
+      <th class="nosort ocih">95% interval<button class="info" type="button" data-info="ci"
+        aria-expanded="false" aria-label="What is the 95% interval?">?</button><span class="ci-axis" id="ciaxis"></span></th>
+      <th data-k="n">Transcripts<span class="arrow">&#9650;</span></th>
+      <th data-k="halo">Halo<button class="info" type="button" data-info="halo"
         aria-expanded="false" aria-label="What does Halo mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="conf">Confidence<span class="arrow">&#9650;</span></th>
     </tr></thead>
@@ -429,29 +459,61 @@ const TIE = __TIEBAND__;
 const DIMS = [["d2","Insight","k2"],["d3","Technical depth","k3"],["d1","Clarity","k1"]];
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-/* The Overall cell. Two dots mark the 95% interval, a tick marks the point
-   estimate, and the endpoints are printed small just outside their dots. */
-const CI_PPP = 5.0;       // pixels per score point
-// The floor is two dot diameters plus a gap. Below it the dots merge into one
-// blob and the interval reads as a single mark, which is worse than no band.
-// It bites only on intervals under 4 points, of which there are a handful.
-const CI_MIN = 20, CI_MAX = 100;
-function ciCell(v, lo, hi){
-  const num = `<span class="v">${v == null ? "&ndash;" : v.toFixed(1)}</span>`;
-  if (v == null || lo == null || hi == null){
-    return `<div class="ci">${num}<span class="ci-none">&mdash;</span></div>`;
-  }
-  const w = Math.max(CI_MIN, Math.min(CI_MAX, (hi - lo) * CI_PPP));
-  const rel = hi > lo ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 0.5;
-  const tick = 4 + rel * (w - 8);   // keep the tick between the two dot centres
-  return `<div class="ci">${num}<div class="ci-wrap">`
-    + `<span class="ci-end">${lo.toFixed(1)}</span>`
-    + `<span class="ci-band" style="width:${w.toFixed(1)}px">`
-    +   `<span class="rule"></span><span class="dot lo"></span><span class="dot hi"></span>`
-    +   `<span class="pt" style="left:${tick.toFixed(1)}px"></span>`
+/* The 95% interval, drawn on ONE scale shared by every row.
+
+   CI_DOM is the domain: the lowest ci_low and the highest ci_high in the whole
+   table, each rounded outward to a multiple of 5. It is derived from the data
+   rather than fixed at 0-100, because 0-100 wasted two thirds of the width and
+   squeezed a typical interval into four pixels. It is derived once, from the
+   full DATA array and not from the sorted rows, so sorting a column never
+   moves a dot.
+
+   CI_TICKS are the round scores inside the domain. They label the axis in the
+   header and draw the faint rules behind every row. */
+const CI_DOM = (() => {
+  const lo = DATA.map(r => r.ci_low).filter(v => v != null);
+  const hi = DATA.map(r => r.ci_high).filter(v => v != null);
+  if (!lo.length || !hi.length) return null;
+  const a = Math.floor(Math.min(...lo) / 5) * 5, b = Math.ceil(Math.max(...hi) / 5) * 5;
+  return b > a ? {lo: a, hi: b} : null;
+})();
+const CI_TICKS = (() => {
+  if (!CI_DOM) return [];
+  const out = [];
+  for (let v = Math.ceil(CI_DOM.lo / 10) * 10; v < CI_DOM.hi; v += 10)
+    if (v > CI_DOM.lo) out.push(v);
+  return out;
+})();
+const ciPct = v => ((v - CI_DOM.lo) / (CI_DOM.hi - CI_DOM.lo)) * 100;
+const CI_GRID = CI_DOM
+  ? `<span class="ci-grid" aria-hidden="true">`
+    + CI_TICKS.map(t => `<i style="left:${ciPct(t).toFixed(3)}%"></i>`).join("")
     + `</span>`
-    + `<span class="ci-end">${hi.toFixed(1)}</span>`
-    + `</div></div>`;
+  : "";
+
+/* The endpoints are not printed beside the dots. On a shared scale they would
+   sit at a different x in every row and fight the alignment the scale exists
+   to give. They are in the cell's tooltip instead. */
+function ciPlot(v, lo, hi){
+  if (!CI_DOM || v == null || lo == null || hi == null)
+    return CI_GRID + `<span class="ci-none">&mdash;</span>`;
+  const a = ciPct(lo), b = ciPct(hi), pt = ciPct(v);
+  const t = esc(`${v.toFixed(1)} \u2014 95% interval ${lo.toFixed(1)} to ${hi.toFixed(1)}`);
+  return CI_GRID
+    + `<span class="ci-track" title="${t}" role="img" aria-label="${t}">`
+    +   `<span class="rule" style="left:${a.toFixed(3)}%; width:${(b - a).toFixed(3)}%"></span>`
+    +   `<span class="dot" style="left:${a.toFixed(3)}%"></span>`
+    +   `<span class="dot" style="left:${b.toFixed(3)}%"></span>`
+    +   `<span class="pt" style="left:${pt.toFixed(3)}%"></span>`
+    + `</span>`;
+}
+
+function ciAxis(){
+  const el = document.getElementById("ciaxis");
+  if (!el) return;
+  el.innerHTML = CI_DOM
+    ? CI_TICKS.map(t => `<i style="left:${ciPct(t).toFixed(3)}%">${t}</i>`).join("")
+    : "";
 }
 
 function meter(v, cls){
@@ -545,7 +607,8 @@ function render(){
       + `<td class="num">${meter(r.d2, "m2")}</td>`
       + `<td class="num">${meter(r.d3, "m3")}</td>`
       + `<td class="num">${meter(r.d1, "m1")}</td>`
-      + `<td class="num overall">${ciCell(r.overall, r.ci_low, r.ci_high)}</td>`
+      + `<td class="overall oscore">${r.overall == null ? "&ndash;" : `<span class="v">${r.overall.toFixed(1)}</span>`}</td>`
+      + `<td class="overall oci">${ciPlot(r.overall, r.ci_low, r.ci_high)}</td>`
       + `<td class="num">${r.n}</td>`
       + `<td class="num halo ${haloCls}">${haloTxt}</td>`
       + `<td><span class="pill ${r.conf}">${r.conf}</span></td></tr>`;
@@ -556,10 +619,13 @@ function render(){
    Copy lives here so a column explanation is one string, not markup buried in
    the header row. Halo is the only one today; the mechanism takes more. */
 const INFO = {
-  ci: `<p><b>Overall &mdash; and how firm it is.</b></p>
-    <p>The big number is the score. The two dots are a 95% confidence interval:
-    resampling this leader's transcripts 20,000 times puts their score between
-    those endpoints 95% of the time.</p>
+  ci: `<p><b>How firm is that score?</b></p>
+    <p>The two dots are a 95% confidence interval: resampling this leader's
+    transcripts 20,000 times puts their score between those endpoints 95% of
+    the time. The tick between them is the score itself.</p>
+    <p>Every row is drawn on the <b>same scale</b>, marked by the numbers above
+    and the faint rules behind the dots. A dot further right is a higher score,
+    in every row. Hover a row to read its exact endpoints.</p>
     <p>A leader graded on 3 transcripts carries a much wider interval than one
     graded on 14, because the transcripts we collected are a <em>sample</em> of
     what that person says in public.</p>
@@ -628,7 +694,7 @@ document.addEventListener("click", e => {
   }
   if (tipBtn) hideTip();
   const th = e.target.closest("thead th");
-  if (th){
+  if (th && th.dataset.k){
     const k = th.dataset.k;
     sortDir = sortKey === k ? -sortDir : (k === "name" || k === "company" || k === "conf" || k === "rank" ? 1 : -1);
     sortKey = k;
@@ -646,7 +712,7 @@ document.addEventListener("click", e => {
   const person = DATA.find(d => d.slug === slug);
   const row = document.createElement("tr");
   row.className = "audit";
-  row.innerHTML = `<td colspan="10">${drawer(slug, person)}</td>`;
+  row.innerHTML = `<td colspan="11">${drawer(slug, person)}</td>`;
   tr.after(row);
 });
 document.addEventListener("keydown", e => {
@@ -659,6 +725,7 @@ document.getElementById("themeBtn").addEventListener("click", () => {
     : window.matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
 });
+ciAxis();
 render();
 </script>
 """
