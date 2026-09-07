@@ -210,6 +210,32 @@ the measurement is named so a later reader can re-run it rather than trust it.
   reason. Judges agree closely about share: median absolute disagreement 2
   points, mean 3.6. A grade with no estimate is kept, never guessed at.
 
+- **A refusal is retried, then falls back to another model.** Astra refuses
+  some politically-charged transcripts. MEASURED: the refusals are NOT
+  deterministic. A controlled re-run of three found it graded two of them the
+  second time, same transcript and prompt; only `alex-karp/the-free-press-qdqhf7`
+  refused twice, and `gpt-5.6-sol` graded that one at 49.1 with a valid schema.
+  So `grade.py` retries the same model `REFUSAL_ATTEMPTS` times and only then
+  tries `--astra-fallback`. A refusal WRITES its grade file, and `grade.py`
+  skips any transcript whose dest exists, so the 11 refusals already on disk
+  will not retry until those records are removed.
+  The fallback is a different model under the same judge name, so calibration is
+  keyed by `(judge, model, mode, dim)` and a model with fewer than
+  `MIN_CALIBRATION_N` grades is not rescaled on its own thin statistics. Note
+  that `codex --json` reports no model in its response, so `served_model`
+  records what was REQUESTED; it is not independently verified.
+
+- **Nothing load-bearing may depend on Python's hash seed.** FOUND by running
+  `aggregate.py` twice over a frozen grades directory and getting 36 different
+  leader scores. Per-transcript venue was picked with
+  `max(set(votes), key=votes.count)`, and string hashing is randomised per
+  process, so the winner of a TIE changed between runs. 42 transcripts have the
+  judges disagreeing about venue and every one is a one-vote-each tie. Harmless
+  while venue was display-only; the venue adjustment made it move the published
+  score. `resolve_venue()` sorts before the max and reports whether there was a
+  real majority, and the adjustment is applied only when there was. A tie means
+  the format is unknown, not resolved.
+
 - **Confidence interval by bootstrap.** A leader's score is a coverage-weighted
   mean over the transcripts we happened to collect, so it carries sampling
   error, and a leader on 3 transcripts carries far more of it than one on 14.

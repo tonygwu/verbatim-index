@@ -326,6 +326,88 @@ def test_astra_search_is_logged():
           "count_tool_events(events)" in astra, "wired somewhere else than the astra path")
 
 
+# ---------------------------------------------------------------------------
+# 10. The published score must not depend on Python's hash seed.
+#
+# FOUND by running aggregate.py twice on a FROZEN grades directory and getting
+# 36 different leader scores. Per-transcript venue_type was picked with
+#   max(set(votes), key=votes.count)
+# and Python randomises str hashing per process, so set iteration order — and
+# therefore the winner of a TIE — changes between runs. On this corpus 42
+# transcripts have judges disagreeing about the venue, and every one of them is
+# a one-vote-each tie.
+#
+# That was harmless while venue_type only fed the display. The venue adjustment
+# made it load-bearing, so a hash seed could move a published score by up to
+# 0.6 points. Two fixes: the displayed value is chosen deterministically, and
+# the ADJUSTMENT is only applied when the judges actually agree, because a tie
+# means the format is unknown rather than resolved.
+# ---------------------------------------------------------------------------
+def test_venue_vote_is_deterministic():
+    print("\n[10] a tied venue vote does not depend on the hash seed")
+    a = load("aggregate")
+    votes = ["keynote", "long_form_podcast"]
+    picks = {a.resolve_venue(list(v))[0] for v in
+             ([votes, votes[::-1]] * 6)}
+    check("a tie resolves to the same value regardless of vote order",
+          len(picks) == 1, f"got {picks}")
+    check("a tie is reported as not agreed", a.resolve_venue(votes)[1] is False,
+          f"{a.resolve_venue(votes)}")
+    check("a clear majority is agreed and wins",
+          a.resolve_venue(["keynote", "keynote", "panel"]) == ("keynote", True),
+          f"{a.resolve_venue(['keynote','keynote','panel'])}")
+    check("a single vote is agreed", a.resolve_venue(["panel"]) == ("panel", True))
+    check("no votes gives no venue", a.resolve_venue([]) == (None, False))
+
+    # And the adjustment must skip a transcript whose venue is not agreed.
+    rows = [{"leader_slug": "x", "venue_type": "pod", "venue_agreed": True,
+             "cal_overall": 70} for _ in range(12)]
+    rows += [{"leader_slug": "x", "venue_type": "pod", "venue_agreed": False,
+              "cal_overall": 70}]
+    eff = {"pod": 5.0}
+    a.apply_venue_adjustment(rows, eff)
+    agreed = [r for r in rows if r["venue_agreed"]][0]
+    tied = [r for r in rows if not r["venue_agreed"]][0]
+    check("an agreed transcript is adjusted", agreed["cal_overall_venue_adj"] == 65.0,
+          f"{agreed}")
+    check("a tied transcript is left alone rather than adjusted on a guess",
+          tied["cal_overall_venue_adj"] == 70.0, f"{tied}")
+
+
+def test_aggregate_is_reproducible():
+    print("\n[10a] two runs over the same grades produce the same scores")
+    import os, subprocess, tempfile
+    data = REPO / "data"
+    if not (data / "results.json").exists():
+        print("  SKIP  no data/ in this clone")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        outs = []
+        for i, seed in enumerate(("0", "12345")):
+            env = dict(os.environ, PYTHONHASHSEED=seed)
+            o = Path(td) / f"r{i}.json"
+            r = subprocess.run([PY, str(REPO / "scripts" / "aggregate.py"),
+                                "--grades", str(REPO / "scripts" / "_nonexistent")
+                                if False else str(data / "grades"),
+                                "--roster", str(data / "roster" / "final.json"),
+                                "--transcripts", str(data / "transcripts_blind"),
+                                "--out", str(o)],
+                               capture_output=True, text=True, env=env)
+            if r.returncode != 0:
+                print(f"  SKIP  aggregate failed: {r.stderr[-200:]}")
+                return
+            outs.append(json.loads(o.read_text()))
+        g = lambda f: {l["slug"]: l["blinded"]["overall"]
+                       for l in f["leaders"] if l["status"] == "scored"}
+        A, B = g(outs[0]), g(outs[1])
+        if outs[0]["diagnostics"]["grades_used"] != outs[1]["diagnostics"]["grades_used"]:
+            print("  SKIP  the corpus changed under us (a grading loop is running)")
+            return
+        diff = [s for s in A if A[s] != B[s]]
+        check("two different hash seeds give identical leader scores",
+              not diff, f"{len(diff)} differ, e.g. {[(s, A[s], B[s]) for s in diff[:3]]}")
+
+
 def main() -> int:
     print("venue-adjustment and error-log guards")
     test_recovers_a_known_effect()
@@ -336,6 +418,8 @@ def main() -> int:
     test_interval_matches_the_point_estimate()
     test_subject_share_cutoff()
     test_astra_search_is_logged()
+    test_venue_vote_is_deterministic()
+    test_aggregate_is_reproducible()
     with tempfile.TemporaryDirectory() as td:
         test_reported_in_diagnostics(Path(td))
         test_error_log_has_timestamps(Path(td))

@@ -347,6 +347,69 @@ def order_breadth_first(jobs: list[dict]) -> list[dict]:
     return cached + [t[2] for t in ranked]
 
 
+# How many times the primary judge model may refuse before another model is
+# tried. MEASURED 2026-09-07: Astra refused 11 blinded transcripts on content
+# grounds, and a controlled re-run of three of them found the refusals are not
+# deterministic. It refused elon-musk/lex-fridman-jn3kpf and
+# tim-cook/the-uptake-by-bridgemake-fwv5jc in production and graded both on the
+# re-run, same transcript, same prompt. Only alex-karp/the-free-press-qdqhf7
+# refused twice. So a retry recovers most of them and a fallback model is needed
+# only for the stubborn minority.
+REFUSAL_ATTEMPTS = 3
+# The fallback model. gpt-5.6-sol graded the transcript that refused twice, at
+# 49.1 with a valid schema. It is a DIFFERENT model, so its grades are filed
+# with the model that served them and aggregate.py calibrates it separately.
+ASTRA_FALLBACK_MODEL = "gpt-5.6-sol"
+
+
+def _policy_fields(job: dict) -> dict:
+    """The retry outcome, flattened onto the grade record.
+
+    `served_model` is what aggregate.py keys calibration on, so a grade produced
+    by the fallback model is never pooled into the primary's distribution.
+    """
+    p = job.get("_policy") or {}
+    if not p:
+        return {}
+    return {"served_model": p.get("served_model"),
+            "refusal_attempts": p.get("attempts"),
+            "fallback_used": p.get("fallback_used", False)}
+
+
+def grade_with_refusal_policy(call, primary: str, fallback: str | None,
+                              attempts: int = REFUSAL_ATTEMPTS):
+    """Retry a refusing judge on the same model, then try another model once.
+
+    `call(model)` must return `(parsed_object, telemetry)`.
+
+    Returns `(obj, telemetry, info)` where info carries `attempts`,
+    `served_model`, `fallback_used` and `refused`. Those travel onto the grade
+    record, because a grade produced by a different model must be visible to
+    calibration rather than silently pooled with the primary's distribution.
+
+    No speculative retry: a transcript that grades first time costs one call.
+    """
+    obj, telemetry, n = None, {}, 0
+    for _ in range(max(1, attempts)):
+        n += 1
+        obj, telemetry = call(primary)
+        if looks_like_refusal(obj) is None:
+            return obj, telemetry, {"attempts": n, "served_model": primary,
+                                    "fallback_used": False, "refused": False}
+    if fallback:
+        n += 1
+        obj2, telemetry2 = call(fallback)
+        if looks_like_refusal(obj2) is None:
+            return obj2, telemetry2, {"attempts": n, "served_model": fallback,
+                                      "fallback_used": True, "refused": False}
+        # Both refused. Report the PRIMARY's refusal, since that is the judge
+        # this arm is supposed to be, and say that the fallback was spent too.
+        return obj, telemetry, {"attempts": n, "served_model": primary,
+                                "fallback_used": True, "refused": True}
+    return obj, telemetry, {"attempts": n, "served_model": primary,
+                            "fallback_used": False, "refused": True}
+
+
 def count_tool_events(events: list[dict]) -> dict[str, int]:
     """Count the tools a codex judge actually used, from the stream we already parse.
 
@@ -683,15 +746,20 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
     return payload.get("result") or "", telemetry
 
 
-def call_astra(prompt: str, timeout: int, workdir: Path) -> tuple[str, dict]:
-    """Run the GPT-6 Astra judge via codex exec. Returns (text, telemetry)."""
+def call_astra(prompt: str, timeout: int, workdir: Path,
+               model: str = "gpt-6-astra") -> tuple[str, dict]:
+    """Run the Astra judge via codex exec. Returns (text, telemetry).
+
+    `model` is a parameter because this arm falls back to another model when
+    it refuses repeatedly. The served model is recorded in the telemetry, so
+    aggregate.py can calibrate each model on its own distribution."""
     out_file = workdir / "astra_last_message.txt"
     cmd = [
         "codex", "exec",
         "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
         "-c", "model_provider=openai",
         "-c", "preferred_auth_method=chatgpt",
-        "-m", "gpt-6-astra",
+        "-m", model,
         "-c", "model_reasoning_effort=max",
         "-s", "read-only",
         "--json",
@@ -730,7 +798,14 @@ def call_astra(prompt: str, timeout: int, workdir: Path) -> tuple[str, dict]:
     # and record the request exactly as made.
     telemetry = {
         "harness": "codex exec",
-        "requested_model": "gpt-6-astra",
+        "requested_model": model,
+        # What answered. NOT independently verified: the codex --json stream
+        # carries thread.started, turn.started, item.completed and
+        # turn.completed only, and stderr names no model either, so there is
+        # nothing in the response to assert against. This records what was
+        # asked for. The reasoning-token check below is the one identity
+        # assertion the harness can actually make.
+        "served_model": model,
         "effort": "max",
         "reasoning_output_tokens": usage.get("reasoning_output_tokens"),
         "input_tokens": usage.get("input_tokens"),
@@ -768,7 +843,29 @@ def grade_one(job: dict) -> dict:
             text, telemetry = call_fable(prompt, job["config_dir"], job["timeout"],
                                          job["fable_bin"], job["workdir"])
         else:
-            text, telemetry = call_astra(prompt, job["timeout"], Path(job["workdir"]))
+            # Astra refuses some politically-charged transcripts, and the refusal
+            # is not deterministic: two of three re-run transcripts graded fine
+            # the second time. So retry the same model, and only fall back to
+            # another model when it keeps refusing.
+            attempts_log: list[dict] = []
+
+            def _one(model: str, _p=prompt, _j=job, _log=attempts_log):
+                txt, tel = call_astra(_p, _j["timeout"], Path(_j["workdir"]), model)
+                _log.append(tel)
+                try:
+                    return extract_json(txt), tel
+                except Exception:
+                    # Unparseable is not a refusal. Hand it back so the normal
+                    # JSON error path classifies it instead of burning retries.
+                    return {"__unparseable__": txt}, tel
+
+            obj_or_raw, telemetry, policy = grade_with_refusal_policy(
+                _one, primary=job["astra_model"], fallback=job["astra_fallback"])
+            if "__unparseable__" in obj_or_raw:
+                text = obj_or_raw["__unparseable__"]
+            else:
+                text = json.dumps(obj_or_raw)
+            job["_policy"] = policy
     except subprocess.TimeoutExpired:
         return {"status": "failed", "id": tid, "judge": job["judge"], "mode": job["mode"],
                 "run": job["run"], "error_type": E_TIMEOUT, "detail": f"exceeded {job['timeout']}s"}
@@ -803,6 +900,7 @@ def grade_one(job: dict) -> dict:
             "telemetry": telemetry, "grading_contract": job["contract"],
             "refused": True, "refusal_reason": refusal, "grade": obj,
             "validation_errors": [],
+            **_policy_fields(job),
         }
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(".json.tmp")
@@ -826,6 +924,7 @@ def grade_one(job: dict) -> dict:
         "telemetry": telemetry,
         "validation_errors": errs,
         "grade": obj,
+        **_policy_fields(job),
     }
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".json.tmp")
@@ -861,6 +960,13 @@ def main() -> int:
                          "What it drops is logged, never silent.")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--errors", default="data/logs/grade_errors.jsonl")
+    ap.add_argument("--astra-model", default="gpt-6-astra",
+                    help="Primary model for the Astra arm.")
+    ap.add_argument("--astra-fallback", default=ASTRA_FALLBACK_MODEL,
+                    help="Model to try when the primary refuses REFUSAL_ATTEMPTS times in a "
+                         "row. Pass an empty string to disable the fallback and simply retry. "
+                         "Its grades are calibrated separately, because it is a different "
+                         "model under the same judge name.")
     ap.add_argument("--fable-bin", default="claude",
                     help="Binary that runs the Fable judge. Must be the plain claude CLI: "
                          "account rotation happens in this script, via the llm-quota-router "
@@ -955,6 +1061,8 @@ def main() -> int:
             "contract": contract,
             "config_dir": assign_accounts(judge, i, cfg_dirs, judges),
             "fable_bin": args.fable_bin,
+            "astra_model": args.astra_model,
+            "astra_fallback": args.astra_fallback or None,
             "workdir": str(wd),
             "dest": str(Path(args.out) / judge / rec["leader_slug"] / f"{stem}.json"),
             "raw_dest": str(Path(args.out) / "_raw" / judge / rec["leader_slug"] / f"{stem}.txt"),

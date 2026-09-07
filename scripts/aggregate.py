@@ -40,7 +40,7 @@ import math
 import statistics as st
 import sys
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # scripts/ is not a package, and this module is also loaded by importlib in the
@@ -118,6 +118,30 @@ def load_grades(root: Path) -> list[dict]:
     return out
 
 
+# Below this many grades a model's own mean and spread are too thin to rescale
+# with, so its scores pass through unchanged rather than being mapped by
+# statistics estimated from a handful of points.
+MIN_CALIBRATION_N = 25
+
+# What model a judge served before grades recorded it. Only used for records
+# written before served_model existed; new ones carry their own.
+DEFAULT_JUDGE_MODEL = {"fable": "claude-fable-5-1", "astra": "gpt-6-astra"}
+
+
+def served_model(g: dict) -> str:
+    """Which model actually produced this grade.
+
+    A judge is an ARM of the study, not a model. Astra falls back to another
+    model when it refuses repeatedly, so filing those grades under "astra" and
+    pooling them into astra's distribution would rescale them by statistics that
+    are not theirs. On the one transcript where both models graded, they
+    differed by 3.65 points, so the distributions are not interchangeable.
+    """
+    t = g.get("telemetry") or {}
+    return (t.get("served_model") or t.get("requested_model")
+            or DEFAULT_JUDGE_MODEL.get(g.get("judge"), g.get("judge") or "unknown"))
+
+
 def calibrate(grades: list[dict]) -> dict:
     """Map each judge's score distribution onto the pooled one, per dimension.
 
@@ -133,12 +157,12 @@ def calibrate(grades: list[dict]) -> dict:
             continue
         for dim in DIMS:
             v = g["grade"]["dimensions"][dim]["score"]
-            by_jmd[(g["judge"], g["mode"], dim)].append(v)
+            by_jmd[(g["judge"], served_model(g), g["mode"], dim)].append(v)
             by_md[(g["mode"], dim)].append(v)
 
     params = {}
     for key, vals in by_jmd.items():
-        judge, mode, dim = key
+        judge, model, mode, dim = key
         pooled = by_md[(mode, dim)]
         jm = st.mean(vals)
         jsd = st.pstdev(vals) if len(vals) > 1 else 0.0
@@ -148,7 +172,11 @@ def calibrate(grades: list[dict]) -> dict:
             "judge_mean": round(jm, 2), "judge_sd": round(jsd, 2),
             "pooled_mean": round(pm, 2), "pooled_sd": round(psd, 2),
             "n": len(vals),
-            "rescaled": jsd >= 3.0,
+            "model": model,
+            # Both conditions matter. A flat judge must not be rescaled because
+            # that amplifies noise, and a model with only a few grades must not
+            # be rescaled because its mean and spread are not yet estimated.
+            "rescaled": jsd >= 3.0 and len(vals) >= MIN_CALIBRATION_N,
         }
     return params
 
@@ -219,6 +247,35 @@ def bootstrap_ci(rows: list[dict], weights: dict, dims: list[str],
 MIN_VENUE_N = 8
 
 
+def resolve_venue(votes: list[str]) -> tuple[str | None, bool]:
+    """The judges' venue verdict, and whether they actually agreed.
+
+    FOUND 2026-09-07 by running aggregate.py twice over a frozen grades
+    directory and getting 36 different leader scores. The old line was
+
+        max(set(votes), key=votes.count)
+
+    and Python randomises string hashing per process, so set iteration order,
+    and therefore the winner of a TIE, changed between runs. On this corpus 42
+    transcripts have the two judges disagreeing about the venue and every one is
+    a one-vote-each tie.
+
+    Harmless while venue_type only fed the display. The venue adjustment made it
+    load-bearing, so the hash seed could move a published score.
+
+    Sorting before the max makes the displayed value stable. The second return
+    value says whether there was a real majority, and the adjustment uses only
+    that: a tie means the format is unknown, not resolved, so nothing is
+    subtracted rather than subtracting a coin flip.
+    """
+    if not votes:
+        return None, False
+    counts = Counter(votes)
+    top = max(sorted(counts), key=lambda v: counts[v])
+    agreed = sum(1 for c in counts.values() if c == counts[top]) == 1
+    return top, agreed
+
+
 def venue_effects(rows: list[dict], field: str = "cal_overall",
                   min_n: int = MIN_VENUE_N) -> dict[str, float]:
     """How many points a FORMAT adds or removes, with the speaker held fixed.
@@ -243,7 +300,7 @@ def venue_effects(rows: list[dict], field: str = "cal_overall",
     transcript with no venue type at all is left alone. Both are reported rather
     than silently skipped.
     """
-    usable = [r for r in rows if r.get("venue_type")]
+    usable = [r for r in rows if r.get("venue_type") and r.get("venue_agreed", True)]
     counts: dict[str, int] = defaultdict(int)
     for r in usable:
         counts[r["venue_type"]] += 1
@@ -277,7 +334,11 @@ def apply_venue_adjustment(rows: list[dict], effects: dict[str, float],
     it, which an adjustment that overwrites its input does not allow.
     """
     for r in rows:
-        e = effects.get(r.get("venue_type") or "", 0.0)
+        # Only adjust when the judges agreed what the venue was. A tie means the
+        # format is unknown, and subtracting an effect for a coin flip would put
+        # the hash seed into the published score.
+        e = (effects.get(r.get("venue_type") or "", 0.0)
+             if r.get("venue_agreed", True) else 0.0)
         r[field + "_venue_adj"] = round(r[field] - e, 2)
     return rows
 
@@ -375,7 +436,7 @@ def main() -> int:
         entry = per_transcript[key]
         for dim in DIMS:
             raw = gr["dimensions"][dim]["score"]
-            cal = apply_calibration(raw, (g["judge"], g["mode"], dim), params)
+            cal = apply_calibration(raw, (g["judge"], served_model(g), g["mode"], dim), params)
             entry[f"raw_{dim}"].append(raw)
             entry[f"cal_{dim}"].append(cal)
         entry["coverage"].append(cov)
@@ -391,7 +452,8 @@ def main() -> int:
                "coverage": round(st.mean(e["coverage"]), 3),
                "venue_challenge": round(st.mean([v for v in e["venue_challenge"] if v is not None]), 2)
                if any(v is not None for v in e["venue_challenge"]) else None,
-               "venue_type": max(set(e["venue_type"]), key=e["venue_type"].count) if e["venue_type"] else None,
+               **dict(zip(("venue_type", "venue_agreed"),
+                          resolve_venue([v for v in e["venue_type"] if v]))),
                "identity_recognised": any(e["identity_confident"])}
         for dim in DIMS:
             row[f"raw_{dim}"] = round(st.mean(e[f"raw_{dim}"]), 2)
@@ -541,7 +603,9 @@ def main() -> int:
         "judge_refusals": len(refusals),
         "judge_refusals_by_leader": refusal_breakdown,
         "leaders_below_min_transcripts": [l["slug"] for l in scored if l["n_transcripts"] < MIN_TRANSCRIPTS_FOR_CONFIDENCE],
-        "calibration_params": {f"{k[0]}|{k[1]}|{k[2]}": v for k, v in params.items()},
+        # judge|model|mode|dim. The model is part of the key because a judge is
+        # an arm, not a model, and the Astra arm can fall back to another one.
+        "calibration_params": {"|".join(str(x) for x in k): v for k, v in params.items()},
         "weights": WEIGHTS,
     }
 
