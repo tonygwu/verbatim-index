@@ -47,6 +47,7 @@ git config user.email 446441+tonygwu@users.noreply.github.com
 git -C data config user.email 446441+tonygwu@users.noreply.github.com
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python scripts/test_grade_harness.py     # pure checks, no quota
+.venv/bin/python scripts/test_pipeline_dedupe.py  # pure checks, no quota
 .venv/bin/python scripts/test_blinding.py
 .venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
 ```
@@ -91,6 +92,19 @@ stops on its own rather than overspending.
   `git rev-parse --show-toplevel` or `Path(__file__)`.
 - **Every failure gets a taxonomy entry**, never a bare count. `grade.py`
   logs `attempted / succeeded / failed` with `error_taxonomy`.
+- **A transcript that leaves the corpus must be withdrawn, not just skipped.**
+  `data/transcripts_blind` and `data/transcripts_open` are derived. `grade.py`
+  grades every file it finds there and `aggregate.py` counts every grade it
+  finds, so a transcript that is retired as a duplicate or rejected by QA keeps
+  scoring until its derived copy AND its grades go. `normalize_transcripts.py
+  --grades` does both. It refuses if the removal looks like a wrong path rather
+  than a withdrawal. Found 2026-09-07: 27 withdrawn transcripts were still on
+  the leaderboard, and one appearance was counted three times.
+- **The duplicate sweep runs in `grade_loop.sh`, before normalize.** Most
+  duplicates are one talk re-uploaded to several YouTube channels, and those
+  arrive through `fetch_loop.sh`. The sweep used to run only in
+  `happyscribe_loop.sh`, which adds nothing on YouTube's side, so a re-upload
+  was graded before the next sweep saw it.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing

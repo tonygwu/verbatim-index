@@ -152,6 +152,10 @@ def main() -> int:
                     help="Deduplicate the merged corpus against ITSELF, regardless of source. "
                          "Catches the same talk re-uploaded to several YouTube channels, which "
                          "the cross-source pass never compares.")
+    ap.add_argument("--grades", default="data/grades",
+                    help="Grades directory to orphan retired transcripts' grades from. "
+                         "Must match the corpus in --youtube; the two used to be able to "
+                         "disagree, because this path was hardcoded.")
     ap.add_argument("--out", default="data/logs/dedupe.json")
     ap.add_argument("--threshold", type=float, default=DUP_THRESHOLD)
     args = ap.parse_args()
@@ -292,7 +296,7 @@ def main() -> int:
         # leader keeps scoring on an appearance that is no longer in the corpus.
         orphans = []
         for r in retired:
-            for gp in Path("data/grades").rglob(f"{r['retired']}__*.json"):
+            for gp in Path(args.grades).rglob(f"{r['retired']}__*.json"):
                 gp.rename(str(gp) + ".orphaned")
                 orphans.append(str(gp))
         print(json.dumps({

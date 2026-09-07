@@ -289,6 +289,75 @@ def blind(text: str, name: str, company: str, dictionary: set[str],
     return text, counts
 
 
+# A prune is only ever as trustworthy as the source directory it trusts. If a
+# fetch loop leaves data/transcripts half-written, or a path argument is wrong,
+# an unguarded prune deletes the whole blinded corpus and orphans every grade
+# in one silent pass. So a removal that is large in BOTH senses refuses.
+# Fraction alone would block a legitimate 2-of-4 prune on a tiny corpus, and a
+# count alone would block a legitimate large prune on a huge one.
+PRUNE_MAX_FRACTION = 0.25   # of what is already in the output directory
+PRUNE_MIN_TO_GUARD = 10     # below this many files, fraction is meaningless
+
+
+def prune_orphans(out_root: Path, kept: set[tuple[str, str]], mode: str,
+                  grades_root: Path | None, max_fraction: float) -> dict:
+    """Withdraw derived transcripts that this run did not write, and their grades.
+
+    A transcript leaves the corpus two ways: dedupe_transcripts.py --sweep
+    retires it as a duplicate, or QA rejects it. Neither used to reach here,
+    because this script only ever wrote files. The copy stayed in the output
+    directory, grade.py globs that whole directory, and aggregate.py counts
+    every grade it finds, so a withdrawn appearance kept scoring forever.
+
+    The test is "did this run write it", not "does the source file exist". That
+    covers the QA rejection too, which leaves the source on the shelf.
+
+    Grades are renamed to `.orphaned` rather than deleted, so the choice stays
+    auditable, and only grades for THIS mode are touched, because the blinded
+    and open passes each own one output directory and one half of the grades.
+    Raw judge output under `_raw` is left alone; it is evidence, not a score.
+    """
+    existing = [p for p in sorted(out_root.rglob("*.json"))
+                if not p.name.endswith(".json.tmp")]
+    stale = [p for p in existing if (p.parent.name, p.stem) not in kept]
+    report = {
+        "mode": mode, "examined": len(existing), "pruned": len(stale),
+        "pruned_ids": [f"{p.parent.name}/{p.stem}" for p in stale],
+        "orphaned_grades": 0, "orphaned_grade_files": [],
+        "grades_checked": str(grades_root) if grades_root else None,
+    }
+    if not stale:
+        return report
+
+    frac = len(stale) / len(existing)
+    if len(stale) >= PRUNE_MIN_TO_GUARD and frac > max_fraction:
+        raise SystemExit(
+            f"REFUSING TO PRUNE: {len(stale)} of {len(existing)} derived transcripts in "
+            f"{out_root} ({frac:.0%}) were not written by this run, above the "
+            f"{max_fraction:.0%} ceiling. That usually means --transcripts points at the "
+            f"wrong directory or the corpus is half-written, not that {len(stale)} "
+            f"appearances were withdrawn at once. Nothing has been deleted. Check the "
+            f"source directory, then re-run with --prune-max-fraction to allow it.")
+
+    for p in stale:
+        p.unlink()
+
+    if grades_root and grades_root.exists():
+        drop = {(p.parent.name, p.stem) for p in stale}
+        for gp in sorted(grades_root.rglob("*.json")):
+            if "_raw" in gp.parts:
+                continue
+            parts = gp.stem.split("__")
+            if len(parts) < 3 or parts[2] != mode:
+                continue
+            if (gp.parent.name, parts[0]) not in drop:
+                continue
+            gp.rename(str(gp) + ".orphaned")
+            report["orphaned_grades"] += 1
+            report["orphaned_grade_files"].append(gp.name)
+    return report
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--transcripts", required=True)
@@ -302,6 +371,15 @@ def main() -> int:
                     help="transcript_qa.json; transcripts with verdict reject are excluded.")
     ap.add_argument("--mode", choices=["blinded", "open"], default="blinded")
     ap.add_argument("--log", required=True)
+    ap.add_argument("--grades", default=None,
+                    help="Grades directory. Withdrawing a transcript only stops it scoring "
+                         "if its grades go too, because aggregate.py reads grades and never "
+                         "looks at this output directory.")
+    ap.add_argument("--no-prune", action="store_true",
+                    help="Leave derived transcripts this run did not write. They stay "
+                         "gradeable and keep counting, so this is for debugging only.")
+    ap.add_argument("--prune-max-fraction", type=float, default=PRUNE_MAX_FRACTION,
+                    help="Refuse to prune more than this share of the output directory.")
     args = ap.parse_args()
 
     roster = json.loads(Path(args.roster).read_text())
@@ -370,10 +448,20 @@ def main() -> int:
             "word_count": rec.get("word_count"),
         })
 
+    kept = {(e["leader_slug"], e["source_id"]) for e in entries}
+    prune = ({"mode": args.mode, "examined": None, "pruned": 0, "pruned_ids": [],
+              "orphaned_grades": 0, "orphaned_grade_files": [], "grades_checked": None,
+              "disabled": True}
+             if args.no_prune else
+             prune_orphans(out_root, kept, args.mode,
+                           Path(args.grades) if args.grades else None,
+                           args.prune_max_fraction))
+
     summary = {
         "mode": args.mode,
         "written": len(entries),
         "skipped_qa_reject": skipped,
+        "prune": prune,
         "total_repair_substitutions": sum(e["repair_substitutions"] for e in entries),
         "total_loop_tokens_removed": sum(e["loop_tokens_removed"] for e in entries),
         "total_blind_substitutions": sum(e["blind_total"] for e in entries),
@@ -384,6 +472,15 @@ def main() -> int:
     Path(args.log).parent.mkdir(parents=True, exist_ok=True)
     Path(args.log).write_text(json.dumps({"summary": summary, "entries": entries}, indent=1))
     print(json.dumps(summary, indent=2))
+    if prune["pruned"] and not args.grades:
+        print(f"WARNING: withdrew {prune['pruned']} derived transcripts but --grades was not "
+              f"given, so their grades are still on disk and aggregate.py still counts them. "
+              f"Pass --grades to complete the withdrawal.", file=sys.stderr)
+    if prune["pruned"]:
+        print(f"withdrew {prune['pruned']} derived transcripts "
+              f"({', '.join(prune['pruned_ids'][:6])}"
+              f"{', ...' if prune['pruned'] > 6 else ''}) and orphaned "
+              f"{prune['orphaned_grades']} {args.mode} grades", file=sys.stderr)
     if summary["transcripts_with_zero_blind_hits"]:
         print(f"WARNING: {len(summary['transcripts_with_zero_blind_hits'])} transcripts had no name/company "
               f"to blind; check the roster spelling matches how the speaker is named on air.", file=sys.stderr)

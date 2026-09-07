@@ -51,11 +51,13 @@ has 4 && { banner 4 "repair speech-recognition errors, then blind and un-blind"
     --transcripts data/transcripts --out data/transcripts_blind \
     --roster data/roster/final.json --repairs data/sources/repairs.json \
     --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
+    --grades data/grades \
     --log data/logs/normalize_blind.json
   $PY scripts/normalize_transcripts.py --mode open \
     --transcripts data/transcripts --out data/transcripts_open \
     --roster data/roster/final.json --repairs data/sources/repairs.json \
     --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
+    --grades data/grades \
     --log data/logs/normalize_open.json
   $PY scripts/test_blinding.py
 }

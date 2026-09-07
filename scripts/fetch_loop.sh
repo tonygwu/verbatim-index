@@ -155,6 +155,7 @@ while true; do
           --transcripts data/transcripts --out "$out" \
           --roster data/roster/final.json --repairs data/sources/repairs.json \
           --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
+        --grades data/grades \
           --log "data/logs/normalize_${m}.json" >/dev/null 2>>data/logs/fetch_loop.err
     done
     say "  normalized; $(find data/transcripts_blind -name '*.json' ! -name '*.tmp' | wc -l | tr -d ' ') ready to grade"

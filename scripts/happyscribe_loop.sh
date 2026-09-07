@@ -45,7 +45,7 @@ while true; do
   # re-uploads that the cross-source pass cannot see.
   before=$(find data/transcripts -name '*.json' ! -name '*.tmp' ! -name '*.superseded' | wc -l | tr -d ' ')
   $PY scripts/dedupe_transcripts.py --merge >/dev/null 2>>data/logs/happyscribe_loop.err
-  $PY scripts/dedupe_transcripts.py --sweep >/dev/null 2>>data/logs/happyscribe_loop.err
+  $PY scripts/dedupe_transcripts.py --sweep >>data/logs/dedupe_sweep.log 2>>data/logs/happyscribe_loop.err
   after=$(find data/transcripts -name '*.json' ! -name '*.tmp' ! -name '*.superseded' | wc -l | tr -d ' ')
   say "cycle ${cycle}: corpus ${before} -> ${after}"
 

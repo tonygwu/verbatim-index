@@ -10,7 +10,8 @@
 #
 # Every stage is idempotent and skips completed work, so each cycle only pays
 # for what is genuinely new:
-#   qa + normalize   cheap, re-runs over everything
+#   sweep            retires duplicate appearances before they are graded
+#   qa + normalize   cheap, re-runs over everything; withdraws what left the shelf
 #   grade            skips any (transcript, judge, mode) already on disk
 #   aggregate+render cheap, gives an always-current leaderboard
 #
@@ -48,8 +49,26 @@ while true; do
 
   say "cycle ${cycle}: ${tx} transcripts, ${g0} grades on disk"
 
-  # 1. Quality gates, then blind and un-blind. Both re-run over everything and
+  # 1. Take duplicates off the shelf BEFORE anything is copied for grading.
+  #    Most duplicates are one talk re-uploaded to several YouTube channels, and
+  #    those arrive through fetch_loop.sh. The sweep used to run only in
+  #    happyscribe_loop.sh, which adds nothing to YouTube's side of the corpus,
+  #    so a re-upload was routinely graded before the next sweep saw it. On
+  #    2026-09-07 the corpus held 16 duplicates the sweep would have retired.
+  say "  sweeping the corpus for duplicate appearances"
+  if $PY scripts/dedupe_transcripts.py --sweep --grades data/grades \
+       >data/logs/dedupe_sweep.json 2>>data/logs/grade_loop.err; then
+    cat data/logs/dedupe_sweep.json >> data/logs/dedupe_sweep.log
+    say "  $($PY -c "import json; d=json.load(open('data/logs/dedupe_sweep.json')); print(f\"retired {d['sweep_retired']} duplicates, orphaned {d['orphaned_grades_removed']} grades\")" 2>/dev/null || echo 'sweep report unreadable')"
+  else
+    say "  SWEEP FAILED, nothing retired this cycle; see data/logs/grade_loop.err"
+  fi
+
+  # 2. Quality gates, then blind and un-blind. Both re-run over everything and
   #    are cheap; a transcript rejected by QA never reaches the graders.
+  #    --grades lets normalize withdraw the grades of a transcript that has left
+  #    the corpus. Without it the appearance keeps scoring, because aggregate.py
+  #    reads data/grades and never looks at the blinded directory.
   $PY scripts/qa_transcripts.py --transcripts data/transcripts \
       --roster data/roster/final.json --glossaries data/sources/aliases.json \
       --out data/logs/transcript_qa.json > /dev/null 2>>data/logs/grade_loop.err
@@ -59,12 +78,13 @@ while true; do
         --transcripts data/transcripts --out "$out" \
         --roster data/roster/final.json --repairs data/sources/repairs.json \
         --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
+        --grades data/grades \
         --log "data/logs/normalize_${mode}.json" > /dev/null 2>>data/logs/grade_loop.err
   done
   ready=$(find data/transcripts_blind -name '*.json' ! -name '*.tmp' 2>/dev/null | wc -l | tr -d ' ')
   say "  ${ready} transcripts passed QA and are ready to grade"
 
-  # 2. Blinded grading. This is the published score, so it covers everything.
+  # 3. Blinded grading. This is the published score, so it covers everything.
   say "  blinded grading pass"
   $PY scripts/grade.py --transcripts data/transcripts_blind --roster data/roster/final.json \
       --out data/grades --judges fable,astra --modes blinded --repeats 1 \
@@ -72,7 +92,7 @@ while true; do
       --fable-accounts "$FABLE_ACCOUNTS" \
       >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
 
-  # 3. Unblinded, on a bounded subset. Only needed to size the reputation halo,
+  # 4. Unblinded, on a bounded subset. Only needed to size the reputation halo,
   #    so it must stay small: it competes with the blinded pass for the same
   #    Fable quota, and the blinded pass is the published score.
   if [ "${OPEN_PER_LEADER:-0}" -eq 0 ]; then
