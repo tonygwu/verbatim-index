@@ -19,6 +19,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# scripts/ is not a package, and this module is also loaded by importlib in the
+# test harness, so make the sibling import work in both cases.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from atomicio import write_atomic  # noqa: E402
+
 TEMPLATE = r"""<title>Verbatim Index</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -790,8 +795,8 @@ def main() -> int:
         .replace("__NOISE__", str(head.get("mean_within_judge_sd_overall", "1.5")))
         .replace("__TIEBAND__", str(head.get("least_significant_difference_95pct", 4.3))))
 
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(html_out)
+    # Atomic: a clone may be reading this file to deploy while another writes it.
+    write_atomic(args.out, html_out)
     print(f"wrote {args.out}  ({len(html_out)/1024:.0f} KB, {len(rows)} leaders)")
     return 0
 

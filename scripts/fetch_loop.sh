@@ -17,6 +17,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Every clone shares one data/ checkout, so a loop started in the wrong clone
+# writes the live corpus rather than a private copy.
+. scripts/daemon_guard.sh
+require_daemon_clone || exit 1
+
 PY=.venv/bin/python
 TARGET="${TARGET:-5}"                 # transcripts wanted per leader
 MIN_ACCEPT="${MIN_ACCEPT:-3}"         # below this a leader is reported as thin

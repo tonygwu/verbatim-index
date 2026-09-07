@@ -42,6 +42,11 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# scripts/ is not a package, and this module is also loaded by importlib in the
+# test harness, so make the sibling import work in both cases.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from atomicio import write_atomic  # noqa: E402
+
 DIMS = ["d1_clarity", "d2_insight", "d3_technical_depth"]
 DIM_LABEL = {"d1_clarity": "Clarity", "d2_insight": "Insight", "d3_technical_depth": "Technical depth"}
 WEIGHTS = {"d1_clarity": 0.20, "d2_insight": 0.45, "d3_technical_depth": 0.35}
@@ -374,11 +379,12 @@ def main() -> int:
                             for s in gr.get("subcriteria", [])},
         })
     audit_path = Path(args.out).with_name(Path(args.out).stem + "_audit.json")
-    audit_path.write_text(json.dumps(audit, indent=1))
+    write_atomic(audit_path, json.dumps(audit, indent=1))
     print(f"audit detail written to {audit_path}", file=sys.stderr)
 
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps({
+    # Atomic, because every clone now shares one data/ checkout and any of them
+    # may be reading results.json to deploy while this runs.
+    write_atomic(args.out, json.dumps({
         "diagnostics": diagnostics,
         "leaders": scored,
         "unscored": [l for l in leaders_out if l["status"] != "scored"],

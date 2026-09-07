@@ -10,7 +10,20 @@ specific to this repo.
 | Repo | Visibility | Where it is checked out | Holds |
 |---|---|---|---|
 | `tonygwu/verbatim-index` | public | the clone root, `repo-N/` | code, rubric, tests, docs |
-| `tonygwu/verbatim-index-data` | private | `repo-N/data/`, gitignored by the root | transcripts, grades, logs, roster, results |
+| `tonygwu/verbatim-index-data` | private | **one** checkout at `verbatim-index/data`, reached from every clone through a `repo-N/data` symlink | transcripts, grades, logs, roster, results |
+
+There is exactly one data checkout. Every clone points at it, so all clones
+read the same bytes at the same instant and any clone can deploy a current
+leaderboard with `bash scripts/deploy.sh`. Before 2026-09-07 each clone held
+its own copy, which drifted: repo-0's live tree ran hundreds of grades ahead of
+what the others could see, and only repo-0 could publish.
+
+The sharing has a cost. A loop started in the wrong clone now writes the live
+corpus instead of a private copy, so the three loops refuse to start unless
+`data/.daemon-clone` names the clone they are in. Git commands are not
+guarded, and one shared checkout means one `.git`: two agents running
+`git -C data ...` at once contend on `index.lock`. **Only `repo-0` commits
+`data/`.** That one stays a rule, not a precondition.
 
 The root `.gitignore` lists `data/`, so `git status` at the root never shows
 data changes and a public commit cannot sweep in a transcript. Data commits
@@ -30,8 +43,8 @@ personal one.
 
 | Clone | Role | What it must not do |
 |---|---|---|
-| `repo-0` | Runs the three daemons (`fetch_loop`, `happyscribe_loop`, `grade_loop`) and is the **only writer** of `data/`. Deploys the site. | Feature work that another clone is already doing. |
-| `repo-1`, `repo-2`, … | Code, tests, docs, analysis. Read `data/` freely. | Start any loop. Write under `data/`. Deploy. |
+| `repo-0` | Runs the three daemons (`fetch_loop`, `happyscribe_loop`, `grade_loop`), is the **only writer** of `data/`, and the only clone that commits it. | Feature work that another clone is already doing. |
+| `repo-1`, `repo-2`, … | Code, tests, docs, analysis. Read `data/` freely. Deploy with `scripts/deploy.sh`. | Start any loop. Write under `data/`. Commit `data/`. |
 
 Why one writer: the loops rewrite `data/transcripts`, `data/grades`, `data/logs`
 and `site/index.html` every few minutes. A second clone writing there produces
@@ -42,12 +55,13 @@ need new data, ask the operator to pull it through `repo-0`.
 
 ```
 git clone git@github.com:tonygwu/verbatim-index.git repo-N && cd repo-N
-git clone git@github.com:tonygwu/verbatim-index-data.git data
+ln -s ../data data          # ONE shared checkout, cloned once at verbatim-index/data
 git config user.email 446441+tonygwu@users.noreply.github.com
 git -C data config user.email 446441+tonygwu@users.noreply.github.com
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python scripts/test_grade_harness.py     # pure checks, no quota
 .venv/bin/python scripts/test_pipeline_dedupe.py  # pure checks, no quota
+.venv/bin/python scripts/test_shared_data.py      # pure checks, no quota
 .venv/bin/python scripts/test_blinding.py
 .venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
 ```
@@ -117,6 +131,10 @@ stops on its own rather than overspending.
   arrive through `fetch_loop.sh`. The sweep used to run only in
   `happyscribe_loop.sh`, which adds nothing on YouTube's side, so a re-upload
   was graded before the next sweep saw it.
+- **Outputs that cross clone boundaries are written atomically.**
+  `data/results.json`, its audit file and `site/index.html` go through
+  `scripts/atomicio.py`. `Path.write_text` truncates first, so a clone
+  deploying while the grading loop rewrites results.json would read a prefix.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing

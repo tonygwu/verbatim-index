@@ -14,6 +14,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Every clone shares one data/ checkout, so a loop started in the wrong clone
+# writes the live corpus rather than a private copy.
+. scripts/daemon_guard.sh
+require_daemon_clone || exit 1
+
 PY=.venv/bin/python
 TARGET="${TARGET:-5}"
 INTERVAL="${INTERVAL:-1.5}"      # seconds between requests to happyscribe
