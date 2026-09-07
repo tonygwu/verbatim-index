@@ -34,6 +34,10 @@ TEMPLATE = r"""<title>Verbatim Index</title>
   --ink:#15181D; --ink-2:#3C4450; --muted:#5B646F; --faint:#8A929C;
   --rule:#DCDFE5; --rule-strong:#C3C8D1;
   --d1:#2E6FC9; --d2:#BA5416; --d3:#00875A;
+  /* Overall is deliberately achromatic. It is a summary of the other three,
+     so giving it a fourth hue would read as a fourth dimension, and the old
+     maroon was the Insight hue exactly. */
+  --d0:#6B7280; --d0-soft:#9CA3AF;
   --d1-wash:#2E6FC91A; --d2-wash:#BA54161A; --d3-wash:#00875A1A;
   --warn:#9A6700; --bad:#A33A2A;
   --shadow:0 1px 2px #15181D0F, 0 4px 16px #15181D0A;
@@ -44,6 +48,7 @@ TEMPLATE = r"""<title>Verbatim Index</title>
     --ink:#E9ECF1; --ink-2:#C3C9D2; --muted:#9AA3AE; --faint:#6E7883;
     --rule:#2C3138; --rule-strong:#3B424B;
     --d1:#5A96DE; --d2:#D2702C; --d3:#2E9C6E;
+    --d0:#9AA3B2; --d0-soft:#6F7787;
     --d1-wash:#5A96DE26; --d2-wash:#D2702C26; --d3-wash:#2E9C6E26;
     --warn:#D9A441; --bad:#E0806F;
     --shadow:0 1px 2px #00000040, 0 4px 16px #00000030;
@@ -54,6 +59,7 @@ TEMPLATE = r"""<title>Verbatim Index</title>
   --ink:#E9ECF1; --ink-2:#C3C9D2; --muted:#9AA3AE; --faint:#6E7883;
   --rule:#2C3138; --rule-strong:#3B424B;
   --d1:#5A96DE; --d2:#D2702C; --d3:#2E9C6E;
+  --d0:#9AA3B2; --d0-soft:#6F7787;
   --d1-wash:#5A96DE26; --d2-wash:#D2702C26; --d3-wash:#2E9C6E26;
   --warn:#D9A441; --bad:#E0806F;
   --shadow:0 1px 2px #00000040, 0 4px 16px #00000030;
@@ -165,8 +171,41 @@ td.org .sector{
 .meter{width:52px; height:5px; border-radius:2px; background:var(--surface-2); overflow:hidden; flex:none}
 .meter i{display:block; height:100%; border-radius:2px}
 .m1 i{background:var(--d1)} .m2 i{background:var(--d2)} .m3 i{background:var(--d3)}
-td.overall .v{font-size:18px; font-weight:600; min-width:42px}
+td.overall .v{font-size:18px; font-weight:600; min-width:42px; color:var(--ink)}
 td.overall{background:var(--surface-2)}
+
+/* Overall cell: point estimate, then a 95% interval drawn as two dots.
+   A filled bar would say "more is more" the way the dimension meters do; this
+   number is not a quantity to fill up, it is an estimate with a width.
+
+   The band is scaled at a FIXED pixels-per-point, so its drawn width is
+   directly comparable row to row: a leader on 5 transcripts is visibly wider
+   than one on 13. Two earlier attempts failed and are worth recording. An
+   absolute 0-100 scale collapsed every typical interval into a few pixels. And
+   endpoint labels centred under their dots overlapped into "70.574.7" as soon
+   as the interval was narrow, which is most rows. They flank the dots now, so
+   they grow outward and can never collide. */
+.ci{display:flex; align-items:center; justify-content:flex-end; gap:14px}
+.ci-wrap{display:flex; align-items:center; gap:7px; flex:none}
+.ci-end{
+  font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
+  font-size:10px; letter-spacing:.01em; color:var(--faint); line-height:1; flex:none;
+}
+.ci-band{position:relative; height:9px; flex:none}
+.ci-band .rule{
+  position:absolute; left:4px; right:4px; top:3.5px; height:2px;
+  border-radius:1px; background:var(--d0); opacity:.4;
+}
+.ci-band .dot{
+  position:absolute; top:0.5px; width:8px; height:8px; border-radius:50%;
+  background:var(--surface); border:1.5px solid var(--d0); box-sizing:border-box;
+}
+.ci-band .dot.lo{left:0} .ci-band .dot.hi{right:0}
+.ci-band .pt{
+  position:absolute; top:-2px; width:2px; height:13px; border-radius:1px;
+  background:var(--d0); transform:translateX(-50%);
+}
+td.overall .ci-none{color:var(--faint); font-size:11px}
 
 .pill{
   display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px;
@@ -339,7 +378,7 @@ footer{
     smaller than __TIEBAND__ points do not separate two leaders.
   </p>
   <div class="legend">
-    <span><i style="background:var(--d2)"></i> Insight &mdash; 45% of composite</span>
+    <span><i style="background:var(--d2)"></i> Insight &mdash; 45% of Overall</span>
     <span><i style="background:var(--d3)"></i> Technical depth &mdash; 35%</span>
     <span><i style="background:var(--d1)"></i> Clarity &mdash; 20%</span>
   </div>
@@ -351,10 +390,11 @@ footer{
       <th data-k="rank" class="num">#<span class="arrow">&#9650;</span></th>
       <th data-k="name">Leader<span class="arrow">&#9650;</span></th>
       <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
-      <th data-k="overall" class="num">Composite<span class="arrow">&#9650;</span></th>
       <th data-k="d2" class="num">Insight<span class="arrow">&#9650;</span></th>
       <th data-k="d3" class="num">Technical<span class="arrow">&#9650;</span></th>
       <th data-k="d1" class="num">Clarity<span class="arrow">&#9650;</span></th>
+      <th data-k="overall" class="num">Overall<button class="info" type="button" data-info="ci"
+        aria-expanded="false" aria-label="What is the interval next to Overall?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="n" class="num">Transcripts<span class="arrow">&#9650;</span></th>
       <th data-k="halo" class="num">Halo<button class="info" type="button" data-info="halo"
         aria-expanded="false" aria-label="What does Halo mean?">?</button><span class="arrow">&#9650;</span></th>
@@ -389,13 +429,38 @@ const TIE = __TIEBAND__;
 const DIMS = [["d2","Insight","k2"],["d3","Technical depth","k3"],["d1","Clarity","k1"]];
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
+/* The Overall cell. Two dots mark the 95% interval, a tick marks the point
+   estimate, and the endpoints are printed small just outside their dots. */
+const CI_PPP = 5.0;       // pixels per score point
+// The floor is two dot diameters plus a gap. Below it the dots merge into one
+// blob and the interval reads as a single mark, which is worse than no band.
+// It bites only on intervals under 4 points, of which there are a handful.
+const CI_MIN = 20, CI_MAX = 100;
+function ciCell(v, lo, hi){
+  const num = `<span class="v">${v == null ? "&ndash;" : v.toFixed(1)}</span>`;
+  if (v == null || lo == null || hi == null){
+    return `<div class="ci">${num}<span class="ci-none">&mdash;</span></div>`;
+  }
+  const w = Math.max(CI_MIN, Math.min(CI_MAX, (hi - lo) * CI_PPP));
+  const rel = hi > lo ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 0.5;
+  const tick = 4 + rel * (w - 8);   // keep the tick between the two dot centres
+  return `<div class="ci">${num}<div class="ci-wrap">`
+    + `<span class="ci-end">${lo.toFixed(1)}</span>`
+    + `<span class="ci-band" style="width:${w.toFixed(1)}px">`
+    +   `<span class="rule"></span><span class="dot lo"></span><span class="dot hi"></span>`
+    +   `<span class="pt" style="left:${tick.toFixed(1)}px"></span>`
+    + `</span>`
+    + `<span class="ci-end">${hi.toFixed(1)}</span>`
+    + `</div></div>`;
+}
+
 function meter(v, cls){
   const w = Math.max(0, Math.min(100, v));
   return `<div class="score"><span class="v">${v == null ? "&ndash;" : v.toFixed(1)}</span>`
        + `<span class="meter ${cls}"><i style="width:${w}%"></i></span></div>`;
 }
 
-/* Bracket runs of leaders whose composite scores all sit inside the tie band. */
+/* Bracket runs of leaders whose Overall scores all sit inside the tie band. */
 function tieGroups(rows){
   const g = new Array(rows.length).fill(-1);
   let id = 0, i = 0;
@@ -477,10 +542,10 @@ function render(){
       + `<td class="rank">${g >= 0 ? '<span class="tie"></span>' : ""}${r.rank}</td>`
       + `<td class="who"><div class="nm">${esc(r.name)}</div><div class="rl">${esc(r.role)}</div></td>`
       + `<td class="org">${esc(r.company)}<span class="sector">${esc(r.sector)}</span></td>`
-      + `<td class="num overall">${meter(r.overall, "m2")}</td>`
       + `<td class="num">${meter(r.d2, "m2")}</td>`
       + `<td class="num">${meter(r.d3, "m3")}</td>`
       + `<td class="num">${meter(r.d1, "m1")}</td>`
+      + `<td class="num overall">${ciCell(r.overall, r.ci_low, r.ci_high)}</td>`
       + `<td class="num">${r.n}</td>`
       + `<td class="num halo ${haloCls}">${haloTxt}</td>`
       + `<td><span class="pill ${r.conf}">${r.conf}</span></td></tr>`;
@@ -491,13 +556,22 @@ function render(){
    Copy lives here so a column explanation is one string, not markup buried in
    the header row. Halo is the only one today; the mechanism takes more. */
 const INFO = {
+  ci: `<p><b>Overall &mdash; and how firm it is.</b></p>
+    <p>The big number is the score. The two dots are a 95% confidence interval:
+    resampling this leader's transcripts 20,000 times puts their score between
+    those endpoints 95% of the time.</p>
+    <p>A leader graded on 3 transcripts carries a much wider interval than one
+    graded on 14, because the transcripts we collected are a <em>sample</em> of
+    what that person says in public.</p>
+    <p class="note">Ranks come from the score alone. Where two intervals overlap
+    heavily, the ranking between those two leaders is not meaningful.</p>`,
   halo: `<p><b>Halo &mdash; what the name is worth.</b></p>
     <p>Every transcript is graded twice. Once with the speaker's name and company
     hidden, once with them shown. Halo is the second score minus the first.</p>
     <p><span class="k pos">+2.0</span> knowing who it was pushed the score up.
     Reputation helped.<br>
     <span class="k neg">&minus;2.0</span> knowing who it was pushed the score down.</p>
-    <p class="note">The Composite ranking uses the blinded score only, so Halo never
+    <p class="note">The Overall ranking uses the blinded score only, so Halo never
     moves it. Across the corpus it averages +0.48 points, which is inside noise.</p>`,
 };
 
@@ -609,7 +683,7 @@ def build_method(results: dict, calib: dict, roster: dict) -> str:
 <h3>What is being scored</h3>
 <p>Each transcript is graded on three dimensions, each on a 1&ndash;100 scale, supported by
 15 sub-criteria that a judge may also mark <em>not observed</em> when the format gave no
-opportunity to demonstrate them. The composite is
+opportunity to demonstrate them. The Overall score is
 <code>{w['d2_insight']:.2f}&times;Insight + {w['d3_technical_depth']:.2f}&times;Technical + {w['d1_clarity']:.2f}&times;Clarity</code>.</p>
 <ul>
 <li><b>Insight (45%)</b> &mdash; causal and counterfactual reasoning, originality, strategic
@@ -646,7 +720,7 @@ each call's telemetry rather than assumed.</li>
 <p>One unchanged transcript was graded five times by each judge under identical conditions. The
 spread that produced is pure method noise.</p>
 <ul>
-<li>Repeat grading moves the composite by about <b>{noise} points</b> of standard deviation.</li>
+<li>Repeat grading moves the Overall score by about <b>{noise} points</b> of standard deviation.</li>
 <li>So two leaders differing by less than <b>{head.get('least_significant_difference_95pct')} points</b>
 are not distinguishable. The bracket in the rank column marks those groups.</li>
 <li>Coverage and venue-difficulty judgements were <b>perfectly stable</b> across repeats
@@ -658,7 +732,7 @@ Across blinded grades the raw means were Fable {raw.get('fable', {}).get('d2_ins
 Astra {raw.get('astra', {}).get('d2_insight', '&ndash;')} on insight, a consistent offset rather than
 genuine disagreement about who is impressive. Each judge's distribution is therefore recentred on the
 pooled distribution before averaging, so only real disagreement moves a leader.
-Correlation between judges on the composite: <b>r&nbsp;=&nbsp;{corr}</b>.
+Correlation between judges on the Overall score: <b>r&nbsp;=&nbsp;{corr}</b>.
 Mean absolute gap: <b>{gap} points</b>.
 </div>
 """)
@@ -680,12 +754,12 @@ Agreement on the ranking is <b>ICC(3,1) = 0.657</b>, moderate on the Koo and Li
 bands, and the 95% limits of agreement span 30 points. Read the ranking as the
 shape of the field, never as a verdict on one appearance.</li>
 <li><b>Length does not buy score.</b> Twelve padded variants of one transcript,
-three padding styles at +25% and +60% words, moved the composite by +0.05
+three padding styles at +25% and +60% words, moved the Overall score by +0.05
 (Fable) and &minus;1.08 (Astra), every one inside the noise floor. Astra's
 clarity score fell 5.7 on padded text while insight and technical depth held
 flat, which is the rubric working as designed.</li>
 <li><b>Fame does not buy score.</b> Correlation between a video's view count and
-its composite is <b>+0.093</b>, against the 0.312 needed for significance at
+its Overall score is <b>+0.093</b>, against the 0.312 needed for significance at
 this sample size.</li>
 <li><b>The three dimensions measure three things.</b> In a multitrait-multimethod
 matrix, every same-dimension cross-judge correlation (0.661 to 0.686) beats every
@@ -702,7 +776,7 @@ sounds: the measured halo above is +0.48 points, inside noise. Judges recognised
 <b>{leak_pct}</b> of blinded transcripts, from products, projects, and context. Defeating that
 would mean stripping the technical content the study exists to measure. Every transcript was
 therefore also graded unblinded, and the <em>Halo</em> column reports the gap: how many points a
-leader gains once the judges are told who they are. The published composite is the blinded one.</li>
+leader gains once the judges are told who they are. The published Overall score is the blinded one.</li>
 <li><b>Captions have no speaker labels.</b> Judges separated the subject's speech from the
 interviewer's by context and reported their confidence and the subject's estimated share of the
 talking. Both are shown in each transcript card.</li>
@@ -763,7 +837,9 @@ def main() -> int:
         rows.append({
             "rank": l["rank"], "slug": l["slug"], "name": l["name"], "role": l["role"],
             "company": l["company"], "sector": l["sector"],
-            "overall": b.get("overall"), "d1": b.get("d1_clarity"),
+            "overall": b.get("overall"),
+            "ci_low": b.get("ci_low"), "ci_high": b.get("ci_high"),
+            "d1": b.get("d1_clarity"),
             "d2": b.get("d2_insight"), "d3": b.get("d3_technical_depth"),
             "n": l["n_transcripts"], "conf": l["confidence"],
             "halo": (l.get("halo") or {}).get("overall"),

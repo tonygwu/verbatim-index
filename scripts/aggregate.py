@@ -39,6 +39,7 @@ import json
 import math
 import statistics as st
 import sys
+import random
 from collections import defaultdict
 from pathlib import Path
 
@@ -115,6 +116,52 @@ def apply_calibration(raw: float, key: tuple, params: dict) -> float:
         return raw
     scaled = p["pooled_mean"] + (raw - p["judge_mean"]) * (p["pooled_sd"] / p["judge_sd"])
     return max(1.0, min(100.0, scaled))
+
+
+# How many resamples the interval is built from. 20k puts the Monte Carlo error
+# on a 95% endpoint well under 0.1 points, which is finer than the scores are
+# printed, so the published interval does not wobble between runs.
+BOOTSTRAP_N = 20000
+BOOTSTRAP_SEED = 20260907
+
+
+def bootstrap_ci(rows: list[dict], weights: dict, dims: list[str],
+                 n: int = BOOTSTRAP_N, seed: int = BOOTSTRAP_SEED,
+                 alpha: float = 0.05) -> tuple[float | None, float | None]:
+    """A 95% interval for a leader's score, resampling their transcripts.
+
+    The score is a coverage-weighted mean over the transcripts that were
+    collected, and those are a SAMPLE of what the person said in public. So the
+    number carries sampling error, and a leader on 3 transcripts carries far
+    more of it than one on 14. The point estimate alone hides that difference
+    completely, which is what this exists to fix.
+
+    The resample is over transcripts, with replacement, because the transcript
+    is the unit that varies. Calibration is deliberately held fixed: it is
+    fitted on the whole corpus, its own uncertainty is small next to per-leader
+    sampling, and refitting it inside every resample would mix two different
+    questions into one interval.
+
+    Seeded, so the published endpoints are reproducible rather than drifting by
+    a tenth of a point every time the loop re-aggregates.
+    """
+    if not rows:
+        return (None, None)
+    rng = random.Random(seed)
+    k = len(rows)
+    draws = []
+    for _ in range(n):
+        pick = [rows[rng.randrange(k)] for _ in range(k)]
+        total = 0.0
+        for dim in dims:
+            num = sum(r[f"cal_{dim}"] * max(r["coverage"], 0.05) for r in pick)
+            den = sum(max(r["coverage"], 0.05) for r in pick)
+            total += weights[dim] * (num / den)
+        draws.append(total)
+    draws.sort()
+    lo = draws[int((alpha / 2) * n)]
+    hi = draws[min(int((1 - alpha / 2) * n), n - 1)]
+    return (round(lo, 1), round(hi, 1))
 
 
 def weighted(pairs: list[tuple[float, float]]) -> float | None:
@@ -273,6 +320,11 @@ def main() -> int:
             return out
 
         b, o = agg(blinded), agg(openm)
+        # The interval belongs beside the score it qualifies, so it is written
+        # into the same block rather than a parallel structure the renderer has
+        # to join back up.
+        if b:
+            b["ci_low"], b["ci_high"] = bootstrap_ci(blinded, WEIGHTS, DIMS)
         halo = {}
         if b and o:
             for dim in DIMS:
@@ -340,6 +392,11 @@ def main() -> int:
             sum(1 for t in all_b if t["identity_recognised"]) / len(all_b), 3) if all_b else None,
         "unscorable_subject_absent": len(unscorable),
         "unscorable_detail": unscorable_report,
+        "bootstrap": {
+            "resamples": BOOTSTRAP_N, "seed": BOOTSTRAP_SEED, "interval": "95%",
+            "unit": "transcript, resampled with replacement",
+            "calibration": "held fixed; not refitted inside the resample",
+        },
         "min_subject_share_pct": MIN_SUBJECT_SHARE,
         "judge_refusals": len(refusals),
         "judge_refusals_by_leader": refusal_breakdown,
