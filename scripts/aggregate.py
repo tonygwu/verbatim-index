@@ -58,6 +58,49 @@ SUB_GROUPS = {
 }
 MIN_TRANSCRIPTS_FOR_CONFIDENCE = 3
 
+# Below this share of the words, the subject is not really in the recording and
+# the grade describes somebody else. MEASURED on 785 blinded grades: the share
+# distribution is bimodal. 47 grades sit at 0-4%, a near-empty band of 3 grades
+# spans 5-9%, and a continuum runs from 10% upward (16, 14, 9, 11, 26, 30, ...).
+# The old value of 15 cut straight through that continuum, so 37 grades sat
+# within five points of the line and small changes reshuffled who was included.
+# 10 sits in the empty band, which makes the cutoff a description of the data
+# rather than a round number.
+MIN_SUBJECT_SHARE = 10
+
+
+def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE
+                      ) -> tuple[list[dict], list[dict]]:
+    """Split grades into (kept, dropped) on subject speech share, per TRANSCRIPT.
+
+    The decision is made once per recording, on the mean of whatever judges
+    estimated it, and applies to all of that recording's grades. It used to be
+    made per grade, so one judge saying 14% and the other 16% dropped one and
+    kept the other, silently turning a two-judge transcript into a single-judge
+    one. Confidence already penalises single-judge leaders, so the filter was
+    quietly feeding a penalty it had nothing to do with.
+
+    Share is a property of the recording, not of the judge, and the judges agree
+    closely about it: median absolute disagreement 2 points, mean 3.6. So the
+    mean is a stable statistic and a transcript is either wholly in or wholly
+    out.
+
+    A grade with no share estimate is kept. Guessing a number for it would be
+    exactly the accept-and-guess this repo forbids.
+    """
+    by_tx: dict[tuple, list[int]] = defaultdict(list)
+    for g in grades:
+        v = (g.get("grade") or {}).get("subject_speech_share_pct")
+        if isinstance(v, int):
+            by_tx[(g["leader_slug"], g["source_id"], g["mode"])].append(v)
+    out = {k: st.mean(v) for k, v in by_tx.items() if v}
+    kept, dropped = [], []
+    for g in grades:
+        key = (g["leader_slug"], g["source_id"], g["mode"])
+        (dropped if key in out and out[key] < cutoff else kept).append(g)
+    return kept, dropped
+
+
 
 def load_grades(root: Path) -> list[dict]:
     out = []
@@ -280,13 +323,7 @@ def main() -> int:
     # score of 1 also entered calibrate(), dragging that judge's mean down and
     # inflating its spread, which shifts the calibrated score of EVERY leader.
     # So this filter must run BEFORE calibration, not at presentation time.
-    MIN_SUBJECT_SHARE = 15
-    unscorable = [g for g in grades
-                  if isinstance((g.get("grade") or {}).get("subject_speech_share_pct"), int)
-                  and g["grade"]["subject_speech_share_pct"] < MIN_SUBJECT_SHARE]
-    unscorable_ids = {(g["leader_slug"], g["source_id"], g["judge"], g["mode"]) for g in unscorable}
-    grades = [g for g in grades
-              if (g["leader_slug"], g["source_id"], g["judge"], g["mode"]) not in unscorable_ids]
+    grades, unscorable = filter_unscorable(grades, MIN_SUBJECT_SHARE)
     unscorable_report = [{
         "leader_slug": g["leader_slug"], "source_id": g["source_id"], "judge": g["judge"],
         "mode": g["mode"], "subject_share_pct": g["grade"]["subject_speech_share_pct"],

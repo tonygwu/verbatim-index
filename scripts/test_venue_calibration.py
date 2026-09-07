@@ -213,6 +213,119 @@ def test_interval_matches_the_point_estimate():
           abs(mid - pt) < abs(mid - raw), f"midpoint={mid:.2f} adjusted={pt:.2f} raw={raw:.2f}")
 
 
+# ---------------------------------------------------------------------------
+# 8. The subject-share cutoff, and deciding it per transcript.
+#
+# MEASURED 2026-09-07 on 785 blinded grades. The share distribution is bimodal:
+# 47 grades sit at 0-4%, where the subject is simply absent, then a near-empty
+# band of 3 grades at 5-9%, then a continuum from 10% upward (16, 14, 9, 11, 26,
+# 30 ...). The old cutoff of 15 cut straight through that continuum. 10 sits in
+# the empty band, so the line describes a real feature of the data rather than a
+# round number.
+#
+# The filter also ran PER GRADE, so one judge estimating 14% and the other 16%
+# dropped one grade and kept the other, silently turning a two-judge transcript
+# into a single-judge one. Confidence already penalises single-judge leaders, so
+# this filter was quietly feeding that. Speech share is a property of the
+# RECORDING, so both judges' estimates decide it together. They agree closely:
+# median absolute disagreement 2 points, mean 3.6.
+# ---------------------------------------------------------------------------
+def test_subject_share_cutoff():
+    print("\n[8] the subject-share cutoff sits in the gap and is decided per transcript")
+    a = load("aggregate")
+    check("the cutoff is 10, the empty band in the measured distribution",
+          a.MIN_SUBJECT_SHARE == 10, f"MIN_SUBJECT_SHARE={a.MIN_SUBJECT_SHARE}")
+
+    def g(slug, sid, judge, share):
+        return {"leader_slug": slug, "source_id": sid, "judge": judge, "mode": "blinded",
+                "grade": {"subject_speech_share_pct": share, "overall": 50.0}}
+
+    # Judges straddle the line. Under the old per-grade rule this kept one and
+    # dropped the other; the transcript must now be all in or all out.
+    straddle = [g("x", "t1", "fable", 9), g("x", "t1", "astra", 12)]
+    kept, dropped = a.filter_unscorable(straddle, a.MIN_SUBJECT_SHARE)
+    check("a straddling transcript is never half-dropped",
+          len(kept) in (0, 2) and len(dropped) in (0, 2), f"kept={len(kept)} dropped={len(dropped)}")
+    check("mean 10.5 is at or above the cutoff, so it is kept whole", len(kept) == 2,
+          f"kept={len(kept)}")
+
+    clearly_out = [g("x", "t2", "fable", 2), g("x", "t2", "astra", 3)]
+    kept, dropped = a.filter_unscorable(clearly_out, a.MIN_SUBJECT_SHARE)
+    check("a transcript where the subject is absent is dropped whole", len(dropped) == 2, f"{dropped}")
+
+    clearly_in = [g("x", "t3", "fable", 60), g("x", "t3", "astra", 70)]
+    kept, _ = a.filter_unscorable(clearly_in, a.MIN_SUBJECT_SHARE)
+    check("an ordinary interview is kept", len(kept) == 2)
+
+    single = [g("x", "t4", "astra", 4)]
+    kept, dropped = a.filter_unscorable(single, a.MIN_SUBJECT_SHARE)
+    check("a single-judge transcript is still judged on the one estimate it has",
+          len(dropped) == 1, f"kept={len(kept)}")
+
+    missing = [{"leader_slug": "x", "source_id": "t5", "judge": "fable", "mode": "blinded",
+                "grade": {"overall": 50.0}}]
+    kept, dropped = a.filter_unscorable(missing, a.MIN_SUBJECT_SHARE)
+    check("a grade with no share estimate is kept, not guessed at",
+          len(kept) == 1 and not dropped, f"kept={len(kept)} dropped={len(dropped)}")
+
+    mixed = [g("x", "t6", "fable", 5), g("x", "t6", "astra", 80)]
+    kept, dropped = a.filter_unscorable(mixed, a.MIN_SUBJECT_SHARE)
+    check("judges that wildly disagree still resolve to one decision for the transcript",
+          len(kept) in (0, 2) and len(dropped) in (0, 2), f"kept={len(kept)} dropped={len(dropped)}")
+
+
+# ---------------------------------------------------------------------------
+# 9. Astra's web searches must be counted.
+#
+# MEASURED 2026-09-07: `codex exec` with the production flags reports
+# "YES - web.run", and the judge was observed issuing web_search calls and
+# citing a page that named the subject. -s read-only restricts the filesystem,
+# not the network, and none of five candidate config keys disabled it.
+#
+# The decision is to leave the behaviour alone, because changing it now would
+# make new grades incomparable with the 999 already in the corpus. But it must
+# stop being INVISIBLE: across 706 Astra grades nothing recorded whether a
+# lookup happened, so the exposure could not be measured at all.
+# ---------------------------------------------------------------------------
+def test_astra_search_is_logged():
+    print("\n[9] Astra's web searches are counted in the telemetry")
+    src = (REPO / "scripts" / "grade.py").read_text()
+    check("grade.py counts web_search items from the codex event stream",
+          "web_search" in src, "the stream is parsed but tool use is not recorded")
+    g = load("grade")
+    check("there is one helper that counts them", hasattr(g, "count_tool_events"),
+          "expected count_tool_events() so the shape is in one place")
+    if not hasattr(g, "count_tool_events"):
+        return
+    events = [
+        {"type": "thread.started"},
+        {"type": "item.started", "item": {"type": "web_search"}},
+        {"type": "item.completed", "item": {"type": "web_search", "query": "who is this"}},
+        {"type": "item.completed", "item": {"type": "web_search", "query": "second"}},
+        {"type": "item.completed", "item": {"type": "command_execution", "command": "cat x"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "{}"}},
+    ]
+    t = g.count_tool_events(events)
+    check("completed web searches are counted, not the started events too",
+          t["web_search"] == 2, f"{t}")
+    check("shell commands are counted separately", t["command_execution"] == 1, f"{t}")
+    check("ordinary messages are not counted as tool use", "agent_message" not in t, f"{t}")
+    check("a run with no tool use reports zero rather than omitting the field",
+          g.count_tool_events([{"type": "turn.completed"}])["web_search"] == 0,
+          f"{g.count_tool_events([{'type': 'turn.completed'}])}")
+    # "tool_use" alone is not enough: E_TOOL_ATTEMPT already contains that
+    # substring, so the first version of this check passed without anything
+    # being wired up. Assert on the telemetry key and the call site instead.
+    check("the counts are written into astra's telemetry",
+          '"tool_use_counts": count_tool_events(events)' in src,
+          "count_tool_events exists but nothing calls it")
+    check("the search queries themselves are recorded, not just a count",
+          '"web_search_queries"' in src, "a bare count cannot say what was looked up")
+    astra = src.split("def call_astra")[1].split("\ndef ")[0]
+    check("the counting happens inside call_astra, where the stream is parsed",
+          "count_tool_events(events)" in astra, "wired somewhere else than the astra path")
+
+
 def main() -> int:
     print("venue-adjustment and error-log guards")
     test_recovers_a_known_effect()
@@ -221,6 +334,8 @@ def main() -> int:
     test_missing_venue_is_safe()
     test_collinear_design_is_not_over_fitted()
     test_interval_matches_the_point_estimate()
+    test_subject_share_cutoff()
+    test_astra_search_is_logged()
     with tempfile.TemporaryDirectory() as td:
         test_reported_in_diagnostics(Path(td))
         test_error_log_has_timestamps(Path(td))

@@ -231,12 +231,39 @@ def test_gitignore_covers_a_symlink(tmp: Path) -> None:
           "the old layout would start tracking transcripts")
 
 
+# ---------------------------------------------------------------------------
+# 5. One working agreement, two names.
+#
+# Different tools look for different filenames. AGENTS.md is the real file and
+# CLAUDE.md is a symlink to it, so the two can never drift apart into two
+# half-maintained copies of the same rules.
+# ---------------------------------------------------------------------------
+
+def test_one_working_agreement() -> None:
+    print("\n[5] CLAUDE.md is a symlink to AGENTS.md, not a second copy")
+    agents, claude = REPO / "AGENTS.md", REPO / "CLAUDE.md"
+    check("AGENTS.md exists and is a real file",
+          agents.is_file() and not agents.is_symlink(), f"{agents}")
+    check("CLAUDE.md is a symlink", claude.is_symlink(),
+          "CLAUDE.md is a regular file again; the two will drift")
+    if claude.is_symlink():
+        check("it points at AGENTS.md, relatively so the tree stays movable",
+              os.readlink(claude) == "AGENTS.md", f"-> {os.readlink(claude)}")
+    check("both names resolve to the same bytes",
+          claude.read_text() == agents.read_text())
+    r = subprocess.run(["git", "-C", str(REPO), "ls-files", "-s", "CLAUDE.md"],
+                       capture_output=True, text=True)
+    check("git has it staged as a symlink (mode 120000), not as a text file",
+          r.stdout.startswith("120000"), f"git ls-files says: {r.stdout.strip() or '(untracked)'}")
+
+
 def main() -> int:
     print("shared-data fleet guards")
     for fn in (test_atomic_writes, test_daemon_guard, test_gitignore_covers_a_symlink):
         with tempfile.TemporaryDirectory() as td:
             fn(Path(td))
     test_deploy_renders_first()
+    test_one_working_agreement()
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))

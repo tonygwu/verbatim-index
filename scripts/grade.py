@@ -347,6 +347,32 @@ def order_breadth_first(jobs: list[dict]) -> list[dict]:
     return cached + [t[2] for t in ranked]
 
 
+def count_tool_events(events: list[dict]) -> dict[str, int]:
+    """Count the tools a codex judge actually used, from the stream we already parse.
+
+    MEASURED 2026-09-07: `codex exec` with these exact production flags answers
+    "YES - web.run" when asked whether it has web search, and the judge was
+    observed running web_search and citing a page that named the blinded
+    subject. `-s read-only` restricts the filesystem, not the network, and none
+    of five candidate config keys switched it off.
+
+    The behaviour is deliberately left alone, because changing it now would make
+    new grades incomparable with the corpus already graded. What is not
+    acceptable is that it was INVISIBLE: across 706 Astra grades nothing recorded
+    whether a lookup happened, so the exposure could not be measured at all.
+    Only completed items are counted, since a started item that never finishes
+    did not return anything to the judge.
+    """
+    counts = {"web_search": 0, "command_execution": 0, "file_search": 0}
+    for e in events:
+        if e.get("type") != "item.completed":
+            continue
+        kind = (e.get("item") or {}).get("type")
+        if kind in counts:
+            counts[kind] += 1
+    return counts
+
+
 def stamp_failure(rec: dict) -> dict:
     """Put the time on a failure record, in UTC, before it is written.
 
@@ -704,6 +730,15 @@ def call_astra(prompt: str, timeout: int, workdir: Path) -> tuple[str, dict]:
         "output_tokens": usage.get("output_tokens"),
         "cached_input_tokens": usage.get("cached_input_tokens"),
         "nonfatal_events": [json.dumps(e)[:200] for e in errors][:5],
+        # What the judge actually reached for. This arm has live web search and
+        # keeps it deliberately; recording the count is what makes the exposure
+        # measurable instead of merely accepted.
+        "tool_use_counts": count_tool_events(events),
+        "web_search_queries": [
+            (e.get("item") or {}).get("query") for e in events
+            if e.get("type") == "item.completed"
+            and (e.get("item") or {}).get("type") == "web_search"
+        ][:10],
     }
     if telemetry["reasoning_output_tokens"] in (None, 0):
         raise RuntimeError(f"{E_MODEL_MISMATCH}: no reasoning tokens reported; "
