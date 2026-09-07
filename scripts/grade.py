@@ -416,9 +416,16 @@ def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
         # one: it says "You've hit your monthly spend limit", so none of
         # "reached your", "usage limit" or "quota" matches it. Without them a
         # quota stop is logged as cli_nonzero_exit and reads as a crash.
+        #
+        # "session limit" is the 5-hour window, a third wording again: "You've
+        # hit your session limit · resets 2:40pm". Captured from claude-e on
+        # 2026-09-07, where 75 refusals in one pass were all filed as crashes.
+        # The family is "You've <verb> your <scope> limit", and this matcher
+        # tests whole phrases, so every new <scope> the CLI ships needs adding.
         if any(s in low for s in ("reached your", "usage limit", "rate limit",
                                   "out of credit", "quota", "upgrade to",
-                                  "spend limit", "cc_cli_limit_message")):
+                                  "spend limit", "session limit",
+                                  "cc_cli_limit_message")):
             return E_AUTH, f"{E_AUTH}: {result[:400]}"
         if payload.get("stop_reason") == "tool_use":
             return E_TOOL_ATTEMPT, (

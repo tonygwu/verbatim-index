@@ -73,6 +73,25 @@ QUOTA_STDOUT = json.dumps({
     "num_turns": 1,
 })
 
+# The 5-hour window refusal, which is a THIRD wording. Captured verbatim from
+# claude-e on 2026-09-07 while the account was refusing, by running the judge's
+# own flags and keeping the raw stdout. It shares no phrase with the two above:
+# not "reached your", not "usage limit", not "spend limit", and it carries no
+# cc_cli_limit_message marker. It was landing in cli_nonzero_exit, so 75 quota
+# stops in one pass read as crashes.
+#
+# The family is "You've <verb> your <scope> limit". Each new <scope> the CLI
+# introduces needs adding here, because the matcher tests for whole phrases.
+SESSION_LIMIT_STDOUT = json.dumps({
+    "is_error": True,
+    "stop_reason": "stop_sequence",
+    "terminal_reason": "api_error",
+    "subtype": "success",
+    "result": "You've hit your session limit · resets 2:40pm (America/Los_Angeles)",
+    "modelUsage": {},
+    "num_turns": 0,
+})
+
 TOOL_STDOUT = json.dumps({
     "is_error": False,
     "stop_reason": "tool_use",
@@ -104,6 +123,12 @@ def test_classification(g) -> None:
           et == g.E_AUTH, f"got {et!r}")
     check("spend-limit detail keeps the CLI's own wording",
           "spend limit" in detail, f"got {detail[:120]!r}")
+
+    et, detail = fn(1, SESSION_LIMIT_STDOUT, "")
+    check("5-hour session limit -> auth_or_quota, not cli_nonzero_exit",
+          et == g.E_AUTH, f"got {et!r}")
+    check("session-limit detail keeps the reset time the operator needs",
+          "2:40pm" in detail, f"got {detail[:120]!r}")
 
     et, detail = fn(1, TOOL_STDOUT, "")
     check("tool attempt -> its own error class",
