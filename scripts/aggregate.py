@@ -384,6 +384,12 @@ def main() -> int:
     # score of 1 also entered calibrate(), dragging that judge's mean down and
     # inflating its spread, which shifts the calibrated score of EVERY leader.
     # So this filter must run BEFORE calibration, not at presentation time.
+    # Recorded before any filter runs, so a reader can tell a stale results.json
+    # from a filtered one. grades_loaded below is counted AFTER the unscorable
+    # drop, so comparing THAT to the files on disk reports a permanent false
+    # staleness equal to the number of dropped rows. deploy.sh compares against
+    # this figure instead.
+    grade_files_read = len(grades)
     grades, unscorable = filter_unscorable(grades, MIN_SUBJECT_SHARE)
     unscorable_report = [{
         "leader_slug": g["leader_slug"], "source_id": g["source_id"], "judge": g["judge"],
@@ -581,6 +587,7 @@ def main() -> int:
     diagnostics = {
         "grading_contracts": dict(contracts),
         "rubric_versions_pooled": len(known),
+        "grade_files_read": grade_files_read,
         "grades_loaded": len(grades),
         "grades_used": len(usable),
         "grades_excluded_validation": len(excluded),
