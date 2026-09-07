@@ -206,15 +206,39 @@ def test_table_layout() -> None:
         check("the exact endpoints stay reachable, in the cell's tooltip",
               "title=" in f and "lo.toFixed(1)" in f and "hi.toFixed(1)" in f,
               "the endpoint numbers are not recoverable anywhere")
-    check("the header carries an axis for the shared scale",
-          'id="ciaxis"' in src and "function ciAxis()" in src,
-          "no axis; a shared scale with no labels cannot be read")
-    check("the axis is drawn before the first render",
-          "ciAxis();" in src and "render();\n</script>" in src
-          and src.index("ciAxis();") < src.index("render();\n</script>"),
-          "ciAxis() never runs")
-    check("the axis ticks and the row rules come from the same tick list",
-          src.count("CI_TICKS.map") == 2, f"CI_TICKS.map uses={src.count('CI_TICKS.map')}")
+    # ---- the scale is read from numbers, not from a ruler ----------------
+    # The axis and the gridlines behind each row were removed on request: the
+    # column read as a chart of vertical bars. Each row now prints its own two
+    # endpoints, so the scale is still readable without any furniture.
+    check("the header axis is gone, leaving the label and the (?) alone",
+          'id="ciaxis"' not in src and "ciAxis" not in src
+          and "ci-axis" not in src,
+          "an axis survives; the header should be '95% interval ?' only")
+    check("the vertical gridlines behind the rows are gone",
+          "CI_GRID" not in src and "ci-grid" not in src and "CI_TICKS" not in src,
+          "the per-row vertical rules survive")
+    if plot:
+        f = plot.group(0)
+        check("each endpoint is printed beside its own dot",
+              'class="lab lab-lo"' in f and 'class="lab lab-hi"' in f,
+              "the endpoint numbers are not drawn in the cell")
+        check("the two endpoint labels grow outward so they cannot collide",
+              "translateX(-100%)" in src and ".lab-hi{padding-left" in src,
+              "labels are centred on their dots and will run together")
+        check("a label sits at the same coordinate as the dot it belongs to",
+              f.count('style="left:${a.toFixed(3)}%"') == 2
+              and f.count('style="left:${b.toFixed(3)}%"') == 2,
+              "a label and its dot are placed independently and can drift apart")
+        check("the printed endpoints carry one decimal, like every other score",
+              f.count("lo.toFixed(1)") >= 2 and f.count("hi.toFixed(1)") >= 2,
+              "endpoint labels are not formatted like the rest of the table")
+        check("the labels are hidden from screen readers, which get the tooltip",
+              f.count('aria-hidden="true"') == 2,
+              "the numbers would be read out twice")
+    check("the cell reserves room for a label that hangs outside the band",
+          re.search(r'td\.oci\{[^}]*padding-left:(\d+)px', src) is not None
+          and int(re.search(r'td\.oci\{[^}]*padding-left:(\d+)px', src).group(1)) >= 30,
+          "a full-width interval would clip its own endpoint labels")
 
     # ---- the table must fit its container -------------------------------
     # It used to be 73px wider than the card, so the last column was reachable

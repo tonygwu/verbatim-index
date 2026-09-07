@@ -200,12 +200,11 @@ td.oscore{
   font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
 }
 td.oscore .v{font-size:18px; font-weight:600; color:var(--ink)}
-td.oci{position:relative; padding-left:12px; padding-right:12px}
+/* Room on both sides for an endpoint label that hangs outside the band. A row
+   whose interval spans the whole domain puts a label flush against each edge,
+   so the padding has to clear the widest label plus its gap. */
+td.oci{position:relative; padding-left:34px; padding-right:34px}
 
-/* The rules span the whole cell box, top to bottom, so adjacent rows join them
-   into continuous verticals down the column. */
-.ci-grid{position:absolute; left:12px; right:12px; top:0; bottom:0; pointer-events:none}
-.ci-grid i{position:absolute; top:0; bottom:0; width:1px; background:var(--rule)}
 .ci-track{position:relative; display:block; height:12px}
 .ci-track .rule{
   position:absolute; top:5px; height:2px; border-radius:1px;
@@ -222,13 +221,19 @@ td.oci{position:relative; padding-left:12px; padding-right:12px}
 }
 .ci-none{color:var(--faint); font-size:11px}
 
-/* The axis under the interval header, on the same coordinates as the rules. */
-th.ocih{padding-left:12px; padding-right:12px}
-.ci-axis{position:relative; display:block; height:11px; margin-top:6px}
-.ci-axis i{
-  position:absolute; transform:translateX(-50%); font-style:normal;
-  font-size:9px; letter-spacing:.02em; color:var(--faint); line-height:1;
+/* The endpoint numbers, one flanking each dot and growing outward. Centring
+   them under their dots ran them together into "70.574.7" on a narrow
+   interval, which is most rows, so each hangs off the outside of its own dot
+   instead. The gap keeps the digits clear of the circle. */
+.ci-track .lab{
+  position:absolute; top:0; line-height:12px; white-space:nowrap;
+  font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
+  font-size:9px; letter-spacing:.02em; color:var(--faint);
 }
+.ci-track .lab-lo{transform:translateX(-100%); padding-right:5px}
+.ci-track .lab-hi{padding-left:5px}
+
+th.ocih{padding-left:34px; padding-right:34px}
 
 .pill{
   display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px;
@@ -424,7 +429,7 @@ footer{
       <th data-k="d1">Clarity<span class="arrow">&#9650;</span></th>
       <th data-k="overall">Overall<span class="arrow">&#9650;</span></th>
       <th class="nosort ocih">95% interval<button class="info" type="button" data-info="ci"
-        aria-expanded="false" aria-label="What is the 95% interval?">?</button><span class="ci-axis" id="ciaxis"></span></th>
+        aria-expanded="false" aria-label="What is the 95% interval?">?</button></th>
       <th data-k="n">Transcripts<span class="arrow">&#9650;</span></th>
       <th data-k="halo">Halo<button class="info" type="button" data-info="halo"
         aria-expanded="false" aria-label="What does Halo mean?">?</button><span class="arrow">&#9650;</span></th>
@@ -468,8 +473,10 @@ const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;
    full DATA array and not from the sorted rows, so sorting a column never
    moves a dot.
 
-   CI_TICKS are the round scores inside the domain. They label the axis in the
-   header and draw the faint rules behind every row. */
+   The scale carries no axis and no gridlines. Each row prints its own two
+   endpoints beside its dots instead, so a number is read rather than
+   estimated against a ruler, and the column stays quiet. Position still
+   encodes value, so rows remain comparable at a glance. */
 const CI_DOM = (() => {
   const lo = DATA.map(r => r.ci_low).filter(v => v != null);
   const hi = DATA.map(r => r.ci_high).filter(v => v != null);
@@ -477,43 +484,24 @@ const CI_DOM = (() => {
   const a = Math.floor(Math.min(...lo) / 5) * 5, b = Math.ceil(Math.max(...hi) / 5) * 5;
   return b > a ? {lo: a, hi: b} : null;
 })();
-const CI_TICKS = (() => {
-  if (!CI_DOM) return [];
-  const out = [];
-  for (let v = Math.ceil(CI_DOM.lo / 10) * 10; v < CI_DOM.hi; v += 10)
-    if (v > CI_DOM.lo) out.push(v);
-  return out;
-})();
 const ciPct = v => ((v - CI_DOM.lo) / (CI_DOM.hi - CI_DOM.lo)) * 100;
-const CI_GRID = CI_DOM
-  ? `<span class="ci-grid" aria-hidden="true">`
-    + CI_TICKS.map(t => `<i style="left:${ciPct(t).toFixed(3)}%"></i>`).join("")
-    + `</span>`
-  : "";
 
-/* The endpoints are not printed beside the dots. On a shared scale they would
-   sit at a different x in every row and fight the alignment the scale exists
-   to give. They are in the cell's tooltip instead. */
+/* Each endpoint is printed beside its own dot and hangs outward, so the two
+   numbers cannot collide however narrow the interval is. The tooltip keeps
+   the same figures for anyone reading with a screen reader. */
 function ciPlot(v, lo, hi){
   if (!CI_DOM || v == null || lo == null || hi == null)
-    return CI_GRID + `<span class="ci-none">&mdash;</span>`;
+    return `<span class="ci-none">&mdash;</span>`;
   const a = ciPct(lo), b = ciPct(hi), pt = ciPct(v);
   const t = esc(`${v.toFixed(1)} \u2014 95% interval ${lo.toFixed(1)} to ${hi.toFixed(1)}`);
-  return CI_GRID
-    + `<span class="ci-track" title="${t}" role="img" aria-label="${t}">`
+  return `<span class="ci-track" title="${t}" role="img" aria-label="${t}">`
+    +   `<span class="lab lab-lo" style="left:${a.toFixed(3)}%" aria-hidden="true">${lo.toFixed(1)}</span>`
     +   `<span class="rule" style="left:${a.toFixed(3)}%; width:${(b - a).toFixed(3)}%"></span>`
     +   `<span class="dot" style="left:${a.toFixed(3)}%"></span>`
     +   `<span class="dot" style="left:${b.toFixed(3)}%"></span>`
     +   `<span class="pt" style="left:${pt.toFixed(3)}%"></span>`
+    +   `<span class="lab lab-hi" style="left:${b.toFixed(3)}%" aria-hidden="true">${hi.toFixed(1)}</span>`
     + `</span>`;
-}
-
-function ciAxis(){
-  const el = document.getElementById("ciaxis");
-  if (!el) return;
-  el.innerHTML = CI_DOM
-    ? CI_TICKS.map(t => `<i style="left:${ciPct(t).toFixed(3)}%">${t}</i>`).join("")
-    : "";
 }
 
 function meter(v, cls){
@@ -725,7 +713,6 @@ document.getElementById("themeBtn").addEventListener("click", () => {
     : window.matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
 });
-ciAxis();
 render();
 </script>
 """
