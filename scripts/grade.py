@@ -347,67 +347,50 @@ def order_breadth_first(jobs: list[dict]) -> list[dict]:
     return cached + [t[2] for t in ranked]
 
 
-# How many times the primary judge model may refuse before another model is
-# tried. MEASURED 2026-09-07: Astra refused 11 blinded transcripts on content
-# grounds, and a controlled re-run of three of them found the refusals are not
-# deterministic. It refused elon-musk/lex-fridman-jn3kpf and
-# tim-cook/the-uptake-by-bridgemake-fwv5jc in production and graded both on the
-# re-run, same transcript, same prompt. Only alex-karp/the-free-press-qdqhf7
-# refused twice. So a retry recovers most of them and a fallback model is needed
-# only for the stubborn minority.
+# How many times a refusing judge is retried on the SAME model.
+# MEASURED 2026-09-07: Astra refused 11 blinded transcripts on content grounds,
+# and a controlled re-run of three found the refusals are not deterministic. It
+# refused elon-musk/lex-fridman-jn3kpf and tim-cook/the-uptake-by-bridgemake-fwv5jc
+# in production and graded both on the re-run, same transcript and prompt. Only
+# alex-karp/the-free-press-qdqhf7 refused twice.
+#
+# There is deliberately NO fallback to another model. A second model's grades
+# could not be calibrated: there would only ever be a handful of them, far below
+# aggregate.MIN_CALIBRATION_N, so they would enter the leaderboard unrescaled and
+# about six points high, and only on the leaders where refusals concentrate. A
+# grade that cannot be calibrated is not worth having, so the call is not made.
 REFUSAL_ATTEMPTS = 3
-# The fallback model. gpt-5.6-sol graded the transcript that refused twice, at
-# 49.1 with a valid schema. It is a DIFFERENT model, so its grades are filed
-# with the model that served them and aggregate.py calibrates it separately.
-ASTRA_FALLBACK_MODEL = "gpt-5.6-sol"
 
 
 def _policy_fields(job: dict) -> dict:
     """The retry outcome, flattened onto the grade record.
 
-    `served_model` is what aggregate.py keys calibration on, so a grade produced
-    by the fallback model is never pooled into the primary's distribution.
+    `served_model` is what aggregate.py keys calibration on, so a judge whose
+    model is bumped mid-corpus is never pooled across two distributions.
     """
     p = job.get("_policy") or {}
     if not p:
         return {}
     return {"served_model": p.get("served_model"),
-            "refusal_attempts": p.get("attempts"),
-            "fallback_used": p.get("fallback_used", False)}
+            "refusal_attempts": p.get("attempts")}
 
 
-def grade_with_refusal_policy(call, primary: str, fallback: str | None,
-                              attempts: int = REFUSAL_ATTEMPTS):
-    """Retry a refusing judge on the same model, then try another model once.
+def grade_with_refusal_policy(call, primary: str, attempts: int = REFUSAL_ATTEMPTS):
+    """Retry a refusing judge on the same model, up to `attempts` times.
 
     `call(model)` must return `(parsed_object, telemetry)`.
 
     Returns `(obj, telemetry, info)` where info carries `attempts`,
-    `served_model`, `fallback_used` and `refused`. Those travel onto the grade
-    record, because a grade produced by a different model must be visible to
-    calibration rather than silently pooled with the primary's distribution.
-
-    No speculative retry: a transcript that grades first time costs one call.
+    `served_model` and `refused`. A transcript that grades first time costs
+    exactly one call: there is no speculative retry.
     """
     obj, telemetry, n = None, {}, 0
     for _ in range(max(1, attempts)):
         n += 1
         obj, telemetry = call(primary)
         if looks_like_refusal(obj) is None:
-            return obj, telemetry, {"attempts": n, "served_model": primary,
-                                    "fallback_used": False, "refused": False}
-    if fallback:
-        n += 1
-        obj2, telemetry2 = call(fallback)
-        if looks_like_refusal(obj2) is None:
-            return obj2, telemetry2, {"attempts": n, "served_model": fallback,
-                                      "fallback_used": True, "refused": False}
-        # Both refused. Report the PRIMARY's refusal, since that is the judge
-        # this arm is supposed to be, and say that the fallback was spent too.
-        return obj, telemetry, {"attempts": n, "served_model": primary,
-                                "fallback_used": True, "refused": True}
-    return obj, telemetry, {"attempts": n, "served_model": primary,
-                            "fallback_used": False, "refused": True}
+            return obj, telemetry, {"attempts": n, "served_model": primary, "refused": False}
+    return obj, telemetry, {"attempts": n, "served_model": primary, "refused": True}
 
 
 def count_tool_events(events: list[dict]) -> dict[str, int]:
@@ -860,7 +843,7 @@ def grade_one(job: dict) -> dict:
                     return {"__unparseable__": txt}, tel
 
             obj_or_raw, telemetry, policy = grade_with_refusal_policy(
-                _one, primary=job["astra_model"], fallback=job["astra_fallback"])
+                _one, primary=job["astra_model"])
             if "__unparseable__" in obj_or_raw:
                 text = obj_or_raw["__unparseable__"]
             else:
@@ -962,11 +945,6 @@ def main() -> int:
     ap.add_argument("--errors", default="data/logs/grade_errors.jsonl")
     ap.add_argument("--astra-model", default="gpt-6-astra",
                     help="Primary model for the Astra arm.")
-    ap.add_argument("--astra-fallback", default=ASTRA_FALLBACK_MODEL,
-                    help="Model to try when the primary refuses REFUSAL_ATTEMPTS times in a "
-                         "row. Pass an empty string to disable the fallback and simply retry. "
-                         "Its grades are calibrated separately, because it is a different "
-                         "model under the same judge name.")
     ap.add_argument("--fable-bin", default="claude",
                     help="Binary that runs the Fable judge. Must be the plain claude CLI: "
                          "account rotation happens in this script, via the llm-quota-router "
@@ -1062,7 +1040,6 @@ def main() -> int:
             "config_dir": assign_accounts(judge, i, cfg_dirs, judges),
             "fable_bin": args.fable_bin,
             "astra_model": args.astra_model,
-            "astra_fallback": args.astra_fallback or None,
             "workdir": str(wd),
             "dest": str(Path(args.out) / judge / rec["leader_slug"] / f"{stem}.json"),
             "raw_dest": str(Path(args.out) / "_raw" / judge / rec["leader_slug"] / f"{stem}.txt"),

@@ -425,6 +425,16 @@ def main() -> int:
     if contracts:
         print(f"grading contracts in corpus: {dict(contracts)}", file=sys.stderr)
 
+    judge_models: dict[str, Counter] = defaultdict(Counter)
+    for g in usable:
+        judge_models[g["judge"]][served_model(g)] += 1
+    for j, models in sorted(judge_models.items()):
+        if len(models) > 1:
+            print(f"WARNING: judge {j!r} served more than one model: {dict(models)}. "
+                  f"Each is calibrated on its own distribution, and any with fewer than "
+                  f"{MIN_CALIBRATION_N} grades is not rescaled at all, so its scores enter "
+                  f"unadjusted. Check that this is intended.", file=sys.stderr)
+
     params = calibrate(usable)
 
     # Per (leader, transcript, mode): consensus of the judges that graded it.
@@ -599,6 +609,11 @@ def main() -> int:
         "venue_note": ("Points a FORMAT adds or removes with the speaker held fixed, fitted "
                        "as an additive leader+venue model and subtracted from each dimension. "
                        "Venues seen fewer than venue_min_n times get exactly zero."),
+        # Which models actually answered for each judge. A judge is an ARM, not a
+        # model, so a mid-corpus model bump would otherwise pool two different
+        # distributions under one name. Calibration already keys on the model;
+        # this makes the situation visible rather than merely handled.
+        "judge_models": {j: dict(m) for j, m in sorted(judge_models.items())},
         "min_subject_share_pct": MIN_SUBJECT_SHARE,
         "judge_refusals": len(refusals),
         "judge_refusals_by_leader": refusal_breakdown,

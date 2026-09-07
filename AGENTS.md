@@ -210,20 +210,24 @@ the measurement is named so a later reader can re-run it rather than trust it.
   reason. Judges agree closely about share: median absolute disagreement 2
   points, mean 3.6. A grade with no estimate is kept, never guessed at.
 
-- **A refusal is retried, then falls back to another model.** Astra refuses
-  some politically-charged transcripts. MEASURED: the refusals are NOT
-  deterministic. A controlled re-run of three found it graded two of them the
-  second time, same transcript and prompt; only `alex-karp/the-free-press-qdqhf7`
-  refused twice, and `gpt-5.6-sol` graded that one at 49.1 with a valid schema.
-  So `grade.py` retries the same model `REFUSAL_ATTEMPTS` times and only then
-  tries `--astra-fallback`. A refusal WRITES its grade file, and `grade.py`
-  skips any transcript whose dest exists, so the 11 refusals already on disk
-  will not retry until those records are removed.
-  The fallback is a different model under the same judge name, so calibration is
-  keyed by `(judge, model, mode, dim)` and a model with fewer than
-  `MIN_CALIBRATION_N` grades is not rescaled on its own thin statistics. Note
-  that `codex --json` reports no model in its response, so `served_model`
-  records what was REQUESTED; it is not independently verified.
+- **A refusal is retried on the same model, three times, and that is all.**
+  Astra refuses some politically-charged transcripts. MEASURED: the refusals are
+  NOT deterministic. A controlled re-run of three found it graded two of them
+  the second time, same transcript and byte-identical prompt; only
+  `alex-karp/the-free-press-qdqhf7` refused twice.
+  There is deliberately NO fallback to a second model. Such grades could not be
+  calibrated: there would only ever be a handful, far below
+  `MIN_CALIBRATION_N`, so they would enter the leaderboard unrescaled and about
+  six points high, and only on the leaders where refusals concentrate. A grade
+  that cannot be calibrated is not worth having, so the call is not made.
+  A refusal WRITES its grade file and `grade.py` skips any transcript whose dest
+  exists, so refusals already on disk never retry until those records are
+  removed. That is a `data/` operation, and therefore repo-0's.
+  Calibration is still keyed by `(judge, model, mode, dim)`, because a judge
+  whose model is BUMPED mid-corpus is the same hazard arriving another way, and
+  `diagnostics.judge_models` warns when one judge served more than one model.
+  Note that `codex --json` reports no model anywhere in its response, so
+  `served_model` records what was REQUESTED; it is not independently verified.
 
 - **Nothing load-bearing may depend on Python's hash seed.** FOUND by running
   `aggregate.py` twice over a frozen grades directory and getting 36 different
@@ -258,6 +262,58 @@ the measurement is named so a later reader can re-run it rather than trust it.
   less subject speech is genuinely less evidence, so a lower score on it is
   defensible, unlike venue, which says nothing about the quality of thinking.
   Correcting something not understood is worse than leaving it visible.
+
+## Experiments run, and what they showed
+
+Four experiments settled questions that guesswork would have got wrong. Each is
+recorded with its method, because the conclusions are only as good as the setup
+and a later agent should be able to challenge them.
+
+**Are the graded transcripts really unique?** (2026-09-07) Compared every pair
+within each leader in `data/transcripts_blind` on 5-gram containment, the same
+measure `dedupe_transcripts.py` uses. 23 pairs scored above the 0.40 threshold
+and nothing landed in the grey band, so the split was clean. 10 duplicate
+appearances across 10 leaders; Reed Hastings' Greylock talk appeared three
+times and moved him 3.2 points and four ranks. `dedupe_transcripts.py` was not
+at fault: it had scored every one of those pairs correctly. Two other defects
+let them through, both now fixed and guarded.
+
+**Can blinding be made to work?** (2026-09-07) Built five progressively harder
+redactions of one transcript, from the shipped name-and-company blinding up to
+183 removed spans with no company, product, colleague, place or year left, then
+asked both judges to name the speaker at each level. Ten calls, ten correct, ten
+confident, replicated on a second leader. Redaction was mechanical, by script,
+so the prose was unchanged; a model proposed the entity list and never rewrote
+the text. CONCLUSION: identity leakage is not fixable by more redaction. What
+survives is the argument, not the nouns — a distinctive strategy, a program of a
+stated age, a public position taken against a named rival — and that is exactly
+what the rubric grades. Fable also reconstructed redacted words and presented
+them as quotes, so the model recognises the EVENT, not just the entities.
+
+**Do the judges have tools?** (2026-09-07) Asked each judge directly, with the
+production flags, for something it could not know from training. Fable is
+offered `WebFetch`, `WebSearch` and `Bash`, tries all three, and every one is
+denied; `web_search_requests: 0`. Astra answers "YES — web.run" and was observed
+searching and citing a page that named the blinded subject. Do not infer this
+from flags: `-s read-only` restricts the filesystem, not the network, and five
+candidate config keys failed to disable it.
+
+**Are the content refusals deterministic?** (2026-09-07) Re-ran three refusing
+transcripts under `gpt-6-astra` at production settings, verifying that the
+rebuilt prompt was byte-identical to `build_judge_prompt`'s output before
+trusting anything. Two of three graded on the re-run. This is sampling variance
+on a borderline judgement, not a hard content block, which is why the fix is a
+retry rather than a second judge.
+
+**Method notes worth inheriting.** Two of these nearly produced wrong answers,
+and both times the cause was the same: comparing against a moving target. The
+grading loop writes continuously, so any before-and-after measured against
+`data/` mixes the change under test with new grades. Copy the corpus once and
+run both arms against the snapshot. Separately, a raw group mean is almost never
+the effect you want here, because leaders are not randomly assigned to venues,
+formats or judges; fit the nuisance factor with the other held fixed, and expect
+the honest effect to be smaller than the raw one. The venue effect fell from 8.2
+points to 5.7 that way.
 
 ## Known limits of the published score
 
