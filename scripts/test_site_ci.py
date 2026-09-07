@@ -370,6 +370,23 @@ def test_technical_column_has_an_info_button() -> None:
     check("the Technical header carries an info button",
           'data-k="d3">Technical<button class="info"' in src,
           "no (?) on the column whose name is the most misleading")
+    # ---- every (?) must have copy, and every dimension must have a (?) ----
+    # One-off checks per key drift: d3 got a button and copy while Insight and
+    # Clarity, which carry 45% and 20% of the score, had neither. Assert the
+    # invariant instead of the instances.
+    keys = set(re.findall(r'data-info="(\w+)"', src))
+    bodies = set(re.findall(r'^  (\w+): `', src, re.M))
+    check("every (?) button has a body in INFO",
+          keys <= bodies, f"buttons with no copy: {sorted(keys - bodies)}")
+    check("every INFO body is reachable from some (?) button",
+          bodies <= keys, f"copy no button opens: {sorted(bodies - keys)}")
+    for k, label in (("d1", "Clarity"), ("d2", "Insight"), ("d3", "Technical")):
+        check(f"the {label} column carries a (?)", k in keys,
+              f"{label} is a scored dimension with no explanation")
+    check("the interval copy does not describe the axis and gridlines removed on 2026-09-07",
+          "faint rules behind the dots" not in src and "numbers above" not in src,
+          "the tooltip points the reader at furniture that is no longer drawn")
+
     check("it uses the same data-info mechanism as halo and ci",
           'data-info="d3"' in src, "a one-off tooltip would drift from the others")
     check("every info button has an aria-label, so all three are reachable",

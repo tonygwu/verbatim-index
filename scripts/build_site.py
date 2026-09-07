@@ -427,10 +427,12 @@ footer{
       <th data-k="overall">Overall<span class="arrow">&#9650;</span></th>
       <th class="nosort ocih">95% interval<button class="info" type="button" data-info="ci"
         aria-expanded="false" aria-label="What is the 95% interval?">?</button></th>
-      <th data-k="d2">Insight<span class="arrow">&#9650;</span></th>
+      <th data-k="d2">Insight<button class="info" type="button" data-info="d2"
+        aria-expanded="false" aria-label="What does Insight mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="d3">Technical<button class="info" type="button" data-info="d3"
         aria-expanded="false" aria-label="What does Technical mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="d1">Clarity<span class="arrow">&#9650;</span></th>
+      <th data-k="d1">Clarity<button class="info" type="button" data-info="d1"
+        aria-expanded="false" aria-label="What does Clarity mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="n">Transcripts<span class="arrow">&#9650;</span></th>
       <th data-k="halo">Halo<button class="info" type="button" data-info="halo"
         aria-expanded="false" aria-label="What does Halo mean?">?</button><span class="arrow">&#9650;</span></th>
@@ -612,14 +614,50 @@ const INFO = {
     <p>The two dots are a 95% confidence interval: resampling this leader's
     transcripts 20,000 times puts their score between those endpoints 95% of
     the time. The tick between them is the score itself.</p>
-    <p>Every row is drawn on the <b>same scale</b>, marked by the numbers above
-    and the faint rules behind the dots. A dot further right is a higher score,
-    in every row. Hover a row to read its exact endpoints.</p>
+    <p>Every row is drawn on the <b>same scale</b>, so a dot further right is a
+    higher score in every row. The two numbers beside each pair of dots are that
+    leader's own endpoints.</p>
     <p>A leader graded on 3 transcripts carries a much wider interval than one
     graded on 14, because the transcripts we collected are a <em>sample</em> of
     what that person says in public.</p>
     <p class="note">Ranks come from the score alone. Where two intervals overlap
     heavily, the ranking between those two leaders is not meaningful.</p>`,
+  d2: `<p><b>Unique insight &mdash; are the points non-obvious, load-bearing and
+    honestly held?</b></p>
+    <p>This is the <b>heaviest</b> of the three, 45% of the score, because it is the
+    hardest to fake and the most costly to lack.</p>
+    <p><b>Mechanism</b> &mdash; why one thing produces another, and what changes if a
+    condition changes.<br>
+    <b>Originality</b> &mdash; a supported implication that alters what you would predict
+    or do, as opposed to contrarianism.<br>
+    <b>Tradeoffs</b> &mdash; compares the strongest alternatives, names the opportunity
+    cost, and still commits.<br>
+    <b>Incentives</b> &mdash; treats customers, staff and rivals as agents who adapt,
+    not as passive.<br>
+    <b>Calibration</b> &mdash; separates known from assumed from hoped, and names what
+    would change their mind.<br>
+    <b>Opposition</b> &mdash; states why an informed person would choose differently and
+    answers that, not a weaker version.<br>
+    <b>Adaptation</b> &mdash; when a follow-up changes a premise, recomputes instead of
+    repeating.</p>
+    <p class="note">Not rewarded: a conclusion you happen to agree with, a claim that is
+    only new to you, listing many considerations without saying which dominate, or hedging
+    that never resolves into a position. The top band means you could predict this
+    person's choice in a situation they never discussed.</p>`,
+  d1: `<p><b>Clarity of communication &mdash; could a listener reconstruct the
+    speaker's model?</b></p>
+    <p>The lightest of the three at 20%, because it is the easiest to coach and says
+    least about the thinking underneath.</p>
+    <p><b>Directness</b> &mdash; answers the question actually asked, rather than one
+    they preferred.<br>
+    <b>Structure</b> &mdash; the answer has a shape you can follow, and the relationship
+    between claims is stated.<br>
+    <b>Concrete language</b> &mdash; plain words with specific referents, not category
+    nouns standing in for content.<br>
+    <b>Economy</b> &mdash; reaches the point without padding, and stops when finished.</p>
+    <p class="note">Not rewarded: speed, charisma, humour, a pleasant voice, sophisticated
+    vocabulary, or confident delivery. <em>Fluency is not clarity</em> &mdash; a polished
+    non-answer scores low here however smooth it sounds.</p>`,
   d3: `<p><b>Technical &amp; industry depth &mdash; does the speaker know how their
     world works?</b></p>
     <p>The column is abbreviated. This is <b>not an engineering test</b>: only one of
