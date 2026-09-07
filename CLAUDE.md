@@ -68,6 +68,15 @@ the 2026-09-06 restart. `OPEN_PER_LEADER=0` skips the unblinded control pass. It
 blinded pass for the same Fable quota and the blinded pass is the published
 score.
 
+`FABLE_ACCOUNTS` pins the Fable rotation to named accounts, for example
+`FABLE_ACCOUNTS=default`. Use it when only some accounts can serve Fable.
+Measured headroom cannot see paid usage credits: an account whose weekly
+Fable window is 100% used reports 0.00 remaining whether or not credits let
+it keep answering. Without the pin, `grade.py` rotates over every account and
+each job that lands on one without credits fails with `auth_or_quota`.
+Anthropic enforces the monthly credit cap server-side, so an unattended run
+stops on its own rather than overspending.
+
 ## Rules that exist because something broke
 
 - **Never call the judge through `cl`.** It injects
