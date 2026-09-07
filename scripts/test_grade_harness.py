@@ -51,6 +51,20 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 # read because it raised on the return code first.
 # ---------------------------------------------------------------------------
 
+# The CLI's wording when the PAID usage credits run out, which is a different
+# refusal from the subscription-window one above: it says "spend limit", never
+# "usage limit", and never "reached your". Observed 2026-09-07 after account A
+# passed its $175.32 monthly cap. It was landing in cli_nonzero_exit, which
+# hides a quota stop inside the bucket meant for genuine crashes.
+SPEND_LIMIT_STDOUT = json.dumps({
+    "is_error": True,
+    "stop_reason": "stop_sequence",
+    "result": "You've hit your monthly spend limit \u00b7 raise it at "
+              "claude.ai/settings/usage?from=cc_cli_limit_message \u00b7 your weekly "
+              "limit resets 4pm",
+    "num_turns": 1,
+})
+
 QUOTA_STDOUT = json.dumps({
     "is_error": True,
     "stop_reason": "stop_sequence",
@@ -84,6 +98,12 @@ def test_classification(g) -> None:
           et == g.E_AUTH, f"got {et!r}")
     check("quota detail keeps the CLI's own wording",
           "Fable limit" in detail, f"got {detail[:120]!r}")
+
+    et, detail = fn(1, SPEND_LIMIT_STDOUT, "")
+    check("spent-out usage credits -> auth_or_quota, not cli_nonzero_exit",
+          et == g.E_AUTH, f"got {et!r}")
+    check("spend-limit detail keeps the CLI's own wording",
+          "spend limit" in detail, f"got {detail[:120]!r}")
 
     et, detail = fn(1, TOOL_STDOUT, "")
     check("tool attempt -> its own error class",

@@ -14,4 +14,10 @@ urllib3==2.7.0
 # Picks which of the operator's Claude subscriptions runs each Fable judge call,
 # by measured remaining Fable quota. grade.py imports it as a library; with a
 # single Claude account it still installs and simply reports one account.
-llm-quota-router @ git+https://github.com/tonygwu/llm-quota-router@v0.1.0
+#
+# Pinned past v0.1.0 deliberately. v0.1.0 derived the interactive fleet from a
+# builtin map of four accounts, so a fifth account was visible to `quotapick
+# status` and to load_config(), and absent from select_account()'s candidate
+# set. The library then reported every account exhausted while the new one had
+# a full window. 0a74583 derives the fleet from the config instead.
+llm-quota-router @ git+https://github.com/tonygwu/llm-quota-router@07725d95bb642aa5a555af8280d9063c24afc82c
