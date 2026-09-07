@@ -62,6 +62,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requi
 .venv/bin/python scripts/test_grade_harness.py     # pure checks, no quota
 .venv/bin/python scripts/test_pipeline_dedupe.py  # pure checks, no quota
 .venv/bin/python scripts/test_shared_data.py      # pure checks, no quota
+.venv/bin/python scripts/test_venue_calibration.py # pure checks, no quota
 .venv/bin/python scripts/test_blinding.py
 .venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
 ```
@@ -154,6 +155,14 @@ stops on its own rather than overspending.
   `data/results.json`, its audit file and `site/index.html` go through
   `scripts/atomicio.py`. `Path.write_text` truncates first, so a clone
   deploying while the grading loop rewrites results.json would read a prefix.
+- **Nuisance effects are estimated and subtracted, not assumed away.**
+  `calibrate()` does it for judges, `venue_effects()` for the format of the
+  appearance. Both fit the effect with the other factor held fixed, because raw
+  means confound the two: leaders are not spread evenly across venues, so the
+  raw 8.2-point spread across formats is only 5.7 once the speaker is held
+  fixed. Fitted per dimension, since the score is a weighted sum of the three,
+  and the bootstrap interval reads the same adjusted values as the point
+  estimate or the dot lands outside its own bar.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing

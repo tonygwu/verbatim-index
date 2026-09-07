@@ -154,7 +154,12 @@ def bootstrap_ci(rows: list[dict], weights: dict, dims: list[str],
         pick = [rows[rng.randrange(k)] for _ in range(k)]
         total = 0.0
         for dim in dims:
-            num = sum(r[f"cal_{dim}"] * max(r["coverage"], 0.05) for r in pick)
+            # The venue adjustment writes cal_<dim>_venue_adj and the leader
+            # score uses it, so the interval must use it too. Otherwise the
+            # published dot sits on the adjusted score while the whiskers come
+            # from the unadjusted one, and the point can fall outside its own bar.
+            key = f"cal_{dim}_venue_adj" if f"cal_{dim}_venue_adj" in pick[0] else f"cal_{dim}"
+            num = sum(r[key] * max(r["coverage"], 0.05) for r in pick)
             den = sum(max(r["coverage"], 0.05) for r in pick)
             total += weights[dim] * (num / den)
         draws.append(total)
@@ -162,6 +167,76 @@ def bootstrap_ci(rows: list[dict], weights: dict, dims: list[str],
     lo = draws[int((alpha / 2) * n)]
     hi = draws[min(int((1 - alpha / 2) * n), n - 1)]
     return (round(lo, 1), round(hi, 1))
+
+
+# A venue effect is only estimable if the venue was seen often enough. Below
+# this the "effect" is one or two transcripts' noise, and subtracting it would
+# move a real score by a made-up amount. Measured on this corpus: internal_talk
+# appears once and tv_interview five times, against 197 long-form podcasts.
+MIN_VENUE_N = 8
+
+
+def venue_effects(rows: list[dict], field: str = "cal_overall",
+                  min_n: int = MIN_VENUE_N) -> dict[str, float]:
+    """How many points a FORMAT adds or removes, with the speaker held fixed.
+
+    Transcript scores vary by venue type, but leaders are not spread evenly
+    across venues: some appear only on long podcasts, others only at keynotes.
+    So the raw mean per venue confounds the format with the people who choose
+    it, and reading it as a format effect overstates it. Measured here: the raw
+    spread across venue types is 8.2 points and the spread with the leader held
+    fixed is 5.7.
+
+    This is the same move `calibrate()` makes for judges. Estimate the nuisance
+    effect, then subtract it, rather than assuming it is zero.
+
+    The fit is an additive two-way model, leader plus venue, solved by
+    alternating means. Each pass sets the leader effects from the residuals of
+    the venue effects and then the reverse, which converges to the least-squares
+    fit of that model. Venue effects are centred to sum to zero so the overall
+    level of the leaderboard does not move.
+
+    A venue seen fewer than `min_n` times gets an effect of exactly zero, and a
+    transcript with no venue type at all is left alone. Both are reported rather
+    than silently skipped.
+    """
+    usable = [r for r in rows if r.get("venue_type")]
+    counts: dict[str, int] = defaultdict(int)
+    for r in usable:
+        counts[r["venue_type"]] += 1
+    fittable = {v for v, n in counts.items() if n >= min_n}
+    usable = [r for r in usable if r["venue_type"] in fittable]
+    if not usable or len(fittable) < 2:
+        return {v: 0.0 for v in counts}
+
+    eff: dict[str, float] = {v: 0.0 for v in fittable}
+    for _ in range(200):
+        by_leader: dict[str, list[float]] = defaultdict(list)
+        for r in usable:
+            by_leader[r["leader_slug"]].append(r[field] - eff[r["venue_type"]])
+        lead = {s: st.mean(v) for s, v in by_leader.items()}
+        by_venue: dict[str, list[float]] = defaultdict(list)
+        for r in usable:
+            by_venue[r["venue_type"]].append(r[field] - lead[r["leader_slug"]])
+        eff = {v: st.mean(x) for v, x in by_venue.items()}
+        centre = st.mean(list(eff.values()))
+        eff = {v: e - centre for v, e in eff.items()}
+    out = {v: 0.0 for v in counts}
+    out.update({v: round(e, 3) for v, e in eff.items()})
+    return out
+
+
+def apply_venue_adjustment(rows: list[dict], effects: dict[str, float],
+                           field: str = "cal_overall") -> list[dict]:
+    """Write `cal_overall_venue_adj` alongside `cal_overall`, never replacing it.
+
+    Keeping both means a reader can see exactly what the adjustment did and undo
+    it, which an adjustment that overwrites its input does not allow.
+    """
+    for r in rows:
+        e = effects.get(r.get("venue_type") or "", 0.0)
+        r[field + "_venue_adj"] = round(r[field] - e, 2)
+    return rows
 
 
 def weighted(pairs: list[tuple[float, float]]) -> float | None:
@@ -289,6 +364,25 @@ def main() -> int:
         row["raw_overall"] = round(sum(WEIGHTS[d] * row[f"raw_{d}"] for d in DIMS), 2)
         transcripts_out.append(row)
 
+    # Venue adjustment. The score is a weighted sum of the three dimensions, so
+    # the effect is fitted and removed on EACH dimension. Fitting the composite
+    # alone would leave the dimensions, the leader score and the confidence
+    # interval disagreeing with each other.
+    #
+    # Blinded only. The open pass is a small control sample and fitting a venue
+    # effect on it would be noise.
+    blinded_rows = [t for t in transcripts_out if t["mode"] == "blinded"]
+    venue_fit = {d: venue_effects(blinded_rows, field=f"cal_{d}") for d in DIMS}
+    for d in DIMS:
+        apply_venue_adjustment(blinded_rows, venue_fit[d], field=f"cal_{d}")
+    for t in blinded_rows:
+        t["cal_overall_venue_adj"] = round(
+            sum(WEIGHTS[d] * t[f"cal_{d}_venue_adj"] for d in DIMS), 2)
+    venue_counts: dict[str, int] = defaultdict(int)
+    for t in blinded_rows:
+        if t.get("venue_type"):
+            venue_counts[t["venue_type"]] += 1
+
     # Per leader, per mode.
     leaders_out = []
     by_leader_mode: dict[tuple, list[dict]] = defaultdict(list)
@@ -307,7 +401,8 @@ def main() -> int:
                 return {}
             out = {}
             for dim in DIMS:
-                out[dim] = round(weighted([(r[f"cal_{dim}"], max(r["coverage"], 0.05)) for r in rows]), 1)
+                key = f"cal_{dim}_venue_adj" if f"cal_{dim}_venue_adj" in rows[0] else f"cal_{dim}"
+                out[dim] = round(weighted([(r[key], max(r["coverage"], 0.05)) for r in rows]), 1)
                 out[f"{dim}_sd"] = round(st.pstdev([r[f"cal_{dim}"] for r in rows]), 1) if len(rows) > 1 else 0.0
             out["overall"] = round(sum(WEIGHTS[d] * out[d] for d in DIMS), 1)
             out["n_transcripts"] = len(rows)
@@ -397,6 +492,14 @@ def main() -> int:
             "unit": "transcript, resampled with replacement",
             "calibration": "held fixed; not refitted inside the resample",
         },
+        # The venue adjustment, reported so a reader can see what it did and
+        # reverse it. Each transcript keeps cal_<dim> next to cal_<dim>_venue_adj.
+        "venue_effects": {d: venue_fit[d] for d in DIMS},
+        "venue_counts": dict(venue_counts),
+        "venue_min_n": MIN_VENUE_N,
+        "venue_note": ("Points a FORMAT adds or removes with the speaker held fixed, fitted "
+                       "as an additive leader+venue model and subtracted from each dimension. "
+                       "Venues seen fewer than venue_min_n times get exactly zero."),
         "min_subject_share_pct": MIN_SUBJECT_SHARE,
         "judge_refusals": len(refusals),
         "judge_refusals_by_leader": refusal_breakdown,

@@ -347,6 +347,24 @@ def order_breadth_first(jobs: list[dict]) -> list[dict]:
     return cached + [t[2] for t in ranked]
 
 
+def stamp_failure(rec: dict) -> dict:
+    """Put the time on a failure record, in UTC, before it is written.
+
+    MEASURED 2026-09-07: data/logs/grade_errors_blind.jsonl held 75 failures and
+    not one carried a timestamp, so telling a Fable spend-limit failure from an
+    hour ago apart from one two days old meant inferring it from somewhere else.
+    The file is also rewritten whole each run, which makes a bare count read as
+    current when it may not be.
+
+    The clock is datetime.now(timezone.utc), never a file mtime and never the
+    local clock, per the repo rule. An existing stamp is left alone so a record
+    that already carries its own time is not overwritten with the write time.
+    """
+    if not rec.get("failed_at_utc"):
+        rec["failed_at_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return rec
+
+
 def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
     """Work out why the Claude CLI exited non-zero.
 
@@ -939,7 +957,7 @@ def main() -> int:
     Path(args.errors).parent.mkdir(parents=True, exist_ok=True)
     with open(args.errors, "w") as fh:
         for r in failed + invalid + refused:
-            fh.write(json.dumps(r) + "\n")
+            fh.write(json.dumps(stamp_failure(r)) + "\n")
 
     tax: dict[str, int] = {}
     for r in failed + invalid + refused:
