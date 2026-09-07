@@ -46,8 +46,9 @@ git clone git@github.com:tonygwu/verbatim-index-data.git data
 git config user.email 446441+tonygwu@users.noreply.github.com
 git -C data config user.email 446441+tonygwu@users.noreply.github.com
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
-.venv/bin/python scripts/test_grade_harness.py     # 33 pure checks, no quota
+.venv/bin/python scripts/test_grade_harness.py     # pure checks, no quota
 .venv/bin/python scripts/test_blinding.py
+.venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
 ```
 
 Python 3.12 or newer: `llm-quota-router`, which `grade.py` imports to route

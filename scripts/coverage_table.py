@@ -21,6 +21,12 @@ from pathlib import Path
 
 TARGET = 5
 
+# Column order for the per-judge columns. Any judge found in the data that is
+# not listed here is appended rather than dropped, so a third judge shows up as
+# a new column instead of vanishing into a total.
+JUDGE_ORDER = ("fable", "astra")
+JW = 5  # width of one per-judge column
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -75,11 +81,21 @@ def main() -> int:
             else:
                 gated[r["leader_slug"]] += 1
 
-    # 4. graded: distinct transcripts with a blinded grade, plus total judge calls
+    # 4. graded: distinct transcripts with a blinded grade, plus total judge
+    # calls. Both are kept per judge as well as pooled: the judges run off
+    # separate quota and one can stall for hours while the pooled number keeps
+    # climbing, which reads as healthy progress when it is not.
     graded_tx: dict[str, set] = defaultdict(set)
+    graded_by_judge: dict[tuple[str, str], set] = defaultdict(set)
+    by_judge_tx: dict[str, set] = defaultdict(set)
     calls: Counter = Counter()
+    calls_by_judge: Counter = Counter()
+    seen_judges: set[str] = set()
     gdir = Path("data/grades")
     if gdir.exists():
+        for d in gdir.iterdir():
+            if d.is_dir() and d.name != "_raw":
+                seen_judges.add(d.name)
         for p in gdir.rglob("*.json"):
             if "_raw" in p.parts or p.name.endswith(".tmp"):
                 continue
@@ -90,9 +106,19 @@ def main() -> int:
             slug = g.get("leader_slug")
             if not slug:
                 continue
+            judge = g.get("judge") or "?"
+            seen_judges.add(judge)
             calls[slug] += 1
+            calls_by_judge[(slug, judge)] += 1
             if g.get("mode") == "blinded" and not g.get("validation_errors"):
                 graded_tx[slug].add(g["source_id"])
+                graded_by_judge[(slug, judge)].add(g["source_id"])
+                by_judge_tx[judge].add(g["transcript_id"])
+
+    judges = [j for j in JUDGE_ORDER if j in seen_judges]
+    judges += sorted(j for j in seen_judges if j not in JUDGE_ORDER)
+    if not judges:                      # no grades on disk yet
+        judges = list(JUDGE_ORDER)
 
     # Scores, where they exist yet
     scores: dict[str, dict] = {}
@@ -114,28 +140,65 @@ def main() -> int:
             "hs": from_hs.get(s, 0),
             "gated": gated.get(s, 0),
             "rejected": rejected.get(s, 0),
-            "graded": len(graded_tx.get(s, ())),
-            "judge_calls": calls.get(s, 0),
-            "overall": scores.get(s, {}).get("overall"),
         })
+        for j in judges:
+            rows[-1][f"graded_{j}"] = len(graded_by_judge.get((s, j), ()))
+        rows[-1]["graded"] = len(graded_tx.get(s, ()))
+        for j in judges:
+            rows[-1][f"calls_{j}"] = calls_by_judge.get((s, j), 0)
+        rows[-1]["judge_calls"] = calls.get(s, 0)
+        rows[-1]["overall"] = scores.get(s, {}).get("overall")
     rows.sort(key=lambda r: (-r["graded"], -r["fetched"], r["leader"]))
 
     w = max(len(r["leader"]) for r in rows)
     c = min(24, max(len(r["company"]) for r in rows))
-    print(f"{'#':>3}  {'LEADER':<{w}}  {'ORGANISATION':<{c}}  {'IDENT':>5} {'FETCH':>5} {'YT':>3} {'HS':>3} {'GATED':>5} {'REJ':>4} {'GRADED':>6} {'CALLS':>5}  {'SCORE':>5}")
-    print(f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4} {'-'*6} {'-'*5}  {'-'*5}")
+
+    def label(j: str) -> str:
+        return j[:JW].upper()
+
+    def group(cells: list[str]) -> str:
+        return " ".join(cells)
+
+    def band(title: str, width: int) -> str:
+        # Truncate rather than overflow: a long judge-group title must not
+        # shift the columns underneath it out of alignment.
+        return title[:width].center(width)
+
+    def left(i, leader, company, r) -> str:
+        return (f"{i:>3}  {leader:<{w}}  {company[:c]:<{c}}  "
+                f"{r['identified']:>5} {r['fetched']:>5} {r['yt']:>3} {r['hs']:>3} "
+                f"{r['gated']:>5} {r['rejected']:>4}")
+
+    head_left = (f"{'#':>3}  {'LEADER':<{w}}  {'ORGANISATION':<{c}}  "
+                 f"{'IDENT':>5} {'FETCH':>5} {'YT':>3} {'HS':>3} {'GATED':>5} {'REJ':>4}")
+    gh = group([f"{label(j):>{JW}}" for j in judges] + [f"{'ANY':>{JW}}"])
+    ch = group([f"{label(j):>{JW}}" for j in judges])
+    rule = (f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4}"
+            f"   {group(['-'*JW] * (len(judges) + 1))}"
+            f"   {group(['-'*JW] * len(judges))}   {'-'*5}")
+
+    # GRADED is distinct transcripts with a valid blinded grade; ANY is the
+    # union across judges, so it is not the sum of the columns to its left.
+    # CALLS counts every grade file, blinded and open alike.
+    print(f"{' ' * len(head_left)}   {band('BLINDED GRADED', len(gh))}"
+          f"   {band('JUDGE CALLS', len(ch))}   {'':>5}")
+    print(f"{head_left}   {gh}   {ch}   {'SCORE':>5}")
+    print(rule)
     for i, r in enumerate(rows, 1):
         sc = f"{r['overall']:.1f}" if r["overall"] is not None else "-"
-        print(f"{i:>3}  {r['leader']:<{w}}  {r['company'][:c]:<{c}}  "
-              f"{r['identified']:>5} {r['fetched']:>5} {r['yt']:>3} {r['hs']:>3} {r['gated']:>5} {r['rejected']:>4} "
-              f"{r['graded']:>6} {r['judge_calls']:>5}  {sc:>5}")
+        g = group([f"{r[f'graded_{j}']:>{JW}}" for j in judges] + [f"{r['graded']:>{JW}}"])
+        k = group([f"{r[f'calls_{j}']:>{JW}}" for j in judges])
+        print(f"{left(i, r['leader'], r['company'], r)}   {g}   {k}   {sc:>5}")
 
-    tot = {k: sum(r[k] for r in rows) for k in
-           ("identified", "fetched", "yt", "hs", "gated", "rejected", "graded", "judge_calls")}
-    print(f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4} {'-'*6} {'-'*5}  {'-'*5}")
+    keys = (["identified", "fetched", "yt", "hs", "gated", "rejected", "graded", "judge_calls"]
+            + [f"graded_{j}" for j in judges] + [f"calls_{j}" for j in judges])
+    tot = {k: sum(r[k] for r in rows) for k in keys}
+    print(rule)
+    gt = group([f"{tot[f'graded_{j}']:>{JW}}" for j in judges] + [f"{tot['graded']:>{JW}}"])
+    kt = group([f"{tot[f'calls_{j}']:>{JW}}" for j in judges])
     print(f"{'':>3}  {'TOTAL':<{w}}  {'':<{c}}  {tot['identified']:>5} {tot['fetched']:>5} "
-          f"{tot['yt']:>3} {tot['hs']:>3} {tot['gated']:>5} {tot['rejected']:>4} "
-          f"{tot['graded']:>6} {tot['judge_calls']:>5}")
+          f"{tot['yt']:>3} {tot['hs']:>3} {tot['gated']:>5} {tot['rejected']:>4}"
+          f"   {gt}   {kt}   {'':>5}")
 
     started = sum(1 for r in rows if r["fetched"] > 0)
     print()
@@ -143,7 +206,23 @@ def main() -> int:
     print(f"  leaders at target ({TARGET})       : {sum(1 for r in rows if r['fetched'] >= TARGET)}/{len(rows)}")
     print(f"  leaders with any grade      : {sum(1 for r in rows if r['graded'] > 0)}/{len(rows)}")
     print(f"  remaining to fetch          : {max(0, len(rows) * TARGET - tot['fetched'])} transcripts")
-    print(f"  remaining judge calls       : ~{max(0, len(rows) * TARGET * 2 - tot['judge_calls'])} (blinded, both judges)")
+    sets = [by_judge_tx.get(j, set()) for j in judges]
+    both = set.intersection(*sets) if sets else set()
+    union = set.union(*sets) if sets else set()
+    # Two different "remaining" numbers, and they answer different questions.
+    # The first is the fetch-side target of TARGET transcripts per leader. The
+    # second is the gap that actually blocks publication: a transcript graded
+    # by only one judge cannot enter the blinded score, so once the target is
+    # met the first number reads ~0 while real work remains.
+    to_target = max(0, len(rows) * TARGET * len(judges) - tot["judge_calls"])
+    to_parity = sum(len(union - s) for s in sets)
+    print(f"  blinded transcripts graded  : "
+          + ", ".join(f"{j} {len(s)}" for j, s in zip(judges, sets)))
+    print(f"  graded by every judge       : {len(both)}/{len(union)} transcripts"
+          f"  (one-sided: "
+          + ", ".join(f"{j} {len(s - both)}" for j, s in zip(judges, sets)) + ")")
+    print(f"  remaining judge calls       : ~{to_target} to reach {TARGET}/leader; "
+          f"~{to_parity} to give every graded transcript all {len(judges)} judges")
 
     if args.csv:
         import csv

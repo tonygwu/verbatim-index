@@ -120,7 +120,14 @@ PYEOF
 
 if [ "$BRIEF" -eq 0 ]; then
   b "PER-LEADER COVERAGE"
-  $PY scripts/coverage_table.py 2>/dev/null | sed 's/^/  /'
+  # Do not swallow stderr here. It used to be 2>/dev/null, which turned any
+  # crash in coverage_table.py into an empty section that reads as "no data".
+  if cov=$($PY scripts/coverage_table.py 2>&1); then
+    printf '%s\n' "$cov" | sed 's/^/  /'
+  else
+    printf '  \033[1;31mcoverage_table.py FAILED\033[0m\n'
+    printf '%s\n' "$cov" | tail -5 | sed 's/^/    /'
+  fi
 fi
 
 b "NEXT"
