@@ -22,6 +22,7 @@ PY=.venv/bin/python
 WORKERS="${WORKERS:-8}"
 OPEN_PER_LEADER="${OPEN_PER_LEADER:-2}"
 CYCLE_SLEEP="${CYCLE_SLEEP:-300}"
+FABLE_ACCOUNTS="${FABLE_ACCOUNTS:-}"  # pin Fable to named accounts, e.g. "default"
 MIN_TO_START="${MIN_TO_START:-4}"      # do not spin up the expensive stage for 1 file
 IDLE_EXIT="${IDLE_EXIT:-3}"            # consecutive no-op cycles with fetch gone -> stop
 
@@ -33,6 +34,7 @@ count_grades(){ find data/grades -name '*.json' ! -name '*.tmp' -not -path '*/_r
 idle=0
 cycle=0
 say "grade loop started. ${WORKERS} workers, unblinded on ${OPEN_PER_LEADER}/leader"
+[ -n "$FABLE_ACCOUNTS" ] && say "  Fable pinned to accounts: ${FABLE_ACCOUNTS}"
 
 while true; do
   cycle=$((cycle + 1))
@@ -67,6 +69,7 @@ while true; do
   $PY scripts/grade.py --transcripts data/transcripts_blind --roster data/roster/final.json \
       --out data/grades --judges fable,astra --modes blinded --repeats 1 \
       --workers "$WORKERS" --errors data/logs/grade_errors_blind.jsonl --timeout 2400 \
+      --fable-accounts "$FABLE_ACCOUNTS" \
       >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
 
   # 3. Unblinded, on a bounded subset. Only needed to size the reputation halo,
@@ -80,6 +83,7 @@ while true; do
         --out data/grades --judges fable,astra --modes open --repeats 1 \
         --limit-per-leader "$OPEN_PER_LEADER" \
         --workers "$WORKERS" --errors data/logs/grade_errors_open.jsonl --timeout 2400 \
+        --fable-accounts "$FABLE_ACCOUNTS" \
         >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
   fi
 

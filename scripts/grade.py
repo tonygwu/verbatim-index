@@ -143,6 +143,45 @@ def claude_config_dirs() -> list[str]:
     return dirs
 
 
+def account_label(config_dir: str) -> str:
+    """The short name this script prints for one account, and accepts for it."""
+    return "default" if config_dir == "__DEFAULT__" else Path(config_dir).name
+
+
+def select_named_accounts(all_dirs: list[str], names: str) -> list[str]:
+    """Restrict the Fable rotation to the accounts named on the command line.
+
+    Measured headroom cannot decide this one. An account whose subscription
+    Fable window is spent still serves Fable when paid usage credits are
+    enabled on it, and the usage API reports 0.00 remaining either way. So
+    when only some accounts have credits, the operator has to say which.
+
+    A name may be `default`, the config-dir basename such as `.claude-b`,
+    that basename without the dot, or the full path. A name matching nothing
+    raises instead of narrowing the rotation to the wrong account or to none.
+    """
+    by_key: dict[str, str] = {}
+    for d in all_dirs:
+        label = account_label(d)
+        by_key[label] = d
+        by_key[label.lstrip(".")] = d
+        by_key[d] = d
+    picked: list[str] = []
+    for raw in names.split(","):
+        name = raw.strip()
+        if not name:
+            continue
+        if name not in by_key:
+            raise SystemExit(
+                f"--fable-accounts {name!r} matches no account. "
+                f"Known: {sorted(account_label(d) for d in all_dirs)}")
+        if by_key[name] not in picked:
+            picked.append(by_key[name])
+    if not picked:
+        raise SystemExit("--fable-accounts was given but named no account")
+    return picked
+
+
 def fable_accounts_from_router(accounts, rows) -> tuple[list[str], dict[str, float]]:
     """Map llm-quota-router accounts and pick rows onto this script's config dirs.
 
@@ -761,6 +800,11 @@ def main() -> int:
                          "account rotation happens in this script, via the llm-quota-router "
                          "library, and the cl launcher is refused because it picks its own "
                          "account and forces bypass-permissions mode.")
+    ap.add_argument("--fable-accounts", default=os.environ.get("FABLE_ACCOUNTS", ""),
+                    help="Comma-separated account names to pin the Fable rotation to, "
+                         "e.g. 'default' or 'default,.claude-b'. Use it when only some "
+                         "accounts can serve Fable, such as when only one has paid usage "
+                         "credits enabled. Overrides the measured-headroom ordering.")
     args = ap.parse_args()
 
     rubric = RUBRIC_PATH.read_text()
@@ -807,18 +851,24 @@ def main() -> int:
     # plain account list is safe: it is only worse, never wrong.
     all_dirs, headroom, routing_note = fable_accounts()
     log(routing_note)
-    cfg_dirs = order_accounts_by_fable(all_dirs, headroom)
     if headroom:
-        shown = ", ".join(f"{Path(a).name if a != '__DEFAULT__' else 'default'}={headroom.get(a, float('nan')):.2f}"
+        shown = ", ".join(f"{account_label(a)}={headroom.get(a, float('nan')):.2f}"
                           for a in all_dirs)
         log(f"fable headroom measured: {shown}")
+    else:
+        log("no fable headroom measured")
+    if args.fable_accounts:
+        cfg_dirs = select_named_accounts(all_dirs, args.fable_accounts)
+        log(f"--fable-accounts pinned the Fable rotation to "
+            f"{[account_label(a) for a in cfg_dirs]}. Measured headroom is ignored: "
+            f"an account out of subscription quota still serves Fable from paid "
+            f"usage credits, and the usage API reports 0.00 remaining either way.")
+    else:
+        cfg_dirs = order_accounts_by_fable(all_dirs, headroom)
         skipped = [a for a in all_dirs if a not in cfg_dirs]
         if skipped:
-            log(f"  excluded as exhausted: {[Path(a).name if a != '__DEFAULT__' else 'default' for a in skipped]}")
-    else:
-        log("no fable headroom measured, keeping plain account order")
-    log(f"fable accounts in rotation (richest fable window first): "
-        f"{[Path(a).name if a != '__DEFAULT__' else 'default' for a in cfg_dirs]}")
+            log(f"  excluded as exhausted: {[account_label(a) for a in skipped]}")
+    log(f"fable accounts in rotation: {[account_label(a) for a in cfg_dirs]}")
 
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "grade-work"
     workroot.mkdir(parents=True, exist_ok=True)

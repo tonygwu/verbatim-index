@@ -339,6 +339,73 @@ def test_quota_routing(g) -> None:
     check("the judge binary defaults to the plain claude CLI, not the cl wrapper",
           'default="cl"' not in src, "found --fable-bin default of cl")
 
+# ---------------------------------------------------------------------------
+# [7] Pinning the Fable rotation to named accounts.
+#
+# Measured headroom cannot see paid usage credits. An account whose weekly
+# Fable window is 100% used reports 0.00 remaining whether or not credits let
+# it keep serving, so the operator has to name the accounts that work. A name
+# that matches nothing must raise: silently narrowing the rotation would send
+# every grade to the wrong account, or to none.
+# ---------------------------------------------------------------------------
+
+def test_account_pinning(g) -> None:
+    print("\n[7] --fable-accounts pins the rotation to accounts that can actually serve")
+
+    fn = getattr(g, "select_named_accounts", None)
+    if fn is None:
+        check("select_named_accounts() exists", False, "function not defined in grade.py")
+        return
+    check("select_named_accounts() exists", True)
+
+    dirs = ["__DEFAULT__", "/h/.claude-b", "/h/.claude-c", "/h/.claude-d"]
+
+    check("'default' names account A, which is addressed by unsetting the variable",
+          fn(dirs, "default") == ["__DEFAULT__"], f"got {fn(dirs, 'default')}")
+    check("the config-dir basename names an account",
+          fn(dirs, ".claude-b") == ["/h/.claude-b"], f"got {fn(dirs, '.claude-b')}")
+    check("the basename without its dot names the same account",
+          fn(dirs, "claude-b") == ["/h/.claude-b"], f"got {fn(dirs, 'claude-b')}")
+    check("a full path names the same account",
+          fn(dirs, "/h/.claude-b") == ["/h/.claude-b"], f"got {fn(dirs, '/h/.claude-b')}")
+    check("several accounts keep the order they were named in",
+          fn(dirs, "claude-c,default") == ["/h/.claude-c", "__DEFAULT__"],
+          f"got {fn(dirs, 'claude-c,default')}")
+    check("a repeated name is not rotated over twice",
+          fn(dirs, "default,default") == ["__DEFAULT__"],
+          f"got {fn(dirs, 'default,default')}")
+    check("whitespace around a name is not part of the name",
+          fn(dirs, " default , claude-b ") == ["__DEFAULT__", "/h/.claude-b"],
+          f"got {fn(dirs, ' default , claude-b ')}")
+
+    for bad, why in [("claude-z", "an account that does not exist"),
+                     ("__DEFAULT_", "a near-miss on the sentinel"),
+                     (",", "a list that names nothing")]:
+        try:
+            got = fn(dirs, bad)
+            check(f"{why} is refused, not guessed", False, f"returned {got}")
+        except SystemExit:
+            check(f"{why} is refused, not guessed", True)
+
+    # The pin must beat measured headroom. Every account here reads as spent,
+    # which is exactly the state credits are bought for.
+    spent = {"__DEFAULT__": 0.0, "/h/.claude-b": 0.0, "/h/.claude-c": 0.0, "/h/.claude-d": 0.0}
+    check("headroom alone would rotate over all four exhausted accounts",
+          g.order_accounts_by_fable(dirs, spent) == dirs,
+          f"got {g.order_accounts_by_fable(dirs, spent)}")
+    check("the pin narrows that to the one account with credits",
+          fn(dirs, "default") == ["__DEFAULT__"], f"got {fn(dirs, 'default')}")
+
+    src = (REPO / "scripts" / "grade.py").read_text()
+    check("--fable-accounts is a real flag, not just a function",
+          '"--fable-accounts"' in src, "flag not registered with argparse")
+    check("the flag can be set from the environment, so the daemon can pass it",
+          'os.environ.get("FABLE_ACCOUNTS"' in src, "no FABLE_ACCOUNTS env default")
+    loop = (REPO / "scripts" / "grade_loop.sh").read_text()
+    check("grade_loop.sh forwards FABLE_ACCOUNTS to both grading passes",
+          loop.count("--fable-accounts") == 2, f"found {loop.count('--fable-accounts')}")
+
+
 def main() -> int:
     g = load_grade()
     print("grading-harness guards")
@@ -349,6 +416,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         test_queue_ordering(g, pathlib.Path(td))
     test_quota_routing(g)
+    test_account_pinning(g)
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))
