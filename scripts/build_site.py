@@ -740,14 +740,37 @@ def build_method(results: dict, calib: dict, roster: dict) -> str:
 opportunity to demonstrate them. The Overall score is
 <code>{w['d2_insight']:.2f}&times;Insight + {w['d3_technical_depth']:.2f}&times;Technical + {w['d1_clarity']:.2f}&times;Clarity</code>.</p>
 <ul>
-<li><b>Insight (45%)</b> &mdash; causal and counterfactual reasoning, originality, strategic
-tradeoffs, understanding of incentives, calibration of confidence, engagement with opposing
-arguments, and whether the speaker recomputes when a premise changes.</li>
-<li><b>Technical depth (35%)</b> &mdash; mechanism, magnitudes and denominators used correctly,
-operational and industry specificity, and movement between strategy and implementation.</li>
-<li><b>Clarity (20%)</b> &mdash; directness, structure, concrete language, economy. Deliberately
-the smallest weight: the rubric explicitly refuses to reward fluency, charisma, or a confident
-delivery, because a polished non-answer is the failure mode being guarded against.</li>
+<li><b>Insight (45%)</b> &mdash; is the thinking any good? Causal and counterfactual
+reasoning, originality, strategic tradeoffs, understanding of incentives, calibration of
+confidence, engagement with opposing arguments, and whether the speaker recomputes when a
+premise changes. It carries the most weight because it is what the study is asking about.</li>
+
+<li><b>Technical and industry depth (35%)</b> &mdash; does the speaker actually know how their
+world works? This is not an engineering test, and only one of its four parts is technical in
+that sense. A non-engineer who genuinely knows how their business runs scores well here.
+<ul>
+<li><b>How the thing works</b> &mdash; architecture, constraints, failure modes; technical
+terms used with their real meaning rather than as decoration.</li>
+<li><b>Numbers</b> &mdash; magnitudes, rates, denominators and unit economics, used correctly,
+and knowing which ones actually bear on the decision.</li>
+<li><b>How the industry actually works</b> &mdash; the part people underrate. Where the
+bottleneck really is, how the supply chain behaves, what the sales motion looks like, what the
+org will and will not do, which regulator has to say yes. Naming the two suppliers who can
+make a part, or why a deal closes in nine months rather than three, counts here.</li>
+<li><b>Moving between layers</b> &mdash; going from business objective to user behaviour to
+product requirement to technical constraint to organisational decision without losing the
+thread.</li>
+</ul>
+The hinge is whether the detail <em>changes the conclusion</em> rather than decorating it.
+Reciting a specification scores low; explaining why that specification forced a particular
+choice scores high. Jargon density, name-dropping technologies and confident claims that are
+wrong on their face are all explicitly not rewarded. Depth carries the second-largest weight
+because it is what makes insight load-bearing rather than rhetorical.</li>
+
+<li><b>Clarity (20%)</b> &mdash; can a listener follow it? Directness, structure, concrete
+language, economy. Deliberately the smallest weight: the rubric explicitly refuses to reward
+fluency, charisma, or a confident delivery, because a polished non-answer is the failure mode
+being guarded against.</li>
 </ul>
 
 <h3>The pipeline</h3>

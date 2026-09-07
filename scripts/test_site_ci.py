@@ -297,12 +297,70 @@ def test_table_layout() -> None:
           'let sortKey = "rank"' in src, "default sort changed")
 
 
+# ---------------------------------------------------------------------------
+# The "What is being scored" prose must match the rubric it describes.
+#
+# The dimension is called "Technical and industry depth" in RUBRIC.md, and only
+# one of its four sub-criteria is technical in the engineering sense: the other
+# three are numeracy, operational and industry knowledge, and the ability to
+# move between layers. Calling it "Technical depth" on the page told readers to
+# expect an engineering test, which is the opposite of what the rubric rewards:
+# it explicitly refuses to credit jargon density or spec-reciting.
+# ---------------------------------------------------------------------------
+
+def test_scoring_prose_matches_the_rubric() -> None:
+    print("\n[prose] the scoring explanation matches RUBRIC.md")
+    src = (REPO / "scripts" / "build_site.py").read_text()
+    rubric = (REPO / ".claude" / "skills" / "leader-transcript-grader" / "RUBRIC.md").read_text()
+
+    check("the rubric still calls D3 'Technical and industry depth'",
+          "Technical and industry depth" in rubric,
+          "the rubric was renamed; this test and the page must follow")
+    check("the page uses the rubric's own name for the dimension",
+          "Technical and industry depth (35%)" in src,
+          "page says 'Technical depth', which promises an engineering test")
+    check("no bare 'Technical depth (35%)' label survives",
+          "<b>Technical depth (35%)</b>" not in src)
+
+    # The four sub-criteria, in words a reader can act on. Matched
+    # case-insensitively: this checks that the idea is explained, not how a
+    # heading happens to be capitalised.
+    low = src.lower()
+    for term in ("how the thing works", "numbers", "how the industry actually works",
+                 "moving between layers"):
+        check(f"the explanation covers {term!r}", term in low, "sub-criterion not explained")
+
+    # Industry depth is the least obvious one, so it must be shown, not asserted.
+    check("industry depth is illustrated with concrete examples",
+          "supply chain" in low and "regulat" in low,
+          "a reader cannot tell what 'industry specificity' means without examples")
+    check("the page says detail must change the conclusion, which is the actual hinge",
+          "changes the conclusion" in low,
+          "without this a reader thinks more detail is always better")
+    check("the page repeats the rubric's anti-patterns",
+          "jargon" in low and ("name-drop" in low or "reciting" in low),
+          "readers should know what is NOT rewarded")
+    check("it says a non-engineer can score well here",
+          "non-engineer" in low, "the commonest misreading is that this is a coding test")
+    check("it says why depth is weighted second, not just what it is",
+          "load-bearing" in low, "the weighting rationale is the reason the dimension exists")
+
+    # The short label and the long one must not drift apart. The table column
+    # and the Overall formula have to stay short, so they keep "Technical"; the
+    # explanatory bullet has room for the rubric's full name. What must never
+    # happen is three different names for one dimension.
+    check("the table column header and the Overall formula use the same short label",
+          '<th data-k="d3">Technical' in src and "&times;Technical +" in src,
+          "the column and the formula disagree about what D3 is called")
+
+
 def main() -> int:
     print("overall-column confidence interval guards")
     test_bootstrap()
     with tempfile.TemporaryDirectory() as td:
         test_aggregate_emits_ci(Path(td))
     test_table_layout()
+    test_scoring_prose_matches_the_rubric()
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))
