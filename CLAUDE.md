@@ -74,7 +74,7 @@ Fable calls by measured quota, requires it.
 ```
 TARGET=14 nohup bash scripts/fetch_loop.sh >> data/logs/fetch_loop.log 2>&1 &
 nohup bash scripts/happyscribe_loop.sh >> data/logs/happyscribe_loop.log 2>&1 &
-WORKERS=10 OPEN_PER_LEADER=0 nohup bash scripts/grade_loop.sh >> data/logs/grade_loop.log 2>&1 &
+OPEN_PER_LEADER=0 nohup bash scripts/grade_loop.sh >> data/logs/grade_loop.log 2>&1 &
 bash scripts/status.sh                 # live state of all three, plus coverage
 ```
 
@@ -83,6 +83,25 @@ to 5, sees every leader already there, and exits at once; that happened on
 the 2026-09-06 restart. `OPEN_PER_LEADER=0` skips the unblinded control pass. It competes with the
 blinded pass for the same Fable quota and the blinded pass is the published
 score.
+
+`WORKERS` is a judgment call between 6 and 10, and the loop defaults to 8.
+The number does not change how much quota a pass spends, because the work is
+the same either way. It changes how fast the pass spends it, and Fable
+quota is the binding constraint. Read the two signals before choosing:
+
+- `quotapick status` prints a `slack` figure per window. Negative slack means
+  the account is being consumed faster than the budget that would carry it to
+  its reset. If slack on the 5h window is negative, drop toward 6.
+- `grep "accounts in rotation" data/logs/grade_loop.err | tail -1` names the
+  Claude accounts that still have measured Fable headroom. If only one account
+  is carrying the whole Fable load, extra workers queue against that one
+  account and exhaust its window sooner, so stay at 6 to 8. If three or more
+  accounts are in rotation, 10 is safe.
+
+Raising `WORKERS` when Fable is already short does not fail loudly. The jobs
+run, hit the limit, and land in the taxonomy as `auth_or_quota`, so the pass
+looks busy while producing nothing. Check `data/logs/grade_errors_blind.jsonl`
+for that label before assuming a slow pass is a healthy one.
 
 `FABLE_ACCOUNTS` pins the Fable rotation to named accounts, for example
 `FABLE_ACCOUNTS=default`. Use it when only some accounts can serve Fable.
