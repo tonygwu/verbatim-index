@@ -354,6 +354,66 @@ def test_scoring_prose_matches_the_rubric() -> None:
           "the column and the formula disagree about what D3 is called")
 
 
+# ---------------------------------------------------------------------------
+# The Technical column needs the same (?) affordance as Halo and 95% interval.
+#
+# "Technical" alone promises an engineering test. The full name is "Technical
+# and industry depth" and three of its four sub-criteria are not engineering.
+# The column has no room for the full name, so the explanation goes where the
+# other two ambiguous columns already put theirs.
+# ---------------------------------------------------------------------------
+
+def test_technical_column_has_an_info_button() -> None:
+    print("\n[info] the Technical column explains itself like Halo does")
+    src = (REPO / "scripts" / "build_site.py").read_text()
+
+    check("the Technical header carries an info button",
+          'data-k="d3">Technical<button class="info"' in src,
+          "no (?) on the column whose name is the most misleading")
+    check("it uses the same data-info mechanism as halo and ci",
+          'data-info="d3"' in src, "a one-off tooltip would drift from the others")
+    check("every info button has an aria-label, so all three are reachable",
+          src.count('class="info"') == src.count('aria-label="What'),
+          f"{src.count('class=\"info\"')} info buttons but "
+          f"{src.count('aria-label=\"What')} labels")
+    check("there is a matching INFO entry, or the button opens nothing",
+          "\n  d3: `" in src, "data-info=\"d3\" has no body in INFO")
+
+    body = src.split("\n  d3: `", 1)[1].split("`,", 1)[0] if "\n  d3: `" in src else ""
+    plain = body.replace("&amp;", "&")
+    check("the panel gives the dimension its full name",
+          "Technical & industry depth" in plain or "Technical and industry depth" in plain,
+          f"body={body[:120]!r}")
+    check("it says plainly that this is not an engineering test",
+          "not an engineering test" in body.lower() or "non-engineer" in body.lower(),
+          "the misreading the button exists to fix is not addressed")
+    check("it names all four sub-criteria",
+          all(t in body.lower() for t in ("works", "numbers", "industry", "layers")),
+          f"body={body[:200]!r}")
+    check("it states the hinge: detail must change the conclusion",
+          "changes the conclusion" in body.lower(),
+          "without this a reader thinks more jargon scores higher")
+    check("it gives a concrete industry example rather than asserting the idea",
+          "supplier" in body.lower() or "regulator" in body.lower(),
+          "abstract wording is what made the old label unclear")
+    check("the column label itself stays short",
+          '<th data-k="d3">Technical<' in src,
+          "the header must stay one word; the panel carries the rest")
+
+    # Everywhere with room for the longer name should use it. Three places have
+    # room (legend, per-leader dimension heading, prose) and two do not (the
+    # sortable column header, the Overall formula).
+    check("the legend under the table uses the fuller name",
+          "Technical &amp; industry depth &mdash; 35%" in src,
+          "legend still says 'Technical depth'")
+    check("the per-leader dimension heading uses it too",
+          '"Technical &amp; industry depth"' in src,
+          "the expanded row still labels the dimension 'Technical depth'")
+    check("no 'Technical depth' label survives anywhere on the page",
+          "Technical depth" not in src,
+          "one dimension must not have two long names")
+
+
 def main() -> int:
     print("overall-column confidence interval guards")
     test_bootstrap()
@@ -361,6 +421,7 @@ def main() -> int:
         test_aggregate_emits_ci(Path(td))
     test_table_layout()
     test_scoring_prose_matches_the_rubric()
+    test_technical_column_has_an_info_button()
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))

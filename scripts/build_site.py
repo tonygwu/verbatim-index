@@ -407,7 +407,7 @@ footer{
   </p>
   <div class="legend">
     <span><i style="background:var(--d2)"></i> Insight &mdash; 45% of Overall</span>
-    <span><i style="background:var(--d3)"></i> Technical depth &mdash; 35%</span>
+    <span><i style="background:var(--d3)"></i> Technical &amp; industry depth &mdash; 35%</span>
     <span><i style="background:var(--d1)"></i> Clarity &mdash; 20%</span>
   </div>
 </div>
@@ -428,7 +428,8 @@ footer{
       <th class="nosort ocih">95% interval<button class="info" type="button" data-info="ci"
         aria-expanded="false" aria-label="What is the 95% interval?">?</button></th>
       <th data-k="d2">Insight<span class="arrow">&#9650;</span></th>
-      <th data-k="d3">Technical<span class="arrow">&#9650;</span></th>
+      <th data-k="d3">Technical<button class="info" type="button" data-info="d3"
+        aria-expanded="false" aria-label="What does Technical mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="d1">Clarity<span class="arrow">&#9650;</span></th>
       <th data-k="n">Transcripts<span class="arrow">&#9650;</span></th>
       <th data-k="halo">Halo<button class="info" type="button" data-info="halo"
@@ -461,7 +462,7 @@ __METHOD__
 const DATA = __DATA__;
 const AUDIT = __AUDIT__;
 const TIE = __TIEBAND__;
-const DIMS = [["d2","Insight","k2"],["d3","Technical depth","k3"],["d1","Clarity","k1"]];
+const DIMS = [["d2","Insight","k2"],["d3","Technical &amp; industry depth","k3"],["d1","Clarity","k1"]];
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 /* The 95% interval, drawn on ONE scale shared by every row.
@@ -619,6 +620,20 @@ const INFO = {
     what that person says in public.</p>
     <p class="note">Ranks come from the score alone. Where two intervals overlap
     heavily, the ranking between those two leaders is not meaningful.</p>`,
+  d3: `<p><b>Technical &amp; industry depth &mdash; does the speaker know how their
+    world works?</b></p>
+    <p>The column is abbreviated. This is <b>not an engineering test</b>: only one of
+    its four parts is technical in that sense, and a non-engineer who genuinely knows
+    how their business runs scores well on it.</p>
+    <p><b>How the thing works</b> &mdash; architecture, constraints, failure modes.<br>
+    <b>Numbers</b> &mdash; magnitudes, rates and unit economics, used correctly.<br>
+    <b>How the industry works</b> &mdash; where the bottleneck really is, how the supply
+    chain behaves, which regulator has to say yes, which two suppliers can make a part.<br>
+    <b>Moving between layers</b> &mdash; business objective to technical constraint to
+    org decision, without losing the thread.</p>
+    <p class="note">The test is whether a detail <em>changes the conclusion</em> rather
+    than decorating it. Reciting a specification scores low; explaining why it forced a
+    choice scores high. Jargon density and name-dropping are not rewarded.</p>`,
   halo: `<p><b>Halo &mdash; what the name is worth.</b></p>
     <p>Every transcript is graded twice. Once with the speaker's name and company
     hidden, once with them shown. Halo is the second score minus the first.</p>
