@@ -283,20 +283,48 @@ def test_mass_prune_refuses(tmp: Path) -> None:
 # would have retired 16 transcripts at that moment.
 # ---------------------------------------------------------------------------
 
-def order_in(text: str, *needles: str) -> list[int]:
-    return [text.find(n) for n in needles]
+def commands(name: str) -> list[str]:
+    """The runnable command lines of a shell script, comments and blanks dropped.
+
+    Continuation lines are joined first. The earlier version of this test read
+    the script line by line, so it never saw a redirect that sat on the line
+    after the command, and a `>/dev/null` added there passed unnoticed.
+    """
+    raw = (REPO / "scripts" / name).read_text()
+    joined, buf = [], ""
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        buf += " " + stripped
+        if stripped.endswith("\\"):
+            buf = buf[:-1]
+            continue
+        if buf.strip():
+            joined.append(" ".join(buf.split()))
+        buf = ""
+    return joined
+
+
+def only(cmds: list[str], needle: str) -> list[str]:
+    return [c for c in cmds if needle in c]
 
 
 def test_sweep_runs_before_grading() -> None:
     print("\n[6] the duplicate sweep runs before anything is graded")
-    loop = (REPO / "scripts" / "grade_loop.sh").read_text()
-    i_sweep, i_norm, i_grade = order_in(
-        loop, "dedupe_transcripts.py --sweep", "normalize_transcripts.py", "grade.py")
-    check("grade_loop.sh runs the duplicate sweep", i_sweep >= 0,
-          "no --sweep call in the loop that feeds the graders")
+    cmds = commands("grade_loop.sh")
+    i_sweep = [i for i, c in enumerate(cmds) if "dedupe_transcripts.py --sweep" in c]
+    i_norm = [i for i, c in enumerate(cmds) if "normalize_transcripts.py" in c]
+    i_grade = [i for i, c in enumerate(cmds) if "grade.py" in c]
+    check("grade_loop.sh runs the duplicate sweep, in a command and not a comment",
+          len(i_sweep) == 1, f"found {len(i_sweep)} sweep commands")
+    check("it copies transcripts and grades them", i_norm and i_grade,
+          f"normalize={i_norm} grade={i_grade}")
     check("the sweep runs before the transcripts are copied for grading",
-          0 <= i_sweep < i_norm, f"sweep@{i_sweep} normalize@{i_norm}")
-    check("the copying runs before the grading", 0 <= i_norm < i_grade,
+          bool(i_sweep) and bool(i_norm) and i_sweep[0] < min(i_norm),
+          f"sweep@{i_sweep} normalize@{i_norm}")
+    check("the copying runs before the grading",
+          bool(i_norm) and bool(i_grade) and min(i_norm) < min(i_grade),
           f"normalize@{i_norm} grade@{i_grade}")
 
 
@@ -304,20 +332,123 @@ def test_sweep_runs_before_grading() -> None:
 # 7. The sweep's report is the only record of what it removed.
 #
 # happyscribe_loop.sh sent it to /dev/null, so `sweep_retired` and
-# `orphaned_grades_removed` were never written anywhere. That is a bare
-# completion count at best, and the repo rules require attempted / succeeded /
-# failed to be visible.
+# `orphaned_grades_removed` were never written anywhere.
+#
+# The first version of this test read one line at a time, which is exactly the
+# hole an adversarial review walked through: in grade_loop.sh the redirect sits
+# on the continuation line, so `>/dev/null` there passed. It now reads whole
+# commands, and it asserts the sweep exists first, so removing the sweep makes
+# the test fail rather than making the check disappear.
 # ---------------------------------------------------------------------------
 
 def test_sweep_report_is_kept() -> None:
     print("\n[7] the sweep's report is kept, not discarded")
     for name in ("grade_loop.sh", "happyscribe_loop.sh"):
-        text = (REPO / "scripts" / name).read_text()
-        for line in text.splitlines():
-            if "dedupe_transcripts.py --sweep" not in line:
-                continue
+        sweeps = only(commands(name), "dedupe_transcripts.py --sweep")
+        check(f"{name} still calls the sweep", len(sweeps) == 1, f"found {len(sweeps)}")
+        for c in sweeps:
             check(f"{name} does not send the sweep report to /dev/null",
-                  ">/dev/null" not in line and "> /dev/null" not in line, line.strip())
+                  "/dev/null" not in c.split("2>>")[0], c)
+
+
+# ---------------------------------------------------------------------------
+# 7b. Only one daemon may prune, and the prune must re-check the shelf.
+#
+# FOUND BY ADVERSARIAL REVIEW of a78baf5, and reproduced. fetch_loop.sh and
+# grade_loop.sh both run normalize over the same two directories at the same
+# time. normalize lists --transcripts ONCE at the top, so a transcript that
+# lands between that listing and the prune is absent from `kept` and was
+# deleted, and its grades orphaned, while its source sat on the shelf. Before
+# a78baf5 normalize only ever wrote files, so concurrency was harmless. The
+# commit made it destructive.
+#
+# Two guards, because either alone leaves a window. The prune re-checks the
+# shelf at deletion time, and only the grading loop prunes at all.
+# ---------------------------------------------------------------------------
+
+def test_only_one_loop_prunes() -> None:
+    print("\n[7b] only the grading loop prunes, and the fetch loop cannot")
+    fetch = only(commands("fetch_loop.sh"), "normalize_transcripts.py")
+    grade = only(commands("grade_loop.sh"), "normalize_transcripts.py")
+    check("fetch_loop.sh normalizes without pruning",
+          fetch and all("--no-prune" in c for c in fetch), f"{fetch}")
+    check("fetch_loop.sh cannot orphan grades", all("--grades" not in c for c in fetch), f"{fetch}")
+    check("grade_loop.sh does prune, and can orphan grades",
+          grade and all("--no-prune" not in c and "--grades" in c for c in grade), f"{grade}")
+
+
+def test_prune_rechecks_the_shelf(tmp: Path) -> None:
+    print("\n[7c] a transcript that arrives mid-run is not deleted by a stale listing")
+    env = build(tmp)
+    out = tmp / "blind"
+    normalize(env, out, tmp, extra=["--grades", str(env["grades"])])
+
+    # Simulate the race directly: a derived copy and its grades exist for a
+    # source that IS on the shelf but was not written by this run, exactly the
+    # state a concurrent fetch_loop normalize leaves behind.
+    d = env["src"] / "alan-turing"
+    (d / "arrived-late.json").write_text(json.dumps({
+        "leader_slug": "alan-turing", "source_id": "arrived-late",
+        "word_count": 40, "text": "[00:00:01] Alan Turing of Bletchley on machinery. " * 20,
+    }, indent=1))
+    (out / "alan-turing" / "arrived-late.json").write_text('{"leader_slug": "alan-turing"}')
+    g = env["grades"] / "fable" / "alan-turing"
+    (g / "arrived-late__fable__blinded__r0.json").write_text("{}")
+
+    # A run that cannot see it: the shelf copy is hidden while normalize lists,
+    # then restored before the prune. Simulated by pruning against a `kept` set
+    # that predates its arrival.
+    mod = load("normalize_transcripts")
+    kept = {("ada-lovelace", "keynote-aaa"), ("ada-lovelace", "reupload-bbb"),
+            ("alan-turing", "lecture-ccc")}
+    report = mod.prune_orphans(out, kept, "blinded", env["grades"], 0.25,
+                               shelf=env["src"], rejected=set())
+    check("the late arrival survives, because its source is still on the shelf",
+          (out / "alan-turing" / "arrived-late.json").exists(), f"report={report}")
+    check("its grades are not orphaned",
+          (g / "arrived-late__fable__blinded__r0.json").exists(),
+          f"orphaned={[p.name for p in env['grades'].rglob('*.orphaned')]}")
+    check("nothing was pruned at all this time", report["pruned"] == 0, f"report={report}")
+
+
+# ---------------------------------------------------------------------------
+# 7d. A refused prune must leave an honest log.
+#
+# FOUND BY ADVERSARIAL REVIEW. The guard raised before the log was written, so
+# the log kept the previous cycle's success and the loop reported nothing.
+# ---------------------------------------------------------------------------
+
+def test_refusal_leaves_an_honest_log(tmp: Path) -> None:
+    print("\n[7d] a refused prune says so in the log, and the loop notices")
+    env = build(tmp)
+    for i in range(20):
+        (env["src"] / "ada-lovelace" / f"filler-{i:02d}.json").write_text(json.dumps({
+            "leader_slug": "ada-lovelace", "source_id": f"filler-{i:02d}",
+            "word_count": 50, "text": "[00:00:01] Ada Lovelace of Analytical Engines. " * 20,
+        }, indent=1))
+    out = tmp / "blind"
+    normalize(env, out, tmp, extra=["--grades", str(env["grades"])])
+    log = tmp / "normalize_blinded.json"
+    log.write_text(json.dumps({"summary": {"marker": "PREVIOUS CYCLE"}}))
+
+    empty = tmp / "empty"; empty.mkdir()
+    r = subprocess.run(
+        [PY, str(REPO / "scripts" / "normalize_transcripts.py"),
+         "--transcripts", str(empty), "--out", str(out), "--roster", str(env["roster"]),
+         "--mode", "blinded", "--grades", str(env["grades"]), "--log", str(log)],
+        capture_output=True, text=True, cwd=REPO)
+    check("normalize still exits non-zero", r.returncode != 0, f"rc={r.returncode}")
+    written = json.loads(log.read_text())
+    check("the log no longer claims the previous cycle's success",
+          written["summary"].get("marker") != "PREVIOUS CYCLE", f"log={written}")
+    check("the log records the refusal and what it would have removed",
+          written["summary"].get("prune", {}).get("refused") is True
+          and written["summary"]["prune"]["would_have_pruned"] == 23,
+          f"prune={written['summary'].get('prune')}")
+
+    loop = " ".join(commands("grade_loop.sh"))
+    check("grade_loop.sh checks whether normalize succeeded",
+          "NORMALIZE FAILED" in loop, "the loop ignores normalize's exit status")
 
 
 # ---------------------------------------------------------------------------
@@ -392,15 +523,64 @@ def test_sweep_orphans_the_grades_it_was_given(tmp: Path) -> None:
           (grades / "original-zzz__astra__blinded__r0.json").exists())
 
 
+# ---------------------------------------------------------------------------
+# 10. A source the sweep retired must not be fetched again.
+#
+# FOUND BY ADVERSARIAL REVIEW of a78baf5, and confirmed. The sweep renames a
+# retired source to `<source_id>.json.superseded`. fetch_transcripts.fetch_one
+# decides what to skip with `dest.exists()` on `<source_id>.json`, which that
+# name does not satisfy, so the retired video was downloaded again on the next
+# cycle and retired again on the one after. That is the 222 -> 214 churn the
+# merge path already documents, on the sweep path, and it spends the YouTube
+# caption allowance the fetcher calls the scarcest resource in the pipeline.
+# a78baf5 made it worse by running the sweep every grading cycle.
+# ---------------------------------------------------------------------------
+
+def test_superseded_source_is_not_refetched(tmp: Path) -> None:
+    print("\n[10] a retired source is not fetched all over again")
+    f = load("fetch_transcripts")
+    out = tmp / "corpus"
+    (out / "ada-lovelace").mkdir(parents=True)
+    src = {"leader_slug": "ada-lovelace", "source_id": "retired-vid", "video_id": "vid-B"}
+
+    (out / "ada-lovelace" / "retired-vid.json.superseded").write_text("{}")
+    r = f.fetch_one(src, out, min_words=100, force=False)
+    check("the fetcher recognises a superseded source and does not re-download it",
+          r["status"] in ("superseded", "cached"), f"status={r.get('status')} r={r}")
+
+    # force must still override, so a deliberate re-fetch stays possible.
+    (out / "ada-lovelace" / "kept-vid.json").write_text("{}")
+    r = f.fetch_one({"leader_slug": "ada-lovelace", "source_id": "kept-vid",
+                     "video_id": "vid-A"}, out, min_words=100, force=False)
+    check("an ordinary cached source is still reported as cached", r["status"] == "cached",
+          f"status={r.get('status')}")
+
+    # A new status that no tally knows about is worse than no status: it makes
+    # attempted, succeeded and failed stop adding up, and the progress line
+    # reports the skip as a failure. The repo rule is a taxonomy, never a bare
+    # count, so the summary has to name it.
+    src_txt = (REPO / "scripts" / "fetch_transcripts.py").read_text()
+    check("the run summary reports superseded skips as their own category",
+          '"superseded":' in src_txt, "superseded results vanish from the summary")
+    check("the progress line subtracts superseded skips from the failure count",
+          "done - ok - sup" in src_txt, "done - ok would report the skip as failed")
+    check("a superseded candidate does not count toward a leader's target",
+          'if r["status"] in ("ok", "cached"):\n            got += 1' in src_txt,
+          "got += 1 must not fire for a superseded result")
+
+
 def main() -> int:
     print("pipeline duplicate guards")
     for fn in (test_retired_source_is_pruned, test_orphaned_grades_stop_counting,
                test_prune_is_scoped_to_its_own_mode, test_qa_rejected_transcript_is_pruned,
-               test_mass_prune_refuses, test_sweep_orphans_the_grades_it_was_given):
+               test_mass_prune_refuses, test_sweep_orphans_the_grades_it_was_given,
+               test_prune_rechecks_the_shelf, test_refusal_leaves_an_honest_log,
+               test_superseded_source_is_not_refetched):
         with tempfile.TemporaryDirectory() as td:
             fn(Path(td))
     test_sweep_runs_before_grading()
     test_sweep_report_is_kept()
+    test_only_one_loop_prunes()
     test_live_corpus_has_no_duplicates()
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

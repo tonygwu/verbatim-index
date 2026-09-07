@@ -242,6 +242,19 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
     if dest.exists() and not force:
         return {"status": "cached", "leader_slug": slug, "source_id": sid, "path": str(dest)}
 
+    # dedupe_transcripts.py --sweep retires a duplicate by renaming it to
+    # <source_id>.json.superseded, which `dest.exists()` above does not see. So
+    # the fetcher used to download it again on the next cycle, the sweep retired
+    # it again on the cycle after, and the pair never settled. That churn spends
+    # the YouTube caption allowance, which is the scarcest resource here. The
+    # retirement is a decision about this source, so honour it, and let --force
+    # override it the way it overrides the cache.
+    superseded = dest.with_name(dest.name + ".superseded")
+    if superseded.exists() and not force:
+        return {"status": "superseded", "leader_slug": slug, "source_id": sid,
+                "path": str(superseded),
+                "detail": "retired as a duplicate by dedupe_transcripts.py --sweep"}
+
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
     except ImportError:
@@ -357,6 +370,10 @@ def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
         results.append(r)
         if r["status"] in ("ok", "cached"):
             got += 1
+        # A superseded candidate is deliberately NOT counted toward the target.
+        # It is a second copy of an appearance already held, so it adds no
+        # coverage, and counting it would let a leader sit below target for ever
+        # while believing it had arrived.
     if got < target:
         log(f"  {slug}: only {got}/{target} fetched from {len(results)} candidates tried")
     return results
@@ -453,10 +470,13 @@ def main() -> int:
                 done += 1
                 if done % 10 == 0 or done == len(sources):
                     ok = sum(1 for x in results if x["status"] in ("ok", "cached"))
-                    log(f"  progress {done}/{len(sources)} attempted | {ok} succeeded | {done - ok} failed")
+                    sup = sum(1 for x in results if x["status"] == "superseded")
+                    log(f"  progress {done}/{len(sources)} attempted | {ok} succeeded | "
+                        f"{sup} skipped as retired duplicates | {done - ok - sup} failed")
 
     ok = [r for r in results if r["status"] == "ok"]
     cached = [r for r in results if r["status"] == "cached"]
+    superseded = [r for r in results if r["status"] == "superseded"]
     failed = [r for r in results if r["status"] == "failed"]
 
     Path(args.errors).parent.mkdir(parents=True, exist_ok=True)
@@ -473,6 +493,9 @@ def main() -> int:
         "succeeded": len(ok) + len(cached),
         "newly_fetched": len(ok),
         "cached": len(cached),
+        # Retired as a duplicate by the sweep. Neither a success nor a failure,
+        # so it gets its own line rather than silently unbalancing the tally.
+        "superseded": len(superseded),
         "failed": len(failed),
         "error_taxonomy": tax,
         "total_words": sum(r.get("words", 0) for r in ok),

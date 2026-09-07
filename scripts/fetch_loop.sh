@@ -149,13 +149,18 @@ while true; do
     $PY scripts/qa_transcripts.py --transcripts data/transcripts \
         --roster data/roster/final.json --glossaries data/sources/aliases.json \
         --out data/logs/transcript_qa.json >/dev/null 2>>data/logs/fetch_loop.err
+    # --no-prune, and deliberately no --grades. Withdrawing a transcript is
+    # grade_loop.sh's job alone. Both loops normalize the same two directories,
+    # and each lists the corpus once at the top, so a second pruner would delete
+    # what the first had just written and orphan its grades. One writer per
+    # directory, the same rule the clones follow for data/.
     for m in blinded open; do
       out=data/transcripts_blind; [ "$m" = open ] && out=data/transcripts_open
       $PY scripts/normalize_transcripts.py --mode "$m" \
           --transcripts data/transcripts --out "$out" \
           --roster data/roster/final.json --repairs data/sources/repairs.json \
           --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
-        --grades data/grades \
+          --no-prune \
           --log "data/logs/normalize_${m}.json" >/dev/null 2>>data/logs/fetch_loop.err
     done
     say "  normalized; $(find data/transcripts_blind -name '*.json' ! -name '*.tmp' | wc -l | tr -d ' ') ready to grade"

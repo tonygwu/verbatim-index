@@ -57,6 +57,7 @@ while true; do
   #    2026-09-07 the corpus held 16 duplicates the sweep would have retired.
   say "  sweeping the corpus for duplicate appearances"
   if $PY scripts/dedupe_transcripts.py --sweep --grades data/grades \
+       --out data/logs/dedupe_sweep_pass.json \
        >data/logs/dedupe_sweep.json 2>>data/logs/grade_loop.err; then
     cat data/logs/dedupe_sweep.json >> data/logs/dedupe_sweep.log
     say "  $($PY -c "import json; d=json.load(open('data/logs/dedupe_sweep.json')); print(f\"retired {d['sweep_retired']} duplicates, orphaned {d['orphaned_grades_removed']} grades\")" 2>/dev/null || echo 'sweep report unreadable')"
@@ -72,15 +73,26 @@ while true; do
   $PY scripts/qa_transcripts.py --transcripts data/transcripts \
       --roster data/roster/final.json --glossaries data/sources/aliases.json \
       --out data/logs/transcript_qa.json > /dev/null 2>>data/logs/grade_loop.err
+  norm_ok=1
   for mode in blinded open; do
     out=data/transcripts_blind; [ "$mode" = open ] && out=data/transcripts_open
-    $PY scripts/normalize_transcripts.py --mode "$mode" \
+    if ! $PY scripts/normalize_transcripts.py --mode "$mode" \
         --transcripts data/transcripts --out "$out" \
         --roster data/roster/final.json --repairs data/sources/repairs.json \
         --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
         --grades data/grades \
-        --log "data/logs/normalize_${mode}.json" > /dev/null 2>>data/logs/grade_loop.err
+        --log "data/logs/normalize_${mode}.json" > /dev/null 2>>data/logs/grade_loop.err; then
+      norm_ok=0
+      say "  NORMALIZE FAILED for ${mode}; see data/logs/grade_loop.err and data/logs/normalize_${mode}.json"
+    fi
   done
+  if [ "$norm_ok" -eq 0 ]; then
+    # The commonest cause is the prune refusing, which means the corpus looks
+    # wrong rather than smaller. Grading an unpruned directory would re-grade
+    # whatever should have been withdrawn, so wait a cycle instead.
+    say "  skipping this cycle's grading because normalize did not complete"
+    sleep "$CYCLE_SLEEP"; continue
+  fi
   ready=$(find data/transcripts_blind -name '*.json' ! -name '*.tmp' 2>/dev/null | wc -l | tr -d ' ')
   say "  ${ready} transcripts passed QA and are ready to grade"
 
@@ -107,7 +119,7 @@ while true; do
         >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
   fi
 
-  # 4. Always leave a current leaderboard behind, even mid-run.
+  # 5. Always leave a current leaderboard behind, even mid-run.
   $PY scripts/aggregate.py --grades data/grades --roster data/roster/final.json \
       --transcripts data/transcripts_blind --out data/results.json \
       > /dev/null 2>>data/logs/grade_loop.err \

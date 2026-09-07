@@ -300,7 +300,9 @@ PRUNE_MIN_TO_GUARD = 10     # below this many files, fraction is meaningless
 
 
 def prune_orphans(out_root: Path, kept: set[tuple[str, str]], mode: str,
-                  grades_root: Path | None, max_fraction: float) -> dict:
+                  grades_root: Path | None, max_fraction: float,
+                  shelf: Path | None = None,
+                  rejected: set[tuple[str, str]] | None = None) -> dict:
     """Withdraw derived transcripts that this run did not write, and their grades.
 
     A transcript leaves the corpus two ways: dedupe_transcripts.py --sweep
@@ -309,17 +311,38 @@ def prune_orphans(out_root: Path, kept: set[tuple[str, str]], mode: str,
     directory, grade.py globs that whole directory, and aggregate.py counts
     every grade it finds, so a withdrawn appearance kept scoring forever.
 
-    The test is "did this run write it", not "does the source file exist". That
-    covers the QA rejection too, which leaves the source on the shelf.
+    Two conditions must BOTH hold before a file goes: this run did not write it,
+    and its source is either off the shelf or rejected by QA. The first test
+    alone was a live defect. `fetch_loop.sh` and `grade_loop.sh` both normalize
+    the same directories, and each lists the corpus once at the top, so a
+    transcript that arrived between one run's listing and its prune looked
+    withdrawn to that run and had its grades orphaned while its source sat on
+    the shelf. Re-reading the shelf here closes that window, because the second
+    test is evaluated at deletion time rather than at listing time.
+
+    Only `grade_loop.sh` passes `--grades` and prunes at all. That is belt and
+    braces: this function is safe under a race, and the fleet still keeps one
+    writer per directory the way the rest of the repo does.
 
     Grades are renamed to `.orphaned` rather than deleted, so the choice stays
     auditable, and only grades for THIS mode are touched, because the blinded
     and open passes each own one output directory and one half of the grades.
     Raw judge output under `_raw` is left alone; it is evidence, not a score.
     """
-    existing = [p for p in sorted(out_root.rglob("*.json"))
-                if not p.name.endswith(".json.tmp")]
-    stale = [p for p in existing if (p.parent.name, p.stem) not in kept]
+    rejected = rejected or set()
+    existing = sorted(out_root.rglob("*.json"))
+
+    def withdrawn(p: Path) -> bool:
+        key = (p.parent.name, p.stem)
+        if key in kept:
+            return False                      # this run wrote it
+        if key in rejected:
+            return True                       # QA turned against it
+        if shelf is None:
+            return True                       # no shelf to consult; old behaviour
+        return not (shelf / key[0] / f"{key[1]}.json").exists()
+
+    stale = [p for p in existing if withdrawn(p)]
     report = {
         "mode": mode, "examined": len(existing), "pruned": len(stale),
         "pruned_ids": [f"{p.parent.name}/{p.stem}" for p in stale],
@@ -331,13 +354,22 @@ def prune_orphans(out_root: Path, kept: set[tuple[str, str]], mode: str,
 
     frac = len(stale) / len(existing)
     if len(stale) >= PRUNE_MIN_TO_GUARD and frac > max_fraction:
-        raise SystemExit(
+        # Reported, not raised. The caller writes the log first, so a refused
+        # cycle leaves an accurate record instead of the previous cycle's
+        # success sitting there looking current.
+        report["pruned"] = 0
+        report["pruned_ids"] = []
+        report["refused"] = True
+        report["would_have_pruned"] = len(stale)
+        report["would_have_pruned_ids"] = [f"{p.parent.name}/{p.stem}" for p in stale]
+        report["reason"] = (
             f"REFUSING TO PRUNE: {len(stale)} of {len(existing)} derived transcripts in "
-            f"{out_root} ({frac:.0%}) were not written by this run, above the "
-            f"{max_fraction:.0%} ceiling. That usually means --transcripts points at the "
-            f"wrong directory or the corpus is half-written, not that {len(stale)} "
-            f"appearances were withdrawn at once. Nothing has been deleted. Check the "
-            f"source directory, then re-run with --prune-max-fraction to allow it.")
+            f"{out_root} ({frac:.0%}) are withdrawn, above the {max_fraction:.0%} ceiling. "
+            f"That usually means --transcripts points at the wrong directory or the corpus "
+            f"is half-written, not that {len(stale)} appearances were withdrawn at once. "
+            f"Nothing has been deleted. Check the source directory, then re-run with "
+            f"--prune-max-fraction to allow it.")
+        return report
 
     for p in stale:
         p.unlink()
@@ -455,7 +487,8 @@ def main() -> int:
              if args.no_prune else
              prune_orphans(out_root, kept, args.mode,
                            Path(args.grades) if args.grades else None,
-                           args.prune_max_fraction))
+                           args.prune_max_fraction,
+                           shelf=Path(args.transcripts), rejected=rejected))
 
     summary = {
         "mode": args.mode,
@@ -471,6 +504,11 @@ def main() -> int:
     }
     Path(args.log).parent.mkdir(parents=True, exist_ok=True)
     Path(args.log).write_text(json.dumps({"summary": summary, "entries": entries}, indent=1))
+    if prune.get("refused"):
+        # The log is on disk before this returns, so the refusal is recorded
+        # even though the cycle fails.
+        print(prune["reason"], file=sys.stderr)
+        return 1
     print(json.dumps(summary, indent=2))
     if prune["pruned"] and not args.grades:
         print(f"WARNING: withdrew {prune['pruned']} derived transcripts but --grades was not "

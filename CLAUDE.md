@@ -100,6 +100,18 @@ stops on its own rather than overspending.
   --grades` does both. It refuses if the removal looks like a wrong path rather
   than a withdrawal. Found 2026-09-07: 27 withdrawn transcripts were still on
   the leaderboard, and one appearance was counted three times.
+- **Only `grade_loop.sh` prunes.** `fetch_loop.sh` normalizes with
+  `--no-prune` and no `--grades`. Both loops normalize the same two
+  directories and each lists the corpus once at the top, so a second pruner
+  deletes what the first just wrote and orphans its grades. `prune_orphans`
+  also re-reads the shelf at deletion time, so it is safe even under a race.
+  Found by adversarial review of a78baf5, after that commit made a previously
+  write-only path destructive.
+- **A retirement must be visible to the fetcher.** The sweep renames a source
+  to `<source_id>.json.superseded`, which `dest.exists()` does not match, so
+  the fetcher re-downloaded it every cycle and the sweep retired it every
+  cycle. `fetch_one` now honours that name, and reports the skip as its own
+  `superseded` category rather than letting the tally stop adding up.
 - **The duplicate sweep runs in `grade_loop.sh`, before normalize.** Most
   duplicates are one talk re-uploaded to several YouTube channels, and those
   arrive through `fetch_loop.sh`. The sweep used to run only in
