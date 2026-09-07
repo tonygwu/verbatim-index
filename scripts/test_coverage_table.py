@@ -17,6 +17,15 @@ What is asserted here:
               while every grade file counts as a CALL.
   PARITY      the one-sided line names the transcripts that one judge has
               graded and another has not, which is the real backlog.
+  PCT         FET% is FETCH/IDENT, 1J% is ANY/FETCH and NJ% is graded-by-every-
+              judge over FETCH, each computed per leader and again on the
+              fleet totals from summed counts rather than averaged ratios.
+  PCT-EMPTY   a leader with nothing identified prints a dash, not 0%. Zero
+              would read as a coverage failure instead of an absent
+              measurement.
+  PCT-ORPHAN  a grade whose transcript has left the corpus pushes 1J% above
+              100, and the table says so by name instead of clamping. That is
+              the orphaned-grade bug normalize_transcripts.py --grades fixes.
 
 Run: .venv/bin/python scripts/test_coverage_table.py
 """
@@ -73,6 +82,105 @@ def cells(line: str) -> list[str]:
     return line.split()
 
 
+# --- percentage-column scenario -------------------------------------------
+# A second, independent fixture. Folding these cases into GRADES above would
+# have rewritten what the parity assertions mean.
+PCT_ROSTER = [
+    {"slug": "ada", "name": "Ada Lovelace", "company": "Analytical Engine"},
+    {"slug": "bob", "name": "Bob Metcalfe", "company": "3Com"},
+    {"slug": "cyd", "name": "Cyd Charisse", "company": "Nothing Yet"},
+    {"slug": "dev", "name": "Dev Orphan", "company": "Withdrawn Corp"},
+]
+# leader -> how many candidates discovery identified
+PCT_IDENT = {"ada": 4, "bob": 4, "cyd": 0, "dev": 2}
+# leader -> transcripts actually on disk
+PCT_FETCHED = {"ada": ["t1", "t2"], "bob": ["t5", "t6", "t7", "t8"],
+               "cyd": [], "dev": ["t9"]}
+# (leader, source, judge) blinded grades, all valid
+PCT_GRADES = [
+    ("ada", "t1", "fable"), ("ada", "t1", "astra"),   # t1 has both judges
+    ("ada", "t2", "astra"),                           # t2 is one-sided
+    ("bob", "t5", "fable"), ("bob", "t5", "astra"),
+    ("dev", "t9", "fable"), ("dev", "t9", "astra"),
+    ("dev", "t10", "fable"), ("dev", "t10", "astra"),  # t10 was withdrawn
+]
+# leader -> (FET%, 1J%, NJ%) as the table should print them
+PCT_WANT = {
+    # 2/4 fetched; both fetched transcripts graded; only t1 has both judges
+    "Ada Lovelace": ("50", "100", "50"),
+    # everything fetched, but only t5 of four reached a judge
+    "Bob Metcalfe": ("100", "25", "25"),
+    # nothing identified and nothing fetched: not answerable, not zero
+    "Cyd Charisse": ("-", "-", "-"),
+    # 1 transcript on disk, 2 transcripts still carrying grades
+    "Dev Orphan": ("50", "200", "200"),
+    # totals from summed counts: 7/10, 5/7, 4/7
+    "TOTAL": ("70", "71", "57"),
+}
+
+
+def build_pct(root: Path) -> None:
+    (root / "data/roster").mkdir(parents=True)
+    (root / "data/roster/final.json").write_text(json.dumps({"roster": PCT_ROSTER}))
+    src = root / "data/sources"
+    src.mkdir(parents=True)
+    (src / "all.jsonl").write_text("".join(
+        json.dumps({"leader_slug": slug}) + "\n"
+        for slug, n in PCT_IDENT.items() for _ in range(n)))
+    for slug, ids in PCT_FETCHED.items():
+        if not ids:
+            continue
+        d = root / "data/transcripts" / slug
+        d.mkdir(parents=True)
+        for sid in ids:
+            (d / f"{sid}.json").write_text(json.dumps(
+                {"fetch_method": "youtube_transcript_api"}))
+    for slug, sid, judge in PCT_GRADES:
+        d = root / "data/grades" / judge / slug
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{sid}__{judge}__blinded__r0.json").write_text(json.dumps({
+            "transcript_id": f"{slug}/{sid}", "leader_slug": slug, "source_id": sid,
+            "judge": judge, "mode": "blinded", "validation_errors": [],
+        }))
+
+
+def check_pct(check) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_pct(root)
+        r = subprocess.run([sys.executable, str(SCRIPT)], cwd=root,
+                           capture_output=True, text=True)
+    if r.returncode != 0:
+        check("PCT", False, f"coverage_table.py exited {r.returncode}: {r.stderr}")
+        return
+    lines = r.stdout.splitlines()
+
+    header = next((l for l in lines if l.lstrip().startswith("#")), "")
+    check("PCT", all(t in header for t in ("FET%", "1J%", "2J%")),
+          f"header is missing a percentage column: {header!r}")
+
+    for name, want in PCT_WANT.items():
+        is_total = name == "TOTAL"
+        row = next((l for l in lines if f"  {name}  " in l
+                    and (is_total or l.split()[:1] != ["TOTAL"])), None)
+        if row is None:
+            check("PCT", False, f"no row for {name}")
+            continue
+        # A leader row ends FET% 1J% NJ% SCORE; the TOTAL row leaves SCORE
+        # blank, so split() drops it. Indexing from the right survives leader
+        # names that contain spaces.
+        got = tuple(cells(row)[-3:] if is_total else cells(row)[-4:-1])
+        label = "PCT-EMPTY" if name.startswith("Cyd") else (
+            "PCT-ORPHAN" if name.startswith("Dev") else "PCT")
+        check(label, got == want,
+              f"{name}: FET%/1J%/NJ% should be {want}, got {got}")
+
+    over = next((l for l in lines if "OVER 100%" in l), None)
+    check("PCT-ORPHAN", over is not None and "Dev Orphan" in over,
+          "the table must name the leader whose grades outlive their "
+          f"transcripts, not silently clamp: {over!r}")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -101,7 +209,9 @@ def main() -> int:
     check("TOTAL", total is not None, "no TOTAL row")
     if total:
         # TOTAL <ident> <fetch> <yt> <hs> <gated> <rej> | f a n any | f a n
-        nums = [int(x) for x in cells(total)[1:]]
+        # | FET% 1J% NJ%.  This fixture has no sources and no transcripts, so
+        # the three percentages are dashes; they get their own scenario below.
+        nums = [int(x) for x in cells(total)[1:-3]]
         want = 6 + (3 + 1) + 3   # narrowing columns, GRADED per judge + ANY, CALLS
         check("SPLIT", len(nums) == want,
               f"TOTAL row has {len(nums)} numeric columns, expected {want}: "
@@ -128,6 +238,8 @@ def main() -> int:
               f"no transcript has all three judges, out of 3; got {m.group(1)}/{m.group(2)}")
         check("PARITY", m.group(3).strip() == "fable 1, astra 2, nova 1",
               f"one-sided counts wrong: {m.group(3).strip()!r}")
+
+    check_pct(check)
 
     for f in fails:
         print(f"FAIL  {f}")

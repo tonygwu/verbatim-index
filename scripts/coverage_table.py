@@ -26,6 +26,21 @@ TARGET = 5
 # a new column instead of vanishing into a total.
 JUDGE_ORDER = ("fable", "astra")
 JW = 5  # width of one per-judge column
+PW = 5  # width of one percentage column
+
+
+def pct(num: int, den: int) -> float | None:
+    """Percentage, or None when there is no denominator to divide by.
+
+    None means "not answerable yet" and prints as a dash. Returning 0.0 for a
+    leader with nothing identified would read as a coverage failure instead of
+    an absent measurement. The value is NOT clamped to 100: a grade whose
+    transcript has left the corpus pushes the ratio above 100, and that is the
+    orphaned-grade bug this table exists to make visible.
+    """
+    if den <= 0:
+        return None
+    return 100.0 * num / den
 
 
 def main() -> int:
@@ -144,10 +159,18 @@ def main() -> int:
         for j in judges:
             rows[-1][f"graded_{j}"] = len(graded_by_judge.get((s, j), ()))
         rows[-1]["graded"] = len(graded_tx.get(s, ()))
+        # Transcripts this leader has from EVERY judge. Intersecting the
+        # per-judge source_id sets, not min() of the counts: two judges can
+        # each hold five grades and overlap on three.
+        all_judges = [set(graded_by_judge.get((s, j), ())) for j in judges]
+        rows[-1]["graded_all"] = len(set.intersection(*all_judges)) if all_judges else 0
         for j in judges:
             rows[-1][f"calls_{j}"] = calls_by_judge.get((s, j), 0)
         rows[-1]["judge_calls"] = calls.get(s, 0)
         rows[-1]["overall"] = scores.get(s, {}).get("overall")
+        rows[-1]["pct_fetched"] = pct(rows[-1]["fetched"], rows[-1]["identified"])
+        rows[-1]["pct_graded_any"] = pct(rows[-1]["graded"], rows[-1]["fetched"])
+        rows[-1]["pct_graded_all"] = pct(rows[-1]["graded_all"], rows[-1]["fetched"])
     rows.sort(key=lambda r: (-r["graded"], -r["fetched"], r["leader"]))
 
     w = max(len(r["leader"]) for r in rows)
@@ -173,32 +196,58 @@ def main() -> int:
                  f"{'IDENT':>5} {'FETCH':>5} {'YT':>3} {'HS':>3} {'GATED':>5} {'REJ':>4}")
     gh = group([f"{label(j):>{JW}}" for j in judges] + [f"{'ANY':>{JW}}"])
     ch = group([f"{label(j):>{JW}}" for j in judges])
+    # "graded by both judges" generalises to "by all judges", so the label
+    # carries the judge count rather than a hardcoded 2.
+    pct_labels = ("FET%", "1J%", f"{len(judges)}J%")
+    ph = group([f"{t:>{PW}}" for t in pct_labels])
     rule = (f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4}"
             f"   {group(['-'*JW] * (len(judges) + 1))}"
-            f"   {group(['-'*JW] * len(judges))}   {'-'*5}")
+            f"   {group(['-'*JW] * len(judges))}"
+            f"   {group(['-'*PW] * len(pct_labels))}   {'-'*5}")
+
+    def cells_pct(r: dict) -> str:
+        out = []
+        for k in ("pct_fetched", "pct_graded_any", "pct_graded_all"):
+            v = r[k]
+            out.append(f"{'-' if v is None else f'{v:.0f}':>{PW}}")
+        return group(out)
 
     # GRADED is distinct transcripts with a valid blinded grade; ANY is the
     # union across judges, so it is not the sum of the columns to its left.
     # CALLS counts every grade file, blinded and open alike.
     print(f"{' ' * len(head_left)}   {band('BLINDED GRADED', len(gh))}"
-          f"   {band('JUDGE CALLS', len(ch))}   {'':>5}")
-    print(f"{head_left}   {gh}   {ch}   {'SCORE':>5}")
+          f"   {band('JUDGE CALLS', len(ch))}   {band('COVERAGE %', len(ph))}   {'':>5}")
+    print(f"{head_left}   {gh}   {ch}   {ph}   {'SCORE':>5}")
     print(rule)
     for i, r in enumerate(rows, 1):
         sc = f"{r['overall']:.1f}" if r["overall"] is not None else "-"
         g = group([f"{r[f'graded_{j}']:>{JW}}" for j in judges] + [f"{r['graded']:>{JW}}"])
         k = group([f"{r[f'calls_{j}']:>{JW}}" for j in judges])
-        print(f"{left(i, r['leader'], r['company'], r)}   {g}   {k}   {sc:>5}")
+        print(f"{left(i, r['leader'], r['company'], r)}   {g}   {k}   {cells_pct(r)}   {sc:>5}")
 
-    keys = (["identified", "fetched", "yt", "hs", "gated", "rejected", "graded", "judge_calls"]
+    keys = (["identified", "fetched", "yt", "hs", "gated", "rejected", "graded",
+             "graded_all", "judge_calls"]
             + [f"graded_{j}" for j in judges] + [f"calls_{j}" for j in judges])
     tot = {k: sum(r[k] for r in rows) for k in keys}
+    # Fleet percentages come from the summed counts, not from averaging the
+    # per-leader percentages. An average of ratios would weight a leader with
+    # 7 appearances the same as one with 57.
+    tot["pct_fetched"] = pct(tot["fetched"], tot["identified"])
+    tot["pct_graded_any"] = pct(tot["graded"], tot["fetched"])
+    tot["pct_graded_all"] = pct(tot["graded_all"], tot["fetched"])
     print(rule)
     gt = group([f"{tot[f'graded_{j}']:>{JW}}" for j in judges] + [f"{tot['graded']:>{JW}}"])
     kt = group([f"{tot[f'calls_{j}']:>{JW}}" for j in judges])
     print(f"{'':>3}  {'TOTAL':<{w}}  {'':<{c}}  {tot['identified']:>5} {tot['fetched']:>5} "
           f"{tot['yt']:>3} {tot['hs']:>3} {tot['gated']:>5} {tot['rejected']:>4}"
-          f"   {gt}   {kt}   {'':>5}")
+          f"   {gt}   {kt}   {cells_pct(tot)}   {'':>5}")
+    print(f"{'':>3}  FET% = FETCH/IDENT.  1J% = ANY/FETCH.  "
+          f"{len(judges)}J% = graded by all {len(judges)} judges / FETCH.")
+    over = [r["leader"] for r in rows
+            if (r["pct_graded_any"] or 0) > 100 or (r["pct_fetched"] or 0) > 100]
+    if over:
+        print(f"{'':>3}  OVER 100%: {', '.join(over)} — grades outlive their "
+              f"withdrawn transcripts. Run normalize_transcripts.py --grades.")
 
     started = sum(1 for r in rows if r["fetched"] > 0)
     print()
