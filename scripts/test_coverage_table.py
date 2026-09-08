@@ -58,6 +58,13 @@ GRADES = [
     ("bob", "t5", "nova", "blinded", []),           # judge outside JUDGE_ORDER
 ]
 
+# Derived from the fixture above, so the expectations move with it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from coverage_table import JUDGE_ORDER, SHADOW_JUDGES as SHADOW  # noqa: E402
+GRADED_BY_JUDGE = {"fable": 1, "astra": 2, "nova": 1}   # blinded, validation-clean
+CALLS_BY_JUDGE = {"fable": 2, "astra": 3, "nova": 1}    # every call, incl. open + invalid
+EXPECTED_JUDGE_COLUMNS = list(JUDGE_ORDER) + sorted(
+    {"fable", "astra", "nova"} - set(JUDGE_ORDER))
 
 def build(root: Path) -> None:
     (root / "data/roster").mkdir(parents=True)
@@ -246,9 +253,22 @@ def check_pct(check) -> None:
     check("UNIQ", "UNIQ" in header and "IDENT" in header,
           f"UNIQ must sit beside IDENT, not replace it: {header!r}")
     ada = next((l for l in lines if "  Ada Lovelace  " in l), "")
-    # 7 narrowing + 3 graded + 2 calls + 3 pct + 1 score = 16 numeric cells.
-    # Counting from the right survives names and companies containing spaces.
-    tail = ada.split()[-16:]
+    # Take the trailing run of numeric cells rather than a fixed count.
+    # It used to slice [-16:], spelled out as "7 narrowing + 3 graded + 2 calls
+    # + 3 pct + 1 score", which silently encodes the NUMBER OF JUDGES twice.
+    # Adding a third judge makes it 18 and every index below shifts, so the
+    # guard failed on a table that was correct. Counting the block survives any
+    # judge count; names and companies containing spaces still cannot reach it
+    # because they are not numeric.
+    def numeric_tail(row: str) -> list[str]:
+        out = []
+        for tok in reversed(row.split()):
+            if re.fullmatch(r"-|\d+(?:\.\d+)?", tok):
+                out.append(tok)
+            else:
+                break
+        return list(reversed(out))
+    tail = numeric_tail(ada)
     check("UNIQ", tail[0:3] == ["4", "2", "2"],
           f"Ada should read IDENT 4, UNIQ 2, FETCH 2; got {tail[0:3]}")
     check("UNIQ", "retired as" in r.stdout and "re-uploads" in r.stdout,
@@ -308,33 +328,56 @@ def main() -> int:
         # TOTAL <ident> <fetch> <yt> <hs> <gated> <rej> | f a n any | f a n
         # | FET% 1J% NJ%.  This fixture has no sources and no transcripts, so
         # the three percentages are dashes; they get their own scenario below.
+        # Derive the expected shape from the judge set instead of hardcoding a
+        # count. Every judge in JUDGE_ORDER gets a column whether or not the
+        # fixture gave it grades, plus any judge the fixture invented. Writing
+        # "three judges" as a literal made this guard fail the moment a third
+        # arm was configured, on a table that was correct.
+        cols = EXPECTED_JUDGE_COLUMNS
         nums = [int(x) for x in cells(total)[1:-3]]
-        want = 7 + (3 + 1) + 3   # narrowing cols (incl UNIQ), GRADED per judge + ANY, CALLS
+        want = 7 + (len(cols) + 1) + len(cols)
         check("SPLIT", len(nums) == want,
               f"TOTAL row has {len(nums)} numeric columns, expected {want}: "
-              f"three judges need their own GRADED and CALLS columns")
+              f"{len(cols)} judges ({', '.join(cols)}) each need a GRADED and a CALLS column")
         nums += [-1] * (want - len(nums))   # report every check, not just the first
-        graded, pooled_any, calls = nums[7:10], nums[10], nums[11:14]
-        check("SPLIT", graded == [1, 2, 1],
-              f"per-judge GRADED should be fable 1, astra 2, nova 1; got {graded}")
+        n = len(cols)
+        graded, pooled_any, calls = nums[7:7 + n], nums[7 + n], nums[8 + n:8 + 2 * n]
+        graded_want = [GRADED_BY_JUDGE.get(j, 0) for j in cols]
+        calls_want = [CALLS_BY_JUDGE.get(j, 0) for j in cols]
+        check("SPLIT", graded == graded_want,
+              f"per-judge GRADED should be "
+              f"{', '.join(f'{j} {v}' for j, v in zip(cols, graded_want))}; got {graded}")
         check("ANY", pooled_any == 3,
               f"ANY is the union of blinded-graded transcripts (ada t1, ada t2, "
               f"bob t5) = 3, not the sum 4; got {pooled_any}")
-        check("ELIGIBLE", calls == [2, 3, 1],
-              f"CALLS counts open and invalid grades too: fable 2, astra 3, "
-              f"nova 1; got {calls}")
+        check("ELIGIBLE", calls == calls_want,
+              f"CALLS counts open and invalid grades too: "
+              f"{', '.join(f'{j} {v}' for j, v in zip(cols, calls_want))}; got {calls}")
 
+    want_summary = ", ".join(f"{j} {GRADED_BY_JUDGE.get(j, 0)}"
+                             for j in EXPECTED_JUDGE_COLUMNS)
     m = re.search(r"blinded transcripts graded\s*:\s*(.+)", out)
-    check("SPLIT", bool(m) and m.group(1).strip() == "fable 1, astra 2, nova 1",
-          f"summary line wrong: {m.group(1).strip() if m else 'missing'!r}")
+    check("SPLIT", bool(m) and m.group(1).strip() == want_summary,
+          f"summary line wrong: got {m.group(1).strip() if m else 'missing'!r}, "
+          f"want {want_summary!r}")
 
-    m = re.search(r"graded by every judge\s*:\s*(\d+)/(\d+).*one-sided:\s*(.+?)\)", out)
+    # The label gains "published" once a shadow arm exists, because the
+    # intersection then covers only the judges that reach the leaderboard.
+    # Accept either wording: which one appears is a function of configuration,
+    # not of the behaviour under test.
+    m = re.search(r"graded by every (?:published )?judge\s*:\s*(\d+)/(\d+)"
+                  r".*one-sided:\s*(.+?)\)", out)
     check("PARITY", bool(m), "no one-sided line")
     if m:
         check("PARITY", (m.group(1), m.group(2)) == ("0", "3"),
               f"no transcript has all three judges, out of 3; got {m.group(1)}/{m.group(2)}")
-        check("PARITY", m.group(3).strip() == "fable 1, astra 2, nova 1",
-              f"one-sided counts wrong: {m.group(3).strip()!r}")
+        # The one-sided tally covers PUBLISHED judges only. A shadow arm at
+        # zero must not appear here, or adding one reads as every transcript
+        # having gone one-sided overnight.
+        want_sided = ", ".join(f"{j} {GRADED_BY_JUDGE.get(j, 0)}"
+                               for j in EXPECTED_JUDGE_COLUMNS if j not in SHADOW)
+        check("PARITY", m.group(3).strip() == want_sided,
+              f"one-sided counts wrong: got {m.group(3).strip()!r}, want {want_sided!r}")
 
     check_pct(check)
     check_shadow(check)

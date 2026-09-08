@@ -31,14 +31,18 @@ TARGET = 5
 # one judge can stall for hours while the pooled number keeps climbing.
 JUDGE_ORDER = ("fable", "astra", "gemini")
 
-# Judges collected but NOT published; kept in step with SHADOW_JUDGES in
-# aggregate.py. They get their own column, but they are held out of the
-# "graded by every judge" intersection and the coverage percentage built on it.
+# Judges collected but NOT published. IMPORTED, never re-declared: a second copy
+# drifts, and the copy that drifts is the one telling the operator an arm is
+# published when it is not. aggregate.py owns the list because it is the thing
+# that actually excludes them from the score.
 #
-# Otherwise adding a shadow judge drops that figure to zero for every leader on
-# the day it is added, which would read as the corpus having lost coverage when
-# nothing about the published score changed.
-SHADOW_JUDGES = ("gemini",)
+# They get their own column, but are held out of the "graded by every judge"
+# intersection and the coverage percentage built on it. Otherwise adding a
+# shadow judge drops that figure to zero for every leader on the day it is
+# added, reading as the corpus having lost coverage when nothing about the
+# published score changed.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aggregate import SHADOW_JUDGES  # noqa: E402
 JW = 5  # width of one per-judge column
 PW = 5  # width of one percentage column
 
@@ -153,15 +157,17 @@ def main() -> int:
                 graded_by_judge[(slug, judge)].add(g["source_id"])
                 by_judge_tx[judge].add(g["transcript_id"])
 
-    # Columns are discovered from the data, so the table never claims a judge
-    # ran when it did not. JUDGE_ORDER only fixes the ORDER of the ones present,
-    # which is why a new arm lands beside fable and astra rather than after the
-    # alphabetical stragglers. A judge with no grades yet is reported on the
-    # shadow line below instead of as a column of zeros.
-    judges = [j for j in JUDGE_ORDER if j in seen_judges]
+    # Every judge in JUDGE_ORDER gets a column whether or not it has grades yet,
+    # and any judge found in the data but not named there is appended so a new
+    # arm is never silently pooled away.
+    #
+    # A column of zeros and an ABSENT column look identical at a glance, and
+    # they mean opposite things: one is a backfill that has not started, the
+    # other is a judge nobody configured. The per-judge split exists precisely
+    # because one judge can stall for hours while the pooled figure keeps
+    # climbing, so the stalled arm has to stay visible while it is at zero.
+    judges = list(JUDGE_ORDER)
     judges += sorted(j for j in seen_judges if j not in JUDGE_ORDER)
-    if not judges:                      # no grades on disk yet
-        judges = list(JUDGE_ORDER)
 
     # The intersection below is what "every judge has graded this" means, and it
     # only makes sense over the judges that reach the leaderboard.

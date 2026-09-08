@@ -114,16 +114,19 @@ else:
         c = Counter((r["judge"], r["mode"]) for r in rows)
         bad = sum(1 for r in rows if r.get("validation_errors"))
         print(f"  grades on disk     {len(rows)}  ({bad} failed validation)")
-        # Read the shadow list out of aggregate.py rather than repeating it. A
-        # second copy would drift, and the copy that drifts is the one that
-        # tells the operator an arm is published when it is not.
-        shadow = set()
+        # Import the shadow list rather than repeating or regex-parsing it. A
+        # second copy drifts, and the copy that drifts is the one that tells the
+        # operator an arm is published when it is not. Regex-parsing was that
+        # same bug wearing a disguise: it would silently return an empty set the
+        # day the declaration is reformatted onto two lines.
+        import sys as _sys
+        _sys.path.insert(0, "scripts")
         try:
-            import re as _re
-            src = Path("scripts/aggregate.py").read_text()
-            m_ = _re.search(r"^SHADOW_JUDGES = \(([^)]*)\)", src, _re.M)
-            if m_: shadow = set(_re.findall(r'"([^"]+)"', m_.group(1)))
-        except Exception:
+            from aggregate import SHADOW_JUDGES as _sj
+            shadow = set(_sj)
+        except Exception as _e:
+            print(f"  WARNING: cannot read SHADOW_JUDGES ({_e}); "
+                  f"shadow arms will not be marked")
             shadow = set()
         for (j, m), n in sorted(c.items()):
             tag = "  [shadow: collected, NOT published]" if j in shadow else ""
