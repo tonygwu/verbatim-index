@@ -308,11 +308,28 @@ def main() -> int:
         print(f"{'':>3}  NOTE: no retired duplicates found on disk, so UNIQ equals IDENT. "
               f"The .superseded\n{'':>8}markers are gitignored, so a clone that did not run "
               f"the sweep cannot see them.")
-    over = [r["leader"] for r in rows
-            if (r["pct_graded_any"] or 0) > 100 or (r["pct_fetched"] or 0) > 100]
-    if over:
-        print(f"{'':>3}  OVER 100%: {', '.join(over)} — grades outlive their "
-              f"withdrawn transcripts. Run normalize_transcripts.py --grades.")
+    # Two different defects push a percentage past 100 and they have opposite
+    # fixes, so they get one line each. Reporting them together sent the
+    # operator to normalize_transcripts.py for a manifest problem it cannot
+    # touch: on 2026-09-08 three leaders read FET% 108-115 with every 1J% at or
+    # under 100, and grade_loop.sh had already run --grades that same cycle.
+    # Each line carries the size of the excess, because the name alone does not
+    # say whether one transcript is involved or ten.
+    orphaned = [r for r in rows if (r["pct_graded_any"] or 0) > 100]
+    if orphaned:
+        names = ", ".join(f"{r['leader']} (+{r['graded'] - r['fetched']})"
+                          for r in orphaned)
+        print(f"{'':>3}  1J% OVER 100%: {names} — grades outlive their withdrawn "
+              f"transcripts. Run normalize_transcripts.py --grades.")
+    unlisted = [r for r in rows if (r["pct_fetched"] or 0) > 100]
+    if unlisted:
+        names = ", ".join(f"{r['leader']} (+{r['fetched'] - r['unique']})"
+                          for r in unlisted)
+        print(f"{'':>3}  FET% OVER 100%: {names} — more transcripts on disk than "
+              f"discovery lists. IDENT is stale, not the corpus: rebuilding\n"
+              f"{'':>8}data/sources/all.jsonl from discovered.json drops candidates "
+              f"already fetched. The transcripts and their grades are\n"
+              f"{'':>8}valid, so there is nothing here to prune.")
 
     started = sum(1 for r in rows if r["fetched"] > 0)
     print()

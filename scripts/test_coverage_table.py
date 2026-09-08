@@ -26,6 +26,12 @@ What is asserted here:
   PCT-ORPHAN  a grade whose transcript has left the corpus pushes 1J% above
               100, and the table says so by name instead of clamping. That is
               the orphaned-grade bug normalize_transcripts.py --grades fixes.
+  PCT-UNLIST  a transcript on disk that discovery no longer lists pushes FET%
+              above 100 with 1J% still at or under 100. It is a STALE MANIFEST,
+              not an orphaned grade, so it gets its own line naming its own
+              cause. Both used to print one message telling the operator to run
+              normalize_transcripts.py --grades, which cannot touch a manifest
+              and which grade_loop.sh had already run that cycle.
 
 Run: .venv/bin/python scripts/test_coverage_table.py
 """
@@ -173,18 +179,19 @@ PCT_ROSTER = [
     {"slug": "bob", "name": "Bob Metcalfe", "company": "3Com"},
     {"slug": "cyd", "name": "Cyd Charisse", "company": "Nothing Yet"},
     {"slug": "dev", "name": "Dev Orphan", "company": "Withdrawn Corp"},
+    {"slug": "eve", "name": "Eve Unlisted", "company": "Stale Manifest Ltd"},
 ]
 # leader -> how many candidates discovery identified
-PCT_IDENT = {"ada": 4, "bob": 4, "cyd": 0, "dev": 2}
+PCT_IDENT = {"ada": 4, "bob": 4, "cyd": 0, "dev": 2, "eve": 1}
 # leader -> transcripts actually on disk
 PCT_FETCHED = {"ada": ["t1", "t2"], "bob": ["t5", "t6", "t7", "t8"],
-               "cyd": [], "dev": ["t9"]}
+               "cyd": [], "dev": ["t9"], "eve": ["t11", "t12"]}
 # leader -> appearances FETCHED and then retired as re-uploads of another. The
 # sweep leaves <id>.json.superseded behind. MEASURED 2026-09-07: Lip-Bu Tan
 # read FETCH 7 of IDENT 14, which looked like half his material failing to
 # download. All 14 downloaded; 7 were duplicates of the other 7. Dividing by
 # IDENT reported 50% for a leader with a perfect fetch record.
-PCT_RETIRED = {"ada": ["t3", "t4"], "bob": [], "cyd": [], "dev": []}
+PCT_RETIRED = {"ada": ["t3", "t4"], "bob": [], "cyd": [], "dev": [], "eve": []}
 # (leader, source, judge) blinded grades, all valid
 PCT_GRADES = [
     # "every published judge" is derived, not spelled out. Listing two judges
@@ -195,6 +202,8 @@ PCT_GRADES = [
     *[("bob", "t5", j) for j in PUBLISHED],
     *[("dev", "t9", j) for j in PUBLISHED],
     *[("dev", "t10", j) for j in PUBLISHED],          # t10 was withdrawn
+    *[("eve", "t11", j) for j in PUBLISHED],          # on disk, unlisted, graded
+    *[("eve", "t12", j) for j in PUBLISHED],
 ]
 # leader -> (FET%, 1J%, NJ%) as the table should print them
 PCT_WANT = {
@@ -207,8 +216,12 @@ PCT_WANT = {
     "Cyd Charisse": ("-", "-", "-"),
     # 1 transcript on disk, 2 transcripts still carrying grades
     "Dev Orphan": ("50", "200", "200"),
-    # totals from summed counts: uniq 8 of ident 10, so 7/8, 5/7, 4/7
-    "TOTAL": ("88", "71", "57"),
+    # 2 transcripts on disk, 1 ever listed. Both are fully graded, so FET% is
+    # the ONLY figure over 100 and the orphan diagnosis does not apply.
+    "Eve Unlisted": ("200", "100", "100"),
+    # totals from summed counts: uniq 9 of ident 11, so 9/9, 7/9, 6/9. An
+    # average of the per-leader ratios would read 113/106/113 instead.
+    "TOTAL": ("100", "78", "67"),
 }
 
 
@@ -300,10 +313,28 @@ def check_pct(check) -> None:
         check(label, got == want,
               f"{name}: FET%/1J%/NJ% should be {want}, got {got}")
 
-    over = next((l for l in lines if "OVER 100%" in l), None)
-    check("PCT-ORPHAN", over is not None and "Dev Orphan" in over,
+    orphan_line = next((l for l in lines if "1J% OVER 100%" in l), None)
+    check("PCT-ORPHAN", orphan_line is not None and "Dev Orphan" in orphan_line,
           "the table must name the leader whose grades outlive their "
-          f"transcripts, not silently clamp: {over!r}")
+          f"transcripts, not silently clamp: {orphan_line!r}")
+    check("PCT-ORPHAN", orphan_line is not None and "Eve Unlisted" not in orphan_line,
+          "a stale manifest is not an orphaned grade; sending it to "
+          f"normalize_transcripts.py --grades is the bug: {orphan_line!r}")
+    check("PCT-ORPHAN", orphan_line is not None and "(+1)" in orphan_line,
+          f"the orphan line must size the excess, not just name it: {orphan_line!r}")
+
+    stale_line = next((l for l in lines if "FET% OVER 100%" in l), None)
+    check("PCT-UNLIST", stale_line is not None and "Eve Unlisted" in stale_line,
+          "FETCH above UNIQ needs its own line naming the stale manifest: "
+          f"{stale_line!r}")
+    check("PCT-UNLIST", stale_line is not None and "Dev Orphan" not in stale_line,
+          f"Dev Orphan is under 100 on FET% and must not appear: {stale_line!r}")
+    check("PCT-UNLIST", stale_line is not None and "(+1)" in stale_line,
+          f"the stale-manifest line must size the excess: {stale_line!r}")
+    check("PCT-UNLIST",
+          stale_line is not None and "normalize_transcripts.py" not in stale_line,
+          "normalize cannot repair a manifest, so the line must not advise it: "
+          f"{stale_line!r}")
 
 
 def main() -> int:
