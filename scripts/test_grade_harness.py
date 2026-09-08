@@ -526,33 +526,103 @@ def test_a_transient_is_retried_not_discarded(g) -> None:
           got == g.E_TRANSIENT, f"got {got}")
 
 
+def test_dead_scaffold_is_not_a_profile(g) -> None:
+    """A directory agy scaffolded but nobody logged into is not a profile.
+
+    FOUND 2026-09-07: `agy` creates $HOME/.gemini/... on startup, so a stray
+    `HOME=... agy` invocation leaves a directory shaped exactly like a profile
+    with no credential in it. One entered a 501-job rotation and would have
+    failed every third call.
+
+    The default home is exempt because it authenticates from the macOS Keychain
+    and answers with its token file deleted outright. A NON-default home cannot:
+    its keychain search list resolves under its own $HOME, which has no
+    keychain, so no token means no credential by either route.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root, home = Path(td) / ".agy-homes", Path(td) / "home"
+        (home / ".gemini" / "antigravity-cli").mkdir(parents=True)   # no token: the DEFAULT
+        live = root / "live" / ".gemini" / "antigravity-cli"
+        live.mkdir(parents=True)
+        (live / "antigravity-oauth-token").write_text("{}")
+        (root / "scaffold" / ".gemini" / "antigravity-cli").mkdir(parents=True)  # no token
+        got = g.agy_profiles(root=root, default_home=str(home))
+
+    check("agy_profiles: the default home is kept even with no token (Keychain auth)",
+          str(home) in got, f"got {got}")
+    check("agy_profiles: a non-default profile WITH a token is kept",
+          str(root / "live") in got, f"got {got}")
+    check("agy_profiles: a scaffold with no token is not a profile",
+          str(root / "scaffold") not in got, f"got {got}")
+
+
+def test_a_spent_profile_is_stepped_around(g) -> None:
+    """The only quota signal Antigravity gives is a pool saying it is spent.
+
+    There is no usage endpoint, so the rotation cannot be ranked by headroom.
+    What it can do is stop routing to a pool inside the dead window that pool
+    itself named. A deadline that cannot be parsed benches nothing: guessing a
+    duration would remove half the rotation on a guess.
+    """
+    A, B = "/home/a", "/home/b"
+    now = 1_800_000_000.0
+    g._GEMINI_BENCH.clear()
+    check("picker: with nothing benched, the round-robin assignment stands",
+          g.pick_gemini_profile(A, [A, B], now) == A)
+
+    g.bench_gemini_profile(A, now + 600)
+    check("picker: a benched profile is stepped around",
+          g.pick_gemini_profile(A, [A, B], now) == B)
+    check("picker: the other profile is untouched",
+          g.pick_gemini_profile(B, [A, B], now) == B)
+    check("picker: the bench expires on its own",
+          g.pick_gemini_profile(A, [A, B], now + 601) == A)
+
+    g.bench_gemini_profile(B, now + 600)
+    check("picker: with every profile spent the call is still made, so it fails "
+          "into the taxonomy instead of vanishing",
+          g.pick_gemini_profile(A, [A, B], now) == A)
+
+    g._GEMINI_BENCH.clear()
+    g.bench_gemini_profile(A, None)
+    check("picker: an unparseable deadline benches nothing",
+          g.pick_gemini_profile(A, [A, B], now) == A)
+
+    # The deadline must come from agy's own wording, via the router.
+    until = g.agy_exhausted_until("Individual quota reached. Resets in 25m54s", now)
+    check("picker: agy's relative reset wording yields a real deadline",
+          until is not None and 1500 < until - now < 1600, f"got {until}")
+    check("picker: a message with no reset time yields None, never 'now'",
+          g.agy_exhausted_until("something went wrong", now) is None)
+
+
 def test_gemini_profiles(g) -> None:
     """The Antigravity rotation is a glob, and it must not gate on a token file.
 
-    Both halves were wrong in a first draft. Membership was gated on
-    antigravity-oauth-token existing, which drops the DEFAULT profile: that one
-    authenticates from the macOS Keychain and answers normally with its token
-    file deleted outright (verified 2026-09-07). And the account list was very
-    nearly hardcoded, which is the mistake this machine has already made twice
-    with the Claude accounts, once for D and once for E.
+    The account list is a glob, never hardcoded letters: this machine has
+    already made that mistake twice with the Claude accounts, once for D and
+    once for E, so assume a third Antigravity account will appear.
+
+    Token rules live in test_dead_scaffold_is_not_a_profile. In short, the
+    default home is exempt because it authenticates from the Keychain, and a
+    non-default one is not because it cannot reach a Keychain at all.
     """
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / ".agy-homes"
         home = Path(td) / "home"
         (home / ".gemini" / "antigravity-cli").mkdir(parents=True)
-        for name in ("zeta", "alpha"):
-            (root / name / ".gemini" / "antigravity-cli").mkdir(parents=True)
+        for name in ("zeta", "alpha"):          # created out of sorted order
+            d = root / name / ".gemini" / "antigravity-cli"
+            d.mkdir(parents=True)
+            (d / "antigravity-oauth-token").write_text("{}")
         # A directory that is not a profile at all must not join the rotation.
         (root / "not-a-profile").mkdir(parents=True)
-        # alpha carries NO token file. It must still be in the rotation.
         got = g.agy_profiles(root=root, default_home=str(home))
 
     check("agy_profiles: default HOME leads the rotation",
           got and got[0] == str(home), f"got {got}")
     check("agy_profiles: finds every profile under the root, sorted",
           [Path(p).name for p in got[1:]] == ["alpha", "zeta"], f"got {got}")
-    check("agy_profiles: a tokenless profile is kept, not silently dropped",
-          str(root / "alpha") in got, f"got {got}")
     check("agy_profiles: a directory without antigravity-cli is not a profile",
           str(root / "not-a-profile") not in got, f"got {got}")
 
@@ -686,6 +756,8 @@ def main() -> int:
     test_blind_judges_is_configurable(g)
     test_failure_taxonomy_names_the_real_cause(g)
     test_a_transient_is_retried_not_discarded(g)
+    test_dead_scaffold_is_not_a_profile(g)
+    test_a_spent_profile_is_stepped_around(g)
     test_gemini_profiles(g)
     test_gemini_identity_is_not_read_by_mtime(g)
     test_gemini_command(g)

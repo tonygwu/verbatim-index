@@ -860,19 +860,36 @@ def agy_profiles(root: Path | None = None, default_home: str | None = None) -> l
     arrived and once when E did, so assume a third Antigravity account will
     appear and that nothing here may need editing when it does.
 
-    Membership is NOT gated on a token file being present. Identity for the
-    default profile comes from the macOS Keychain, and `agy` answers normally
-    with its token file deleted outright, so a token check would wrongly drop
-    the main account. An unauthenticated profile therefore reaches the harness
-    and fails loudly with E_AUTH, which is the right outcome: it is reported,
-    not silently skipped.
+    The DEFAULT home is always included and is never token-checked. It
+    authenticates from the macOS Keychain, and `agy` answers normally with its
+    token file deleted outright, so a token check would wrongly drop the main
+    account.
+
+    A NON-DEFAULT home must carry a token, because it has neither of the two
+    ways to be usable otherwise. Its Keychain search list resolves under its own
+    $HOME, which holds no keychain, so it cannot reach the Keychain at all; a
+    first login there raises "Keychain Not Found" and falls back to the file.
+    No token therefore means no credential by either route.
+
+    FOUND 2026-09-07: `agy` scaffolds $HOME/.gemini/... on startup, so any stray
+    `HOME=... agy` invocation leaves behind a directory that looks exactly like
+    a profile and has no credential. One appeared this way and entered a 501-job
+    rotation, where it would have failed every third call. Failing loudly is the
+    right treatment for a profile that was configured and has since broken; it
+    is the wrong treatment for a directory that was never a profile at all.
     """
     root = AGY_HOME_ROOT if root is None else root
-    homes = [default_home or str(Path.home())]
+    default = default_home or str(Path.home())
+    homes = [default]
     if root.is_dir():
         for d in sorted(root.iterdir()):
-            if (d / ".gemini" / "antigravity-cli").is_dir():
-                homes.append(str(d))
+            if not (d / ".gemini" / "antigravity-cli").is_dir():
+                continue
+            if not (d / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").exists():
+                log(f"skipping Antigravity profile {d.name}: no token, and a non-default "
+                    f"profile cannot reach the Keychain, so it has no credential at all")
+                continue
+            homes.append(str(d))
     return homes
 
 
@@ -961,6 +978,76 @@ def classify_agy_failure(rc: int, blob: str, now_s: float | None = None) -> tupl
     if "invalid model selection" in low or "not recognized as a known model" in low:
         return E_MODEL_MISMATCH, f"{E_MODEL_MISMATCH}: {blob[:400]}"
     return E_CLI, f"{E_CLI}: rc={rc} {blob[:400]}"
+
+
+#: Profiles known to be spent, and until when. Antigravity publishes no usage
+#: endpoint, so this is the ONLY quota signal available: a pool that says it is
+#: exhausted and names its own reset time. Learned from failures, never polled.
+_GEMINI_BENCH: dict[str, float] = {}
+_GEMINI_BENCH_LOCK = threading.Lock()
+
+
+def agy_exhausted_until(blob: str, now_s: float) -> float | None:
+    """Epoch seconds when a spent Antigravity pool comes back, or None.
+
+    The deadline comes from the router, which parses agy's own relative wording
+    ("Individual quota reached. ... Resets in 25m54s"). None means the message
+    named no time, NOT "now": returning now would un-bench the pool immediately
+    and spend the next call on a certain failure.
+    """
+    try:
+        from quota_router.failure_text import (classify_failure_text,
+                                               EXHAUSTED_WITH_DEADLINE)
+        v = classify_failure_text(blob, now_s)
+    except ImportError:
+        return None
+    if v.kind != EXHAUSTED_WITH_DEADLINE:
+        return None
+    until = getattr(v, "exhausted_until_s", None)
+    return until if until and until > now_s else None
+
+
+def bench_gemini_profile(profile_home: str, until_s: float | None) -> None:
+    """Record that a profile is spent. An unknown deadline benches nothing.
+
+    A profile with no stated reset is left routable on purpose. Benching it for
+    a guessed duration would remove half the rotation on a guess, and the cost
+    of guessing wrong is worse than the cost of one more failed call that lands
+    in the taxonomy where it can be counted.
+    """
+    if not until_s:
+        return
+    with _GEMINI_BENCH_LOCK:
+        _GEMINI_BENCH[profile_home] = max(_GEMINI_BENCH.get(profile_home, 0.0), until_s)
+
+
+def pick_gemini_profile(assigned: str, profiles: list[str], now_s: float | None = None) -> str:
+    """The assigned profile, unless it is benched and another one is not.
+
+    Rotation is round-robin because there is nothing to rank by: `agy` exposes
+    no usage endpoint, so no profile can be known to have more headroom than
+    another. What CAN be known is that a specific pool said it was spent and
+    when it returns. This keeps the round-robin and only skips a pool inside its
+    own stated dead window.
+
+    When every profile is benched the assignment stands, so the call is made and
+    fails into the taxonomy rather than being silently dropped. A pass that
+    cannot run should say so with numbers, not go quiet.
+    """
+    now_s = time.time() if now_s is None else now_s
+    with _GEMINI_BENCH_LOCK:
+        bench = dict(_GEMINI_BENCH)
+    if bench.get(assigned, 0.0) <= now_s:
+        return assigned
+    live = [p for p in profiles if bench.get(p, 0.0) <= now_s]
+    if not live:
+        return assigned
+    # Keep the round-robin's shape: take the next live profile after the
+    # assigned one, so load still spreads instead of piling onto the first.
+    if assigned in profiles:
+        order = profiles[profiles.index(assigned):] + profiles[:profiles.index(assigned)]
+        live = [p for p in order if p in live]
+    return live[0]
 
 
 def gemini_command(prompt: str, model: str, binary: str, print_timeout_s: int,
@@ -1112,7 +1199,15 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         blob = f"{proc.stdout or ''} {proc.stderr or ''}"
         raise RuntimeError(classify_agy_failure(proc.returncode, blob)[1])
     if result.get("status") != "SUCCESS":
-        raise RuntimeError(classify_agy_failure(proc.returncode, json.dumps(result))[1])
+        blob = json.dumps(result)
+        kind, detail = classify_agy_failure(proc.returncode, blob)
+        if kind == E_AUTH:
+            until = agy_exhausted_until(blob, time.time())
+            bench_gemini_profile(profile_home, until)
+            if until:
+                log(f"    gemini: benching {Path(profile_home).name or 'default'} for "
+                    f"{round(until - time.time())}s; it reported its own reset time")
+        raise RuntimeError(detail)
 
     # Model identity, asserted rather than assumed. A model name agy does not
     # know is rejected up front with a non-zero exit, so this catches the other
@@ -1187,7 +1282,12 @@ def grade_one(job: dict) -> dict:
             # been measured, and adding a retry now would hide the evidence
             # needed to answer that. If refusals show up in the taxonomy, the
             # measurement comes first and the retry second.
-            text, telemetry = call_gemini(prompt, job["gemini_profile"], job["timeout"],
+            # Round-robin assigns the profile up front; the picker only steps
+            # around one that has since reported itself spent, inside its own
+            # stated dead window. Chosen here, not at queue-build time, because
+            # a 500-job pass learns which pools are spent while it runs.
+            profile = pick_gemini_profile(job["gemini_profile"], job["gemini_profiles"])
+            text, telemetry = call_gemini(prompt, profile, job["timeout"],
                                           job["workdir"], job["gemini_model"],
                                           job["agy_bin"])
         else:
@@ -1453,6 +1553,7 @@ def main() -> int:
             # profile. See assign_accounts() for the bug that motivated it.
             "gemini_profile": assign_accounts("gemini", i, gem_profiles, judges)
                               if gem_profiles else None,
+            "gemini_profiles": gem_profiles,
             "workdir": str(wd),
             "dest": str(Path(args.out) / judge / rec["leader_slug"] / f"{stem}.json"),
             "raw_dest": str(Path(args.out) / "_raw" / judge / rec["leader_slug"] / f"{stem}.txt"),
