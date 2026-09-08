@@ -404,6 +404,32 @@ persisted may simply not have been rejected loudly. And a denied tool can end a
 turn with `status: SUCCESS` and an EMPTY response, which `call_gemini()` now
 raises as `empty_response` rather than writing a silent non-answer as a grade.
 
+**How much does a judge disagree with ITSELF?** (2026-09-07) Nobody had ever
+measured it: the whole corpus is `--repeats 1`, so every grade was implicitly
+treated as a fixed value. Eight transcripts spanning eight leaders and 3.1k to
+27.9k words, three repeats each, all three arms, against a frozen copy of the
+corpus rather than the live one.
+
+| arm | transcripts | runs | mean spread | max | within-transcript sd |
+|---|---|---|---|---|---|
+| astra | 7 | 17 | 1.28 | 2.0 | 0.60 |
+| gemini | 6 | 12 | 2.30 | 4.1 | 1.15 |
+| fable | - | - | - | - | not measured |
+
+Gemini is about twice as noisy as Astra on a re-run. Both are small next to what
+the board can resolve: re-run noise averages down into a leader's score by
+sqrt(n), giving +/-1.30 at 95% for a 3-transcript leader on Gemini and +/-0.60
+at 14, against a median rank range of 13 places.
+
+Three caveats, each of which matters more than the headline. The Gemini figure
+is optimistically biased, because the transcript with the worst observed
+variance is the one that failed most often and dropped out of the pairs. Fable
+produced no repeatability data at all: 17 of its 24 calls returned
+`auth_or_quota` because its weekly window was nearly spent, so no transcript got
+two Fable runs and the three-way comparison is really two-way. And Astra failed
+schema validation three times here, so the quote-cap overrun is not unique to
+the new arm; Gemini is roughly three times worse at it, not alone in it.
+
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
 grading loop writes continuously, so any before-and-after measured against
@@ -453,6 +479,18 @@ new grades incomparable with the corpus already graded.
   grading calls the judge used no tools at all, unlike Astra which was observed
   searching. One data point is not a finding. Read `grades_where_a_tool_ran` in
   `diagnostics.shadow_judges` once the backfill has run.
+
+- **The published interval does not include judge re-run noise.** `bootstrap`
+  resamples a leader's transcripts and holds each grade as a fixed value, so it
+  captures sampling across transcripts and nothing about the same judge scoring
+  the same transcript differently on a second call. MEASURED 2026-09-07: that
+  noise is a within-transcript sd of 0.60 for Astra and 1.15 for Gemini, which
+  is +/-0.31 and +/-0.60 at 95% for a 14-transcript leader. The published
+  endpoints are therefore slightly narrower than the truth. Left as is because
+  the effect is small against a median rank range of 13 places, and because
+  folding it in would need repeat grades across the whole corpus rather than the
+  eight transcripts measured. Recorded because it is an assumption the number
+  carries silently, not because it changes a rank today.
 
 - **Filters bite unevenly, which is a bias and not a detail.** The subject-share
   filter removed 81% of Jeff Bezos's material, and he is scored on what is left.
