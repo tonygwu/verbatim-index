@@ -111,6 +111,27 @@ REFUSAL_PHRASES = ("cannot assign", "can't assign", "can\u2019t assign", "unable
 REFUSAL_TEXT_KEYS = ("reason", "status", "note", "error", "message", "explanation")
 
 
+#: Every label a judge call can raise, so the taxonomy can name any of them.
+#: Listed in one place and derived from, never re-typed at the call site: the
+#: first version enumerated a subset inline and silently relabelled the rest.
+ALL_ERROR_TYPES = (E_CLI, E_TIMEOUT, E_EMPTY, E_NOJSON, E_BADJSON, E_SCHEMA,
+                   E_MODEL_MISMATCH, E_AUTH, E_REFUSED, E_TOOL_ATTEMPT, E_TRANSIENT)
+
+
+def classify_exception_detail(detail: str) -> str:
+    """Recover the taxonomy label a judge call put at the front of its message.
+
+    FOUND 2026-09-07: the inline version listed five of the eleven labels, so a
+    Gemini pass reported 9 failures as `cli_nonzero_exit` whose own detail said
+    `transient_retryable` or `empty_response`. The tally then read as a crash
+    wave when it was one wave of load-shedding and one empty answer, which are
+    different problems with different fixes. Longest match wins so a label that
+    is a prefix of another cannot shadow it.
+    """
+    hits = [e for e in ALL_ERROR_TYPES if detail.startswith(e)]
+    return max(hits, key=len) if hits else E_CLI
+
+
 def looks_like_refusal(obj: dict) -> str | None:
     """Return the judge's stated reason if this is a refusal, else None."""
     if "dimensions" in obj:
@@ -1044,8 +1065,36 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     print_timeout = max(60, timeout - 60)
     log_path = jail / "agy-cli.log"
     cmd = gemini_command(prompt, model, binary, print_timeout, log_path)
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          env=env, cwd=str(jail), stdin=subprocess.DEVNULL)
+
+    # A transient is retried; an exhaustion or a bad model is not.
+    #
+    # MEASURED 2026-09-07, first Gemini pass: 8 of 24 calls failed with
+    # `"error": "authentication failed or timed out"` at duration_seconds 0 and
+    # num_turns 0, and every one of them was repeat index 2. order_breadth_first
+    # puts the last repeat of every transcript at the END of the pass, so this
+    # is the arm degrading under sustained load rather than anything about those
+    # transcripts. Backing off and retrying is the fix; without it a verdict of
+    # "safe to retry" just discarded the grade.
+    #
+    # Backoff is generous because the failures arrive at duration 0, which means
+    # the CLI is being turned away before it does any work, and hammering a
+    # source that is turning us away is how a burst limit becomes a longer one.
+    attempts, proc, last = 0, None, ""
+    for delay in (0, 10, 30, 90):
+        if delay:
+            time.sleep(delay)
+        attempts += 1
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                              env=env, cwd=str(jail), stdin=subprocess.DEVNULL)
+        last = f"{proc.stdout or ''} {proc.stderr or ''}"
+        if proc.returncode == 0 and '"status":"SUCCESS"' in (proc.stdout or "").replace(" ", ""):
+            break
+        kind, _detail = classify_agy_failure(proc.returncode, last)
+        if kind != E_TRANSIENT:
+            break
+    if attempts > 1:
+        log(f"    gemini: {attempts} attempts after a transient failure "
+            f"({Path(profile_home).name or 'default'})")
 
     events = []
     for line in (proc.stdout or "").splitlines():
@@ -1170,8 +1219,7 @@ def grade_one(job: dict) -> dict:
                 "run": job["run"], "error_type": E_TIMEOUT, "detail": f"exceeded {job['timeout']}s"}
     except Exception as exc:  # noqa: BLE001
         detail = str(exc)
-        etype = next((e for e in (E_CLI, E_TIMEOUT, E_AUTH, E_MODEL_MISMATCH, E_TOOL_ATTEMPT)
-                      if detail.startswith(e)), E_CLI)
+        etype = classify_exception_detail(detail)
         return {"status": "failed", "id": tid, "judge": job["judge"], "mode": job["mode"],
                 "run": job["run"], "error_type": etype, "detail": detail[:800]}
 

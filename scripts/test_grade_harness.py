@@ -468,6 +468,64 @@ def test_blind_judges_is_configurable(g) -> None:
           "blinded judges ${BLIND_JUDGES}" in loop)
 
 
+def test_failure_taxonomy_names_the_real_cause(g) -> None:
+    """A failure is filed under the label it raised, not swept into cli_nonzero_exit.
+
+    FOUND 2026-09-07 in the first Gemini pass: 10 failures, of which 9 were
+    reported as `cli_nonzero_exit` while their own detail said
+    `transient_retryable` or `empty_response`. The inline classifier enumerated
+    five of the eleven labels and everything else fell through to the default.
+
+    That is not cosmetic. The three causes need three different responses: a
+    transient should be retried, an empty answer means a denied tool ended the
+    turn, and a genuine non-zero exit is a crash. Collapsed into one count, the
+    pass reads as broken when it is shedding load, which is exactly the
+    "a fully-broken component reads as slow" failure the taxonomy exists to stop.
+    """
+    check("every taxonomy label is listed in ALL_ERROR_TYPES",
+          set(g.ALL_ERROR_TYPES) == {v for k, v in vars(g).items()
+                                     if k.startswith("E_") and isinstance(v, str)},
+          f"listed={sorted(g.ALL_ERROR_TYPES)}")
+    # The exact strings observed in that pass.
+    observed = [
+        ("transient_retryable: rate-limit/transport error with no quota wording; "
+         "safe to retry. matched=transient:timeout", g.E_TRANSIENT),
+        ('empty_response: status SUCCESS with an empty response. denied_actions=[]', g.E_EMPTY),
+        ("auth_or_quota: exhausted_with_deadline resets in 1554s", g.E_AUTH),
+        ("model_identity_mismatch: requested x, telemetry names y", g.E_MODEL_MISMATCH),
+        ("cli_nonzero_exit: rc=1 panic", g.E_CLI),
+        ("something nobody labelled", g.E_CLI),
+    ]
+    for detail, want in observed:
+        got = g.classify_exception_detail(detail)
+        check(f"taxonomy: {detail[:38]!r} -> {want}", got == want, f"got {got}")
+
+
+def test_a_transient_is_retried_not_discarded(g) -> None:
+    """The verdict "safe to retry" must actually cause a retry.
+
+    The load-shedding wave that motivated this raised `transient_retryable`
+    correctly and then threw the grade away, because nothing acted on the
+    verdict. 8 of 24 calls were lost that way, all of them the last repeat of
+    their transcript, which is where order_breadth_first puts the tail of a pass.
+    """
+    import inspect
+    src = inspect.getsource(g.call_gemini)
+    check("call_gemini retries rather than failing on the first transient",
+          "E_TRANSIENT" in src and "for delay in" in src,
+          "no retry loop found in call_gemini")
+    check("the retry backs off instead of hammering a source turning us away",
+          "time.sleep(delay)" in src)
+    check("a non-transient failure breaks out instead of burning the budget",
+          "if kind != E_TRANSIENT:" in src and "break" in src)
+    # The exact wording the CLI produced under load must reach that branch.
+    observed = ('{"conversation_id": "", "status": "ERROR", "response": "", '
+                '"error": "authentication failed or timed out", "duration_seconds": 0}')
+    got, _d = g.classify_agy_failure(1, observed, now_s=1_800_000_000.0)
+    check("the observed load-shedding text classifies as transient, not exhaustion",
+          got == g.E_TRANSIENT, f"got {got}")
+
+
 def test_gemini_profiles(g) -> None:
     """The Antigravity rotation is a glob, and it must not gate on a token file.
 
@@ -626,6 +684,8 @@ def main() -> int:
     test_quota_routing(g)
     test_account_pinning(g)
     test_blind_judges_is_configurable(g)
+    test_failure_taxonomy_names_the_real_cause(g)
+    test_a_transient_is_retried_not_discarded(g)
     test_gemini_profiles(g)
     test_gemini_identity_is_not_read_by_mtime(g)
     test_gemini_command(g)
