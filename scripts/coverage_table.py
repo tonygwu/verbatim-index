@@ -69,7 +69,16 @@ def main() -> int:
                 if isinstance(rows, list):
                     identified[slug] += len(rows)
 
-    # 2. fetched: transcript files actually on disk
+    # 2. fetched: transcript files actually on disk, plus the ones that were
+    # fetched and then retired as duplicates. The sweep renames a retired
+    # source to <id>.json.superseded, so those are appearances we DID obtain
+    # and then found to be re-uploads of another appearance.
+    retired: Counter = Counter()
+    tdir0 = Path("data/transcripts")
+    if tdir0.exists():
+        for p in tdir0.rglob("*.superseded"):
+            retired[p.parent.name] += 1
+
     fetched: Counter = Counter()
     from_yt: Counter = Counter()
     from_hs: Counter = Counter()
@@ -150,6 +159,10 @@ def main() -> int:
             "leader": p["name"],
             "company": p["company"],
             "identified": identified.get(s, 0),
+            "duplicates": retired.get(s, 0),
+            # Distinct appearances discovery found: every candidate, less the
+            # ones we obtained and then retired as re-uploads of each other.
+            "unique": max(0, identified.get(s, 0) - retired.get(s, 0)),
             "fetched": fetched.get(s, 0),
             "yt": from_yt.get(s, 0),
             "hs": from_hs.get(s, 0),
@@ -168,7 +181,7 @@ def main() -> int:
             rows[-1][f"calls_{j}"] = calls_by_judge.get((s, j), 0)
         rows[-1]["judge_calls"] = calls.get(s, 0)
         rows[-1]["overall"] = scores.get(s, {}).get("overall")
-        rows[-1]["pct_fetched"] = pct(rows[-1]["fetched"], rows[-1]["identified"])
+        rows[-1]["pct_fetched"] = pct(rows[-1]["fetched"], rows[-1]["unique"])
         rows[-1]["pct_graded_any"] = pct(rows[-1]["graded"], rows[-1]["fetched"])
         rows[-1]["pct_graded_all"] = pct(rows[-1]["graded_all"], rows[-1]["fetched"])
     rows.sort(key=lambda r: (-r["graded"], -r["fetched"], r["leader"]))
@@ -189,18 +202,18 @@ def main() -> int:
 
     def left(i, leader, company, r) -> str:
         return (f"{i:>3}  {leader:<{w}}  {company[:c]:<{c}}  "
-                f"{r['identified']:>5} {r['fetched']:>5} {r['yt']:>3} {r['hs']:>3} "
+                f"{r['identified']:>5} {r['unique']:>5} {r['fetched']:>5} {r['yt']:>3} {r['hs']:>3} "
                 f"{r['gated']:>5} {r['rejected']:>4}")
 
     head_left = (f"{'#':>3}  {'LEADER':<{w}}  {'ORGANISATION':<{c}}  "
-                 f"{'IDENT':>5} {'FETCH':>5} {'YT':>3} {'HS':>3} {'GATED':>5} {'REJ':>4}")
+                 f"{'IDENT':>5} {'UNIQ':>5} {'FETCH':>5} {'YT':>3} {'HS':>3} {'GATED':>5} {'REJ':>4}")
     gh = group([f"{label(j):>{JW}}" for j in judges] + [f"{'ANY':>{JW}}"])
     ch = group([f"{label(j):>{JW}}" for j in judges])
     # "graded by both judges" generalises to "by all judges", so the label
     # carries the judge count rather than a hardcoded 2.
     pct_labels = ("FET%", "1J%", f"{len(judges)}J%")
     ph = group([f"{t:>{PW}}" for t in pct_labels])
-    rule = (f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4}"
+    rule = (f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4}"
             f"   {group(['-'*JW] * (len(judges) + 1))}"
             f"   {group(['-'*JW] * len(judges))}"
             f"   {group(['-'*PW] * len(pct_labels))}   {'-'*5}")
@@ -225,24 +238,30 @@ def main() -> int:
         k = group([f"{r[f'calls_{j}']:>{JW}}" for j in judges])
         print(f"{left(i, r['leader'], r['company'], r)}   {g}   {k}   {cells_pct(r)}   {sc:>5}")
 
-    keys = (["identified", "fetched", "yt", "hs", "gated", "rejected", "graded",
+    keys = (["identified", "unique", "duplicates", "fetched", "yt", "hs", "gated", "rejected", "graded",
              "graded_all", "judge_calls"]
             + [f"graded_{j}" for j in judges] + [f"calls_{j}" for j in judges])
     tot = {k: sum(r[k] for r in rows) for k in keys}
     # Fleet percentages come from the summed counts, not from averaging the
     # per-leader percentages. An average of ratios would weight a leader with
     # 7 appearances the same as one with 57.
-    tot["pct_fetched"] = pct(tot["fetched"], tot["identified"])
+    tot["pct_fetched"] = pct(tot["fetched"], tot["unique"])
     tot["pct_graded_any"] = pct(tot["graded"], tot["fetched"])
     tot["pct_graded_all"] = pct(tot["graded_all"], tot["fetched"])
     print(rule)
     gt = group([f"{tot[f'graded_{j}']:>{JW}}" for j in judges] + [f"{tot['graded']:>{JW}}"])
     kt = group([f"{tot[f'calls_{j}']:>{JW}}" for j in judges])
-    print(f"{'':>3}  {'TOTAL':<{w}}  {'':<{c}}  {tot['identified']:>5} {tot['fetched']:>5} "
+    print(f"{'':>3}  {'TOTAL':<{w}}  {'':<{c}}  {tot['identified']:>5} {tot['unique']:>5} {tot['fetched']:>5} "
           f"{tot['yt']:>3} {tot['hs']:>3} {tot['gated']:>5} {tot['rejected']:>4}"
           f"   {gt}   {kt}   {cells_pct(tot)}   {'':>5}")
-    print(f"{'':>3}  FET% = FETCH/IDENT.  1J% = ANY/FETCH.  "
+    print(f"{'':>3}  UNIQ = IDENT minus {tot['duplicates']} appearances fetched then retired as "
+          f"re-uploads of another.")
+    print(f"{'':>3}  FET% = FETCH/UNIQ.  1J% = ANY/FETCH.  "
           f"{len(judges)}J% = graded by all {len(judges)} judges / FETCH.")
+    if tot["duplicates"] == 0 and tot["fetched"] > 0:
+        print(f"{'':>3}  NOTE: no retired duplicates found on disk, so UNIQ equals IDENT. "
+              f"The .superseded\n{'':>8}markers are gitignored, so a clone that did not run "
+              f"the sweep cannot see them.")
     over = [r["leader"] for r in rows
             if (r["pct_graded_any"] or 0) > 100 or (r["pct_fetched"] or 0) > 100]
     if over:

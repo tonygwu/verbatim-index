@@ -96,6 +96,12 @@ PCT_IDENT = {"ada": 4, "bob": 4, "cyd": 0, "dev": 2}
 # leader -> transcripts actually on disk
 PCT_FETCHED = {"ada": ["t1", "t2"], "bob": ["t5", "t6", "t7", "t8"],
                "cyd": [], "dev": ["t9"]}
+# leader -> appearances FETCHED and then retired as re-uploads of another. The
+# sweep leaves <id>.json.superseded behind. MEASURED 2026-09-07: Lip-Bu Tan
+# read FETCH 7 of IDENT 14, which looked like half his material failing to
+# download. All 14 downloaded; 7 were duplicates of the other 7. Dividing by
+# IDENT reported 50% for a leader with a perfect fetch record.
+PCT_RETIRED = {"ada": ["t3", "t4"], "bob": [], "cyd": [], "dev": []}
 # (leader, source, judge) blinded grades, all valid
 PCT_GRADES = [
     ("ada", "t1", "fable"), ("ada", "t1", "astra"),   # t1 has both judges
@@ -106,16 +112,17 @@ PCT_GRADES = [
 ]
 # leader -> (FET%, 1J%, NJ%) as the table should print them
 PCT_WANT = {
-    # 2/4 fetched; both fetched transcripts graded; only t1 has both judges
-    "Ada Lovelace": ("50", "100", "50"),
+    # ident 4, two retired as duplicates -> uniq 2, and both are fetched, so
+    # this leader has a PERFECT fetch record and must read 100, not 50.
+    "Ada Lovelace": ("100", "100", "50"),
     # everything fetched, but only t5 of four reached a judge
     "Bob Metcalfe": ("100", "25", "25"),
     # nothing identified and nothing fetched: not answerable, not zero
     "Cyd Charisse": ("-", "-", "-"),
     # 1 transcript on disk, 2 transcripts still carrying grades
     "Dev Orphan": ("50", "200", "200"),
-    # totals from summed counts: 7/10, 5/7, 4/7
-    "TOTAL": ("70", "71", "57"),
+    # totals from summed counts: uniq 8 of ident 10, so 7/8, 5/7, 4/7
+    "TOTAL": ("88", "71", "57"),
 }
 
 
@@ -135,6 +142,13 @@ def build_pct(root: Path) -> None:
         for sid in ids:
             (d / f"{sid}.json").write_text(json.dumps(
                 {"fetch_method": "youtube_transcript_api"}))
+    for slug, ids in PCT_RETIRED.items():
+        if not ids:
+            continue
+        d = root / "data/transcripts" / slug
+        d.mkdir(parents=True, exist_ok=True)
+        for sid in ids:
+            (d / f"{sid}.json.superseded").write_text("{}")
     for slug, sid, judge in PCT_GRADES:
         d = root / "data/grades" / judge / slug
         d.mkdir(parents=True, exist_ok=True)
@@ -158,6 +172,18 @@ def check_pct(check) -> None:
     header = next((l for l in lines if l.lstrip().startswith("#")), "")
     check("PCT", all(t in header for t in ("FET%", "1J%", "2J%")),
           f"header is missing a percentage column: {header!r}")
+    check("UNIQ", "UNIQ" in header and "IDENT" in header,
+          f"UNIQ must sit beside IDENT, not replace it: {header!r}")
+    ada = next((l for l in lines if "  Ada Lovelace  " in l), "")
+    # 7 narrowing + 3 graded + 2 calls + 3 pct + 1 score = 16 numeric cells.
+    # Counting from the right survives names and companies containing spaces.
+    tail = ada.split()[-16:]
+    check("UNIQ", tail[0:3] == ["4", "2", "2"],
+          f"Ada should read IDENT 4, UNIQ 2, FETCH 2; got {tail[0:3]}")
+    check("UNIQ", "retired as" in r.stdout and "re-uploads" in r.stdout,
+          "the footnote must say what UNIQ subtracts, or the column is unexplained")
+    check("UNIQ", "FET% = FETCH/UNIQ" in r.stdout,
+          "the footnote still claims FET% divides by IDENT")
 
     for name, want in PCT_WANT.items():
         is_total = name == "TOTAL"
@@ -212,12 +238,12 @@ def main() -> int:
         # | FET% 1J% NJ%.  This fixture has no sources and no transcripts, so
         # the three percentages are dashes; they get their own scenario below.
         nums = [int(x) for x in cells(total)[1:-3]]
-        want = 6 + (3 + 1) + 3   # narrowing columns, GRADED per judge + ANY, CALLS
+        want = 7 + (3 + 1) + 3   # narrowing cols (incl UNIQ), GRADED per judge + ANY, CALLS
         check("SPLIT", len(nums) == want,
               f"TOTAL row has {len(nums)} numeric columns, expected {want}: "
               f"three judges need their own GRADED and CALLS columns")
         nums += [-1] * (want - len(nums))   # report every check, not just the first
-        graded, pooled_any, calls = nums[6:9], nums[9], nums[10:13]
+        graded, pooled_any, calls = nums[7:10], nums[10], nums[11:14]
         check("SPLIT", graded == [1, 2, 1],
               f"per-judge GRADED should be fable 1, astra 2, nova 1; got {graded}")
         check("ANY", pooled_any == 3,
