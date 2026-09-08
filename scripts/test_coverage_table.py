@@ -82,6 +82,77 @@ def cells(line: str) -> list[str]:
     return line.split()
 
 
+# --- shadow-judge scenario -------------------------------------------------
+# A third independent fixture. A shadow judge is COLLECTED but not published,
+# so it must get its own column while staying out of every figure that
+# describes the published corpus.
+SHADOW_GRADES = [
+    ("ada", "t1", "fable"), ("ada", "t1", "astra"),
+    ("ada", "t1", "gemini"),      # shadow: a column, but not published coverage
+    ("ada", "t1", "nova"),        # published, and outside JUDGE_ORDER
+]
+
+
+def build_shadow(root: Path) -> None:
+    (root / "data/roster").mkdir(parents=True)
+    (root / "data/roster/final.json").write_text(json.dumps({"roster": [
+        {"slug": "ada", "name": "Ada Lovelace", "company": "Analytical Engine"}]}))
+    # Written in an order that is neither JUDGE_ORDER nor alphabetical, so a
+    # passing column order can only come from JUDGE_ORDER.
+    for _leader, src, judge in [SHADOW_GRADES[i] for i in (3, 2, 1, 0)]:
+        d = root / "data/grades" / judge / "ada"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{src}__{judge}__blinded__r0.json").write_text(json.dumps({
+            "transcript_id": f"ada/{src}", "leader_slug": "ada", "source_id": src,
+            "judge": judge, "mode": "blinded", "validation_errors": []}))
+
+
+def check_shadow(check) -> None:
+    """A shadow judge gets a column and is kept out of the published figures.
+
+    Both halves matter and they pull in opposite directions. Without the column
+    the arm is invisible and a stalled backfill cannot be told from an absent
+    one. Inside the published intersection, adding the arm would have reported
+    "graded by every judge 0/491" on the day it was added, reading as a total
+    loss of coverage when nothing about the published score had changed.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_shadow(root)
+        r = subprocess.run([sys.executable, str(SCRIPT)], cwd=root,
+                           capture_output=True, text=True)
+    if r.returncode != 0:
+        check("SHADOW", False, f"coverage_table.py exited {r.returncode}: {r.stderr}")
+        return
+    out, lines = r.stdout, r.stdout.splitlines()
+    header = next((l for l in lines if l.lstrip().startswith("#")), "")
+
+    check("SHADOW", "GEMIN" in header,
+          f"the shadow judge has no column, so a stalled backfill is invisible: {header!r}")
+    # Order comes from JUDGE_ORDER, not from disk order or the alphabet.
+    idx = [header.find(t) for t in ("FABLE", "ASTRA", "GEMIN", "NOVA")]
+    check("SHADOW", all(a < b for a, b in zip(idx, idx[1:])) and -1 not in idx,
+          f"columns must read FABLE ASTRA GEMIN NOVA; got offsets {idx} in {header!r}")
+
+    # The published percentage counts 3 judges, not 4, and says so.
+    check("SHADOW", "3J%" in header and "4J%" not in header,
+          f"the coverage column must exclude the shadow judge: {header!r}")
+    legend = next((l for l in lines if "FET% =" in l), "")
+    check("SHADOW", "3J%" in legend and "4J%" not in legend,
+          f"the legend must agree with the column it explains: {legend!r}")
+    check("SHADOW", "gemini" in legend,
+          f"the legend must name the judge it excluded: {legend!r}")
+
+    m = re.search(r"graded by every published judge\s*:\s*(\d+)/(\d+).*one-sided:\s*(.+?)\)", out)
+    check("SHADOW", bool(m), "no published-judge parity line")
+    if m:
+        check("SHADOW", "gemini" not in m.group(3),
+              f"the shadow judge must not appear in published parity: {m.group(3)!r}")
+    check("SHADOW", re.search(r"shadow judges\s*:\s*gemini 1/1", out) is not None,
+          "the shadow line must report the arm's own backfill progress")
+
+
+
 # --- percentage-column scenario -------------------------------------------
 # A second, independent fixture. Folding these cases into GRADES above would
 # have rewritten what the parity assertions mean.
@@ -266,6 +337,7 @@ def main() -> int:
               f"one-sided counts wrong: {m.group(3).strip()!r}")
 
     check_pct(check)
+    check_shadow(check)
 
     for f in fails:
         print(f"FAIL  {f}")

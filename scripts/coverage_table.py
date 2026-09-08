@@ -22,9 +22,23 @@ from pathlib import Path
 TARGET = 5
 
 # Column order for the per-judge columns. Any judge found in the data that is
-# not listed here is appended rather than dropped, so a third judge shows up as
+# not listed here is appended rather than dropped, so a fourth judge shows up as
 # a new column instead of vanishing into a total.
-JUDGE_ORDER = ("fable", "astra")
+#
+# A judge named here gets a column even with nothing on disk yet, so a backfill
+# in progress reads as 0 rather than as an absent column. An absent column and a
+# stalled one look identical, and the whole point of the per-judge split is that
+# one judge can stall for hours while the pooled number keeps climbing.
+JUDGE_ORDER = ("fable", "astra", "gemini")
+
+# Judges collected but NOT published; kept in step with SHADOW_JUDGES in
+# aggregate.py. They get their own column, but they are held out of the
+# "graded by every judge" intersection and the coverage percentage built on it.
+#
+# Otherwise adding a shadow judge drops that figure to zero for every leader on
+# the day it is added, which would read as the corpus having lost coverage when
+# nothing about the published score changed.
+SHADOW_JUDGES = ("gemini",)
 JW = 5  # width of one per-judge column
 PW = 5  # width of one percentage column
 
@@ -139,10 +153,19 @@ def main() -> int:
                 graded_by_judge[(slug, judge)].add(g["source_id"])
                 by_judge_tx[judge].add(g["transcript_id"])
 
+    # Columns are discovered from the data, so the table never claims a judge
+    # ran when it did not. JUDGE_ORDER only fixes the ORDER of the ones present,
+    # which is why a new arm lands beside fable and astra rather than after the
+    # alphabetical stragglers. A judge with no grades yet is reported on the
+    # shadow line below instead of as a column of zeros.
     judges = [j for j in JUDGE_ORDER if j in seen_judges]
     judges += sorted(j for j in seen_judges if j not in JUDGE_ORDER)
     if not judges:                      # no grades on disk yet
         judges = list(JUDGE_ORDER)
+
+    # The intersection below is what "every judge has graded this" means, and it
+    # only makes sense over the judges that reach the leaderboard.
+    published = [j for j in judges if j not in SHADOW_JUDGES] or judges
 
     # Scores, where they exist yet
     scores: dict[str, dict] = {}
@@ -175,7 +198,7 @@ def main() -> int:
         # Transcripts this leader has from EVERY judge. Intersecting the
         # per-judge source_id sets, not min() of the counts: two judges can
         # each hold five grades and overlap on three.
-        all_judges = [set(graded_by_judge.get((s, j), ())) for j in judges]
+        all_judges = [set(graded_by_judge.get((s, j), ())) for j in published]
         rows[-1]["graded_all"] = len(set.intersection(*all_judges)) if all_judges else 0
         for j in judges:
             rows[-1][f"calls_{j}"] = calls_by_judge.get((s, j), 0)
@@ -211,7 +234,7 @@ def main() -> int:
     ch = group([f"{label(j):>{JW}}" for j in judges])
     # "graded by both judges" generalises to "by all judges", so the label
     # carries the judge count rather than a hardcoded 2.
-    pct_labels = ("FET%", "1J%", f"{len(judges)}J%")
+    pct_labels = ("FET%", "1J%", f"{len(published)}J%")
     ph = group([f"{t:>{PW}}" for t in pct_labels])
     rule = (f"{'-'*3}  {'-'*w}  {'-'*c}  {'-'*5} {'-'*5} {'-'*5} {'-'*3} {'-'*3} {'-'*5} {'-'*4}"
             f"   {group(['-'*JW] * (len(judges) + 1))}"
@@ -256,8 +279,16 @@ def main() -> int:
           f"   {gt}   {kt}   {cells_pct(tot)}   {'':>5}")
     print(f"{'':>3}  UNIQ = IDENT minus {tot['duplicates']} appearances fetched then retired as "
           f"re-uploads of another.")
+    # Count the PUBLISHED judges, matching the column header. Using len(judges)
+    # here disagreed with the header the moment a shadow judge appeared: the
+    # column read 3J% while the legend explaining it read 4J%.
+    shadow_note = ("" if len(published) == len(judges)
+                   else f"  Shadow judges are excluded from it: "
+                        f"{', '.join(j for j in judges if j in SHADOW_JUDGES)}.")
     print(f"{'':>3}  FET% = FETCH/UNIQ.  1J% = ANY/FETCH.  "
-          f"{len(judges)}J% = graded by all {len(judges)} judges / FETCH.")
+          f"{len(published)}J% = graded by all {len(published)} "
+          f"{'published ' if len(published) != len(judges) else ''}judges / FETCH."
+          f"{shadow_note}")
     if tot["duplicates"] == 0 and tot["fetched"] > 0:
         print(f"{'':>3}  NOTE: no retired duplicates found on disk, so UNIQ equals IDENT. "
               f"The .superseded\n{'':>8}markers are gitignored, so a clone that did not run "
@@ -275,8 +306,14 @@ def main() -> int:
     print(f"  leaders with any grade      : {sum(1 for r in rows if r['graded'] > 0)}/{len(rows)}")
     print(f"  remaining to fetch          : {max(0, len(rows) * TARGET - tot['fetched'])} transcripts")
     sets = [by_judge_tx.get(j, set()) for j in judges]
-    both = set.intersection(*sets) if sets else set()
-    union = set.union(*sets) if sets else set()
+    # "Graded by every judge" is a statement about the PUBLISHED score, so it
+    # intersects the published judges only, exactly as the nJ% column does.
+    # Intersecting a shadow judge in would have reported 0/491 on the day the
+    # Gemini arm was added, reading as a total loss of coverage when nothing
+    # about the published corpus had changed.
+    pub_sets = [by_judge_tx.get(j, set()) for j in published]
+    both = set.intersection(*pub_sets) if pub_sets else set()
+    union = set.union(*pub_sets) if pub_sets else set()
     # Two different "remaining" numbers, and they answer different questions.
     # The first is the fetch-side target of TARGET transcripts per leader. The
     # second is the gap that actually blocks publication: a transcript graded
@@ -286,9 +323,16 @@ def main() -> int:
     to_parity = sum(len(union - s) for s in sets)
     print(f"  blinded transcripts graded  : "
           + ", ".join(f"{j} {len(s)}" for j, s in zip(judges, sets)))
-    print(f"  graded by every judge       : {len(both)}/{len(union)} transcripts"
+    pub_label = "every judge" if len(published) == len(judges) else "every published judge"
+    print(f"  {('graded by ' + pub_label):<28}: {len(both)}/{len(union)} transcripts"
           f"  (one-sided: "
-          + ", ".join(f"{j} {len(s - both)}" for j, s in zip(judges, sets)) + ")")
+          + ", ".join(f"{j} {len(s - both)}" for j, s in zip(published, pub_sets)) + ")")
+    shadow_here = list(SHADOW_JUDGES)
+    if shadow_here:
+        print(f"  {'shadow judges':<28}: "
+              + ", ".join(f"{j} {len(by_judge_tx.get(j, set()))}/{len(union)} transcripts "
+                          f"({pct(len(by_judge_tx.get(j, set())), len(union)) or 0:.0f}% backfilled, "
+                          f"collected but not published)" for j in shadow_here))
     print(f"  remaining judge calls       : ~{to_target} to reach {TARGET}/leader; "
           f"~{to_parity} to give every graded transcript all {len(judges)} judges")
 
