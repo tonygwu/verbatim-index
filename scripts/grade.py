@@ -84,6 +84,12 @@ E_MODEL_MISMATCH = "model_identity_mismatch"
 E_AUTH = "auth_or_quota"
 E_REFUSED = "judge_declined_to_score"
 E_TOOL_ATTEMPT = "judge_attempted_tool_use"
+# A failure that means "try again", not "this account is spent". Kept apart from
+# E_AUTH because conflating them is a documented production bug in
+# llm-quota-router: an OAuth refresh race between concurrent headless spawns
+# arrives carrying a 429, and reading that as exhaustion benched a healthy
+# account and produced ~44 spurious failures.
+E_TRANSIENT = "transient_retryable"
 
 # A judge can return valid JSON that is not a grade. GPT-6 Astra declined to
 # score a Palantir CEO transcript, saying it "cannot assign the requested
@@ -820,17 +826,6 @@ GEMINI_MODEL = "gemini-3.8-flash-high"
 #: Where the non-default Antigravity profiles live. See agy_profiles().
 AGY_HOME_ROOT = Path.home() / ".agy-homes"
 
-#: Quota and auth wordings seen from `agy`. The router's failure_text module
-#: parses the deadline out of "Individual quota reached. ... Resets in 25m54s",
-#: so the same family of phrases has to be recognised here or a quota stop is
-#: filed as a crash. Matched as whole phrases, like classify_cli_failure does.
-AGY_QUOTA_PHRASES = (
-    "quota reached", "quota exceeded", "resource_exhausted", "rate limit",
-    "resets in", "no credit information", "out of credit", "429",
-)
-AGY_AUTH_PHRASES = ("not signed in", "unauthenticated", "please log in", "login required")
-
-
 def agy_profiles(root: Path | None = None, default_home: str | None = None) -> list[str]:
     """Every Antigravity profile on this machine, DERIVED rather than listed.
 
@@ -883,21 +878,65 @@ def agy_identity_from_log(log_path: Path) -> str | None:
     return hits[-1] if hits else None
 
 
-def classify_agy_failure(rc: int, blob: str) -> tuple[str, str]:
-    """Work out why `agy` failed, from stdout, stderr and the result event together.
+#: Provider-specific wordings the shared classifier does not know. Consulted ONLY
+#: when it returns "unknown", never before it: the ordering inside that module is
+#: its whole safety story, and second-guessing it is how a transient becomes a
+#: bench. RESOURCE_EXHAUSTED is Google's own quota code and is not in the
+#: router's pattern set, which is tuned to Claude and Codex wordings.
+AGY_LOCAL_QUOTA_PHRASES = ("resource_exhausted", "quota reached", "quota exceeded",
+                           "out of credit", "no credit information")
+AGY_LOCAL_AUTH_PHRASES = ("unauthenticated", "login required")
 
-    Same shape as classify_cli_failure for the Claude CLI, and for the same
-    reason: a quota stop and a crash both exit non-zero, and a bare
-    cli_nonzero_exit count cannot tell them apart afterwards.
+
+def classify_agy_failure(rc: int, blob: str, now_s: float | None = None) -> tuple[str, str]:
+    """Work out why `agy` failed, deferring the dangerous part to the router.
+
+    The one question that matters is whether the account is SPENT or merely
+    unhappy, and getting it wrong is expensive in both directions.
+    `quota_router.failure_text` exists to answer exactly that, already knows
+    `agy`'s own relative wording ("Individual quota reached. ... Resets in
+    25m54s"), and encodes an ordering that a hand-rolled matcher gets wrong.
+
+    A first version of this function DID get it wrong, in the direction the
+    router warns about: it filed "Not logged in - Please run /login" and a bare
+    429 as quota stops. Both are transient. That misreading is recorded there as
+    having benched a healthy account for ~44 spurious failures, so this defers
+    rather than repeats it.
+
+    Local patterns are consulted only where the router says "unknown", which is
+    where provider-specific knowledge legitimately belongs: RESOURCE_EXHAUSTED
+    is Google's quota code and the router's patterns are tuned to Claude and
+    Codex. `now_s` is passed in rather than read from the clock so a relative
+    deadline is deterministic and testable.
     """
-    low = (blob or "").lower()
-    if any(s in low for s in AGY_QUOTA_PHRASES):
+    blob = blob or ""
+    now_s = time.time() if now_s is None else now_s
+    try:
+        from quota_router.failure_text import (classify_failure_text, TRANSIENT,
+                                               EXHAUSTED_WITH_DEADLINE,
+                                               EXHAUSTED_WITHOUT_DEADLINE)
+        verdict = classify_failure_text(blob, now_s)
+    except ImportError:
+        verdict = None                      # router absent: local rules only
+
+    if verdict is not None:
+        if verdict.kind == TRANSIENT:
+            return E_TRANSIENT, (f"{E_TRANSIENT}: {verdict.reason}. "
+                                 f"matched={verdict.matched} text={blob[:300]}")
+        if verdict.kind in (EXHAUSTED_WITH_DEADLINE, EXHAUSTED_WITHOUT_DEADLINE):
+            until = getattr(verdict, "exhausted_until_s", None)
+            when = (f" resets in {round(until - now_s)}s" if until else
+                    " with no reset time in the message")
+            return E_AUTH, f"{E_AUTH}: {verdict.kind}{when}. text={blob[:300]}"
+
+    low = blob.lower()
+    if any(s_ in low for s_ in AGY_LOCAL_QUOTA_PHRASES):
         return E_AUTH, f"{E_AUTH}: {blob[:400]}"
-    if any(s in low for s in AGY_AUTH_PHRASES):
+    if any(s_ in low for s_ in AGY_LOCAL_AUTH_PHRASES):
         return E_AUTH, f"{E_AUTH}: {blob[:400]}"
     # A model name agy does not know is rejected before any inference happens.
-    # That is an identity failure, not a crash: it means this harness asked for
-    # a model this CLI cannot serve.
+    # That is an identity failure, not a crash: this harness asked for a model
+    # this CLI cannot serve.
     if "invalid model selection" in low or "not recognized as a known model" in low:
         return E_MODEL_MISMATCH, f"{E_MODEL_MISMATCH}: {blob[:400]}"
     return E_CLI, f"{E_CLI}: rc={rc} {blob[:400]}"

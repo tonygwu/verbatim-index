@@ -558,15 +558,27 @@ def test_gemini_failure_classification(g) -> None:
     parses a reset deadline out of.
     """
     cases = [
-        ("Individual quota reached. Resets in 25m54s", g.E_AUTH),
+        ("Individual quota reached. Please try later. Resets in 25m54s", g.E_AUTH),
         ("RESOURCE_EXHAUSTED: please try again later", g.E_AUTH),
-        ("error: not signed in; run /login", g.E_AUTH),
         ('model gemini-9 is not recognized as a known model', g.E_MODEL_MISMATCH),
         ("panic: runtime error: index out of range", g.E_CLI),
+        # The two that a first version got WRONG, in the direction that benches a
+        # healthy account. An OAuth refresh race between concurrent headless
+        # spawns arrives carrying a 429 and means retry, not exhaustion.
+        ("Not logged in \u00b7 Please run /login", g.E_TRANSIENT),
+        ("rate_limit exceeded (429)", g.E_TRANSIENT),
     ]
     for blob, want in cases:
-        got, _detail = g.classify_agy_failure(1, blob)
+        got, _detail = g.classify_agy_failure(1, blob, now_s=1_800_000_000.0)
         check(f"classify_agy_failure: {blob[:34]!r} -> {want}", got == want, f"got {got}")
+
+    # A quota stop must carry its reset time, or a scheduler has nothing to wait on.
+    _k, detail = g.classify_agy_failure(1, "Individual quota reached. Resets in 25m54s",
+                                        now_s=1_800_000_000.0)
+    check("classify_agy_failure: an exhaustion deadline reaches the log line",
+          "resets in" in detail and "155" in detail, f"got {detail!r}")
+    check("classify_agy_failure: empty text is not silently a quota stop",
+          g.classify_agy_failure(1, "", now_s=1_800_000_000.0)[0] == g.E_CLI)
 
 
 def test_gemini_tool_accounting(g) -> None:

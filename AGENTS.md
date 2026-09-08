@@ -234,6 +234,17 @@ the mix even.
   Separately, `~/.gemini/antigravity-cli/conversations/` is SHARED with the
   Antigravity IDE, whose language server holds open SQLite handles there, so
   that directory must not be moved while the app runs.
+- **"Try again" and "this account is spent" are different failures, and only
+  `quota_router.failure_text` gets to tell them apart.** An OAuth refresh race
+  between concurrent headless spawns arrives carrying a 429, and reading that as
+  exhaustion benches a healthy account; that is recorded in the router as ~44
+  spurious production failures. A first version of `classify_agy_failure` made
+  exactly that mistake, filing both `Not logged in - Please run /login` and a
+  bare 429 as quota stops. It now delegates, and consults its own patterns only
+  where the router returns `unknown`, which is where provider-specific
+  knowledge belongs: `RESOURCE_EXHAUSTED` is Google's quota code and the
+  router's patterns are tuned to Claude and Codex wordings. Transient failures
+  land in the taxonomy as `transient_retryable`, never as `auth_or_quota`.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing
