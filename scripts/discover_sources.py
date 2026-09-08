@@ -42,6 +42,13 @@ PREFER_SEC = 2400       # 40 minutes and up is preferred
 MAX_SEC = 21600         # 6 hours; longer is almost always a livestream loop
 MAX_PER_CHANNEL = 2     # so one interviewer's style cannot dominate a leader
 CANDIDATES_PER_LEADER = 14  # ranked; the fetch step walks this list until N succeed
+                            # Override per run with --candidates-per-leader. Going
+                            # DEEPER into the ranked list is the safe way to widen:
+                            # it admits lower-ranked real appearances. Lowering
+                            # MIN_SEC or raising MAX_PER_CHANNEL instead would admit
+                            # clips and re-uploads, and re-uploads are already the
+                            # binding constraint (Lip-Bu Tan fetched 14 of 14 and 7
+                            # were duplicates of the other 7).
 
 # Titles written ABOUT the person rather than featuring them. These slip past a
 # surname check, because the surname is right there in the title. Real examples
@@ -169,7 +176,7 @@ def aliases_for(person: dict) -> list[str]:
     return sorted(w for w in out if len(w) > 2)
 
 
-def discover(person: dict, target: int) -> dict:
+def discover(person: dict, target: int, cap: int = CANDIDATES_PER_LEADER) -> dict:
     slug, name, company = person["slug"], person["name"], person["company"]
     queries = [
         f"{name} interview", f"{name} podcast", f"{name} keynote",
@@ -243,7 +250,7 @@ def discover(person: dict, target: int) -> dict:
     per_channel: Counter = Counter()
     seen_titles: set[str] = set()
     for kind, c in interleaved:
-        if len(chosen) >= CANDIDATES_PER_LEADER:
+        if len(chosen) >= cap:
             break
         if per_channel[c["channel"]] >= MAX_PER_CHANNEL:
             continue
@@ -295,17 +302,20 @@ def main() -> int:
     ap.add_argument("--target", type=int, default=5)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--only", default=None, help="Comma-separated slugs, for topping up specific leaders.")
+    ap.add_argument("--candidates-per-leader", type=int, default=CANDIDATES_PER_LEADER,
+                    help=f"How deep to go in the ranked list (default {CANDIDATES_PER_LEADER}).")
     args = ap.parse_args()
 
     roster = json.loads(Path(args.roster).read_text())["roster"]
     if args.only:
         want = {s.strip() for s in args.only.split(",")}
         roster = [p for p in roster if p["slug"] in want]
-    log(f"discovering sources for {len(roster)} leaders, target {args.target} each")
+    log(f"discovering sources for {len(roster)} leaders, target {args.target} each, "
+        f"up to {args.candidates_per_leader} candidates each")
 
     results = []
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(discover, p, args.target): p for p in roster}
+        futs = {ex.submit(discover, p, args.target, args.candidates_per_leader): p for p in roster}
         for fut in cf.as_completed(futs):
             try:
                 results.append(fut.result())
