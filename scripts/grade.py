@@ -925,6 +925,28 @@ AGY_LOCAL_QUOTA_PHRASES = ("resource_exhausted", "quota reached", "quota exceede
                            "out of credit", "no credit information")
 AGY_LOCAL_AUTH_PHRASES = ("unauthenticated", "login required")
 
+#: Wordings that LOOK like a logout and are really a refresh race between
+#: concurrent headless spawns. The router already treats Claude's version of
+#: this ("Not logged in - Please run /login") as transient, for the reason its
+#: module records: reading a race as exhaustion benches a healthy account.
+#:
+#: MEASURED 2026-09-07 in the backfill: two jobs failed with "You are not logged
+#: into Antigravity." while BOTH profiles were signed in, and the next two jobs
+#: succeeded on those same two profiles seconds later. A real logout does not
+#: repair itself between calls. The phrasing differs from the router's pattern,
+#: so it fell through to cli_nonzero_exit and was never retried.
+#:
+#: The asymmetry is deliberate. Treating a genuine logout as transient costs
+#: four bounded retries and then a loud failure. Treating a race as fatal
+#: discards a grade every time two workers start at once, which at two workers
+#: was a third of the pass.
+#: Only wordings actually OBSERVED are listed. A speculative pattern here reads
+#: a real failure as retryable, which is the same class of mistake as reading a
+#: race as exhaustion, just pointing the other way. Both strings below come from
+#: one observed message: "error getting token source: You are not logged into
+#: Antigravity."
+AGY_LOCAL_TRANSIENT_PHRASES = ("not logged into antigravity", "getting token source")
+
 
 def classify_agy_failure(rc: int, blob: str, now_s: float | None = None) -> tuple[str, str]:
     """Work out why `agy` failed, deferring the dangerous part to the router.
@@ -968,6 +990,13 @@ def classify_agy_failure(rc: int, blob: str, now_s: float | None = None) -> tupl
             return E_AUTH, f"{E_AUTH}: {verdict.kind}{when}. text={blob[:300]}"
 
     low = blob.lower()
+    # Transient before quota: a refresh race can arrive carrying wording that
+    # otherwise reads as an auth failure, and benching on it is the expensive
+    # mistake. Quota patterns are checked after, so a real exhaustion with a
+    # deadline still wins through the router branch above.
+    if any(s_ in low for s_ in AGY_LOCAL_TRANSIENT_PHRASES):
+        return E_TRANSIENT, (f"{E_TRANSIENT}: looks like a refresh race between "
+                             f"concurrent spawns, not a logout. {blob[:300]}")
     if any(s_ in low for s_ in AGY_LOCAL_QUOTA_PHRASES):
         return E_AUTH, f"{E_AUTH}: {blob[:400]}"
     if any(s_ in low for s_ in AGY_LOCAL_AUTH_PHRASES):

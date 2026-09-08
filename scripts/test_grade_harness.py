@@ -695,6 +695,12 @@ def test_gemini_failure_classification(g) -> None:
         # spawns arrives carrying a 429 and means retry, not exhaustion.
         ("Not logged in \u00b7 Please run /login", g.E_TRANSIENT),
         ("rate_limit exceeded (429)", g.E_TRANSIENT),
+        # MEASURED in the backfill: this arrived while both profiles were signed
+        # in, and the next two jobs succeeded on those same profiles seconds
+        # later. A real logout does not repair itself between calls.
+        ("error getting token source: You are not logged into Antigravity.", g.E_TRANSIENT),
+        # A real exhaustion must still win, or the retry loop hammers a spent pool.
+        ("Individual quota reached. Resets in 25m54s", g.E_AUTH),
     ]
     for blob, want in cases:
         got, _detail = g.classify_agy_failure(1, blob, now_s=1_800_000_000.0)
