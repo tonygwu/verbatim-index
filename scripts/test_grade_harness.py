@@ -452,18 +452,20 @@ def test_account_pinning(g) -> None:
 
 
 def test_blind_judges_is_configurable(g) -> None:
-    """The daemon can add the Gemini arm without an edit, and defaults unchanged.
+    """The daemon grades with every published judge, and the set is overridable.
 
-    Two separate guarantees. Adding a judge to a running pipeline must not
-    require editing a file the operator would then have to remember to revert.
-    And a plain restart must NOT silently start spending Antigravity quota, so
-    the default stays exactly what it was.
+    Two guarantees. The judge list must be changeable without editing a file the
+    operator then has to remember to revert. And the default must name every
+    PUBLISHED judge: a new transcript graded by a subset reintroduces the uneven
+    judge mix that the backfill existed to remove, and widens it every cycle.
     """
     loop = (REPO / "scripts" / "grade_loop.sh").read_text()
     check("grade_loop: blinded judges come from BLIND_JUDGES",
           '--judges "$BLIND_JUDGES"' in loop, "the pass still hardcodes its judges")
-    check("grade_loop: the default is unchanged, so a restart adds no new arm",
-          'BLIND_JUDGES="${BLIND_JUDGES:-fable,astra}"' in loop)
+    check("grade_loop: the default grades with every published judge",
+          'BLIND_JUDGES="${BLIND_JUDGES:-fable,astra,gemini}"' in loop,
+          "a new transcript graded by fewer judges than the corpus reintroduces "
+          "the uneven mix the backfill removed")
     check("grade_loop: the judges in use are logged, not left to be inferred",
           "blinded judges ${BLIND_JUDGES}" in loop)
 

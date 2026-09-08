@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -42,7 +43,15 @@ JUDGE_ORDER = ("fable", "astra", "gemini")
 # added, reading as the corpus having lost coverage when nothing about the
 # published score changed.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from aggregate import SHADOW_JUDGES  # noqa: E402
+from aggregate import SHADOW_JUDGES as _SHADOW_DEFAULT  # noqa: E402
+
+# VI_SHADOW_JUDGES exists so the shadow path stays testable when no arm is
+# currently shadowed. Without it, promoting the last shadow judge would silently
+# delete the test coverage for the mechanism the NEXT arm depends on. It is a
+# test seam, not a configuration knob: production reads aggregate.py.
+SHADOW_JUDGES = tuple(
+    j.strip() for j in os.environ["VI_SHADOW_JUDGES"].split(",") if j.strip()
+) if os.environ.get("VI_SHADOW_JUDGES") else _SHADOW_DEFAULT
 JW = 5  # width of one per-judge column
 PW = 5  # width of one percentage column
 

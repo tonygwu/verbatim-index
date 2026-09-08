@@ -61,6 +61,7 @@ GRADES = [
 # Derived from the fixture above, so the expectations move with it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from coverage_table import JUDGE_ORDER, SHADOW_JUDGES as SHADOW  # noqa: E402
+PUBLISHED = [j for j in JUDGE_ORDER if j not in SHADOW]
 GRADED_BY_JUDGE = {"fable": 1, "astra": 2, "nova": 1}   # blinded, validation-clean
 CALLS_BY_JUDGE = {"fable": 2, "astra": 3, "nova": 1}    # every call, incl. open + invalid
 EXPECTED_JUDGE_COLUMNS = list(JUDGE_ORDER) + sorted(
@@ -126,8 +127,12 @@ def check_shadow(check) -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build_shadow(root)
+        # Name the shadow arm explicitly. Production currently shadows nothing,
+        # and a test that silently stops exercising this path would leave the
+        # next arm's promotion gate unguarded.
+        env = dict(os.environ, VI_SHADOW_JUDGES="gemini")
         r = subprocess.run([sys.executable, str(SCRIPT)], cwd=root,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=env)
     if r.returncode != 0:
         check("SHADOW", False, f"coverage_table.py exited {r.returncode}: {r.stderr}")
         return
@@ -182,11 +187,14 @@ PCT_FETCHED = {"ada": ["t1", "t2"], "bob": ["t5", "t6", "t7", "t8"],
 PCT_RETIRED = {"ada": ["t3", "t4"], "bob": [], "cyd": [], "dev": []}
 # (leader, source, judge) blinded grades, all valid
 PCT_GRADES = [
-    ("ada", "t1", "fable"), ("ada", "t1", "astra"),   # t1 has both judges
+    # "every published judge" is derived, not spelled out. Listing two judges
+    # here made the NJ% expectations fail the day a third was published, on a
+    # table that was correct.
+    *[("ada", "t1", j) for j in PUBLISHED],           # t1 has every judge
     ("ada", "t2", "astra"),                           # t2 is one-sided
-    ("bob", "t5", "fable"), ("bob", "t5", "astra"),
-    ("dev", "t9", "fable"), ("dev", "t9", "astra"),
-    ("dev", "t10", "fable"), ("dev", "t10", "astra"),  # t10 was withdrawn
+    *[("bob", "t5", j) for j in PUBLISHED],
+    *[("dev", "t9", j) for j in PUBLISHED],
+    *[("dev", "t10", j) for j in PUBLISHED],          # t10 was withdrawn
 ]
 # leader -> (FET%, 1J%, NJ%) as the table should print them
 PCT_WANT = {
@@ -248,7 +256,7 @@ def check_pct(check) -> None:
     lines = r.stdout.splitlines()
 
     header = next((l for l in lines if l.lstrip().startswith("#")), "")
-    check("PCT", all(t in header for t in ("FET%", "1J%", "2J%")),
+    check("PCT", all(t in header for t in ("FET%", "1J%", f"{len(PUBLISHED)}J%")),
           f"header is missing a percentage column: {header!r}")
     check("UNIQ", "UNIQ" in header and "IDENT" in header,
           f"UNIQ must sit beside IDENT, not replace it: {header!r}")

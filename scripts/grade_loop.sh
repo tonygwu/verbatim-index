@@ -26,16 +26,14 @@ require_daemon_clone || exit 1
 
 PY=.venv/bin/python
 WORKERS="${WORKERS:-8}"
-# Which judges the blinded pass runs. Default is unchanged, so adding the
-# Gemini arm is an explicit act rather than something a restart picks up.
+# Which judges the blinded pass runs. All three since 2026-09-08, when the
+# Gemini arm was promoted out of SHADOW_JUDGES after backfilling the corpus.
 #
-# The Gemini backfill is a bounded one-time job over the existing corpus and is
-# better run on its own (see AGENTS.md), because Antigravity quota cannot be
-# measured: mixing it into the loop makes a quota stop harder to attribute to
-# the arm that caused it. Once the backfill is complete and the arm is promoted
-# out of SHADOW_JUDGES, set BLIND_JUDGES=fable,astra,gemini here so NEW
-# transcripts keep the judge mix even.
-BLIND_JUDGES="${BLIND_JUDGES:-fable,astra}"
+# It has to be all three. A leader's score is compared across judges, so a new
+# transcript graded by only two would reintroduce exactly the uneven judge MIX
+# the backfill existed to remove, and drift it wider every cycle. Set this to
+# fable,astra to fall back to two judges if the Antigravity arm has to be pulled.
+BLIND_JUDGES="${BLIND_JUDGES:-fable,astra,gemini}"
 OPEN_PER_LEADER="${OPEN_PER_LEADER:-2}"
 CYCLE_SLEEP="${CYCLE_SLEEP:-300}"
 FABLE_ACCOUNTS="${FABLE_ACCOUNTS:-}"  # pin Fable to named accounts, e.g. "default"

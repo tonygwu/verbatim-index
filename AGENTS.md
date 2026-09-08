@@ -118,15 +118,29 @@ stops on its own rather than overspending.
 
 ## The third judge: Gemini 3.8 Flash via Antigravity
 
-Added 2026-09-07 and **not published yet**. It is listed in
-`SHADOW_JUDGES` in `aggregate.py`, so its grades are collected, reported in
-`diagnostics.shadow_judges`, and excluded from every published number.
+Added 2026-09-07, backfilled over the whole corpus, and **published on
+2026-09-08**. `SHADOW_JUDGES` is now empty; it stays in `aggregate.py` because
+the next arm will need it.
 
-Why it waits there: a new judge changes the judge MIX per leader, and an uneven
-mix is the one thing `calibrate()` cannot repair. Promoting the arm before the
-backfill finishes would let a half-graded corpus reshuffle the board. Verified
-by running `aggregate.py` over one snapshot with and without the Gemini grades:
-40 leaders compared, 0 changed, the published block byte-identical.
+What promoting it cost, measured on one frozen snapshot with the arm shadowed
+and then published: 34 of 40 leaders change rank, mean 1.45 places and at most
+5, and the mean score moves 2.08 points with a maximum of 4.10. Jeff Bezos moves
+furthest, 2nd to 7th, which is expected rather than alarming: the subject-share
+filter already removed 81% of his material, so he is scored on the least
+evidence of anyone on the board and is the most sensitive to a new judge.
+
+It was held in shadow until the backfill finished, because a new judge changes
+the judge MIX per leader and an uneven mix is the one thing `calibrate()` cannot
+repair. While shadowed the exclusion was verified the same way: 40 leaders
+compared, 0 changed, the published block byte-identical.
+
+Its gates at promotion, from `diagnostics.shadow_judges`: spread 14.8 / 17.0 /
+17.3 across the three dimensions against a floor of 3.0, so `calibrate()`
+rescales it rather than passing it through; and it sits +1.85 from Astra and
++6.86 from Fable on paired transcripts, consistent with the ordering already
+recorded here. `BLIND_JUDGES` in `grade_loop.sh` now names all three, because a
+new transcript graded by a subset would reintroduce the uneven mix and widen it
+every cycle.
 
 Two Antigravity accounts serve it. A profile follows `$HOME`, because `agy` has
 no `AGY_CONFIG_DIR`:
@@ -470,15 +484,32 @@ new grades incomparable with the corpus already graded.
   Fable is genuinely sandboxed: it is offered the tools, tries all three, and
   every one is denied.
 
+- **Gemini reaches 94.8% of the corpus and the missing 5% is the long tail,
+  literally.** Fable covers 501/501 and Astra 498/501; Gemini covers 475/501.
+  The 26 it misses are not random: their median length is 35,993 words against
+  12,109 for the corpus. On a very long transcript the judge reaches for a tool
+  to navigate the prompt, the tool is denied, and the turn ends with an empty
+  answer. Six attempts across two passes recovered none of them. The gap
+  therefore lands hardest on leaders who appear on long-form podcasts, at 30.8%
+  of Elon Musk's transcripts and 23.1% of Palmer Luckey's, so those two are
+  scored on a judge mix that is measurably different from everyone else's.
+  This is the uneven mix that calibration cannot fix, accepted knowingly rather
+  than hidden: `coverage_table.py` shows the per-judge columns that make it
+  visible. Closing it needs a way to stop the judge reaching for a tool on a
+  36k-word prompt, which the permission system cannot express.
+
 - **The Gemini judge has live web search too, and it also cannot be disabled.**
   Same position as the Astra arm, reached by a different route: the permission
   system recognises three grant actions plus `mcp`, and a builtin tool is not
   expressible as a rule at all. `count_gemini_tool_events()` records
   `tool_use_counts` and `web_search_queries` on every grade, so the exposure is
-  measured rather than assumed. Early signal, and only that: on the first real
-  grading calls the judge used no tools at all, unlike Astra which was observed
-  searching. One data point is not a finding. Read `grades_where_a_tool_ran` in
-  `diagnostics.shadow_judges` once the backfill has run.
+  measured rather than assumed. MEASURED over the full backfill: a tool ran on 19
+  of 483 grades, 4%, and the recorded queries show the judge searching for the
+  blinded subject BY NAME -- `"group chat" "evan spiegel" "screenshop"` and
+  `"Group Chat" "Aaron Rodgers" "Screenshop" "Kanye"`. That is active
+  de-blinding, not incidental lookup, and it is the same behaviour recorded for
+  Astra above. An early note here said the judge used no tools at all; that was
+  one data point on three grades and it was wrong.
 
 - **The published interval does not include judge re-run noise.** `bootstrap`
   resamples a leader's transcripts and holds each grade as a fixed value, so it

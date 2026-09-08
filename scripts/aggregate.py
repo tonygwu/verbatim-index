@@ -145,7 +145,11 @@ DEFAULT_JUDGE_MODEL = {"fable": "claude-fable-5-1", "astra": "gpt-6-astra",
 #
 # Promoting an arm means deleting its name here, and that is deliberately a
 # code change with a diff, not a flag someone can pass in a hurry.
-SHADOW_JUDGES = ("gemini",)
+# Empty: the Gemini arm was promoted 2026-09-08 after backfilling the corpus.
+# Its coverage gap is recorded under Known limits in AGENTS.md rather than
+# hidden here, because a shadow list is for an arm that is not ready, not for
+# one whose weakness has been measured and accepted.
+SHADOW_JUDGES: tuple[str, ...] = ()
 
 
 def served_model(g: dict) -> str:
