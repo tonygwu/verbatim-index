@@ -7,8 +7,8 @@ commands given; do not trust a line without running its check.
 
 | Repo | Commit | Pushed |
 |---|---|---|
-| code (`repo-0`, public) | `9ce441a` on `main` | yes |
-| data (`data/`, private) | `0b130a6` on `main` | yes |
+| code (`repo-0`, public) | `9445ab2` on `main` | yes |
+| data (`data/`, private) | `cb5c509` on `main` (moves every cycle; check it) | yes |
 
 Verify: `git status --short --branch && git -C data status --short --branch`
 Both should read `## main...origin/main`. The data tree goes dirty again
@@ -104,4 +104,5 @@ fired, completed, and auto-deleted. The resume lock is released.
       && git log --oneline -1 && git -C data log --oneline -1 \
       && ps -eo pid,command | grep -c "[g]rade_loop"
 
-Expect: code clean at `9ce441a`, data at `0b130a6`, one grade_loop running.
+Expect: both repos clean and in sync, one grade_loop running. The data HEAD
+advances on its own as the daemons commit nothing but the operator snapshots.
