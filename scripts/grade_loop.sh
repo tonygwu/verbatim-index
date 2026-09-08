@@ -26,6 +26,16 @@ require_daemon_clone || exit 1
 
 PY=.venv/bin/python
 WORKERS="${WORKERS:-8}"
+# Which judges the blinded pass runs. Default is unchanged, so adding the
+# Gemini arm is an explicit act rather than something a restart picks up.
+#
+# The Gemini backfill is a bounded one-time job over the existing corpus and is
+# better run on its own (see AGENTS.md), because Antigravity quota cannot be
+# measured: mixing it into the loop makes a quota stop harder to attribute to
+# the arm that caused it. Once the backfill is complete and the arm is promoted
+# out of SHADOW_JUDGES, set BLIND_JUDGES=fable,astra,gemini here so NEW
+# transcripts keep the judge mix even.
+BLIND_JUDGES="${BLIND_JUDGES:-fable,astra}"
 OPEN_PER_LEADER="${OPEN_PER_LEADER:-2}"
 CYCLE_SLEEP="${CYCLE_SLEEP:-300}"
 FABLE_ACCOUNTS="${FABLE_ACCOUNTS:-}"  # pin Fable to named accounts, e.g. "default"
@@ -39,7 +49,7 @@ count_grades(){ find data/grades -name '*.json' ! -name '*.tmp' -not -path '*/_r
 
 idle=0
 cycle=0
-say "grade loop started. ${WORKERS} workers, unblinded on ${OPEN_PER_LEADER}/leader"
+say "grade loop started. ${WORKERS} workers, blinded judges ${BLIND_JUDGES}, unblinded on ${OPEN_PER_LEADER}/leader"
 [ -n "$FABLE_ACCOUNTS" ] && say "  Fable pinned to accounts: ${FABLE_ACCOUNTS}"
 
 while true; do
@@ -104,7 +114,7 @@ while true; do
   # 3. Blinded grading. This is the published score, so it covers everything.
   say "  blinded grading pass"
   $PY scripts/grade.py --transcripts data/transcripts_blind --roster data/roster/final.json \
-      --out data/grades --judges fable,astra --modes blinded --repeats 1 \
+      --out data/grades --judges "$BLIND_JUDGES" --modes blinded --repeats 1 \
       --workers "$WORKERS" --errors data/logs/grade_errors_blind.jsonl --timeout 2400 \
       --fable-accounts "$FABLE_ACCOUNTS" \
       >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err

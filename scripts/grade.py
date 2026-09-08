@@ -811,6 +811,273 @@ def call_astra(prompt: str, timeout: int, workdir: Path,
     return text, telemetry
 
 
+# ----------------------------------------------------------------------------
+# Judge C: Gemini 3.8 Flash (High), driven by the Antigravity CLI (`agy`).
+# ----------------------------------------------------------------------------
+
+GEMINI_MODEL = "gemini-3.8-flash-high"
+
+#: Where the non-default Antigravity profiles live. See agy_profiles().
+AGY_HOME_ROOT = Path.home() / ".agy-homes"
+
+#: Quota and auth wordings seen from `agy`. The router's failure_text module
+#: parses the deadline out of "Individual quota reached. ... Resets in 25m54s",
+#: so the same family of phrases has to be recognised here or a quota stop is
+#: filed as a crash. Matched as whole phrases, like classify_cli_failure does.
+AGY_QUOTA_PHRASES = (
+    "quota reached", "quota exceeded", "resource_exhausted", "rate limit",
+    "resets in", "no credit information", "out of credit", "429",
+)
+AGY_AUTH_PHRASES = ("not signed in", "unauthenticated", "please log in", "login required")
+
+
+def agy_profiles(root: Path | None = None, default_home: str | None = None) -> list[str]:
+    """Every Antigravity profile on this machine, DERIVED rather than listed.
+
+    A profile is a HOME: `agy` reads $HOME/.gemini/antigravity-cli/ and there is
+    no AGY_CONFIG_DIR. Verified 2026-09-07 by grepping the binary for every env
+    var naming a config, dir, profile or account; the only path resolution is
+    os.UserHomeDir. So a second account is a second HOME.
+
+    The list is a glob, never hardcoded letters. This repo's operator has been
+    bitten twice by hardcoded account letters, once when Claude account D
+    arrived and once when E did, so assume a third Antigravity account will
+    appear and that nothing here may need editing when it does.
+
+    Membership is NOT gated on a token file being present. Identity for the
+    default profile comes from the macOS Keychain, and `agy` answers normally
+    with its token file deleted outright, so a token check would wrongly drop
+    the main account. An unauthenticated profile therefore reaches the harness
+    and fails loudly with E_AUTH, which is the right outcome: it is reported,
+    not silently skipped.
+    """
+    root = AGY_HOME_ROOT if root is None else root
+    homes = [default_home or str(Path.home())]
+    if root.is_dir():
+        for d in sorted(root.iterdir()):
+            if (d / ".gemini" / "antigravity-cli").is_dir():
+                homes.append(str(d))
+    return homes
+
+
+def agy_identity_from_log(log_path: Path) -> str | None:
+    """Which account served ONE call, read from the log that call wrote.
+
+    Takes an explicit path rather than searching a directory. The first version
+    of this picked the newest log by st_mtime and got the wrong account: a
+    profile directory carries its old logs when it is renamed or reused, and
+    mtime records when a file was TOUCHED, not what is in it. That is the
+    repo's standing rule about never deriving logical time from the filesystem,
+    arriving in a new place. `agy --log-file` removes the guesswork entirely by
+    naming the file up front, so there is nothing to sort and nothing to infer.
+
+    Best-effort. A run that logs no address returns None and the grade is still
+    written, because discarding a real answer over a missing log line would be
+    the worse failure.
+    """
+    try:
+        hits = re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+                          log_path.read_text(errors="ignore"))
+    except OSError:
+        return None
+    return hits[-1] if hits else None
+
+
+def classify_agy_failure(rc: int, blob: str) -> tuple[str, str]:
+    """Work out why `agy` failed, from stdout, stderr and the result event together.
+
+    Same shape as classify_cli_failure for the Claude CLI, and for the same
+    reason: a quota stop and a crash both exit non-zero, and a bare
+    cli_nonzero_exit count cannot tell them apart afterwards.
+    """
+    low = (blob or "").lower()
+    if any(s in low for s in AGY_QUOTA_PHRASES):
+        return E_AUTH, f"{E_AUTH}: {blob[:400]}"
+    if any(s in low for s in AGY_AUTH_PHRASES):
+        return E_AUTH, f"{E_AUTH}: {blob[:400]}"
+    # A model name agy does not know is rejected before any inference happens.
+    # That is an identity failure, not a crash: it means this harness asked for
+    # a model this CLI cannot serve.
+    if "invalid model selection" in low or "not recognized as a known model" in low:
+        return E_MODEL_MISMATCH, f"{E_MODEL_MISMATCH}: {blob[:400]}"
+    return E_CLI, f"{E_CLI}: rc={rc} {blob[:400]}"
+
+
+def gemini_command(prompt: str, model: str, binary: str, print_timeout_s: int,
+                   log_path: Path) -> list[str]:
+    """The Gemini judge invocation, in one place so the tool test checks the real thing.
+
+    `--output-format stream-json` is load-bearing and is NOT a formatting
+    preference. It is the only output mode that names the model that answered:
+    the `init` event carries {"model": "..."}, and the plain `json` mode carries
+    no model field anywhere. Without it this arm could assert nothing about
+    model identity, which is exactly the position the Astra arm is stuck in.
+
+    `--disable-slash-commands` stops a transcript line beginning with "/" from
+    being expanded as a slash command or skill before the judge reads it.
+
+    There is deliberately NO --dangerously-skip-permissions, for the same reason
+    fable_command() runs the plain `claude` binary: it auto-approves every tool,
+    and a judge that can read this repository can read the roster it is blinded
+    against. Reads outside the working directory are denied by default, verified
+    2026-09-07, and the judge is run in a jail dir away from the corpus.
+
+    --print-timeout sits below the subprocess timeout so `agy` exits on its own
+    and prints a parseable result event, rather than being killed mid-write.
+
+    `--log-file` pins this call's log to a known path. Without it the account
+    that served a call could only be guessed at by sorting a shared directory
+    by mtime, which returned the wrong account on 2026-09-07 because a renamed
+    profile keeps its old logs.
+    """
+    return [
+        binary, "-p", prompt,
+        "--model", model,
+        "--output-format", "stream-json",
+        "--disable-slash-commands",
+        "--print-timeout", f"{print_timeout_s}s",
+        "--log-file", str(log_path),
+    ]
+
+
+def count_gemini_tool_events(events: list[dict]) -> tuple[dict[str, int], list[str]]:
+    """Count the tools the Gemini judge used, and capture what it looked up.
+
+    MEASURED 2026-09-07: this judge has live web search and it CANNOT be turned
+    off. Asked directly, it ran search_web and reported the tool succeeded. The
+    permission system recognises exactly three grant actions plus mcp, and the
+    CLI rejects any rule naming a builtin tool, logging
+    `ignoring invalid deny entry "search_web": invalid grant string` and
+    `unknown action "search_web"` for the search_web(*) form. Network-level
+    blocking does not help either, because the search runs behind the model
+    rather than from this client.
+
+    So this arm carries the same exposure the Astra arm does, and it is recorded
+    for the same reason: it was accepted deliberately, so it must be visible.
+    Only DONE steps count. A tool step that ended in ERROR returned nothing to
+    the judge, and counting it would overstate what the judge actually saw.
+    """
+    counts: dict[str, int] = {}
+    queries: list[str] = []
+    for e in events:
+        if e.get("event") != "step_update":
+            continue
+        su = e.get("step_update") or {}
+        if su.get("step_type") != "tool" or su.get("state") != "DONE":
+            continue
+        name = su.get("tool_name") or "unknown"
+        counts[name] = counts.get(name, 0) + 1
+        params = (su.get("tool_info") or {}).get("parameters") or {}
+        for key in ("query", "Query", "url", "Url", "AbsolutePath"):
+            if params.get(key):
+                queries.append(f"{name}: {str(params[key])[:160]}")
+                break
+    return counts, queries[:10]
+
+
+def call_gemini(prompt: str, profile_home: str, timeout: int,
+                workdir: str | None = None, model: str = GEMINI_MODEL,
+                binary: str = "agy") -> tuple[str, dict]:
+    """Run the Gemini 3.8 Flash judge via the Antigravity CLI. Returns (text, telemetry).
+
+    The account is chosen here, per call, by setting HOME, because that is the
+    only thing that selects an Antigravity profile. Note that the DEFAULT
+    profile takes its identity from the macOS Keychain rather than from the
+    token file in that directory, so the account this reaches is whatever the
+    Keychain currently holds. agy_identity_from_log() reads it back out of
+    this call's own log and the answer is recorded on the grade, not assumed.
+    """
+    env = dict(os.environ)
+    env["HOME"] = profile_home
+    # A stale value for either of these in the inherited shell would silently
+    # change which account or which backend answers. GEMINI_API_KEY switches agy
+    # to the raw Gemini API when settings.json names that provider, which would
+    # serve a different model with no subscription quota behind it.
+    env.pop("GEMINI_API_KEY", None)
+    env.pop("CLAUDE_CONFIG_DIR", None)
+
+    # Run outside the repository, like the Fable arm: the judge should not stand
+    # in a directory holding the roster it is blinded against. Reads outside the
+    # working directory are refused by agy, so the jail is what makes that bite.
+    jail = Path(workdir) if workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "judge-jail"
+    jail.mkdir(parents=True, exist_ok=True)
+
+    print_timeout = max(60, timeout - 60)
+    log_path = jail / "agy-cli.log"
+    cmd = gemini_command(prompt, model, binary, print_timeout, log_path)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                          env=env, cwd=str(jail), stdin=subprocess.DEVNULL)
+
+    events = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+
+    init = next((e.get("init") for e in events if e.get("event") == "init"), None)
+    result = next((e.get("result") for e in reversed(events) if e.get("event") == "result"), None)
+
+    if result is None:
+        blob = f"{proc.stdout or ''} {proc.stderr or ''}"
+        raise RuntimeError(classify_agy_failure(proc.returncode, blob)[1])
+    if result.get("status") != "SUCCESS":
+        raise RuntimeError(classify_agy_failure(proc.returncode, json.dumps(result))[1])
+
+    # Model identity, asserted rather than assumed. A model name agy does not
+    # know is rejected up front with a non-zero exit, so this catches the other
+    # case: a request that was accepted and served by something else.
+    served = (init or {}).get("model")
+    if not served:
+        raise RuntimeError(f"{E_MODEL_MISMATCH}: no init event named a model, so nothing "
+                           f"verifies that {model} answered")
+    if served != model:
+        raise RuntimeError(f"{E_MODEL_MISMATCH}: requested {model}, telemetry names {served}")
+
+    text = result.get("response") or ""
+    denied = result.get("denied_actions") or []
+    if not text.strip():
+        # FOUND 2026-09-07: a denied tool can end the turn with status SUCCESS
+        # and an EMPTY response. Observed when a read outside the working
+        # directory was refused: the judge gave up and returned "". Writing that
+        # as a grade would file a silent non-answer as a result, so it fails
+        # here instead, carrying what was denied so the cause is legible.
+        raise RuntimeError(f"{E_EMPTY}: status SUCCESS with an empty response. "
+                           f"denied_actions={json.dumps(denied)[:300]}")
+
+    usage = result.get("usage") or {}
+    counts, queries = count_gemini_tool_events(events)
+    telemetry = {
+        "harness": f"{binary} -p",
+        "requested_model": model,
+        # Independently verified, unlike the Astra arm: the init event names the
+        # model that answered, so this is a reading rather than an echo.
+        "served_model": served,
+        "served_model_verified": True,
+        "profile_home": profile_home,
+        # Which account actually served this call, read from THIS call's log.
+        "profile_identity": agy_identity_from_log(log_path),
+        "duration_seconds": result.get("duration_seconds"),
+        "num_turns": result.get("num_turns"),
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "thinking_tokens": usage.get("thinking_tokens"),
+        "cache_read_tokens": usage.get("cache_read_tokens"),
+        "denied_actions": [d.get("action") for d in denied if isinstance(d, dict)],
+        "tool_use_counts": counts,
+        "web_search_queries": queries,
+    }
+    if telemetry["thinking_tokens"] in (None, 0):
+        # The "-high" suffix IS the reasoning setting for this model family, so
+        # zero thinking tokens means the high-effort variant did not take effect.
+        # Same assertion the Astra arm makes with reasoning_output_tokens.
+        raise RuntimeError(f"{E_MODEL_MISMATCH}: no thinking tokens reported, so the "
+                           f"high-effort variant did not take effect. usage={usage}")
+    return text, telemetry
+
+
 def grade_one(job: dict) -> dict:
     rec = job["rec"]
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
@@ -825,6 +1092,16 @@ def grade_one(job: dict) -> dict:
         if job["judge"] == "fable":
             text, telemetry = call_fable(prompt, job["config_dir"], job["timeout"],
                                          job["fable_bin"], job["workdir"])
+        elif job["judge"] == "gemini":
+            # No refusal-retry wrapper here, deliberately. The retry exists
+            # because Astra refuses some politically-charged transcripts
+            # non-deterministically. Whether this judge does the same has not
+            # been measured, and adding a retry now would hide the evidence
+            # needed to answer that. If refusals show up in the taxonomy, the
+            # measurement comes first and the retry second.
+            text, telemetry = call_gemini(prompt, job["gemini_profile"], job["timeout"],
+                                          job["workdir"], job["gemini_model"],
+                                          job["agy_bin"])
         else:
             # Astra refuses some politically-charged transcripts, and the refusal
             # is not deterministic: two of three re-run transcripts graded fine
@@ -955,6 +1232,18 @@ def main() -> int:
                          "e.g. 'default' or 'default,.claude-b'. Use it when only some "
                          "accounts can serve Fable, such as when only one has paid usage "
                          "credits enabled. Overrides the measured-headroom ordering.")
+    ap.add_argument("--gemini-model", default=GEMINI_MODEL,
+                    help="Model for the Gemini arm, as the Antigravity CLI names it. "
+                         "The effort level is part of the name (-high/-medium/-low); "
+                         "there is no separate effort flag for this family.")
+    ap.add_argument("--agy-bin", default="agy",
+                    help="Binary that runs the Gemini judge. Must be the plain agy CLI.")
+    ap.add_argument("--gemini-profiles", default=os.environ.get("GEMINI_PROFILES", ""),
+                    help="Comma-separated Antigravity profile HOMEs to pin the Gemini "
+                         "rotation to, or their basenames under ~/.agy-homes. Default is "
+                         "every profile found. Unlike the Fable rotation this cannot be "
+                         "ordered by headroom: Antigravity exposes no usage endpoint at "
+                         "all, so the rotation is plain round-robin.")
     args = ap.parse_args()
 
     rubric = RUBRIC_PATH.read_text()
@@ -1020,6 +1309,35 @@ def main() -> int:
             log(f"  excluded as exhausted: {[account_label(a) for a in skipped]}")
     log(f"fable accounts in rotation: {[account_label(a) for a in cfg_dirs]}")
 
+    # The Gemini rotation is round-robin and nothing more. There is no headroom
+    # ordering because there is no headroom to read: `agy` exposes no usage or
+    # quota subcommand and writes no quota field anywhere on disk, so the
+    # llm-quota-router adapter reports these pools as unobservable with
+    # confidence 0.0. Ranking them would mean inventing the numbers, and a
+    # router that invents numbers sends every call to an exhausted pool.
+    # What IS available is failure-learned: a quota stop names its own reset
+    # time, and classify_agy_failure files it as E_AUTH so the taxonomy shows it.
+    gem_profiles = agy_profiles()
+    if args.gemini_profiles:
+        wanted = [w.strip() for w in args.gemini_profiles.split(",") if w.strip()]
+        resolved = []
+        for w in wanted:
+            hits = [h for h in gem_profiles if h == w or Path(h).name == w]
+            if not hits:
+                raise SystemExit(f"--gemini-profiles: no Antigravity profile matches {w!r}. "
+                                 f"Known: {[Path(h).name or h for h in gem_profiles]}")
+            resolved.append(hits[0])
+        gem_profiles = resolved
+    if "gemini" in judges:
+        if not gem_profiles:
+            raise SystemExit("no Antigravity profiles found: the Gemini arm needs at least "
+                             "the default HOME with ~/.gemini/antigravity-cli present")
+        # Paths only. The account each profile serves is recorded per grade
+        # from that call's own log; asserting it here, before any call has been
+        # made, would mean guessing from stale files.
+        log(f"gemini profiles in rotation (round-robin, no headroom is measurable): "
+            f"{gem_profiles}")
+
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "grade-work"
     workroot.mkdir(parents=True, exist_ok=True)
 
@@ -1040,6 +1358,14 @@ def main() -> int:
             "config_dir": assign_accounts(judge, i, cfg_dirs, judges),
             "fable_bin": args.fable_bin,
             "astra_model": args.astra_model,
+            "gemini_model": args.gemini_model,
+            "agy_bin": args.agy_bin,
+            # Same per-judge index arithmetic as the Fable rotation: jobs are
+            # enumerated over product(paths, judges, ...), so dividing by the
+            # judge count is what stops this arm from reaching only every Nth
+            # profile. See assign_accounts() for the bug that motivated it.
+            "gemini_profile": assign_accounts("gemini", i, gem_profiles, judges)
+                              if gem_profiles else None,
             "workdir": str(wd),
             "dest": str(Path(args.out) / judge / rec["leader_slug"] / f"{stem}.json"),
             "raw_dest": str(Path(args.out) / "_raw" / judge / rec["leader_slug"] / f"{stem}.txt"),

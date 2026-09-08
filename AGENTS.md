@@ -116,6 +116,56 @@ each job that lands on one without credits fails with `auth_or_quota`.
 Anthropic enforces the monthly credit cap server-side, so an unattended run
 stops on its own rather than overspending.
 
+## The third judge: Gemini 3.8 Flash via Antigravity
+
+Added 2026-09-07 and **not published yet**. It is listed in
+`SHADOW_JUDGES` in `aggregate.py`, so its grades are collected, reported in
+`diagnostics.shadow_judges`, and excluded from every published number.
+
+Why it waits there: a new judge changes the judge MIX per leader, and an uneven
+mix is the one thing `calibrate()` cannot repair. Promoting the arm before the
+backfill finishes would let a half-graded corpus reshuffle the board. Verified
+by running `aggregate.py` over one snapshot with and without the Gemini grades:
+40 leaders compared, 0 changed, the published block byte-identical.
+
+Two Antigravity accounts serve it. A profile follows `$HOME`, because `agy` has
+no `AGY_CONFIG_DIR`:
+
+| Invocation | HOME | Identity |
+|---|---|---|
+| `agy` | `~` | tonygwu@gmail.com |
+| `agy-b` | `~/.agy-homes/gptwufamily` | gptwufamily@gmail.com |
+
+`agy-profiles` derives that table rather than restating it. `grade.py` sets
+`HOME` per subprocess and records which account served each grade in
+`telemetry.profile_identity`.
+
+**There is no quota measurement, and there cannot be.** `agy` exposes no usage
+subcommand and writes no quota field to disk, so `llm-quota-router` reports both
+Antigravity pools with `confidence=0.0` and `quotapick status` prints
+`snapshot carries no usage windows`. The rotation is therefore plain
+round-robin. Unlike the Fable arm there is nothing to order by headroom, and
+inventing an ordering would send every call to an exhausted pool. A stop shows
+up as `auth_or_quota` in the taxonomy, carrying the CLI's own reset wording.
+
+Running the backfill, separately from the loop so a quota stop is attributable:
+
+```
+.venv/bin/python scripts/grade.py --transcripts data/transcripts_blind \
+    --roster data/roster/final.json --out data/grades \
+    --judges gemini --modes blinded --repeats 1 --workers 4 --timeout 2400 \
+    --errors data/logs/grade_errors_gemini.jsonl
+```
+
+`bash scripts/status.sh` shows backfill progress and both account identities.
+Once it reaches the full corpus, read `diagnostics.shadow_judges` before
+promoting: `backfill_complete`, then `calibration_readiness` per dimension
+(`would_be_rescaled` needs sd >= 3.0 and at least `MIN_CALIBRATION_N` grades),
+then `vs_fable` and `vs_astra` for paired agreement. Promotion is deleting the
+name from `SHADOW_JUDGES`, deliberately a diff rather than a flag. After that,
+set `BLIND_JUDGES=fable,astra,gemini` on `grade_loop.sh` so new transcripts keep
+the mix even.
+
 ## Rules that exist because something broke
 
 - **Never call the judge through `cl`.** It injects
@@ -166,6 +216,24 @@ stops on its own rather than overspending.
   fixed. Fitted per dimension, since the score is a weighted sum of the three,
   and the bootstrap interval reads the same adjusted values as the point
   estimate or the dot lands outside its own bar.
+- **An account's identity is read from the call that ran, never from the newest
+  file by mtime.** `agy` writes one log per invocation into a shared directory,
+  and a profile keeps its old logs when it is renamed or reused. Sorting that
+  directory by `st_mtime` named the WRONG account on 2026-09-07: a log from a
+  previous account sorted newest because the file had been touched, not because
+  it was written last. `grade.py` passes `agy --log-file` so each call names its
+  own log, and `agy_identity_from_log()` reads exactly that path. Where no call
+  is available to attach to, as in `status.sh`, order by the timestamp IN the
+  filename. This is the standing mtime rule arriving in a new place.
+- **For `agy`, the token file is not the credential.** The default profile
+  authenticates from the macOS Keychain (`svce="gemini"`, `acct="antigravity"`)
+  and answers normally with `antigravity-oauth-token` deleted outright. Swapping
+  those files to swap accounts is a no-op; changing the account means `/logout`
+  and `/login`. The log line that says which path was used is
+  `ChainedAuth: authenticated via keyring (effective: keyring)`.
+  Separately, `~/.gemini/antigravity-cli/conversations/` is SHARED with the
+  Antigravity IDE, whose language server holds open SQLite handles there, so
+  that directory must not be moved while the app runs.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing
@@ -305,6 +373,26 @@ trusting anything. Two of three graded on the re-run. This is sampling variance
 on a borderline judgement, not a hard content block, which is why the fix is a
 retry rather than a second judge.
 
+**Can the Gemini judge's web search be turned off?** (2026-09-07) No, and the
+answer is structural rather than a matter of finding the right flag. Asked
+directly with the production flags, the judge ran `search_web` and reported that
+it succeeded. A `permissions.deny` block naming the tool five different ways was
+read by the CLI and then rejected entry by entry:
+`ignoring invalid deny entry "search_web": invalid grant string` and
+`unknown action "search_web" in grant string: "search_web(*)"`. The binary
+carries `unknown action %q, want %q, %q or %q`, so the grant vocabulary is three
+actions wide plus `mcp`, and builtin tools are not in it. Network-level blocking
+does not help either, because the search runs behind the model rather than from
+this client. Filesystem access IS confined: a read outside the working directory
+returns `permission check failed for read_file` and lands in `denied_actions`.
+The settings file was restored byte-identical afterwards, verified by sha256.
+
+Two things worth inheriting from this. The CLI SILENTLY DROPPED the invalid
+entries when it next wrote the file, so a rule that looks accepted because it
+persisted may simply not have been rejected loudly. And a denied tool can end a
+turn with `status: SUCCESS` and an EMPTY response, which `call_gemini()` now
+raises as `empty_response` rather than writing a silent non-answer as a grade.
+
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
 grading loop writes continuously, so any before-and-after measured against
@@ -344,6 +432,16 @@ new grades incomparable with the corpus already graded.
   on every Astra grade, so the exposure is measurable instead of merely accepted.
   Fable is genuinely sandboxed: it is offered the tools, tries all three, and
   every one is denied.
+
+- **The Gemini judge has live web search too, and it also cannot be disabled.**
+  Same position as the Astra arm, reached by a different route: the permission
+  system recognises three grant actions plus `mcp`, and a builtin tool is not
+  expressible as a rule at all. `count_gemini_tool_events()` records
+  `tool_use_counts` and `web_search_queries` on every grade, so the exposure is
+  measured rather than assumed. Early signal, and only that: on the first real
+  grading calls the judge used no tools at all, unlike Astra which was observed
+  searching. One data point is not a finding. Read `grades_where_a_tool_ran` in
+  `diagnostics.shadow_judges` once the backfill has run.
 
 - **Filters bite unevenly, which is a bias and not a detail.** The subject-share
   filter removed 81% of Jeff Bezos's material, and he is scored on what is left.

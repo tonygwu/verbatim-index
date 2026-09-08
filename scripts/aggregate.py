@@ -125,7 +125,27 @@ MIN_CALIBRATION_N = 25
 
 # What model a judge served before grades recorded it. Only used for records
 # written before served_model existed; new ones carry their own.
-DEFAULT_JUDGE_MODEL = {"fable": "claude-fable-5-1", "astra": "gpt-6-astra"}
+DEFAULT_JUDGE_MODEL = {"fable": "claude-fable-5-1", "astra": "gpt-6-astra",
+                       "gemini": "gemini-3.8-flash-high"}
+
+# Judges whose grades are COLLECTED but kept out of the published score.
+#
+# A new judge changes the judge MIX per leader, and an uneven mix is the one
+# thing calibrate() cannot repair: it maps each judge onto the pooled
+# distribution, so a leader graded more often by a harsh judge still lands lower
+# than one graded more often by a lenient judge. Backfilling the whole corpus
+# fixes the mix, but only once the backfill is COMPLETE. Until then the arm sits
+# here, graded and reported and not published, so a half-finished backfill
+# cannot quietly reshuffle the board.
+#
+# It is also where an arm waits until its own distribution is known to be
+# usable. calibrate() only rescales a judge whose spread reaches MIN_SD, so a
+# flat judge would enter unrescaled and sit systematically off. shadow_report()
+# prints the spread and the agreement needed to make that call on evidence.
+#
+# Promoting an arm means deleting its name here, and that is deliberately a
+# code change with a diff, not a flag someone can pass in a hurry.
+SHADOW_JUDGES = ("gemini",)
 
 
 def served_model(g: dict) -> str:
@@ -350,6 +370,101 @@ def weighted(pairs: list[tuple[float, float]]) -> float | None:
     return num / den if den > 0 else None
 
 
+def shadow_report(shadow: list[dict], published: list[dict], corpus_n: int | None) -> dict:
+    """What a shadow judge would contribute, without letting it contribute.
+
+    Answers the three questions that decide whether the arm can be promoted,
+    and answers each with a number rather than an impression.
+
+    1. IS THE BACKFILL COMPLETE? An uneven judge mix is what calibration cannot
+       fix, so an arm may only be promoted once it has graded the same corpus
+       the published judges did. `blinded_coverage` is that fraction.
+    2. CAN IT BE CALIBRATED? calibrate() rescales a judge only when its spread
+       reaches 3.0 and it has at least MIN_CALIBRATION_N grades. Below either,
+       the arm would enter the pool unrescaled and sit systematically off. Both
+       thresholds are reported per dimension, with the verdict.
+    3. DOES IT AGREE? `vs_<judge>` gives the mean absolute difference on the
+       overall score across transcripts BOTH graded, which is the paired
+       comparison; an unpaired difference of means would confound the judge with
+       whichever transcripts it happened to get.
+
+    Nothing here feeds a published number. It exists so promotion is a decision
+    made on evidence, not on the arm having run without crashing.
+    """
+    out: dict = {"n_grades": len(shadow)}
+    if not shadow:
+        return out
+
+    blinded = [g for g in shadow if g["mode"] == "blinded" and not g.get("_excluded")]
+    out["n_blinded"] = len(blinded)
+    out["judges"] = sorted({g["judge"] for g in shadow})
+    out["served_models"] = dict(Counter(served_model(g) for g in shadow))
+    out["refusals"] = sum(1 for g in shadow if g.get("refused"))
+    out["excluded_validation"] = sum(1 for g in shadow if g.get("_excluded"))
+
+    # 1. Backfill progress against the corpus the published judges cover.
+    seen = {(g["leader_slug"], g["source_id"]) for g in blinded}
+    out["blinded_transcripts_graded"] = len(seen)
+    if corpus_n:
+        out["blinded_coverage"] = round(len(seen) / corpus_n, 3)
+        out["backfill_complete"] = len(seen) >= corpus_n
+
+    # 2. Spread, per dimension, against the two thresholds calibrate() applies.
+    spread = {}
+    for dim in DIMS:
+        vals = [g["grade"]["dimensions"][dim]["score"] for g in blinded
+                if isinstance(g["grade"]["dimensions"].get(dim, {}).get("score"), int)]
+        sd = round(st.pstdev(vals), 2) if len(vals) > 1 else 0.0
+        spread[dim] = {
+            "n": len(vals),
+            "mean": round(st.mean(vals), 2) if vals else None,
+            "sd": sd,
+            # Both conditions, stated separately, because they fail for
+            # different reasons and need different remedies: too few grades
+            # means grade more, too flat means this judge cannot be rescaled
+            # at all and pooling it would be a choice, not a calculation.
+            "enough_grades": len(vals) >= MIN_CALIBRATION_N,
+            "spread_sufficient": sd >= 3.0,
+            "would_be_rescaled": sd >= 3.0 and len(vals) >= MIN_CALIBRATION_N,
+        }
+    out["calibration_readiness"] = spread
+
+    # 3. Paired agreement with each published judge.
+    by_key: dict[tuple, dict] = defaultdict(dict)
+    for g in published:
+        if g["mode"] == "blinded" and not g.get("_excluded"):
+            by_key[(g["leader_slug"], g["source_id"])][g["judge"]] = g["grade"]["overall"]
+    for g in blinded:
+        by_key[(g["leader_slug"], g["source_id"])].setdefault("_shadow", g["grade"]["overall"])
+
+    for other in sorted({g["judge"] for g in published if g["mode"] == "blinded"}):
+        pairs = [(v["_shadow"], v[other]) for v in by_key.values()
+                 if "_shadow" in v and other in v]
+        if len(pairs) < 3:
+            out[f"vs_{other}"] = {"n_paired": len(pairs), "note": "too few pairs to compare"}
+            continue
+        diffs = [a - b for a, b in pairs]
+        out[f"vs_{other}"] = {
+            "n_paired": len(pairs),
+            # Signed, so a systematic offset is visible. Calibration removes a
+            # constant offset; it does not remove disagreement.
+            "mean_signed_diff": round(st.mean(diffs), 2),
+            "mean_abs_diff": round(st.mean([abs(d) for d in diffs]), 2),
+            "median_abs_diff": round(st.median([abs(d) for d in diffs]), 2),
+        }
+
+    # The exposure this arm carries, same as the Astra arm: live web search that
+    # cannot be switched off. Recorded so it is measurable rather than assumed.
+    searched = [g for g in shadow
+                if sum(((g.get("telemetry") or {}).get("tool_use_counts") or {}).values())]
+    out["grades_where_a_tool_ran"] = len(searched)
+    out["web_search_queries_sample"] = [
+        q for g in searched[:20]
+        for q in ((g.get("telemetry") or {}).get("web_search_queries") or [])
+    ][:10]
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--grades", required=True)
@@ -367,6 +482,16 @@ def main() -> int:
     grades = load_grades(Path(args.grades))
     if not grades:
         raise SystemExit("no grades found")
+
+    # Split the shadow arms out FIRST, before filter_unscorable and before
+    # calibrate(), so a shadow judge cannot move a published number by any
+    # route: not through the pooled mean, not through a leader's coverage, and
+    # not through the bootstrap. It is reported in diagnostics instead.
+    shadow = [g for g in grades if g.get("judge") in SHADOW_JUDGES]
+    grades = [g for g in grades if g.get("judge") not in SHADOW_JUDGES]
+    if not grades:
+        raise SystemExit(f"every grade found belongs to a shadow judge {list(SHADOW_JUDGES)}; "
+                         f"there is nothing to publish. Promote the arm or grade with another judge.")
 
     # A judge that declines to score one subject silently halves that leader's
     # evidence while everyone else keeps two judges. Count it per leader and per
@@ -593,6 +718,9 @@ def main() -> int:
         "grades_excluded_validation": len(excluded),
         "transcripts_with_blinded_consensus": len(all_b),
         "judge_call_counts": {"fable_blinded": len(fable), "astra_blinded": len(astra)},
+        # Collected, reported, and deliberately NOT in any number above.
+        # See SHADOW_JUDGES for why an arm waits here.
+        "shadow_judges": shadow_report(shadow, usable, len(all_b) or None),
         "judge_raw_means_blinded": {
             "fable": {d: round(st.mean([g["grade"]["dimensions"][d]["score"] for g in fable]), 1) for d in DIMS} if fable else {},
             "astra": {d: round(st.mean([g["grade"]["dimensions"][d]["score"] for g in astra]), 1) for d in DIMS} if astra else {},

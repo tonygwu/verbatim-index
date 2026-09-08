@@ -114,8 +114,73 @@ else:
         c = Counter((r["judge"], r["mode"]) for r in rows)
         bad = sum(1 for r in rows if r.get("validation_errors"))
         print(f"  grades on disk     {len(rows)}  ({bad} failed validation)")
+        # Read the shadow list out of aggregate.py rather than repeating it. A
+        # second copy would drift, and the copy that drifts is the one that
+        # tells the operator an arm is published when it is not.
+        shadow = set()
+        try:
+            import re as _re
+            src = Path("scripts/aggregate.py").read_text()
+            m_ = _re.search(r"^SHADOW_JUDGES = \(([^)]*)\)", src, _re.M)
+            if m_: shadow = set(_re.findall(r'"([^"]+)"', m_.group(1)))
+        except Exception:
+            shadow = set()
         for (j, m), n in sorted(c.items()):
-            print(f"    {j:6} {m:8}   {n}")
+            tag = "  [shadow: collected, NOT published]" if j in shadow else ""
+            print(f"    {j:6} {m:8}   {n}{tag}")
+PYEOF
+
+b "ANTIGRAVITY (gemini judge)"
+$PY - <<'PYEOF'
+import json, re
+from pathlib import Path
+
+# Profiles are a glob, never a hardcoded list of accounts: this machine has
+# already been bitten twice by hardcoded Claude account letters.
+homes = [Path.home()]
+root = Path.home() / ".agy-homes"
+if root.is_dir():
+    homes += sorted(d for d in root.iterdir()
+                    if (d / ".gemini" / "antigravity-cli").is_dir())
+
+def identity(home):
+    """Newest log BY FILENAME, never by mtime. A renamed or reused profile keeps
+    its old logs, and mtime says when a file was touched, not what is in it.
+    Sorting by mtime named the wrong account here on 2026-09-07."""
+    d = home / ".gemini" / "antigravity-cli" / "log"
+    for f in sorted(d.glob("*.log"), reverse=True)[:25] if d.is_dir() else []:
+        hits = re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+                          f.read_text(errors="ignore"))
+        if hits:
+            return hits[-1]
+    return "unknown"
+
+for h in homes:
+    label = "default" if h == Path.home() else h.name
+    print(f"  profile {label:<14} {identity(h)}")
+if len(homes) < 2:
+    print("  only one profile: the rotation has nothing to rotate over")
+print("  quota             not measurable; agy exposes no usage endpoint, so the")
+print("                    rotation is round-robin and a stop shows as auth_or_quota")
+
+# Backfill progress. An uneven judge mix is what calibration cannot fix, so the
+# arm may only be promoted once this reaches the full corpus.
+corpus = {(p.parent.name, p.stem) for p in Path("data/transcripts_blind").rglob("*.json")}
+graded = set()
+gd = Path("data/grades/gemini")
+if gd.is_dir():
+    for p in gd.rglob("*.json"):
+        if "_raw" in p.parts: continue
+        try: r = json.loads(p.read_text())
+        except Exception: continue
+        if r.get("mode") == "blinded":
+            graded.add((r["leader_slug"], r["source_id"]))
+n, tot = len(graded), len(corpus)
+pct = (100.0 * n / tot) if tot else 0.0
+bar = "#" * int(pct // 5) + "." * (20 - int(pct // 5))
+print(f"  backfill          [{bar}] {n}/{tot} blinded transcripts ({pct:.1f}%)")
+if tot and n < tot:
+    print(f"                    {tot - n} to go before the arm can leave shadow mode")
 PYEOF
 
 if [ "$BRIEF" -eq 0 ]; then

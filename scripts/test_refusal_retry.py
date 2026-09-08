@@ -165,7 +165,14 @@ def test_live_path_uses_the_policy():
     check("call_astra takes the model as an argument", "model" in sig.parameters, f"{sig}")
     check("its default is the primary model", sig.parameters["model"].default == "gpt-6-astra",
           f"{sig.parameters.get('model')}")
-    astra_branch = src.split('if job["judge"] == "fable"')[1][:1500]
+    # Scope this to the rest of grade_one, not to a fixed character count.
+    # It used to read the first 1500 chars after the fable check, which broke
+    # when the Gemini branch was added between them: the call moved to 1772 and
+    # the guard failed while the code was correct. A wider magic number only
+    # defers that, so slice to the next top-level def instead.
+    after = src.split('if job["judge"] == "fable"')[1]
+    end = after.find("\ndef ")
+    astra_branch = after[:end if end != -1 else len(after)]
     check("the astra branch calls grade_with_refusal_policy",
           "grade_with_refusal_policy(" in astra_branch,
           "the live path still calls call_astra once and takes the refusal")

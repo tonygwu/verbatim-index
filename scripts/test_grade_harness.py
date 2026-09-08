@@ -451,6 +451,157 @@ def test_account_pinning(g) -> None:
           loop.count("--fable-accounts") == 2, f"found {loop.count('--fable-accounts')}")
 
 
+def test_blind_judges_is_configurable(g) -> None:
+    """The daemon can add the Gemini arm without an edit, and defaults unchanged.
+
+    Two separate guarantees. Adding a judge to a running pipeline must not
+    require editing a file the operator would then have to remember to revert.
+    And a plain restart must NOT silently start spending Antigravity quota, so
+    the default stays exactly what it was.
+    """
+    loop = (REPO / "scripts" / "grade_loop.sh").read_text()
+    check("grade_loop: blinded judges come from BLIND_JUDGES",
+          '--judges "$BLIND_JUDGES"' in loop, "the pass still hardcodes its judges")
+    check("grade_loop: the default is unchanged, so a restart adds no new arm",
+          'BLIND_JUDGES="${BLIND_JUDGES:-fable,astra}"' in loop)
+    check("grade_loop: the judges in use are logged, not left to be inferred",
+          "blinded judges ${BLIND_JUDGES}" in loop)
+
+
+def test_gemini_profiles(g) -> None:
+    """The Antigravity rotation is a glob, and it must not gate on a token file.
+
+    Both halves were wrong in a first draft. Membership was gated on
+    antigravity-oauth-token existing, which drops the DEFAULT profile: that one
+    authenticates from the macOS Keychain and answers normally with its token
+    file deleted outright (verified 2026-09-07). And the account list was very
+    nearly hardcoded, which is the mistake this machine has already made twice
+    with the Claude accounts, once for D and once for E.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / ".agy-homes"
+        home = Path(td) / "home"
+        (home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+        for name in ("zeta", "alpha"):
+            (root / name / ".gemini" / "antigravity-cli").mkdir(parents=True)
+        # A directory that is not a profile at all must not join the rotation.
+        (root / "not-a-profile").mkdir(parents=True)
+        # alpha carries NO token file. It must still be in the rotation.
+        got = g.agy_profiles(root=root, default_home=str(home))
+
+    check("agy_profiles: default HOME leads the rotation",
+          got and got[0] == str(home), f"got {got}")
+    check("agy_profiles: finds every profile under the root, sorted",
+          [Path(p).name for p in got[1:]] == ["alpha", "zeta"], f"got {got}")
+    check("agy_profiles: a tokenless profile is kept, not silently dropped",
+          str(root / "alpha") in got, f"got {got}")
+    check("agy_profiles: a directory without antigravity-cli is not a profile",
+          str(root / "not-a-profile") not in got, f"got {got}")
+
+
+def test_gemini_identity_is_not_read_by_mtime(g) -> None:
+    """Identity comes from the log a call wrote, never from the newest by mtime.
+
+    FOUND 2026-09-07: the first version sorted a profile's log directory by
+    st_mtime and named the WRONG account. A renamed or reused profile keeps its
+    old logs, and mtime records when a file was touched rather than what is in
+    it. This test reproduces exactly that: a stale log carrying the other
+    account is given the newest mtime, and the reader must be unaffected because
+    it is handed one explicit path.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        stale = d / "cli-20260101_000000.log"
+        stale.write_text("signed in as olduser@example.com\n")
+        mine = d / "cli-20260907_204743.log"
+        mine.write_text("[AuthProvider] account=realuser@example.com\nauth ok\n")
+        # Make the STALE file the newest by mtime, the trap that caught this.
+        os.utime(stale, (2 ** 31 - 1, 2 ** 31 - 1))
+
+        got = g.agy_identity_from_log(mine)
+        check("agy_identity_from_log: reads the log it was given, not the newest mtime",
+              got == "realuser@example.com", f"got {got!r}")
+        check("agy_identity_from_log: a missing log is None, not a crash",
+              g.agy_identity_from_log(d / "nope.log") is None)
+        empty = d / "empty.log"; empty.write_text("no addresses here\n")
+        check("agy_identity_from_log: a log with no address is None",
+              g.agy_identity_from_log(empty) is None)
+
+
+def test_gemini_command(g) -> None:
+    """The flags that make this arm auditable and safe are actually passed.
+
+    stream-json is the ONLY output mode that names the model that answered, so
+    dropping it would silently remove the arm's one identity assertion and
+    leave it in the same unverifiable position as the Astra arm.
+    """
+    cmd = g.gemini_command("PROMPT", "gemini-3.8-flash-high", "agy", 540, Path("/tmp/x.log"))
+    check("gemini_command: stream-json, the only mode that names the served model",
+          "--output-format" in cmd and cmd[cmd.index("--output-format") + 1] == "stream-json",
+          f"got {cmd}")
+    check("gemini_command: pins this call's log path, so identity needs no guessing",
+          "--log-file" in cmd and cmd[cmd.index("--log-file") + 1] == "/tmp/x.log")
+    check("gemini_command: slash-command expansion off, so a '/' transcript line is data",
+          "--disable-slash-commands" in cmd)
+    check("gemini_command: never auto-approves tools; the judge is blinded against this repo",
+          "--dangerously-skip-permissions" not in cmd)
+    check("gemini_command: requests the model it was told to",
+          cmd[cmd.index("--model") + 1] == "gemini-3.8-flash-high")
+
+
+def test_gemini_failure_classification(g) -> None:
+    """A quota stop is a quota stop, not a crash.
+
+    Same reason classify_cli_failure exists for the Claude CLI: both exit
+    non-zero, and a bare cli_nonzero_exit count cannot tell them apart after
+    the fact. The Antigravity wording is the one llm-quota-router already
+    parses a reset deadline out of.
+    """
+    cases = [
+        ("Individual quota reached. Resets in 25m54s", g.E_AUTH),
+        ("RESOURCE_EXHAUSTED: please try again later", g.E_AUTH),
+        ("error: not signed in; run /login", g.E_AUTH),
+        ('model gemini-9 is not recognized as a known model', g.E_MODEL_MISMATCH),
+        ("panic: runtime error: index out of range", g.E_CLI),
+    ]
+    for blob, want in cases:
+        got, _detail = g.classify_agy_failure(1, blob)
+        check(f"classify_agy_failure: {blob[:34]!r} -> {want}", got == want, f"got {got}")
+
+
+def test_gemini_tool_accounting(g) -> None:
+    """Only tools that COMPLETED count, and what was looked up is captured.
+
+    This judge has live web search that cannot be disabled: its permission
+    system knows three grant actions plus mcp, and rejects any rule naming a
+    builtin tool. The exposure is accepted, so it has to be visible. A step that
+    ended in ERROR returned nothing to the judge and must not be counted, or the
+    record overstates what the judge actually saw.
+    """
+    events = [
+        {"event": "init", "init": {"model": "gemini-3.8-flash-high"}},
+        {"event": "step_update", "step_update": {
+            "step_type": "tool", "state": "ACTIVE", "tool_name": "search_web",
+            "tool_info": {"parameters": {"query": "who is the speaker"}}}},
+        {"event": "step_update", "step_update": {
+            "step_type": "tool", "state": "DONE", "tool_name": "search_web",
+            "tool_info": {"parameters": {"query": "who is the speaker"}}}},
+        {"event": "step_update", "step_update": {
+            "step_type": "tool", "state": "ERROR", "tool_name": "view_file",
+            "tool_info": {"parameters": {"AbsolutePath": "/roster.json"}}}},
+        {"event": "step_update", "step_update": {
+            "step_type": "agent_response", "state": "DONE"}},
+    ]
+    counts, queries = g.count_gemini_tool_events(events)
+    check("count_gemini_tool_events: a completed search counts exactly once",
+          counts.get("search_web") == 1, f"got {counts}")
+    check("count_gemini_tool_events: an ACTIVE step is not double-counted",
+          sum(counts.values()) == 1, f"got {counts}")
+    check("count_gemini_tool_events: an ERRORed tool returned nothing, so it is not counted",
+          "view_file" not in counts, f"got {counts}")
+    check("count_gemini_tool_events: the search terms are recorded, not just a tally",
+          any("who is the speaker" in q for q in queries), f"got {queries}")
+
 def main() -> int:
     g = load_grade()
     print("grading-harness guards")
@@ -462,6 +613,12 @@ def main() -> int:
         test_queue_ordering(g, pathlib.Path(td))
     test_quota_routing(g)
     test_account_pinning(g)
+    test_blind_judges_is_configurable(g)
+    test_gemini_profiles(g)
+    test_gemini_identity_is_not_read_by_mtime(g)
+    test_gemini_command(g)
+    test_gemini_failure_classification(g)
+    test_gemini_tool_accounting(g)
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))
