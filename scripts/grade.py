@@ -1195,7 +1195,7 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     # Backoff is generous because the failures arrive at duration 0, which means
     # the CLI is being turned away before it does any work, and hammering a
     # source that is turning us away is how a burst limit becomes a longer one.
-    attempts, proc, last = 0, None, ""
+    attempts, empty_retries, proc, last = 0, 0, None, ""
     for delay in (0, 10, 30, 90):
         if delay:
             time.sleep(delay)
@@ -1203,13 +1203,34 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                               env=env, cwd=str(jail), stdin=subprocess.DEVNULL)
         last = f"{proc.stdout or ''} {proc.stderr or ''}"
-        if proc.returncode == 0 and '"status":"SUCCESS"' in (proc.stdout or "").replace(" ", ""):
-            break
+        squashed = (proc.stdout or "").replace(" ", "")
+        if proc.returncode == 0 and '"status":"SUCCESS"' in squashed:
+            # A SUCCESS carrying no answer is not a success. A denied tool can
+            # end the turn with an empty response, and the model reaches for a
+            # tool stochastically, so another attempt often answers without one.
+            #
+            # This is the same shape as the Fable arm's --max-turns rule: the
+            # denial only helps if the model gets a turn afterwards to answer
+            # without the tool. agy has no --max-turns, so a retry is the only
+            # equivalent lever.
+            #
+            # Retrying matters more than the raw rate suggests. The loss is NOT
+            # random: it lands on transcripts whose content prompts a lookup, so
+            # leaving it turns a 6% failure rate into a content-correlated hole
+            # in the corpus, which is the bias this repo already documents for
+            # the subject-share and refusal filters.
+            if '"response":""' not in squashed:
+                break
+            empty_retries += 1
+            if empty_retries > 2:
+                break
+            continue
         kind, _detail = classify_agy_failure(proc.returncode, last)
         if kind != E_TRANSIENT:
             break
     if attempts > 1:
-        log(f"    gemini: {attempts} attempts after a transient failure "
+        log(f"    gemini: {attempts} attempts "
+            f"({empty_retries} after an empty answer) "
             f"({Path(profile_home).name or 'default'})")
 
     events = []
@@ -1277,6 +1298,8 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         "output_tokens": usage.get("output_tokens"),
         "thinking_tokens": usage.get("thinking_tokens"),
         "cache_read_tokens": usage.get("cache_read_tokens"),
+        "attempts": attempts,
+        "empty_retries": empty_retries,
         "denied_actions": [d.get("action") for d in denied if isinstance(d, dict)],
         "tool_use_counts": counts,
         "web_search_queries": queries,

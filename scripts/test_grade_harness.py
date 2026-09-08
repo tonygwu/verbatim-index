@@ -514,6 +514,17 @@ def test_a_transient_is_retried_not_discarded(g) -> None:
     check("call_gemini retries rather than failing on the first transient",
           "E_TRANSIENT" in src and "for delay in" in src,
           "no retry loop found in call_gemini")
+    # An empty answer is retried too, and for a reason the raw rate understates:
+    # the loss lands on transcripts whose content prompts a lookup, so leaving it
+    # is a content-correlated hole rather than a uniform 6%.
+    check("an empty answer under a SUCCESS status is retried, not accepted",
+          '"response":""' in src and "empty_retries" in src,
+          "call_gemini treats an empty SUCCESS as a result")
+    check("the empty-answer retry is bounded",
+          "empty_retries > 2" in src, "an empty answer could retry forever")
+    check("attempts and empty retries are recorded on the grade",
+          '"attempts": attempts' in src and '"empty_retries": empty_retries' in src,
+          "the exposure would only be visible in logs, not in the record")
     check("the retry backs off instead of hammering a source turning us away",
           "time.sleep(delay)" in src)
     check("a non-transient failure breaks out instead of burning the budget",
