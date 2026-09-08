@@ -16,7 +16,8 @@ within minutes because the daemons write continuously; that is normal.
 
 ## The single next action
 
-Deploy. The live board is stale and the judge backlog has nearly closed:
+The board is deployed and current as of the commit below. If grades have
+accumulated since, redeploy:
 
     bash scripts/deploy.sh --refresh
 
@@ -36,7 +37,7 @@ deploy:
     d=json.loads(re.search(r'const DATA\s*=\s*(\[.*?\]);', open('/tmp/live.html').read(), re.S).group(1))
     print('scored:', sum(r['n'] or 0 for r in d), 'across', len(d), 'leaders')"
 
-Last published: version `a7047e50`, 452 transcripts scored.
+Last published: version `0eace5c1`, 463 transcripts scored, deployed 2026-09-07 ~21:25 PDT.
 
 ## Background processes (NOT started by this session, do not stop them)
 
