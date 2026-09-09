@@ -47,6 +47,7 @@ count_grades(){ find data/grades -name '*.json' ! -name '*.tmp' -not -path '*/_r
 
 idle=0
 cycle=0
+render_fail=0   # consecutive cycles whose leaderboard rebuild did not complete
 say "grade loop started. ${WORKERS} workers, blinded judges ${BLIND_JUDGES}, unblinded on ${OPEN_PER_LEADER}/leader"
 [ -n "$FABLE_ACCOUNTS" ] && say "  Fable pinned to accounts: ${FABLE_ACCOUNTS}"
 
@@ -133,14 +134,40 @@ while true; do
   fi
 
   # 5. Always leave a current leaderboard behind, even mid-run.
-  $PY scripts/aggregate.py --grades data/grades --roster data/roster/final.json \
-      --transcripts data/transcripts_blind --out data/results.json \
-      > /dev/null 2>>data/logs/grade_loop.err \
-  && $PY scripts/build_site.py --results data/results.json --audit data/results_audit.json \
-      --roster data/roster/final.json --calibration data/logs/calibration.json \
-      --sources data/sources/discovered.json --out site/index.html \
-      >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err \
-  && say "  leaderboard re-rendered from $(count_grades) grades"
+  #
+  #    A render failure used to be SILENT. The two commands were chained with
+  #    &&, so a failure just skipped the "re-rendered" line and the cycle
+  #    carried on. A stale board and a fresh one read identically in this log.
+  #    On 2026-09-09 aggregate.py died with a KeyError on every cycle for 13
+  #    hours: the site kept serving the 01:40Z build, 96 new grades never
+  #    reached it, and the loop still exited saying COMPLETE. Only
+  #    grade_loop.err knew, and nothing reads that until something looks wrong.
+  #
+  #    Each stage now names its own failure, the run of failures is counted,
+  #    and the loop refuses to call itself complete over a board it could not
+  #    rebuild.
+  if ! $PY scripts/aggregate.py --grades data/grades --roster data/roster/final.json \
+        --transcripts data/transcripts_blind --out data/results.json \
+        > /dev/null 2>>data/logs/grade_loop.err; then
+    render_fail=$((render_fail + 1))
+    say "  AGGREGATE FAILED (${render_fail} cycle(s) in a row). data/results.json and"
+    say "    site/index.html both still hold the last build that succeeded."
+    say "    last line of data/logs/grade_loop.err: $(tail -n 1 data/logs/grade_loop.err)"
+  elif ! $PY scripts/build_site.py --results data/results.json --audit data/results_audit.json \
+        --roster data/roster/final.json --calibration data/logs/calibration.json \
+        --sources data/sources/discovered.json --out site/index.html \
+        >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err; then
+    render_fail=$((render_fail + 1))
+    say "  BUILD_SITE FAILED (${render_fail} cycle(s) in a row). data/results.json is current,"
+    say "    site/index.html is NOT, so the two now disagree."
+    say "    last line of data/logs/grade_loop.err: $(tail -n 1 data/logs/grade_loop.err)"
+  else
+    if [ "$render_fail" -gt 0 ]; then
+      say "  render RECOVERED after ${render_fail} failed cycle(s)"
+    fi
+    render_fail=0
+    say "  leaderboard re-rendered from $(count_grades) grades"
+  fi
 
   g1=$(count_grades)
   gained=$(( g1 - g0 ))
@@ -155,6 +182,17 @@ while true; do
       idle=$((idle + 1))
       say "  no new grades and no fetcher (${idle}/${IDLE_EXIT})"
       if [ "$idle" -ge "$IDLE_EXIT" ]; then
+        # Grading being finished is not the same as the board being current.
+        # Exiting 0 with "leaderboard at site/index.html" over a build that
+        # failed 58 times is what let 2026-09-09 go unnoticed for 13 hours.
+        if [ "$render_fail" -gt 0 ]; then
+          say "STOPPING ON A STALE LEADERBOARD: nothing left to grade, but the rebuild has"
+          say "  failed ${render_fail} cycle(s) in a row. site/index.html is the last build that"
+          say "  succeeded, NOT these ${g1} grades. Fix the render, then re-run:"
+          say "  bash scripts/deploy.sh --refresh"
+          say "  see data/logs/grade_loop.err"
+          exit 1
+        fi
         say "COMPLETE: nothing left to grade. leaderboard at site/index.html"
         exit 0
       fi

@@ -524,7 +524,44 @@ def main() -> int:
     # staleness equal to the number of dropped rows. deploy.sh compares against
     # this figure instead.
     grade_files_read = len(grades)
+
+    # A record that failed schema validation is not a grade, so it leaves HERE,
+    # before any filter reads a field out of it.
+    #
+    # It used to leave after filter_unscorable, and that cost 13 hours of
+    # leaderboard on 2026-09-09. Astra refused
+    # tim-cook/the-bulwark-and-the-prof-zi07-f and wrote a record whose "grade"
+    # object held one key, "error". Fable scored the same recording with a
+    # subject share of 0, so the recording fell under the cutoff and ALL of its
+    # grades went to the unscorable list, the refusal record among them. The
+    # report below then read subject_speech_share_pct off a record that has no
+    # dimensions, no overall and no share, and aggregate.py died with KeyError
+    # on every cycle from then on. The loop kept grading and still exited
+    # "COMPLETE", so the site served the last good build for 58 cycles.
+    #
+    # Reading anything at all off an invalid record is the defect; dropping it
+    # earlier is the fix. MEASURED on the corpus of 2026-09-09, 1906 records,
+    # 14 of them invalid: 6 invalid records carry a subject share and all 6 sit
+    # far above the cutoff, so 0 transcripts change their in-or-out verdict.
+    # No published number moves. The reorder is still the right semantics
+    # rather than a lucky one: a record that failed the schema should not get a
+    # vote on whether a recording is scorable.
+    excluded = [g for g in grades if g.get("_excluded")]
+    grades = [g for g in grades if not g.get("_excluded")]
+
     grades, unscorable = filter_unscorable(grades, MIN_SUBJECT_SHARE)
+    # Every record here has passed schema validation, so it HAS a share. The
+    # subscript stays a subscript on purpose: a missing key means a record that
+    # is not a grade has reached this far again, and that must stop the run
+    # rather than be smoothed over with a default. It only names the record it
+    # tripped on, because a bare KeyError does not say which file to look at.
+    for g in unscorable:
+        if "subject_speech_share_pct" not in (g.get("grade") or {}):
+            raise SystemExit(
+                f"NOT A GRADE: {g['judge']}/{g['leader_slug']}/{g['source_id']} carries no "
+                f"subject_speech_share_pct, so it is not a scorable record, yet it reached the "
+                f"unscorable report. validation_errors={g.get('validation_errors')!r}. "
+                f"Records that fail validation must be split out before filter_unscorable.")
     unscorable_report = [{
         "leader_slug": g["leader_slug"], "source_id": g["source_id"], "judge": g["judge"],
         "mode": g["mode"], "subject_share_pct": g["grade"]["subject_speech_share_pct"],
@@ -542,8 +579,20 @@ def main() -> int:
     for e in refusal_breakdown.values():
         e["judges"] = sorted(e["judges"])
 
-    excluded = [g for g in grades if g.get("_excluded")]
-    usable = [g for g in grades if not g.get("_excluded")]
+    # Already split out above, before the share filter could read a field off
+    # one. Everything still here passed validation.
+    usable = grades
+
+    # Every record read is now in exactly one bucket, and the four add up to the
+    # files read. If that stops being true a record is being dropped silently,
+    # which is how a leader loses evidence without anything saying so.
+    accounted = len(excluded) + len(unscorable) + len(refusals) + len(usable)
+    if accounted != grade_files_read:
+        raise SystemExit(
+            f"records do not add up: read {grade_files_read}, accounted {accounted} "
+            f"(excluded {len(excluded)}, unscorable {len(unscorable)}, "
+            f"refused {len(refusals)}, usable {len(usable)}). A record is being "
+            f"dropped or double-counted between load_grades and here.")
 
     # Pooling scores produced by different rubrics is a silent correctness
     # failure: the numbers still average, they just no longer mean the same

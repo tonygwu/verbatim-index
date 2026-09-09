@@ -68,6 +68,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requi
 .venv/bin/python scripts/test_venue_calibration.py # pure checks, no quota
 .venv/bin/python scripts/test_blinding.py
 .venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
+.venv/bin/python scripts/test_render_integrity.py # invalid records, and a loud render
 ```
 
 Python 3.12 or newer: `llm-quota-router`, which `grade.py` imports to route
@@ -259,6 +260,25 @@ the mix even.
   knowledge belongs: `RESOURCE_EXHAUSTED` is Google's quota code and the
   router's patterns are tuned to Claude and Codex wordings. Transient failures
   land in the taxonomy as `transient_retryable`, never as `auth_or_quota`.
+- **A record that failed validation is not a grade, and nothing may read a field
+  off one.** `load_grades` marks it `_excluded`, but the split acting on that
+  mark used to run AFTER `filter_unscorable`. On 2026-09-09 Astra refused
+  `tim-cook/the-bulwark-and-the-prof-zi07-f` and wrote a record whose `grade`
+  held one key, `error`. Fable had scored the same recording at 0% subject
+  share, so the whole recording fell under the cutoff and every grade for it
+  reached the unscorable report, that record included, and `aggregate.py` died
+  with `KeyError: 'subject_speech_share_pct'` on every cycle for the next 13
+  hours. The split now runs first. A non-grade that validation did NOT catch
+  stops the run with a message naming the file, never a default share, and the
+  four buckets are checked to add up to the files read.
+- **A render that failed must say so, and a loop may not report COMPLETE over a
+  board it could not rebuild.** `grade_loop.sh` chained aggregate and build_site
+  with `&&`, so the failure above only skipped the "re-rendered" line. The loop
+  graded 96 more transcripts across 58 cycles, never rebuilt the leaderboard,
+  then exited 0 saying `COMPLETE: nothing left to grade`. Each stage now names
+  its own failure with the last line of `grade_loop.err`, consecutive failures
+  are counted, and a stale board exits 1. Guarded by
+  `scripts/test_render_integrity.py`.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing
