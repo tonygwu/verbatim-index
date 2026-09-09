@@ -57,6 +57,11 @@ SUB_GROUPS = {
     "d3_technical_depth": ["T1", "T2", "T3", "T4"],
 }
 MIN_TRANSCRIPTS_FOR_CONFIDENCE = 3
+# The upper band. Named rather than typed inline, because the site explains this
+# rule to a reader and the explanation must be generated from the rule itself.
+# The judge count on that page was hand-typed in five places and went stale the
+# day a third judge was promoted; this is the same hazard one column over.
+HIGH_CONFIDENCE_TRANSCRIPTS = 5
 
 # Below this share of the words, the subject is not really in the recording and
 # the grade describes somebody else. MEASURED on 785 blinded grades: the share
@@ -687,7 +692,8 @@ def main() -> int:
             # A leader scored by one judge is less trustworthy than the transcript
             # count alone suggests, so the confidence label says so.
             "confidence": ("low" if len(judges_seen) < 2 else
-                           ("high" if n >= 5 else ("medium" if n >= MIN_TRANSCRIPTS_FOR_CONFIDENCE else "low"))),
+                           ("high" if n >= HIGH_CONFIDENCE_TRANSCRIPTS else
+                            ("medium" if n >= MIN_TRANSCRIPTS_FOR_CONFIDENCE else "low"))),
             "mean_judge_disagreement": round(st.mean(judge_spread), 1) if judge_spread else None,
         })
 

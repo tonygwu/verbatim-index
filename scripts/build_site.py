@@ -23,6 +23,10 @@ from pathlib import Path
 # test harness, so make the sibling import work in both cases.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
+from aggregate import (  # noqa: E402
+    HIGH_CONFIDENCE_TRANSCRIPTS,
+    MIN_TRANSCRIPTS_FOR_CONFIDENCE,
+)
 
 TEMPLATE = r"""<title>Verbatim Index</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -438,7 +442,8 @@ footer{
       <th data-k="n">Transcripts<span class="arrow">&#9650;</span></th>
       <th data-k="halo">Halo<button class="info" type="button" data-info="halo"
         aria-expanded="false" aria-label="What does Halo mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="conf">Confidence<span class="arrow">&#9650;</span></th>
+      <th data-k="conf">Confidence<button class="info" type="button" data-info="conf"
+        aria-expanded="false" aria-label="What does Confidence mean?">?</button><span class="arrow">&#9650;</span></th>
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -612,6 +617,20 @@ function render(){
    Copy lives here so a column explanation is one string, not markup buried in
    the header row. Halo is the only one today; the mechanism takes more. */
 const INFO = {
+  conf: `<p><b>How much evidence is this leader's score standing on?</b></p>
+    <p>Confidence describes the <b>amount of evidence</b>, never the quality of the
+    thinking. A leader can score well and still be marked LOW.</p>
+    <p><b>HIGH</b> &mdash; graded on __CONF_HIGH__ or more transcripts, by at least two
+    judges.<br>
+    <b>MEDIUM</b> &mdash; graded on __CONF_MIN__ to __CONF_HIGH_MINUS_1__ transcripts, by at
+    least two judges.<br>
+    <b>LOW</b> &mdash; fewer than __CONF_MIN__ transcripts, <em>or</em> only one judge reached
+    it, however many transcripts there are.</p>
+    <p>The single-judge case is separate on purpose. One judge on eight transcripts
+    still reads as LOW, because a second judge is what catches one judge's bias on a
+    particular speaker, and no number of transcripts from a single judge replaces it.</p>
+    <p class="note">A LOW row is evidence-poor, not a verdict. Read its 95% interval
+    rather than its rank.</p>`,
   ci: `<p><b>How firm is that score?</b></p>
     <p>The two dots are a 95% confidence interval: resampling this leader's
     transcripts 20,000 times puts their score between those endpoints 95% of
@@ -1056,6 +1075,9 @@ def main() -> int:
         .replace("__RUNDATE__", datetime.now(timezone.utc).strftime("%d %B %Y"))
         .replace("__N_LEADERS__", str(len(rows)))
         .replace("__N_JUDGES_WORD__", judge_count_word(results))
+        .replace("__CONF_HIGH_MINUS_1__", str(HIGH_CONFIDENCE_TRANSCRIPTS - 1))
+        .replace("__CONF_HIGH__", str(HIGH_CONFIDENCE_TRANSCRIPTS))
+        .replace("__CONF_MIN__", str(MIN_TRANSCRIPTS_FOR_CONFIDENCE))
         .replace("__N_TRANSCRIPTS__", str(d.get("transcripts_with_blinded_consensus", 0)))
         .replace("__N_WORDS__",
                  (f"{words/1e6:.1f}M" if words >= 1e6 else f"{words/1000:.0f}k")

@@ -287,7 +287,7 @@ def test_table_layout() -> None:
     check("the Overall interval keeps a (?) explaining it",
           'data-info="ci"' in src, "no affordance to explain the dots")
     check("and the tooltip copy for it exists, so the (?) is not empty",
-          re.search(r'const INFO = \{\s*ci:', src) is not None,
+          "\n  ci: `" in src,
           "INFO has no ci entry; clicking the (?) would show nothing")
     check("the tooltip says the scale is shared",
           re.search(r'ci: `.*?same\*?\*? ?scale|ci: `.*?<b>same</b> scale', src, re.S) is not None
@@ -441,6 +441,21 @@ def test_technical_column_has_an_info_button() -> None:
 # one. These guards fail instead.
 # ---------------------------------------------------------------------------
 
+def build_confidence_copy(src: str, agg) -> str:
+    """Render the Confidence copy the way build_site.py's main() does.
+
+    Asserting on the placeholders alone would pass if main() forgot to replace
+    them; asserting on the rendered page alone would pass if someone typed the
+    numbers in. This does the substitution here, from aggregate.py's constants,
+    so both halves have to line up.
+    """
+    body = src.split("\n  conf: `", 1)[1].split("`,", 1)[0]
+    return (body
+            .replace("__CONF_HIGH_MINUS_1__", str(agg.HIGH_CONFIDENCE_TRANSCRIPTS - 1))
+            .replace("__CONF_HIGH__", str(agg.HIGH_CONFIDENCE_TRANSCRIPTS))
+            .replace("__CONF_MIN__", str(agg.MIN_TRANSCRIPTS_FOR_CONFIDENCE)))
+
+
 def test_judge_count_is_derived() -> None:
     print("\n[6] the page derives its judge count from the grades that scored")
     sys.path.insert(0, str(REPO / "scripts"))
@@ -466,6 +481,39 @@ def test_judge_count_is_derived() -> None:
           "published_judges must say where its judge set comes from")
 
     src = (REPO / "scripts" / "build_site.py").read_text()
+
+    # ---- the Confidence column explains its own three bands ----------------
+    # The bands are set in aggregate.py. Typing them into the copy would put the
+    # rule in two places and let them drift, which is the defect this whole
+    # section exists to catch.
+    import aggregate as agg
+    check("the Confidence header carries an info button",
+          'data-k="conf">Confidence<button class="info"' in src,
+          "the column has three undefined labels and no explanation")
+    check("the Confidence copy exists", "\n  conf: `" in src,
+          'data-info="conf" has no body in INFO')
+    conf = src.split("\n  conf: `", 1)[1].split("`,", 1)[0] if "\n  conf: `" in src else ""
+    for band in ("HIGH", "MEDIUM", "LOW"):
+        check(f"the copy names the {band} band", band in conf, f"body={conf[:120]!r}")
+    check("the thresholds are placeholders, not typed numbers",
+          "__CONF_HIGH__" in conf and "__CONF_MIN__" in conf,
+          "a threshold typed into the copy drifts the day aggregate.py changes")
+    check("it says Confidence is about evidence, not score quality",
+          "amount of evidence" in conf and "never the quality" in conf,
+          "the commonest misreading of the column is left open")
+    check("it explains the single-judge case, which the count alone hides",
+          "one judge" in conf.lower(), "a leader on 8 transcripts can still read LOW")
+
+    rendered = build_confidence_copy(src, agg)
+    check("HIGH renders aggregate.py's own upper threshold",
+          f"{agg.HIGH_CONFIDENCE_TRANSCRIPTS} or more transcripts" in rendered,
+          rendered[:200])
+    check("MEDIUM renders the band between the two thresholds",
+          f"{agg.MIN_TRANSCRIPTS_FOR_CONFIDENCE} to {agg.HIGH_CONFIDENCE_TRANSCRIPTS - 1}"
+          in rendered, rendered[:200])
+    check("LOW renders the lower threshold",
+          f"fewer than {agg.MIN_TRANSCRIPTS_FOR_CONFIDENCE}" in rendered, rendered[:200])
+
     check("the template asks for the count rather than stating it",
           src.count("__N_JUDGES_WORD__") >= 3, f"{src.count('__N_JUDGES_WORD__')} uses")
     # The exact sentences that went stale. A bare search for "Two" would hit the
