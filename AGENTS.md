@@ -464,6 +464,23 @@ two Fable runs and the three-way comparison is really two-way. And Astra failed
 schema validation three times here, so the quote-cap overrun is not unique to
 the new arm; Gemini is roughly three times worse at it, not alone in it.
 
+**Is the agy empty-answer failure deterministic?** (2026-09-09) No. Parsed the
+failure set out of five separate Gemini passes in `data/logs/gemini_backfill.log`
+and compared them. 25 transcripts failed at least once; **0 failed in every pass
+they were attempted in**. Consecutive passes recovered 4, 4 and 10 transcripts,
+the last being 10 of 14. Costs nothing to re-derive: the passes are all in that
+log, so this needs no new grading calls.
+
+The mechanism explains the result. agy ends a run when a tool is auto-denied,
+and whether the model reaches for a tool is sampled, not fixed. Length raises
+the odds without forcing the outcome, which is why the failures concentrate on
+long transcripts and still move between passes.
+
+This is the second time in this repo that a repeated failure was mistaken for a
+deterministic one, after the Astra refusals. The general lesson is cheap to
+apply: before recording a failure as a limit, check whether the SAME items fail
+every time, not merely whether the same NUMBER does.
+
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
 grading loop writes continuously, so any before-and-after measured against
@@ -504,19 +521,30 @@ new grades incomparable with the corpus already graded.
   Fable is genuinely sandboxed: it is offered the tools, tries all three, and
   every one is denied.
 
-- **Gemini reaches 94.8% of the corpus and the missing 5% is the long tail,
-  literally.** Fable covers 501/501 and Astra 498/501; Gemini covers 475/501.
-  The 26 it misses are not random: their median length is 35,993 words against
-  12,109 for the corpus. On a very long transcript the judge reaches for a tool
-  to navigate the prompt, the tool is denied, and the turn ends with an empty
-  answer. Six attempts across two passes recovered none of them. The gap
-  therefore lands hardest on leaders who appear on long-form podcasts, at 30.8%
-  of Elon Musk's transcripts and 23.1% of Palmer Luckey's, so those two are
-  scored on a judge mix that is measurably different from everyone else's.
-  This is the uneven mix that calibration cannot fix, accepted knowingly rather
-  than hidden: `coverage_table.py` shows the per-judge columns that make it
-  visible. Closing it needs a way to stop the judge reaching for a tool on a
-  36k-word prompt, which the permission system cannot express.
+- **Gemini's coverage gap is a RETRY BUDGET, not a ceiling.** On a long prompt
+  the judge reaches for a tool to navigate it, the tool is auto-denied, and the
+  turn ends with an empty answer, because agy terminates a run on an
+  auto-denied tool (upstream bug, see below). Long transcripts fail far more
+  often: the ones that failed had a median of ~36,000 words against ~12,000 for
+  the corpus.
+
+  MEASURED 2026-09-09 across five passes: **no transcript fails
+  deterministically.** 25 transcripts failed at least once and 0 failed in
+  every pass they were attempted in, with one pass recovering 10 of 14.
+  Whether the model reaches for a tool is a sampling decision, so a long prompt
+  raises the probability rather than forcing it. Re-running is therefore the
+  fix, exactly as it is for Astra's refusals.
+
+  An earlier version of this entry called these transcripts blocked and put the
+  gap at a permanent 5%. That was wrong, and wrong in a way worth remembering:
+  a failure that repeats is not the same as a failure that is deterministic,
+  and this repo already had the Astra refusal precedent showing the difference.
+  What the bug really costs is quota, since every retry is a real call and the
+  long transcripts are the expensive ones.
+
+  Watch it in `coverage_table.py`, which shows per-judge columns. If Gemini
+  drifts below the other two, run the blinded pass again rather than assuming a
+  ceiling.
 
 - **The Gemini judge has live web search too, and it also cannot be disabled.**
   Same position as the Astra arm, reached by a different route: the permission
