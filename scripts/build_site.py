@@ -378,13 +378,15 @@ footer{
 <div class="wrap">
 
 <header class="mast">
-  <div class="eyebrow">__RUNDATE__ &middot; Blinded transcripts &middot; Two independent judges</div>
+  <div class="eyebrow">__RUNDATE__ &middot; Blinded transcripts &middot; __N_JUDGES_WORD__ independent judges</div>
   <h1>Verbatim <em>Index</em></h1>
   <p class="thesis">
     __N_LEADERS__ technology leaders, ranked on the thinking their public speech actually demonstrates.
-    Every score comes from <strong>verbatim transcripts alone</strong> &mdash; no company results,
-    no market capitalisation, no reputation. Two frontier models graded each transcript independently
-    against a 15-criterion rubric, and every score below carries the written reasoning behind it.
+    Every score comes from <strong>verbatim transcripts</strong> of things they said in public:
+    long-form podcasts, interviews and fireside chats, conference panels and keynote talks.
+    Nothing else counts. Not company results, not market capitalisation, not reputation.
+    __N_JUDGES_WORD__ frontier models graded each transcript independently against a 15-criterion
+    rubric, and every score below carries the written reasoning behind it.
   </p>
 </header>
 
@@ -394,7 +396,7 @@ footer{
   <div><dt>Words graded</dt><dd>__N_WORDS__</dd></div>
   <div><dt>Judge calls</dt><dd>__N_CALLS__</dd></div>
   <div><dt>Tie band</dt><dd>&plusmn;__TIEBAND__<small>pts</small></dd></div>
-  <div><dt>Judge agreement</dt><dd>__CORR__<small>r</small></dd></div>
+  <div><dt>Fable vs Astra</dt><dd>__CORR__<small>r</small></dd></div>
 </dl>
 
 <div class="sec">
@@ -771,9 +773,55 @@ render();
 """
 
 
+# How many judges score, and what to call them. This used to be the word "Two"
+# typed into five separate sentences. It went stale the moment a third judge was
+# promoted: the page said two judges while three were setting the score. The
+# count is now read from the grades that actually reached the published number.
+JUDGE_LABELS = {
+    "fable": "Claude Fable 5.1",
+    "astra": "OpenAI GPT-6 Astra",
+    "gemini": "Google Gemini 3.8 Flash",
+}
+NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
+
+
+def published_judges(results: dict) -> list[str]:
+    """Judge arms whose grades reach the published score.
+
+    diagnostics.judge_models is written from the telemetry of the calls that
+    ran, over the grades left AFTER shadow judges are filtered out, so a judge
+    appears here only once it is both grading and published.
+    """
+    return sorted(results.get("diagnostics", {}).get("judge_models") or {})
+
+
+def judge_count_word(results: dict) -> str:
+    n = len(published_judges(results))
+    return NUMBER_WORDS.get(n, str(n))
+
+
 def build_method(results: dict, calib: dict, roster: dict) -> str:
     d = results["diagnostics"]
     w = d["weights"]
+    # The panel, and how far each judge has actually reached. A judge added
+    # partway through the corpus does not hold every transcript, and averaging
+    # over "the judges" without saying which ones is how the page came to claim
+    # two judges while three were scoring.
+    judges = published_judges(results)
+    judge_word = judge_count_word(results)
+    blinded_tx = [t for t in results.get("transcripts", []) if t.get("mode") == "blinded"]
+    per_judge = {j: sum(1 for t in blinded_tx if j in (t.get("judges") or []))
+                 for j in judges}
+    full_panel = sum(1 for t in blinded_tx
+                     if len(t.get("judges") or []) >= len(judges))
+    open_tx = sum(1 for t in results.get("transcripts", []) if t.get("mode") == "open")
+    models = d.get("judge_models") or {}
+
+    def judge_phrase(j: str) -> str:
+        served = max(models.get(j, {}), key=models[j].get) if models.get(j) else "&ndash;"
+        return (f"<b>{JUDGE_LABELS.get(j, j.title())}</b> "
+                f"(<code>{esc(served)}</code>, {per_judge.get(j, 0)} transcripts)")
+
     leak = d.get("blinding_leakage_rate")
     corr = d.get("inter_judge_correlation_overall")
     gap = d.get("mean_abs_judge_gap_overall")
@@ -839,16 +887,16 @@ speech-recognition repetition loops, type-token ratio, words per minute, and min
 including speech-recognition manglings of the surname found by phonetic matching. This step is
 covered by tests, after an early version replaced the contraction &ldquo;that&rsquo;s&rdquo; with
 <code>[SUBJECT]</code> 34 times in one transcript.</li>
-<li>Two judges graded every transcript independently: <b>Claude Fable 5.1</b> at maximum reasoning
-effort, and <b>OpenAI GPT-6 Astra</b> at maximum reasoning effort. Model identity was asserted from
-each call's telemetry rather than assumed.</li>
+<li>{judge_word} judges graded each transcript independently, each at its highest reasoning
+setting, and no judge ever sees another's answer: {"; ".join(judge_phrase(j) for j in judges)}.
+The model that served each call was read from that call's own telemetry rather than assumed.</li>
 </ul>
 """)
 
     parts.append(f"""
 <h3>How reliable is a score?</h3>
-<p>One unchanged transcript was graded five times by each judge under identical conditions. The
-spread that produced is pure method noise.</p>
+<p>One unchanged transcript was graded five times by Fable and five times by Astra under
+identical conditions. The spread that produced is pure method noise.</p>
 <ul>
 <li>Repeat grading moves the Overall score by about <b>{noise} points</b> of standard deviation.</li>
 <li>So two leaders differing by less than <b>{head.get('least_significant_difference_95pct')} points</b>
@@ -857,13 +905,14 @@ are not distinguishable. The bracket in the rank column marks those groups.</li>
 (standard deviation 0.00), so the judges read the same conversation the same way every time.</li>
 </ul>
 <div class="callout">
-<b>The two judges disagree in a specific, correctable way.</b>
+<b>Fable and Astra disagree in a specific, correctable way.</b>
 Across blinded grades the raw means were Fable {raw.get('fable', {}).get('d2_insight', '&ndash;')} and
 Astra {raw.get('astra', {}).get('d2_insight', '&ndash;')} on insight, a consistent offset rather than
 genuine disagreement about who is impressive. Each judge's distribution is therefore recentred on the
 pooled distribution before averaging, so only real disagreement moves a leader.
-Correlation between judges on the Overall score: <b>r&nbsp;=&nbsp;{corr}</b>.
-Mean absolute gap: <b>{gap} points</b>.
+Correlation between those two judges on the Overall score: <b>r&nbsp;=&nbsp;{corr}</b>.
+Mean absolute gap: <b>{gap} points</b>. Both figures compare Fable with Astra alone; they have
+not been recomputed across every pair since the panel grew.
 </div>
 """)
 
@@ -877,7 +926,7 @@ transcript twice gave a mean absolute difference of 1.69 (Fable) and 2.06
 (Astra), implying a single-grading standard deviation near 1.64. Measured two
 independent ways, five repeats on one fixture and nine pairs across four
 different transcripts, which agree.</li>
-<li><b>The two judges differ from each other by 8.65 points</b>, which is four
+<li><b>Fable and Astra differ from each other by 8.65 points</b>, which is four
 to five times either judge's own noise. So where they disagree, that is a real
 difference of opinion about the transcript and not instability in either model.
 Agreement on the ranking is <b>ICC(3,1) = 0.657</b>, moderate on the Koo and Li
@@ -904,21 +953,33 @@ standard errors of zero.</li>
 <li><b>Blinding removed the name, not the identity.</b> This matters less than it
 sounds: the measured halo above is +0.48 points, inside noise. Judges recognised the speaker anyway in
 <b>{leak_pct}</b> of blinded transcripts, from products, projects, and context. Defeating that
-would mean stripping the technical content the study exists to measure. Every transcript was
-therefore also graded unblinded, and the <em>Halo</em> column reports the gap: how many points a
-leader gains once the judges are told who they are. The published Overall score is the blinded one.</li>
+would mean stripping the technical content the study exists to measure. {open_tx} of the
+{len(blinded_tx)} transcripts were therefore graded a second time unblinded, and the <em>Halo</em>
+column reports the gap on those: how many points a leader gains once the judges are told who they
+are. The published Overall score is always the blinded one.</li>
 <li><b>Captions have no speaker labels.</b> Judges separated the subject's speech from the
 interviewer's by context and reported their confidence and the subject's estimated share of the
 talking. Both are shown in each transcript card.</li>
-<li><b>Venue difficulty is reported, never corrected for.</b> A leader who only sits for friendly
-interviews will score lower on insight, because a soft conversation cannot demonstrate reasoning
-under pressure. Adjusting for that would mean inventing a score for a conversation that never
-happened.</li>
+<li><b>Venue format is corrected for. Venue difficulty is not.</b> Leaders are not spread evenly
+across formats, so the published score subtracts what the <em>format</em> is worth with the speaker
+held fixed, putting a keynote and a long-form podcast on the same footing. What is never corrected
+for is how hard the conversation itself was. A leader who only sits for friendly interviews will
+score lower on insight, because a soft conversation cannot demonstrate reasoning under pressure.
+Adjusting for that would mean inventing a score for a conversation that never happened, so each
+transcript reports its judged difficulty instead.</li>
 <li><b>Sampling is not exhaustive.</b> A handful of appearances per leader is a sample of a public
 speaking record, not the whole of it. Leaders marked low confidence have too few transcripts for
 their rank to be trusted.</li>
-<li><b>Judges are language models.</b> Two frontier models with different training agreeing on a
-ranking is meaningful evidence, and it is not the same thing as being correct.</li>
+<li><b>Not every transcript carries every judge.</b> The panel grew to {judge_word.lower()}
+judges partway through the corpus, so {full_panel} of {len(blinded_tx)} transcripts hold all
+{len(judges)} opinions. Each transcript is scored on the grades that exist for it. No missing
+grade is ever estimated or filled in.</li>
+<li><b>Reliability was measured on Fable and Astra.</b> The repeat-noise, tie-band and
+agreement figures above come from those two arms, before the third joined. They are not yet
+recomputed for the full panel.</li>
+<li><b>Judges are language models.</b> {judge_word} frontier models with different training
+agreeing on a ranking is meaningful evidence, and it is not the same thing as being
+correct.</li>
 </ul>
 """)
 
@@ -994,8 +1055,11 @@ def main() -> int:
         .replace("__METHOD__", build_method(results, calib, roster))
         .replace("__RUNDATE__", datetime.now(timezone.utc).strftime("%d %B %Y"))
         .replace("__N_LEADERS__", str(len(rows)))
+        .replace("__N_JUDGES_WORD__", judge_count_word(results))
         .replace("__N_TRANSCRIPTS__", str(d.get("transcripts_with_blinded_consensus", 0)))
-        .replace("__N_WORDS__", f"{words/1000:.0f}k" if words else "&ndash;")
+        .replace("__N_WORDS__",
+                 (f"{words/1e6:.1f}M" if words >= 1e6 else f"{words/1000:.0f}k")
+                 if words else "&ndash;")
         .replace("__N_CALLS__", str(d.get("grades_used", 0)))
         .replace("__CORR__", str(d.get("inter_judge_correlation_overall") or "&ndash;"))
         .replace("__NOISE__", str(head.get("mean_within_judge_sd_overall", "1.5")))

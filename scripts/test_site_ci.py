@@ -431,6 +431,52 @@ def test_technical_column_has_an_info_button() -> None:
           "one dimension must not have two long names")
 
 
+# ---------------------------------------------------------------------------
+# 6. The judge count on the page is DERIVED, never typed.
+#
+# The page carried the word "Two" in five separate sentences. On 2026-09-08 the
+# Gemini arm was promoted out of SHADOW_JUDGES and began setting the published
+# score, and every one of those sentences kept saying two. Nothing failed: the
+# copy is prose, so a stale judge count renders exactly as cleanly as a correct
+# one. These guards fail instead.
+# ---------------------------------------------------------------------------
+
+def test_judge_count_is_derived() -> None:
+    print("\n[6] the page derives its judge count from the grades that scored")
+    sys.path.insert(0, str(REPO / "scripts"))
+    import build_site as bs
+
+    def res(*judges):
+        return {"diagnostics": {"judge_models": {j: {f"{j}-model": 1} for j in judges}}}
+
+    check("two judges read as Two", bs.judge_count_word(res("fable", "astra")) == "Two",
+          bs.judge_count_word(res("fable", "astra")))
+    check("adding a third judge changes the word, with no edit to the copy",
+          bs.judge_count_word(res("fable", "astra", "gemini")) == "Three",
+          bs.judge_count_word(res("fable", "astra", "gemini")))
+    check("the judges come back named, for the pipeline bullet",
+          bs.published_judges(res("gemini", "fable")) == ["fable", "gemini"],
+          str(bs.published_judges(res("gemini", "fable"))))
+    # judge_models is written from the grades left AFTER shadow judges are
+    # filtered out, so a shadow arm cannot reach this count. Asserting the
+    # SOURCE, because asserting the number would pass on a coincidence.
+    check("the count reads judge_models, which excludes shadow arms",
+          "judge_models" in bs.published_judges.__doc__ and
+          "shadow" in bs.published_judges.__doc__.lower(),
+          "published_judges must say where its judge set comes from")
+
+    src = (REPO / "scripts" / "build_site.py").read_text()
+    check("the template asks for the count rather than stating it",
+          src.count("__N_JUDGES_WORD__") >= 3, f"{src.count('__N_JUDGES_WORD__')} uses")
+    # The exact sentences that went stale. A bare search for "Two" would hit the
+    # NUMBER_WORDS table and the Fable/Astra attributions, which are correct.
+    for typed in ("Two independent judges", "Two frontier models",
+                  "Two judges graded", "Three independent judges",
+                  "Three frontier models", "Three judges graded"):
+        check(f"no hardcoded {typed!r} in the copy", typed not in src,
+              "the judge count must come from the data, not the sentence")
+
+
 def main() -> int:
     print("overall-column confidence interval guards")
     test_bootstrap()
@@ -439,6 +485,7 @@ def main() -> int:
     test_table_layout()
     test_scoring_prose_matches_the_rubric()
     test_technical_column_has_an_info_button()
+    test_judge_count_is_derived()
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))
