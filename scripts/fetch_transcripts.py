@@ -31,6 +31,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
 REQUIRED_FIELDS = ("leader_slug", "source_id", "video_id", "title", "venue", "kind", "year")
 
 # Error taxonomy. Every failure maps to exactly one of these.
@@ -41,6 +43,7 @@ E_BLOCKED = "ip_blocked_or_ratelimited"
 E_NOT_ENGLISH = "no_english_track"
 E_TOO_SHORT = "below_min_words"
 E_METADATA = "metadata_fetch_failed"
+E_TIMEOUT = "http_timeout"
 E_OTHER = "other"
 
 _print_lock = threading.Lock()
@@ -137,6 +140,34 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# youtube_transcript_api builds a plain requests.Session and sets no timeout
+# anywhere in its source, so a stalled connection blocks the calling thread for
+# as long as the kernel keeps the socket open. MEASURED 2026-09-08: one worker
+# sat ESTABLISHED to a YouTube address at 0.0% CPU for 21h19m. The loop reported
+# itself running the whole time and grade_loop.sh kept printing "fetch loop is
+# still running. waiting." every six minutes. Nothing in the pipeline could tell
+# a stall from slow work.
+HTTP_TIMEOUT_DEFAULT = 60.0
+
+
+class TimeoutSession(requests.Session):
+    """A Session that applies a default timeout to every request it makes.
+
+    The library calls its http_client itself, for the caption LIST and again for
+    the caption FETCH, so passing a timeout at one call site would leave the
+    other unbounded. Defaulting it on the session covers both, and an explicit
+    per-call timeout still wins.
+    """
+
+    def __init__(self, timeout: float = HTTP_TIMEOUT_DEFAULT) -> None:
+        super().__init__()
+        self.timeout = timeout
+
+    def request(self, *args, **kwargs):  # type: ignore[override]
+        kwargs.setdefault("timeout", self.timeout)
+        return super().request(*args, **kwargs)
+
+
 def classify(exc: Exception) -> str:
     """Map an exception to the taxonomy by CLASS NAME, not message text.
 
@@ -144,6 +175,11 @@ def classify(exc: Exception) -> str:
     unrelated messages, and a class name is the library's actual contract.
     """
     name = type(exc).__name__
+    # requests raises ConnectTimeout and ReadTimeout, both subclasses of
+    # Timeout. A stall is NOT E_OTHER: it is the one failure that used to be
+    # invisible, so it gets its own label and stays countable.
+    if isinstance(exc, requests.exceptions.Timeout):
+        return E_TIMEOUT
     if name in THROTTLE_CLASSES:
         return E_BLOCKED
     if name == "TranscriptsDisabled":
@@ -233,7 +269,8 @@ def segments_to_text(segments: list[dict]) -> tuple[str, list[dict]]:
 
 
 def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
-              pacer: "Pacer | None" = None) -> dict:
+              pacer: "Pacer | None" = None,
+              timeout: float = HTTP_TIMEOUT_DEFAULT) -> dict:
     slug = src["leader_slug"]
     sid = src["source_id"]
     vid = src["video_id"]
@@ -262,7 +299,7 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
                 "error_type": E_OTHER, "detail": "youtube_transcript_api not importable"}
 
     try:
-        api = YouTubeTranscriptApi()
+        api = YouTubeTranscriptApi(http_client=TimeoutSession(timeout))
         listing = api.list(vid)
         track = None
         track_kind = None
@@ -324,7 +361,8 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
 
 
 def fetch_with_retry(src: dict, out_dir: Path, min_words: int, force: bool,
-                     pacer: Pacer, breaker: Breaker) -> dict:
+                     pacer: Pacer, breaker: Breaker,
+                     timeout: float = HTTP_TIMEOUT_DEFAULT) -> dict:
     """One source. Retried only for throttling; everything else fails immediately."""
     last = None
     for attempt in range(MAX_TRIES):
@@ -333,8 +371,12 @@ def fetch_with_retry(src: dict, out_dir: Path, min_words: int, force: bool,
                     "source_id": src["source_id"], "error_type": E_BLOCKED,
                     "detail": "circuit open: endpoint refusing consistently, run aborted"}
         pacer.wait()
-        r = fetch_one(src, out_dir, min_words, force, pacer)
-        if r["status"] != "failed" or r.get("error_type") != E_BLOCKED:
+        r = fetch_one(src, out_dir, min_words, force, pacer, timeout)
+        # A stall and a block are different failures and keep different labels,
+        # but they call for the same response: back off. Feeding E_TIMEOUT to
+        # the breaker as well stops a silently stalling endpoint from resetting
+        # it on every attempt and being hammered at full pace.
+        if r["status"] != "failed" or r.get("error_type") not in (E_BLOCKED, E_TIMEOUT):
             breaker.record_ok()
             return r
         last = r
@@ -353,7 +395,8 @@ def fetch_with_retry(src: dict, out_dir: Path, min_words: int, force: bool,
 
 
 def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
-                 min_words: int, force: bool, pacer: Pacer, breaker: Breaker) -> list[dict]:
+                 min_words: int, force: bool, pacer: Pacer, breaker: Breaker,
+                 timeout: float = HTTP_TIMEOUT_DEFAULT) -> list[dict]:
     """Walk a leader's ranked candidates until `target` transcripts are on disk.
 
     Candidates come pre-ranked by duration. Stopping early is the point: it means
@@ -366,7 +409,7 @@ def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
             break
         if breaker.open:
             break
-        r = fetch_with_retry(c, out_dir, min_words, force, pacer, breaker)
+        r = fetch_with_retry(c, out_dir, min_words, force, pacer, breaker, timeout)
         results.append(r)
         if r["status"] in ("ok", "cached"):
             got += 1
@@ -391,6 +434,10 @@ def main() -> int:
     ap.add_argument("--target-per-leader", type=int, default=0,
                     help="Stop after N successful transcripts per leader, walking that leader's "
                          "ranked candidate list in order. 0 fetches every row in the manifest.")
+    ap.add_argument("--http-timeout", type=float, default=HTTP_TIMEOUT_DEFAULT,
+                    help="Seconds any single caption request may wait before it is abandoned. "
+                         "The library sets none, so without this a stalled socket blocks a "
+                         "worker until the kernel gives up.")
     ap.add_argument("--min-interval", type=float, default=2.0,
                     help="Minimum seconds between caption requests across ALL workers, jittered. "
                          "The yt-dlp wiki suggests 5 to 10 seconds as the remedy for HTTP 429.")
@@ -451,7 +498,8 @@ def main() -> int:
         done = 0
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = {ex.submit(fetch_leader, slug, cands, args.target_per_leader,
-                              out_dir, args.min_words, args.force, pacer, breaker): slug
+                              out_dir, args.min_words, args.force, pacer, breaker,
+                              args.http_timeout): slug
                     for slug, cands in by_leader.items()}
             for fut in cf.as_completed(futs):
                 rs = fut.result()
@@ -462,7 +510,8 @@ def main() -> int:
     else:
         done = 0
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futs = {ex.submit(fetch_with_retry, s_, out_dir, args.min_words, args.force, pacer, breaker): s_
+            futs = {ex.submit(fetch_with_retry, s_, out_dir, args.min_words, args.force, pacer,
+                              breaker, args.http_timeout): s_
                     for s_ in sources}
             for fut in cf.as_completed(futs):
                 r = fut.result()
