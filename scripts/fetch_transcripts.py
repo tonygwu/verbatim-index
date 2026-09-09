@@ -431,6 +431,12 @@ def main() -> int:
     ap.add_argument("--min-words", type=int, default=700,
                     help="Reject transcripts shorter than this; a 3-minute clip has too little signal to score.")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--have-dir", default=None,
+                    help="Directory counted when deciding whether a leader has already "
+                         "reached --target-per-leader. Defaults to --out. The loop passes "
+                         "data/transcripts_blind, because the target means GRADEABLE "
+                         "transcripts: a leader whose fetches are rejected by QA has not "
+                         "reached the target no matter how many raw files are on disk.")
     ap.add_argument("--target-per-leader", type=int, default=0,
                     help="Stop after N successful transcripts per leader, walking that leader's "
                          "ranked candidate list in order. 0 fetches every row in the manifest.")
@@ -484,8 +490,16 @@ def main() -> int:
         # cycle and make coverage a function of queue position. Ordering by
         # current coverage spends each cycle's budget where it is thinnest, and
         # drops leaders already at target entirely.
+        # Count GRADEABLE transcripts, not raw fetches, when one is available.
+        # FOUND 2026-09-09: the target was measured against data/transcripts, so a
+        # leader whose transcripts fail QA stopped short. Michael Dell had 16 raw
+        # files and 9 that survived QA against a target of 14, and the loop
+        # reported him "at target" and exited. He is scored on the thinnest
+        # evidence on the board as a direct result.
+        have_dir = Path(args.have_dir) if args.have_dir else out_dir
         def _have(slug: str) -> int:
-            return len(list((out_dir / slug).glob("*.json"))) if (out_dir / slug).exists() else 0
+            d = have_dir / slug
+            return len([f for f in d.glob("*.json") if not f.name.endswith(".tmp")]) if d.exists() else 0
 
         ordered = sorted(by_leader.items(), key=lambda kv: (_have(kv[0]), kv[0]))
         ordered = [(slug, cands) for slug, cands in ordered if _have(slug) < args.target_per_leader]

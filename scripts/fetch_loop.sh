@@ -23,7 +23,8 @@ cd "$(dirname "$0")/.."
 require_daemon_clone || exit 1
 
 PY=.venv/bin/python
-TARGET="${TARGET:-5}"                 # transcripts wanted per leader
+TARGET="${TARGET:-5}"                 # GRADEABLE transcripts wanted per leader
+BARREN_LIMIT="${BARREN_LIMIT:-3}"     # consecutive empty passes before giving up
 MIN_ACCEPT="${MIN_ACCEPT:-3}"         # below this a leader is reported as thin
 PROBE_VIDEO="${PROBE_VIDEO:-93piVCwqXz8}"
 # Pacing is deliberately AGGRESSIVE. The operator can rotate the VPN exit on
@@ -48,12 +49,21 @@ import json, sys
 from pathlib import Path
 target = int(sys.argv[1])
 roster = [r["slug"] for r in json.loads(Path("data/roster/final.json").read_text())["roster"]]
-counts = {s: len(list((Path("data/transcripts") / s).glob("*.json"))) for s in roster}
+# TARGET means GRADEABLE transcripts, not raw fetches. Counting data/transcripts
+# reported a leader "at target" while QA had rejected enough of them to leave him
+# far short: Michael Dell, 16 raw, 9 gradeable, target 14, loop exited COMPLETE.
+# QA and normalize run in this same loop right after fetching, so the blinded
+# directory is current by the time this is read.
+blind = Path("data/transcripts_blind")
+counts = {s: len([f for f in (blind / s).glob("*.json") if not f.name.endswith(".tmp")])
+          if (blind / s).is_dir() else 0 for s in roster}
+raw = {s: len(list((Path("data/transcripts") / s).glob("*.json"))) for s in roster}
 done = sum(1 for v in counts.values() if v >= target)
 print(json.dumps({
     "leaders": len(roster),
     "transcripts": sum(counts.values()),
     "leaders_at_target": done,
+    "raw_transcripts": sum(raw.values()),
     "leaders_with_zero": [s for s, v in counts.items() if v == 0],
     "thin": {s: v for s, v in sorted(counts.items()) if 0 < v < target},
 }))
@@ -82,6 +92,7 @@ PYEOF
 
 sleep_for=$BASE_SLEEP
 cycle=0
+barren=0
 say "fetch loop started. target ${TARGET}/leader, pace ${PACE}s, ${WORKERS} workers"
 
 while true; do
@@ -137,6 +148,7 @@ while true; do
     --out data/transcripts \
     --errors "data/logs/fetch_errors_cycle${cycle}.jsonl" \
     --workers "$WORKERS" --target-per-leader "$TARGET" --min-interval "$PACE" \
+    --have-dir data/transcripts_blind \
     >/dev/null 2>>data/logs/fetch_loop.err
   after=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
   gained=$(( after - before ))
@@ -172,11 +184,24 @@ while true; do
   fi
 
   if [ "$gained" -gt 0 ]; then
+    barren=0
     sleep_for=$BASE_SLEEP           # it worked, go back to the normal cadence
     say "  +${gained} transcripts (now ${after}). sleeping ${sleep_for}s"
   else
+    barren=$(( barren + 1 ))
     sleep_for=$(( sleep_for * 2 )); [ "$sleep_for" -gt "$MAX_SLEEP" ] && sleep_for=$MAX_SLEEP
-    say "  no new transcripts this pass. sleeping ${sleep_for}s"
+    say "  no new transcripts this pass (${barren}/${BARREN_LIMIT}). sleeping ${sleep_for}s"
+    # Counting gradeable transcripts means a leader whose candidates are spent
+    # can never reach the target, so "not at target" is no longer proof that
+    # more work exists. Without this the loop would back off to MAX_SLEEP and
+    # spin forever. Name who is short, so the shortfall is visible rather than
+    # silently accepted.
+    if [ "$barren" -ge "$BARREN_LIMIT" ]; then
+      short=$($PY -c "import json,sys;d=json.loads(sys.argv[1]);print(', '.join(f'{k} {v}/{sys.argv[2]}' for k,v in d['thin'].items()) or 'none')" "$cov" "$TARGET")
+      say "EXHAUSTED: ${BARREN_LIMIT} passes with no new transcripts. Short of target: ${short}"
+      printf '{"at":"%s","event":"exhausted","short":"%s"}\n' "$(stamp)" "$short" >> "$STATE"
+      exit 0
+    fi
   fi
   sleep "$sleep_for"
 done
