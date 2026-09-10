@@ -90,6 +90,105 @@ def collapse_loops(text: str, max_repeats: int = 2) -> tuple[str, dict]:
     return " ".join(out), {"tokens_removed": removed, "runs_collapsed": runs}
 
 
+TIMESTAMP = re.compile(r"^\[\d\d:\d\d:\d\d\]$")
+
+
+def collapse_paragraph_loops(text: str, window: int = 20, island: int | None = None,
+                             min_share: float = 0.05) -> tuple[str, dict]:
+    """Remove paragraph-scale replays: any run of `window` content tokens that
+    already occurred earlier in the transcript, at any alignment.
+
+    `collapse_loops` above repairs a recogniser stuttering on one token. It
+    cannot see a live stream that replays the same segment: sam-altman/
+    the-economic-times-vfilis is 64,068 words of an eight-minute interview
+    looped 39 times, and every judge read all of it. MEASURED 2026-09-10 on
+    569 transcripts: 8 are more than 10% repeated by this measure, the worst
+    four 76-96%. A stride-40 block measure had put the worst at 19.6% and
+    found only 3, because a loop whose period is not a multiple of the block
+    never lines up with it; this match is alignment-free.
+
+    Timestamps are ignored for matching, because each replay carries fresh
+    ones, and kept in the output. A replay is never byte-identical: the
+    recogniser renders the same audio a little differently each time, and
+    every such difference leaves a hole of up to `window` tokens that no
+    repeated window can cover. A surviving run shorter than `island` tokens
+    (default: the window) that sits between removed material and more
+    removed material, or at the head of a removed run, is that residue and
+    goes too.
+
+    Nothing is removed unless at least `min_share` of the content repeats.
+    Below that a repeat is a cold-open teaser or a sponsor read, both
+    harmless, and collapsing them would rewrite 114 derived transcripts on
+    the 2026-09-10 corpus to fix 10. The share is still measured and
+    reported for every transcript, so the gate is visible, not silent.
+    """
+    if island is None:
+        island = window
+    all_toks = text.split()
+    if not all_toks:
+        return text, {"repeat_share": 0.0, "tokens_removed": 0, "content_tokens": 0}
+    content_idx = [i for i, t in enumerate(all_toks) if not TIMESTAMP.match(t)]
+    content = [all_toks[i] for i in content_idx]
+    mask = [False] * len(content)
+    seen: dict[tuple[str, ...], int] = {}
+    for i in range(len(content) - window + 1):
+        key = tuple(content[i:i + window])
+        p = seen.get(key)
+        if p is None:
+            seen[key] = i
+            continue
+        for j in range(i, i + window):
+            mask[j] = True
+        # A replay is never byte-identical. The recogniser's first slip inside
+        # a copy leaves the tokens before it uncovered, because no window that
+        # contains the slip repeats. Walk back from this match and its
+        # original together, and keep masking while they still agree, allowing
+        # a few slips in a row. Bounded by one window, so a genuine sentence
+        # before a replay cannot be eaten.
+        back, slips = 1, 0
+        while back <= window and i - back > p - back >= 0 and not mask[i - back]:
+            if content[i - back] == content[p - back]:
+                slips = 0
+            else:
+                slips += 1
+                if slips > 3:
+                    break
+            mask[i - back] = True
+            back += 1
+        if slips:
+            # Do not keep a trailing run of slips: it may be real speech.
+            for q in range(i - back + 1, i - back + 1 + slips):
+                if 0 <= q < len(mask) and content[q] != content[q - (i - p)]:
+                    mask[q] = False
+    repeat_share = sum(mask) / len(content) if content else 0.0
+    if repeat_share < min_share:
+        return text, {"repeat_share": round(repeat_share, 4), "tokens_removed": 0,
+                      "content_tokens": len(content), "below_min_share": True}
+    k = 0
+    while k < len(mask):
+        if mask[k]:
+            k += 1
+            continue
+        j = k
+        while j < len(mask) and not mask[j]:
+            j += 1
+        if (j - k) < island and k > 0 and j < len(mask):
+            for q in range(k, j):
+                mask[q] = True
+        k = j
+    drop = {content_idx[q] for q, m in enumerate(mask) if m}
+    out: list[str] = []
+    for i, t in enumerate(all_toks):
+        if i in drop:
+            continue
+        if TIMESTAMP.match(t) and out and TIMESTAMP.match(out[-1]):
+            out[-1] = t  # keep one marker per gap, the later one
+            continue
+        out.append(t)
+    return " ".join(out), {"repeat_share": round(repeat_share, 4), "tokens_removed": len(drop),
+                           "content_tokens": len(content)}
+
+
 def name_variants(full_name: str) -> list[str]:
     """Longest first, so 'Jensen Huang' is replaced before 'Huang' alone."""
     parts = [p for p in re.split(r"\s+", full_name.strip()) if p]
@@ -446,6 +545,9 @@ def main() -> int:
 
         text = rec["text"]
         text, loopfix = collapse_loops(text)
+        original_words = len(text.split())
+        text, parafix = collapse_paragraph_loops(text)
+        parafix["original_word_count"] = original_words
         text, applied = apply_repairs(text, repairs.get(slug, []))
         blind_counts: dict[str, int] = {}
         if args.mode == "blinded":
@@ -454,9 +556,14 @@ def main() -> int:
 
         rec_out = dict(rec)
         rec_out["text"] = text
+        if parafix["tokens_removed"]:
+            # The judge is told the transcript length, and the length it is
+            # told must be the length it is given.
+            rec_out["word_count"] = len(text.split())
         rec_out["normalization"] = {
             "mode": args.mode,
             "loop_collapse": loopfix,
+            "paragraph_loop_collapse": parafix,
             "repairs_applied": applied,
             "repair_substitutions": sum(a["count"] for a in applied),
             "repairs_that_matched_nothing": [a["wrong"] for a in applied if a["count"] == 0],
