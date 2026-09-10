@@ -75,7 +75,11 @@ def main() -> int:
                 "title": s.get("title") or "untitled",
                 "venue": s.get("venue") or "unknown",
                 "kind": kind if kind in KINDS else "interview",
-                "year": int(s.get("year") or 0) or 2024,
+                # 0 means unknown. This used to read `or 2024`, which turned every
+                # missing year into 2024 and put "Approximate year: 2024" in front
+                # of every judge on every grade while the uploads ran 2009-2026.
+                # The fetcher overrides it with YouTube's upload date anyway.
+                "year": int(s.get("year") or 0),
                 # Rank carries the discovery ordering through to the fetcher, which
                 # walks a leader's candidates in this order and stops once it has
                 # enough. Without it the fetcher would try all 14 and waste caption

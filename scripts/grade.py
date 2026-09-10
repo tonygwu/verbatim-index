@@ -512,6 +512,9 @@ def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
 
 def build_judge_prompt(rec: dict, mode: str, rubric: str, schema: str) -> str:
     ident = "BLINDED" if mode == "blinded" else "OPEN"
+    # 0 is the fetcher's "unknown" (a Happyscribe record has no date). Printing
+    # it as a number put "Approximate year: 0" in front of 29 transcripts.
+    year = rec.get("declared_year") or "unknown"
     if mode == "blinded":
         identity_block = (
             "This transcript is BLINDED. The speaker's name and their company have been replaced\n"
@@ -522,7 +525,7 @@ def build_judge_prompt(rec: dict, mode: str, rubric: str, schema: str) -> str:
         )
         header = (
             f"Format as declared by the publisher: {rec.get('declared_kind')}\n"
-            f"Approximate year: {rec.get('declared_year')}\n"
+            f"Approximate year: {year}\n"
             f"Duration: {round((rec.get('duration_sec') or 0) / 60)} minutes\n"
             f"Transcript length: {rec.get('word_count')} words\n"
         )
@@ -540,7 +543,7 @@ def build_judge_prompt(rec: dict, mode: str, rubric: str, schema: str) -> str:
             f"Venue: {rec.get('declared_venue')}\n"
             f"Title: {rec.get('yt_title') or rec.get('declared_title')}\n"
             f"Format: {rec.get('declared_kind')}\n"
-            f"Approximate year: {rec.get('declared_year')}\n"
+            f"Approximate year: {year}\n"
             f"Duration: {round((rec.get('duration_sec') or 0) / 60)} minutes\n"
             f"Transcript length: {rec.get('word_count')} words\n"
         )
@@ -1116,6 +1119,40 @@ def gemini_command(prompt: str, model: str, binary: str, print_timeout_s: int,
     ]
 
 
+def gemini_identity_report(results: list[dict]) -> dict:
+    """Which Google account each Antigravity profile actually served in this run.
+
+    Read from the grades this run wrote, each of which carries the identity its
+    own call logged. MEASURED 2026-09-10: both profile HOMEs on this machine
+    served gptwufamily@gmail.com for all 567 Gemini grades in the corpus, and a
+    re-login of the default profile was overwritten 31 minutes later by a
+    refresh under the other HOME. `agy` keeps its credential in the macOS
+    Keychain under one fixed service and account name, so two HOMEs on one
+    macOS user share one credential and the round-robin alternates between two
+    doors into the same account. The rotation cannot detect that by itself, so
+    it is reported here and warned about when every profile resolves to one
+    address.
+    """
+    by_home: dict[str, dict[str, int]] = {}
+    for r in results:
+        if r.get("judge") != "gemini" or r.get("status") not in ("ok", "invalid"):
+            continue
+        try:
+            t = json.loads(Path(r["path"]).read_text()).get("telemetry") or {}
+        except (OSError, ValueError, KeyError):
+            continue
+        home = t.get("profile_home") or "?"
+        ident = t.get("profile_identity") or "unknown"
+        by_home.setdefault(home, {})
+        by_home[home][ident] = by_home[home].get(ident, 0) + 1
+    identities = {i for m in by_home.values() for i in m if i != "unknown"}
+    return {
+        "profiles": by_home,
+        "distinct_identities": sorted(identities),
+        "one_account_behind_all_profiles": len(by_home) > 1 and len(identities) == 1,
+    }
+
+
 def count_gemini_tool_events(events: list[dict]) -> tuple[dict[str, int], list[str]]:
     """Count the tools the Gemini judge used, and capture what it looked up.
 
@@ -1656,6 +1693,13 @@ def main() -> int:
     for r in failed + invalid + refused:
         tax[r.get("error_type", "unknown")] = tax.get(r.get("error_type", "unknown"), 0) + 1
 
+    gemini_ids = gemini_identity_report(results) if "gemini" in judges else None
+    if gemini_ids and gemini_ids["one_account_behind_all_profiles"]:
+        log(f"WARNING: {len(gemini_ids['profiles'])} Antigravity profiles were in rotation and "
+            f"every one of them served {gemini_ids['distinct_identities'][0]}. Two HOMEs on one "
+            f"macOS user share one Keychain credential, so the second profile adds no quota "
+            f"and the last refresh decides the account. See gemini_identity_report().")
+
     print(json.dumps({
         "attempted": len(jobs),
         "succeeded": len(ok) + len(cached),
@@ -1666,6 +1710,7 @@ def main() -> int:
         "failed": len(failed),
         "error_taxonomy": tax,
         "median_elapsed_sec": sorted(r["elapsed"] for r in ok)[len(ok) // 2] if ok else None,
+        "gemini_identities": gemini_ids,
     }, indent=2))
     return 0
 

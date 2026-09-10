@@ -340,7 +340,7 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
         "declared_title": src["title"],
         "declared_venue": src["venue"],
         "declared_kind": src["kind"],
-        "declared_year": src["year"],
+        "declared_year": declared_year(src, meta),
         "caption_track": track_kind,
         "word_count": words,
         "char_count": len(text),
@@ -358,6 +358,23 @@ def fetch_one(src: dict, out_dir: Path, min_words: int, force: bool,
     os.replace(tmp, dest)
     return {"status": "ok", "leader_slug": slug, "source_id": sid,
             "words": words, "track": track_kind, "path": str(dest)}
+
+
+def declared_year(src: dict, meta: dict) -> int:
+    """The year the judge will be told. YouTube's upload date first, the
+    manifest second, 0 when neither says.
+
+    FOUND 2026-09-10: every manifest row said 2024, because
+    sources_to_manifest.py defaulted a missing year to 2024, and this record
+    copied it while already carrying `yt_upload_date` from the same fetch.
+    479 of 535 dated transcripts disagreed with the year in their own prompt,
+    by up to 15 years. 0 is rendered as "unknown" by grade.py; it is never a
+    number the judge could mistake for a date.
+    """
+    upload = str(meta.get("yt_upload_date") or "")
+    if len(upload) == 8 and upload.isdigit():
+        return int(upload[:4])
+    return int(src.get("year") or 0)
 
 
 def fetch_with_retry(src: dict, out_dir: Path, min_words: int, force: bool,
