@@ -588,7 +588,9 @@ def check_schema(obj, schema: dict, path: str = "$", root: dict | None = None) -
     if "anyOf" in schema:
         branches = [check_schema(obj, s, path, root) for s in schema["anyOf"]]
         if not any(len(b) == 0 for b in branches):
-            best = min(branches, key=len)
+            # Report the branch that got DEEPEST before failing: a null branch fails
+            # at the top in one step and says nothing useful about a real object.
+            best = max(branches, key=lambda b: max((len(e.split(':')[0]) for e in b), default=0))
             return [f"{path}: matches no anyOf branch; closest: {best[0] if best else '?'}"]
         return []
     if "const" in schema and obj != schema["const"]:
