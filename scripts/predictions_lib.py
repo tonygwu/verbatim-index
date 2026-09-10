@@ -247,33 +247,41 @@ def record_sort_key(rec: dict) -> tuple[int, str]:
     return rec["source"]["quote_char_start"], rec["prediction_id"]
 
 
-def dedupe_overlapping(cands: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Collapse candidates whose character ranges overlap within one transcript.
+DEDUPE_OVERLAP = 0.8   # share of the LONGER span that the two spans share before they count as one
 
-    Each candidate carries start, end and prediction_id. Keep the longer span;
-    tie on the smaller start; tie on the smaller id. One pass over candidates
-    sorted by (start, -length, id): a candidate is dropped when it overlaps any
-    kept one. Dropped entries are returned with `kept_by`, never discarded silently.
+
+def span_overlap(a: dict, b: dict) -> float:
+    """Shared characters as a share of the longer span. 0 when disjoint, 1 when identical."""
+    shared = max(0, min(a["end"], b["end"]) - max(a["start"], b["start"]))
+    longer = max(a["end"] - a["start"], b["end"] - b["start"], 1)
+    return shared / longer
+
+
+def dedupe_overlapping(cands: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Collapse NEAR-IDENTICAL spans within one transcript, and nothing else.
+
+    Two candidates are one prediction only when they share at least
+    DEDUPE_OVERLAP of the longer span: the same sentence quoted with slightly
+    different boundaries. Merely overlapping spans are two records, because two
+    distinct claims can share words. FOUND on the first live transcript
+    (george-hotz/mapbox-n9wxlr, 2026-09-10): a rule that collapsed any overlap
+    kept "we are going to be better than GM supercruise" and silently dropped
+    "we are going to open source all the highway maps by the end of the year",
+    which sat inside the same 39-word span.
+
+    Among near-identical spans keep the longer; tie on the smaller start; tie
+    on the smaller id. Dropped entries are returned with `kept_by`, never lost.
     """
-    order = sorted(cands, key=lambda c: (c["start"], -(c["end"] - c["start"]), c["prediction_id"]))
+    order = sorted(cands, key=lambda c: (-(c["end"] - c["start"]), c["start"], c["prediction_id"]))
     kept: list[dict] = []
     dropped: list[dict] = []
     for c in order:
-        clash = next((k for k in kept if c["start"] < k["end"] and k["start"] < c["end"]), None)
+        clash = next((k for k in kept if span_overlap(c, k) >= DEDUPE_OVERLAP), None)
         if clash is None:
             kept.append(c)
         else:
-            if (c["end"] - c["start"], -c["start"], c["prediction_id"]) > \
-               (clash["end"] - clash["start"], -clash["start"], clash["prediction_id"]) and \
-               (c["end"] - c["start"]) > (clash["end"] - clash["start"]):
-                # A later-starting but LONGER span beats the kept one.
-                kept.remove(clash)
-                dropped.append({"prediction_id": clash["prediction_id"], "start": clash["start"],
-                                "end": clash["end"], "kept_by": c["prediction_id"]})
-                kept.append(c)
-            else:
-                dropped.append({"prediction_id": c["prediction_id"], "start": c["start"],
-                                "end": c["end"], "kept_by": clash["prediction_id"]})
+            dropped.append({"prediction_id": c["prediction_id"], "start": c["start"], "end": c["end"],
+                            "kept_by": clash["prediction_id"]})
     kept.sort(key=lambda c: (c["start"], c["prediction_id"]))
     return kept, dropped
 

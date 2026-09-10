@@ -8,7 +8,7 @@ number, a write that lands in a directory this clone does not own.
 
   GROUND    normalise strips only timestamp marks; exact grounding maps to original offsets
   ID        the id ignores case, punctuation, marks and whitespace, and nothing else
-  DEDUPE    overlapping spans collapse to the longer one and the drop is recorded
+  DEDUPE    near-identical spans collapse to the longer one; merely overlapping spans are two records
   DATE      statement date comes from yt_upload_date, never declared_year; malformed fails loud
   CUTOFF    date-only publication gives a 00:00 UTC cutoff at date precision; unknown gives none
   GUARD     writes under data/ are allowed ONLY under data/predictions
@@ -98,23 +98,27 @@ def test_id(L) -> None:
 
 def test_dedupe(L) -> None:
     c = lambda s, e, i: {"start": s, "end": e, "prediction_id": i}  # noqa: E731
-    kept, dropped = L.dedupe_overlapping([c(0, 10, "a"), c(5, 12, "b"), c(20, 30, "c")])
-    check("DEDUPE: overlapping pair keeps the longer, drops the other with kept_by",
-          [k["prediction_id"] for k in kept] == ["a", "c"] and dropped == [{"prediction_id": "b", "start": 5, "end": 12, "kept_by": "a"}],
+    kept, dropped = L.dedupe_overlapping([c(0, 100, "a"), c(2, 100, "b"), c(200, 300, "c")])
+    check("DEDUPE: near-identical spans collapse to the longer, and the drop names its keeper",
+          [k["prediction_id"] for k in kept] == ["a", "c"] and dropped == [{"prediction_id": "b", "start": 2, "end": 100, "kept_by": "a"}],
           f"{kept} {dropped}")
-    kept, dropped = L.dedupe_overlapping([c(5, 12, "b"), c(0, 10, "a")])
+    kept, _ = L.dedupe_overlapping([c(2, 100, "b"), c(0, 100, "a")])
     check("DEDUPE: order of input does not matter", [k["prediction_id"] for k in kept] == ["a"])
-    kept, dropped = L.dedupe_overlapping([c(0, 10, "a"), c(2, 20, "b")])
-    check("DEDUPE: a later-starting LONGER span wins", [k["prediction_id"] for k in kept] == ["b"] and dropped[0]["kept_by"] == "b")
+    kept, dropped = L.dedupe_overlapping([c(0, 100, "a"), c(0, 200, "b")])
+    check("DEDUPE: a span that holds another plus as much text again is a SECOND record (the Hotz case)",
+          [k["prediction_id"] for k in kept] == ["a", "b"] and dropped == [], f"{kept} {dropped}")
     kept, _ = L.dedupe_overlapping([c(0, 10, "b"), c(0, 10, "a")])
-    check("DEDUPE: equal spans tie on the smaller id", [k["prediction_id"] for k in kept] == ["a"])
-    kept, dropped = L.dedupe_overlapping([c(0, 10, "a"), c(8, 18, "b"), c(16, 26, "c")])
-    check("DEDUPE: a chain resolves against KEPT spans only (a and c both survive)",
-          [k["prediction_id"] for k in kept] == ["a", "c"], str(kept))
+    check("DEDUPE: identical spans tie on the smaller id", [k["prediction_id"] for k in kept] == ["a"])
+    kept, dropped = L.dedupe_overlapping([c(0, 100, "a"), c(10, 110, "b"), c(20, 120, "c")])
+    check("DEDUPE: a chain of near-identical spans resolves against KEPT spans (b and c both fold into a)",
+          [k["prediction_id"] for k in kept] == ["a"] and {d["kept_by"] for d in dropped} == {"a"}, str(kept))
     again, d2 = L.dedupe_overlapping(kept)
     check("DEDUPE: idempotent", again == kept and d2 == [])
-    check("DEDUPE: adjacent, non-overlapping spans both survive",
-          len(L.dedupe_overlapping([c(0, 10, "a"), c(10, 20, "b")])[0]) == 2)
+    check("DEDUPE: partly overlapping spans both survive",
+          len(L.dedupe_overlapping([c(0, 100, "a"), c(50, 150, "b")])[0]) == 2)
+    check("DEDUPE: span_overlap is shared chars over the longer span",
+          L.span_overlap(c(0, 100, "a"), c(50, 150, "b")) == 0.5 and L.span_overlap(c(0, 100, "a"), c(200, 300, "b")) == 0
+          and L.span_overlap(c(0, 100, "a"), c(0, 100, "b")) == 1.0)
 
 
 def test_date(L) -> None:

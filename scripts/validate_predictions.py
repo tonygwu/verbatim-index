@@ -30,7 +30,7 @@ import predictions_lib as L  # noqa: E402
 
 INVARIANTS = [
     "schema", "transcript_exists", "not_excluded", "quote_grounds", "quote_length", "timestamp_mark",
-    "context_windows", "prediction_id", "no_overlap", "sorted", "statement_date", "target_date",
+    "context_windows", "prediction_id", "near_duplicate", "sorted", "statement_date", "target_date",
     "confidence", "gates_and_qualifies", "verification_status", "sentinels", "provenance",
     "meta_consistency", "speaker", "consensus", "file",
 ]
@@ -251,9 +251,13 @@ def validate_tree(pred_root: Path, transcripts_root: Path, exclusions: dict, sch
             if rec.get("accepted") is True:
                 counts["accepted"] += 1
         spans.sort()
-        for (s1, e1, n1), (s2, e2, n2) in zip(spans, spans[1:]):
-            if s2 < e1:
-                fail(out, file, n2, "no_overlap", f"overlaps line {n1} ({s1}:{e1} vs {s2}:{e2})")
+        for i, (s1, e1, n1) in enumerate(spans):
+            for s2, e2, n2 in spans[i + 1:]:
+                if s2 >= e1:
+                    break
+                share = L.span_overlap({"start": s1, "end": e1}, {"start": s2, "end": e2})
+                if share >= L.DEDUPE_OVERLAP:
+                    fail(out, file, n2, "near_duplicate", f"shares {share:.2f} of line {n1}'s span ({s1}:{e1} vs {s2}:{e2})")
         meta_path = file.with_name(f"{sid}.meta.json")
         if not meta_path.exists():
             fail(out, file, None, "meta_consistency", "no .meta.json beside the predictions file")

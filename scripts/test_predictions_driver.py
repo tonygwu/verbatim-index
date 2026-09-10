@@ -150,17 +150,17 @@ def cand(quote, hint="[00:01:00]", **over):
 def test_ground(D, L) -> None:
     prov = L.normalise_provenance("fable", {"requested_model": "claude-fable-5-1", "judge_model": "claude-fable-5-1"}, "default", "claude")
     obj = {"candidates": [
-        cand("I think by 2030 most code will be written by AI"),           # grounds
-        cand("by 2030 most code will be written by AI, that is my bet"),   # overlaps the first, longer -> wins
-        cand("most code will be written by machines"),                      # paraphrase -> not_found
-        cand("so tell me I think"),                                         # 5 words -> word_count
+        cand("I think by 2030 most code will be written by AI"),                  # grounds
+        cand("I think by 2030 most code will be written by AI, that is"),         # near-identical -> folds into the longer
+        cand("most code will be written by machines"),                             # paraphrase -> not_found
+        cand("so tell me I think"),                                                # 5 words -> word_count
     ]}
     records, ungrounded, dropped = D.ground_candidates(REC, ROSTER, obj, prov, "c" * 12, "run", "2026-09-10T00:00:00Z", {})
-    check("GROUND: only grounded, in-bounds, non-overlapping candidates become records",
-          len(records) == 1 and records[0]["source"]["quote_original"].startswith("by 2030 most code"), str([r["source"]["quote"] for r in records]))
+    check("GROUND: only grounded, in-bounds, non-duplicate candidates become records",
+          len(records) == 1 and records[0]["source"]["quote_original"].endswith("that is"), str([r["source"]["quote"] for r in records]))
     check("GROUND: ungrounded candidates are recorded with reasons",
           sorted(u["reason"] for u in ungrounded) == ["not_found", "word_count_5"], str(ungrounded))
-    check("GROUND: the overlap drop is recorded with kept_by", len(dropped) == 1 and dropped[0]["kept_by"] == records[0]["prediction_id"])
+    check("GROUND: the near-duplicate drop is recorded with kept_by", len(dropped) == 1 and dropped[0]["kept_by"] == records[0]["prediction_id"])
     check("GROUND: records validate against the record schema", L.check_schema(records[0], L.load_record_schema()) == [])
     bad = D.parse_model_output
     for text, label in (("no json at all", L.E_NOJSON), ('{"schema_version": "1"}', L.E_SCHEMA)):

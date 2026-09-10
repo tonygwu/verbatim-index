@@ -69,6 +69,9 @@ several sentences, quote the contiguous span that contains the whole claim, with
   case and punctuation. A quote that does not match is discarded, so a shorter exact span is
   always better than a longer approximate one.
 - `timestamp_hint` is the nearest `[hh:mm:ss]` mark at or before the quote, or `unmarked`.
+- One claim per candidate. If one sentence holds two predictions, return two candidates, each
+  quoting the smallest span that carries its own claim. Never return a quote that contains
+  another of your quotes, and never return the same claim twice.
 
 ## 4. The normalized claim
 

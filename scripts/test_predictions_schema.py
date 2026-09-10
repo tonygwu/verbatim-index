@@ -146,8 +146,8 @@ def test_clean_and_mutations(V, L) -> None:
         mut("context edited", "context_windows", 1, set_src("context_before", "nothing"))
         mut("id tampered", "prediction_id", 1, lambda rs: rs[0].__setitem__("prediction_id", "0000000000000000"))
         mut("duplicate id", "prediction_id", 2, lambda rs: rs[1].__setitem__("prediction_id", rs[0]["prediction_id"]))
-        mut("overlapping spans", "no_overlap", 2, lambda rs: (rs[1]["source"].__setitem__("quote_char_start", rs[0]["source"]["quote_char_start"] + 2),
-                                                             rs[1]["source"].__setitem__("quote_char_end", rs[0]["source"]["quote_char_end"] + 2)))
+        mut("near-duplicate spans", "near_duplicate", 2, lambda rs: (rs[1]["source"].__setitem__("quote_char_start", rs[0]["source"]["quote_char_start"] + 2),
+                                                                     rs[1]["source"].__setitem__("quote_char_end", rs[0]["source"]["quote_char_end"] + 2)))
         mut("statement_date without basis", "statement_date", 1, set_src("statement_date_basis", "unknown"))
         mut("target_date malformed", "target_date", 1, lambda rs: rs[0]["prediction"].__setitem__("target_date", "2030-13"))
         mut("explicit horizon without text", "target_date", 1, lambda rs: rs[0]["prediction"].__setitem__("target_date_text", None))
