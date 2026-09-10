@@ -297,6 +297,31 @@ the measurement is named so a later reader can re-run it rather than trust it.
   2.4 on technical depth. What calibration cannot fix is an uneven judge MIX
   per leader, so watch `judge_call_counts` when a quota window closes.
 
+- **Calibration is MARGINAL, and a residual judge-by-length effect survives it.**
+  `calibrate()` matches each judge's whole-corpus distribution to the pooled one,
+  so it removes a constant offset and a spread difference. MEASURED 2026-09-09 on
+  the 470 complete cases: after calibration the residual judge effect is
+  essentially zero on the 336 transcripts under 15k words (all three within 0.05
+  on `d2_insight`). It is NOT zero at the top end. On 25k-40k transcripts Gemini
+  sits about -0.93 points below the three-judge mean, weighted across dimensions,
+  and the other two sit above it.
+
+  A single global mean and sd per judge cannot absorb a slope against transcript
+  length, which is why this survives. The practical size is small: dropping
+  Gemini from a long transcript raises it ~0.47 points, so a leader's score moves
+  by that times their share of long transcripts, at most +0.18 for
+  brian-armstrong. Against a board where no adjacent pair separates at 95%, that
+  is noise. Left uncorrected on those grounds, with n=26 in the top band making
+  -0.93 an upper bound.
+
+  Worth knowing for whoever next touches this: `venue_effects()` fits an ADDITIVE
+  model and estimates the nuisance effect with the speaker held fixed, which is
+  the conditional treatment. `calibrate()` does the marginal one for judges. The
+  repo therefore holds itself to a higher standard for venue than for judges. The
+  natural upgrade is a two-way `score ~ transcript + judge` fit, which handles
+  unbalanced judge coverage natively. Not done, because the measured residual
+  does not justify re-deriving 2,000 grades.
+
 - **Venue adjustment.** `venue_effects()` fits an additive leader-plus-venue
   model and subtracts what the FORMAT is worth with the speaker held fixed.
   Leaders are not spread evenly across formats: some are entirely long-form
@@ -480,6 +505,57 @@ This is the second time in this repo that a repeated failure was mistaken for a
 deterministic one, after the Astra refusals. The general lesson is cheap to
 apply: before recording a failure as a limit, check whether the SAME items fail
 every time, not merely whether the same NUMBER does.
+
+**How much do the three judges agree on ORDER?** (2026-09-09) Rank agreement,
+on the 470 transcripts all three graded (complete cases, refusals excluded --
+note a refusal writes a grade file with `{reason, status, transcript_id}` and no
+scores, so filtering on `validation_errors` alone does not catch them).
+
+Ranks are the right instrument because Spearman and Kendall are invariant to any
+monotonic per-judge transform, and `calibrate()` applies a LINEAR rescale. So
+these numbers measure disagreement about ORDER, independent of the offsets
+calibration already removes. Pearson on raw scores conflates the two.
+
+| pair | Spearman | 95% CI | Kendall tau-b | agree on a random pair |
+|---|---|---|---|---|
+| fable <> astra | 0.899 | [0.876, 0.917] | 0.729 | 86.5% |
+| fable <> gemini | 0.878 | [0.848, 0.901] | 0.701 | 85.1% |
+| astra <> gemini | 0.863 | [0.832, 0.887] | 0.679 | 84.0% |
+
+Kendall W across all three at once is 0.920. Gemini is NOT an outlier: the whole
+spread across the three pairs is 2.5 percentage points. A paired bootstrap on the
+same resamples separates only one comparison, fable<>astra minus astra<>gemini at
++0.036 [+0.012, +0.062]; fable<>gemini is indistinguishable from the incumbent
+pair.
+
+Per dimension the pairing structure CHANGES, which the overall number hides.
+Clarity is the weakest-agreed dimension for every pair (W 0.868) and is the one
+where Gemini sides with Astra (0.805) over Fable (0.780). On technical depth
+Gemini<>Fable (0.880) slightly exceeds Fable<>Astra (0.875). Clarity being worst
+is corroborated independently: it is also where Fable and Astra differ most in
+LEVEL, at 9.0 points. That points at the rubric's clarity criteria being the
+least well specified, rather than at any one judge.
+
+**Do agy and cursor-agent grade the same, and can they be mixed?** (2026-09-09)
+No. Tested because cursor-agent runs `gemini-3.8-flash-high` without hitting the
+agy headless bug, which made a hybrid tempting: agy for short transcripts,
+cursor for long ones.
+
+Paired on identical transcripts, n=6 in the 24k-33k word band where a hybrid
+would actually deploy: mean signed difference **-4.45** points (cursor lower),
+sd 4.35, 95% CI [-9.01, +0.11], negative in 5 of 6. Not significant in
+isolation, and three things still point one way: the direction is consistent,
+the divergence concentrates in `d2_insight` which carries weight 0.45, and the
+weighted per-dimension differences reconstruct the overall mean. A first n=3
+spanning all lengths gave mean abs 4.23 and would have looked merely marginal;
+restricting to the deployment regime is what made it legible.
+
+Impact had it shipped: Elon Musk -1.37 points, Palmer Luckey -1.03, landing only
+on long-form-podcast leaders. Cursor also fails the 25-word quote cap at a
+similar rate, so it fixes nothing there. Subject-share agrees closely between
+harnesses, so both read the same recording; this is a scoring difference, not
+comprehension. The test does not say which harness is closer to truth. It says
+they are not exchangeable, which is all a hybrid needed them to be.
 
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The

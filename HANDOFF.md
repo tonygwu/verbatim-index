@@ -1,108 +1,89 @@
-# Verbatim Index — session handoff, 2026-09-07 ~21:20 PDT
+# Verbatim Index — session handoff, 2026-09-10 08:25Z
 
-Written before a context clear. Everything here is verifiable with the
-commands given; do not trust a line without running its check.
+Written before a context compaction. Every line here has a check command; do
+not trust one without running it.
 
 ## Pinned revision
 
 | Repo | Commit | Pushed |
 |---|---|---|
-| code (`repo-0`, public) | `9445ab2` on `main` | yes |
-| data (`data/`, private) | `cb5c509` on `main` (moves every cycle; check it) | yes |
+| code (`repo-0`, public) | `329fb87` on `main` | yes |
+| data (`data/`, private) | `91356d5` (moves every cycle; re-check) | check |
 
-Verify: `git status --short --branch && git -C data status --short --branch`
-Both should read `## main...origin/main`. The data tree goes dirty again
-within minutes because the daemons write continuously; that is normal.
+Verify: `git -C /Users/tonygwu/Code/misc/verbatim-index/repo-0 status --short --branch`
 
-## The single next action
+## What this session did
 
-The board is deployed and current as of the commit below. If grades have
-accumulated since, redeploy:
+Added a THIRD judge — Gemini 3.8 Flash via the Antigravity CLI (`agy`) — and
+promoted it to published. It joins Fable 5.1 (`claude -p`) and GPT-6 Astra
+(`codex exec`). Everything below is recorded in AGENTS.md; this file is only
+the live state.
 
-    bash scripts/deploy.sh --refresh
+- Two Antigravity accounts, selected by `$HOME` (there is no AGY_CONFIG_DIR).
+  `agy` = tonygwu@gmail.com, `agy-b` = gptwufamily@gmail.com. Run
+  `agy-profiles` to derive the mapping; never infer it from the alias.
+- Gemini is in `BLIND_JUDGES` in `grade_loop.sh`, so new transcripts get all
+  three judges. It was NOT, earlier, and coverage silently drifted to 87%.
+- A fork fixed the fetch target to count GRADEABLE transcripts rather than raw
+  downloads (`329fb87`). The loop had declared 40/40 at target when the truth
+  was 26/40.
 
-`--refresh` re-aggregates `data/results.json` first. A plain `deploy.sh` only
-re-renders and will republish stale numbers; it shipped a stale board twice on
-2026-09-07 before that flag existed. The command prints a staleness line
-either way — read it.
+## Background processes STILL RUNNING
 
-Then verify the LIVE page, not the local file. The Cloudflare edge lags ~10s,
-so an immediate curl reads the previous version and looks like a failed
-deploy:
+| Process | Check |
+|---|---|
+| `fetch_loop.sh` (TARGET=14) | `pgrep -f fetch_loop.sh` |
+| `grade_loop.sh` (OPEN_PER_LEADER=0) | `pgrep -f grade_loop.sh` |
 
-    sleep 10
-    curl -s "https://verbatim-index.tonygwu.com/?cb=$RANDOM" -o /tmp/live.html
-    .venv/bin/python -c "
-    import json,re
-    d=json.loads(re.search(r'const DATA\s*=\s*(\[.*?\]);', open('/tmp/live.html').read(), re.S).group(1))
-    print('scored:', sum(r['n'] or 0 for r in d), 'across', len(d), 'leaders')"
+Both exit on their own when work runs out. `happyscribe_loop` is stopped.
 
-Last published: version `0eace5c1`, 463 transcripts scored, deployed 2026-09-07 ~21:25 PDT.
+**The fetch loop needs a human when YouTube blocks the exit IP.** It prints
+`BLOCKED on IP <addr>`, re-probes every 60s, and resumes by itself once the VPN
+is rotated. Two exits were burned today, each lasting under an hour at the
+current 2s pace / 6 workers.
 
-## Background processes (NOT started by this session, do not stop them)
+## Live numbers at handoff time
 
-    ps -eo pid,etime,command | grep -E "fetch_loop|grade_loop|happyscribe_loop" | grep -v grep
+```
+corpus     574 gradeable
+at target  36/40  short: michael-dell 11/14, cc-wei 12/14, larry-ellison 12/14, sergey-brin 12/14
+fable      570/574 (99.3%)
+astra      567/574 (98.8%)
+gemini     552/574 (96.2%)
+```
 
-Three daemons, running ~11h: `fetch_loop.sh`, `happyscribe_loop.sh`,
-`grade_loop.sh`. Only `repo-0` may run them. `grade_loop` rewrites
-`site/index.html` every cycle, so the local file can differ from what was last
-deployed. Expected, not a bug.
+Verify: `bash scripts/status.sh`
 
-No jobs from this session are running. The 2:55pm wakeup cron (`74d2995b`)
-fired, completed, and auto-deleted. The resume lock is released.
+## Open decisions, with costs
 
-## State of the work
+1. **Slow the fetch pace?** Exits are lasting <1h at 2s/6 workers with ~9
+   transcripts left to fetch. Slower may finish with fewer VPN rotations.
+   Cost of doing nothing: more manual rotations.
+2. **Add rank agreement to `aggregate.py` diagnostics?** It is computed ad hoc
+   today (see AGENTS.md). Recomputing per run would make judge drift visible
+   early. Cost: more diagnostics surface to maintain.
+3. **Upgrade `calibrate()` to a two-way `score ~ transcript + judge` fit?**
+   AGENTS.md records why it is defensible not to. Cost of doing it: re-deriving
+   ~2,000 grades for a measured effect of at most 0.18 points.
 
-- **Judge parity almost closed.** astra-only went 107 -> 14 today; ~16 Fable
-  calls remain to give every graded transcript both judges. Check with
-  `.venv/bin/python scripts/coverage_table.py | tail -3`.
-- **Fable quota is per-account and reopens on its own.** No restart needed;
-  `grade.py` re-measures every cycle via the `quota_router` library.
-  Account A's monthly usage-based billing was turned OFF by the operator on
-  2026-09-07, so A is now window-limited like the rest. Weekly Fable resets:
-  `claude-d` Tue Sep 8 ~11am, `claude-b` Wed Sep 9 ~2am, `claude-c` Fri Sep 11
-  ~6pm (note: `claude-c` is a max 5x plan, ~1/4 the capacity of the others).
-- **Discovery was widened.** `discover_sources.py --candidates-per-leader`
-  (new flag) was run at 26 for the ten thinnest leaders, adding 148 candidates.
-  These are ranks 15-26, so a HIGHER share should fail QA. Watch the `REJ`
-  column in the coverage table.
+## Known open issue, upstream
 
-## Open decisions
+The 20-odd transcripts Gemini cannot grade are all >32k words and hit an
+Antigravity CLI bug: an auto-denied tool ends the run with exit 0 and
+`status: SUCCESS` and an empty response. Filed and confirmed on macOS 1.1.28 at
+https://github.com/google-antigravity/antigravity-cli/issues/794 — it is NOT
+deterministic, so re-running recovers some each pass.
 
-1. **Make the duplicate count durable.** `UNIQ` in the coverage table subtracts
-   appearances retired as re-uploads, counted from `.superseded` markers on
-   disk. `data/.gitignore` excludes those, so a fresh clone sees zero and
-   `UNIQ` collapses to `IDENT`. The table prints a NOTE when that happens
-   rather than silently reverting.
-   - Do nothing: correct on this machine, degraded elsewhere. Free.
-   - Commit a retirement log: correct everywhere, costs a new data file the
-     sweep must maintain.
-   - Recommendation: do nothing until a second clone actually needs it.
-2. **Whether to keep widening discovery.** Going deeper in the ranked list is
-   the safe lever. Lowering `MIN_SEC` (900) admits clips; raising
-   `MAX_PER_CHANNEL` (2) admits more re-uploads, which is already the binding
-   constraint. Recommendation: judge the current batch's REJ rate first.
+## Single next action
 
-## Things established this session that are easy to re-derive wrongly
-
-- **`FETCH` below `IDENT` is usually duplicates, not failures.** Lip-Bu Tan
-  showed 7 of 14 and had a perfect fetch record: 7 live + 7 `.superseded`.
-  That is why `UNIQ` exists. Do not "fix" a low `FET%` by widening filters
-  before checking `.superseded` counts.
-- **`deploy.sh` is two steps, not one.** Rendering matches the page to
-  `results.json`; only `aggregate.py` matches `results.json` to the grades.
-- **Exit code 0 from the Claude CLI proves nothing.** A quota refusal exits 1
-  with the reason in STDOUT as JSON; a wrong-model substitution exits 0.
-  Assert `modelUsage` names `claude-fable-5-1`.
-- **Jeff Bezos reads 8 transcripts of 16 fetched** — 4 rejected at QA, 4 where
-  he speaks under the 10% subject-share floor. Correct behaviour, already
-  investigated, not a bug to reopen.
+Watch for `BLOCKED on IP` in `data/logs/fetch_loop.log` and rotate the VPN when
+it appears; otherwise let both loops run to their own completion.
 
 ## Verification command
 
-    git status --short --branch && git -C data status --short --branch | head -1 \
-      && git log --oneline -1 && git -C data log --oneline -1 \
-      && ps -eo pid,command | grep -c "[g]rade_loop"
-
-Expect: both repos clean and in sync, one grade_loop running. The data HEAD
-advances on its own as the daemons commit nothing but the operator snapshots.
+```
+\
+  git status --short --branch && \
+  pgrep -fl 'fetch_loop.sh|grade_loop.sh' && \
+  bash scripts/status.sh --brief
+```
