@@ -69,6 +69,11 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requi
 .venv/bin/python scripts/test_blinding.py
 .venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
 .venv/bin/python scripts/test_render_integrity.py # invalid records, and a loud render
+.venv/bin/python scripts/test_wrong_person_screen.py # identity guesses against the roster
+.venv/bin/python scripts/test_loop_collapse.py    # paragraph-scale replays
+.venv/bin/python scripts/test_declared_year.py    # the year the judge is told
+.venv/bin/python scripts/test_withdraw_sources.py # guarded withdrawal tool
+.venv/bin/python scripts/test_gemini_identity.py  # one account behind two profiles
 ```
 
 Python 3.12 or newer: `llm-quota-router`, which `grade.py` imports to route
@@ -143,17 +148,29 @@ recorded here. `BLIND_JUDGES` in `grade_loop.sh` now names all three, because a
 new transcript graded by a subset would reintroduce the uneven mix and widen it
 every cycle.
 
-Two Antigravity accounts serve it. A profile follows `$HOME`, because `agy` has
-no `AGY_CONFIG_DIR`:
+Two Antigravity profiles are in rotation. A profile follows `$HOME`, because
+`agy` has no `AGY_CONFIG_DIR`:
 
-| Invocation | HOME | Identity |
-|---|---|---|
-| `agy` | `~` | tonygwu@gmail.com |
-| `agy-b` | `~/.agy-homes/gptwufamily` | gptwufamily@gmail.com |
+| Invocation | HOME |
+|---|---|
+| `agy` | `~` |
+| `agy-b` | `~/.agy-homes/gptwufamily` |
 
 `agy-profiles` derives that table rather than restating it. `grade.py` sets
 `HOME` per subprocess and records which account served each grade in
 `telemetry.profile_identity`.
+
+**Two profiles do not mean two accounts.** MEASURED 2026-09-10: all 567 Gemini
+grades in the corpus were served by gptwufamily@gmail.com, 282 through `~`
+and 285 through the other HOME. `agy` keeps its credential in the macOS
+Keychain under service `gemini`, account `antigravity`, one item per macOS
+user, so both HOMEs read and refresh the same credential and the last refresh
+decides the account for both. A `/login` under one HOME is overwritten by the
+next refresh under the other; the operator's re-login of `~` as
+tonygwu@gmail.com at 08:25Z lasted until 08:56Z. A second HOME on one macOS
+user adds no quota. `grade.py` now prints `gemini_identities` at the end of
+every run and warns when every profile served one address. A real second
+account needs a second macOS user, or one account and one profile.
 
 **There is no quota measurement, and there cannot be.** `agy` exposes no usage
 subcommand and writes no quota field to disk, so `llm-quota-router` reports both
@@ -183,6 +200,42 @@ the mix even.
 
 ## Rules that exist because something broke
 
+- **A judge's `identity_guess` is read, not just stored.** MEASURED 2026-09-10:
+  31 recordings on the board were a different person from the leader they were
+  filed under, and on every one at least two judges had named the real speaker
+  in `identity_guess`: "Eugene Wei", "Adam Dell", "Mario Draghi", "Sebastian
+  Mallaby". Astra wrote "This record must not be aggregated" inside one grade,
+  and it was aggregated. The subject-share filter cannot catch these because it
+  asks whether SOMEONE is speaking. `scripts/wrong_person_screen.py` classifies
+  every guess against the roster and flags a recording when two judges disagree
+  with the label or two judges put share at 0; it reads no transcript text and
+  spends no quota. 44 flagged, 0 false positives on hand review, 0 misses in a
+  seeded sample of 40. Run it after each pass; a new flag should stop the render
+  the way a failed render does. The matching traps it guards are in its test:
+  "Dell" is also a company, "Clément" is "Clem", "the DJ, not the Epic Games
+  founder", and a guess that opens with the real speaker and then names the
+  leader.
+- **Withdrawals go through a manifest and a guarded tool.** A retirement is a
+  rename in `data/`, which only repo-0 writes. `scripts/withdraw_sources.py`
+  takes a manifest such as `docs/withdrawals-2026-09-10.json`, dry-runs by
+  default, refuses `--apply` unless `data/.daemon-clone` names the clone it runs
+  from, and reports every entry as done, skipped or failed. `retire` renames the
+  source to `.superseded`, the name the fetcher already honours, and the next
+  grade-loop normalize prunes the derived copies and orphans the grades;
+  `regrade` orphans the grades and keeps the source, for a transcript whose
+  derived text changed under an existing grade.
+- **The year the judge is told comes from the recording.** FOUND 2026-09-10:
+  every manifest row said 2024 because `sources_to_manifest.py` defaulted a
+  missing year with `or 2024`, and the fetcher copied it into every record
+  while already holding `yt_upload_date`. 479 of 535 dated transcripts read
+  "Approximate year: 2024" against uploads from 2009 to 2026, and 29 Happyscribe
+  records read "Approximate year: 0". `declared_year()` in the fetcher now takes
+  the upload date first, and `grade.py` prints "unknown" for 0. MEASURED with a
+  controlled re-grade (docs/CORPUS-INTEGRITY-FOLLOWUP.md, section 1): the true
+  year moves a grade -0.7 points (se 0.4, n=18) and a leader at most 0.2, inside
+  Fable's own re-run drift, so the corpus was not re-graded. A default that
+  silently invents a value is the accept-and-guess this repo forbids, and this
+  one reached every judge on every grade for four days.
 - **Never call the judge through `cl`.** It injects
   `--dangerously-skip-permissions`, which gives the judge tool access to this
   repository, including the roster it is blinded against. `grade.py` uses
@@ -363,6 +416,16 @@ the measurement is named so a later reader can re-run it rather than trust it.
   into a single-judge one, which `confidence` then penalised for an unrelated
   reason. Judges agree closely about share: median absolute disagreement 2
   points, mean 3.6. A grade with no estimate is kept, never guessed at.
+
+  **A zero from any judge drops the recording, whatever the mean.** MEASURED
+  2026-09-10 on 558 recordings: 10 were on the board with one or two judges at
+  0 and another judge at 42 to 86, and all 10 were subject-absent on
+  inspection. The high judge had scored the host, a co-guest or a biographer
+  and said so in its own notes; Gemini reports the share of the DOMINANT
+  speaker, not of the named subject. A mean cannot express "the subject is not
+  here". Under this rule 0 of the 10 survive; a median keeps 4. It drops 10
+  recordings and moves Jeff Bezos from 7th to 2nd, because two of his three
+  subject-absent recordings had scored their hosts at about 40 points.
 
 - **A refusal is retried on the same model, three times, and that is all.**
   Astra refuses some politically-charged transcripts. MEASURED: the refusals are
@@ -573,6 +636,29 @@ harnesses, so both read the same recording; this is a scoring difference, not
 comprehension. The test does not say which harness is closer to truth. It says
 they are not exchangeable, which is all a hybrid needed them to be.
 
+**Does the wrong year move the score?** (2026-09-10) No, not enough to see on
+the board. 18 transcripts spanning offsets of -15 to +2 years, three arms per
+transcript and judge: the on-disk grade, a fresh control with the identical
+prompt, and a fresh call whose prompt differed by exactly the year line. True
+year minus control: -0.73 pooled, se 0.39, t -1.87, MDE 1.10 at 80% power;
+Fable -1.0, Astra -0.3, Gemini -0.9; same sign in both upload strata. Substituting
+the 18 true-year grades into the board moved no leader more than 0.2 points or
+one place. Full tables in docs/CORPUS-INTEGRITY-FOLLOWUP.md.
+
+The control arm measured Fable's re-run noise for the first time: sd 3.24
+within transcript, twice Astra's 1.53, and a MEAN shift of +2.44 (se 0.76)
+against grades 1 to 4 days old. That is drift, larger than the effect the test
+was built to find, and it is not explained. Gemini's re-run sd was 4.30 on 13
+transcripts, against 1.15 measured on six.
+
+**Does paragraph-scale looping move the grade?** (2026-09-10) No. The 8
+transcripts over 20% repeated, collapsed and re-graded by all three judges
+against their on-disk grades: Fable +1.2, Astra +1.6, Gemini -1.7 on five,
+pooled +0.65 (se 0.70). The judges had already read through the replays and
+said so in their notes. What the loop costs is quota and Gemini's retry budget:
+every judge read all 64,068 words of the worst one on every call, and the
+collapse cuts it to 1,803.
+
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
 grading loop writes continuously, so any before-and-after measured against
@@ -662,6 +748,15 @@ new grades incomparable with the corpus already graded.
   folding it in would need repeat grades across the whole corpus rather than the
   eight transcripts measured. Recorded because it is an assumption the number
   carries silently, not because it changes a rank today.
+  MEASURED AGAIN 2026-09-10 on 18 transcripts: Fable's within-transcript sd is
+  3.24 and its mean drifted +2.44 against grades 1 to 4 days old; Astra 1.53;
+  Gemini 4.30. The 2026-09-07 figures were optimistic. Fable's drift is the
+  largest unexplained number in the pipeline and deserves its own experiment.
+
+- **Every Gemini grade came from one account.** See "Two profiles do not mean
+  two accounts" above. The round-robin was even and both HOMEs resolved to
+  gptwufamily@gmail.com, so the arm's quota exposure is one account's, and the
+  per-grade `profile_identity` is the record of it.
 
 - **Filters bite unevenly, which is a bias and not a detail.** The subject-share
   filter removed 81% of Jeff Bezos's material, and he is scored on what is left.
@@ -676,4 +771,8 @@ new grades incomparable with the corpus already graded.
 - Published site: `site/index.html`, deployed with `npx wrangler deploy` to
   `verbatim-index.tonygwu.com`
 - Per-leader pipeline coverage: `.venv/bin/python scripts/coverage_table.py`
+- Wrong-person screen: `.venv/bin/python scripts/wrong_person_screen.py`
+- Corpus-integrity findings and their re-derivation:
+  `docs/CORPUS-INTEGRITY-2026-09-10.md`, `docs/CORPUS-INTEGRITY-FOLLOWUP.md`,
+  and the withdrawal manifest `docs/withdrawals-2026-09-10.json`
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
