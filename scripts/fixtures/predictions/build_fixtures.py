@@ -88,8 +88,8 @@ KEYNOTE_GOLD = {
          "horizon": "explicit", "target_date": "2027-09", "confidence_type": "qualitative", "probability": None,
          "category": "market_industry", "prediction_type": "numeric", "subject_control": "external",
          "must_contain": ["half", "warehouse", "robot"]},
-        {"gold_id": "P8", "quote": "by 2028 the cost of a humanoid robot will be under 20,000 dollars and most of them will be built outside the United States",
-         "horizon": "explicit", "target_date": "2028", "confidence_type": "none", "probability": None,
+        {"gold_id": "P8", "quote": "here is my actual bet by 2028 the cost of a humanoid robot will be under 20,000 dollars and most of them will be built outside the United States",
+         "horizon": "explicit", "target_date": "2028", "confidence_type": "qualitative", "probability": None,
          "category": "technology_product", "prediction_type": "numeric", "subject_control": "external",
          "must_contain": ["20,000", "2028"]},
     ],
@@ -133,16 +133,14 @@ INTERVIEW_GOLD = {
 
 # ---------------------------------------------------------------------------
 # fireside-01: Kenji Sato, NO upload date. The interviewer proposes a number the subject rejects.
+# The restatement of the 500-dollar claim 300 words later is deliberately NOT gold: the spec tells the
+# extractor never to return the same claim twice, so a second record there is neither hit nor miss.
 # ---------------------------------------------------------------------------
 FIRESIDE = """[00:00:00] we're here with Kenji Sato of Orbital Foundry Kenji you've been building this for a decade right now we have about 200 engineers and most of them are on the depot program so let's get into the numbers everybody wants launch costs go to 100 dollars a kilo by 2030 right no I don't think that what I do think is that by 2030 launch cost to low earth orbit will be under 500 dollars a kilogram for a commercial customer buying a full manifest and that is already a huge deal a 100 dollar number needs full reuse of every stage and a flight rate nobody has [00:01:00] what does the depot timeline look like the first commercial [00:02:00] orbital fuel depot will be operating before the end of 2027 we have the customer we have the manifest and the long pole is a valve that we are testing this quarter people keep asking about Mars I'll say what I always say I don't know and I'm not going to put a date on it what about your competitors the ones with the big rockets could be at the depot before you sure maybe possibly I mean anything could happen in this industry [Music] [00:03:00] let me come back to cost because I want to be precise like I said under 500 dollars a kilo by 2030 that is the number and I'm happy to be held to it and one more thing the whole small launcher category is going to consolidate down to two or three players by the end of 2026 the economics don't support twelve thanks Kenji thanks"""
 
 FIRESIDE_GOLD = {
     "positives": [
         {"gold_id": "P11", "quote": "by 2030 launch cost to low earth orbit will be under 500 dollars a kilogram for a commercial customer buying a full manifest",
-         "horizon": "explicit", "target_date": "2030", "confidence_type": "none", "probability": None,
-         "category": "technology_product", "prediction_type": "numeric", "subject_control": "partial",
-         "must_contain": ["500", "2030"]},
-        {"gold_id": "P12", "quote": "under 500 dollars a kilo by 2030 that is the number and I'm happy to be held to it",
          "horizon": "explicit", "target_date": "2030", "confidence_type": "none", "probability": None,
          "category": "technology_product", "prediction_type": "numeric", "subject_control": "partial",
          "must_contain": ["500", "2030"]},

@@ -465,8 +465,8 @@ def speaker_header(rec: dict, roster_entry: dict | None) -> str:
     minutes = round((rec.get("duration_sec") or 0) / 60)
     return (
         f"Speaker: {name}\n"
-        f"Role at the time: {role}\n"
-        f"Company: {company}\n"
+        f"Role (current roster entry; may postdate this recording): {role}\n"
+        f"Company (current roster entry): {company}\n"
         f"Sector: {sector}\n"
         f"Title: {rec.get('yt_title') or rec.get('declared_title') or 'unknown'}\n"
         f"Venue: {rec.get('declared_venue') or 'unknown'}\n"

@@ -52,7 +52,7 @@ def record_from_gold(L, rec: dict, roster: dict, g: dict, verdict: bool | None, 
         if prob_override is not None:
             conf["probability"] = prob_override
     elif g["confidence_type"] == "qualitative":
-        conf["verbatim_confidence_language"] = next(w for w in ("I'm almost certain", "I have no doubt", "I'm quite sure", "I'd bet") if w.lower() in g["quote"].lower())
+        conf["verbatim_confidence_language"] = next(w for w in ("I'm almost certain", "I have no doubt", "I'm quite sure", "I'd bet", "my actual bet") if w.lower() in g["quote"].lower())
     cand = {"quote": g["quote"], "gates": {x: True for x in L.GATES}, "gate_notes": "", "resolution_criteria": "By X, Y will Z",
             "normalized_claim": f"{roster['name']}: " + " ".join(g["must_contain"]) + " " + g["quote"],
             "category": g["category"], "prediction_type": g["prediction_type"], "target_date": g["target_date"],
@@ -122,24 +122,24 @@ def main() -> int:
     n_pos = sum(len(json.loads(g.read_text())["positives"]) for g in FIX.glob("gold/*/*.json"))
     n_neg = sum(len(json.loads(g.read_text())["negatives"]) for g in FIX.glob("gold/*/*.json"))
     reasons = {n["reason"] for g in FIX.glob("gold/*/*.json") for n in json.loads(g.read_text())["negatives"]}
-    check("FIXTURES: 14 positives, 24 negatives, and every probe failure mode is represented",
-          n_pos == 14 and n_neg == 24 and set(E.PROBE_FAILURE_MODES) <= reasons, f"{n_pos} {n_neg} {sorted(reasons)}")
+    check("FIXTURES: 13 positives, 24 negatives, and every probe failure mode is represented",
+          n_pos == 13 and n_neg == 24 and set(E.PROBE_FAILURE_MODES) <= reasons, f"{n_pos} {n_neg} {sorted(reasons)}")
     with tempfile.TemporaryDirectory() as td:
         scored = build_scored(Path(td), L)
         rep = E.score_tree(scored, FIX)
         m, t = rep["metrics"], rep["totals"]
-        # 13 gold positives written (P14 missing); P4 rejected by the verifier -> 12 accepted matched; plus 1 false positive.
-        check("METRICS: accepted 13, matched 12, precision 12/13, recall 12/14",
-              t["accepted"] == 13 and t["matched"] == 12 and m["precision"] == round(12 / 13, 4) and m["recall"] == round(12 / 14, 4),
+        # 12 gold positives written (P14 missing); P4 rejected by the verifier -> 11 accepted matched; plus 1 false positive.
+        check("METRICS: accepted 12, matched 11, precision 11/12, recall 11/13",
+              t["accepted"] == 12 and t["matched"] == 11 and m["precision"] == round(11 / 12, 4) and m["recall"] == round(11 / 13, 4),
               json.dumps({k: t[k] for k in ("accepted", "matched", "gold", "false_positives")}) + json.dumps(m))
         check("METRICS: the adversarial table counts the vision false positive and nothing else",
               rep["adversarial"]["present_tense_vision"]["accepted"] == 1 and sum(v["accepted"] for v in rep["adversarial"].values()) == 1,
               json.dumps(rep["adversarial"]))
         check("METRICS: extractor-only precision counts the verifier-rejected P4 as an extractor hit",
-              t["qualifying"] == 14 and t["extractor_matched"] == 13)
+              t["qualifying"] == 13 and t["extractor_matched"] == 12)
         check("METRICS: probability exactness catches the wrong 0.9 on P2", m["probability_exactness"] == 0.0 and m["confidence_type_correctness"] == 1.0)
         check("METRICS: claim and horizon fidelity are 1.0 on records built from gold", m["claim_fidelity"] == 1.0 and m["horizon_correctness"] == 1.0)
-        check("METRICS: ungrounded rate reads the meta", m["ungrounded_rate"] == round(1 / 15, 4), str(m["ungrounded_rate"]))
+        check("METRICS: ungrounded rate reads the meta", m["ungrounded_rate"] == round(1 / 14, 4), str(m["ungrounded_rate"]))
         check("METRICS: schema and quote fidelity pass on a valid tree", m["schema_valid"] == 1.0 and m["quote_fidelity"] == 1.0, str(rep["validator_failures"][:3]))
         row = next(r for r in rep["per_transcript"] if r["transcript"] == "kenji-sato/fireside-01")
         check("METRICS: the missed gold is named per transcript", row["unmatched_gold"] == ["P14"])

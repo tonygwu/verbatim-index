@@ -98,7 +98,7 @@ def test_prompt(D, L) -> None:
     spec = (L.SKILL / L.EXTRACTION_SPEC).read_text()
     schema = json.dumps(json.loads((L.SKILL / L.EXTRACTOR_SCHEMA).read_text()))
     p = L.build_extraction_prompt(REC, ROSTER, spec, schema)
-    for needle in ("Speaker: Ada L", "Role at the time: CEO", "Company: Co", "Title: Ada on code", "Venue: Pod",
+    for needle in ("Speaker: Ada L", "Role (current roster entry; may postdate this recording): CEO", "Company (current roster entry): Co", "Title: Ada on code", "Venue: Pod",
                    "Format: podcast", "Statement date: 2025-03-01", "no speaker labels", "transcript_id must be exactly: ada/s1",
                    REC["text"], f"{L.MIN_QUOTE_WORDS} to {L.MAX_QUOTE_WORDS} words", f"At most {L.MAX_CANDIDATES} candidates"):
         check(f"PROMPT: extraction prompt has {needle[:40]!r}", needle in p)

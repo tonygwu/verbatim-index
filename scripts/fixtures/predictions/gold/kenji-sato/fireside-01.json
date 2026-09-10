@@ -18,23 +18,6 @@
    "char_end": 450
   },
   {
-   "gold_id": "P12",
-   "quote": "under 500 dollars a kilo by 2030 that is the number and I'm happy to be held to it",
-   "horizon": "explicit",
-   "target_date": "2030",
-   "confidence_type": "none",
-   "probability": null,
-   "category": "technology_product",
-   "prediction_type": "numeric",
-   "subject_control": "partial",
-   "must_contain": [
-    "500",
-    "2030"
-   ],
-   "char_start": 1160,
-   "char_end": 1242
-  },
-  {
    "gold_id": "P13",
    "quote": "the first commercial [00:02:00] orbital fuel depot will be operating before the end of 2027",
    "horizon": "explicit",

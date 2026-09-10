@@ -56,10 +56,10 @@
   },
   {
    "gold_id": "P8",
-   "quote": "by 2028 the cost of a humanoid robot will be under 20,000 dollars and most of them will be built outside the United States",
+   "quote": "here is my actual bet by 2028 the cost of a humanoid robot will be under 20,000 dollars and most of them will be built outside the United States",
    "horizon": "explicit",
    "target_date": "2028",
-   "confidence_type": "none",
+   "confidence_type": "qualitative",
    "probability": null,
    "category": "technology_product",
    "prediction_type": "numeric",
@@ -68,7 +68,7 @@
     "20,000",
     "2028"
    ],
-   "char_start": 579,
+   "char_start": 557,
    "char_end": 701
   }
  ],

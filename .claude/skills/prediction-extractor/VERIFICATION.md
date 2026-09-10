@@ -67,8 +67,9 @@ faithful.
 ## 5. Confidence seen
 
 `confidence_type_seen` is what the QUOTE carries: `explicit_probability` only if the speaker
-states a number, percentage or odds; `qualitative` for words of likelihood; `none` otherwise.
-Never a number of your own.
+states a number, percentage or odds; `qualitative` for words of DEGREE ("very likely", "almost
+certain", "I'm sure", "probably", "I'd bet", "no doubt"); `none` otherwise. Belief verbs ("I
+think", "I believe", "I expect") are commitment, not confidence. Never a number of your own.
 
 ## 6. What is not a prediction
 

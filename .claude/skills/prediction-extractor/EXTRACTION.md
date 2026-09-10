@@ -106,7 +106,10 @@ and units exactly. Do not add precision the speaker did not give: "a lot more" s
   fraction in [0, 1] and copy the speaker's words into `verbatim_confidence_language`.
 - `qualitative`: the speaker uses words of likelihood or certainty ("very likely", "almost
   certainly", "I'd bet", "I'm sure", "probably"). Copy the words; `probability` is null.
-- `none`: a plain assertion. Both fields null.
+- `none`: a plain assertion. Both fields null. Belief verbs are commitment, not confidence:
+  "I think", "I believe", "I expect", "we think", "my prediction is" leave the type at `none`.
+  Confidence needs a DEGREE word: "very likely", "almost certain", "I'm sure", "probably",
+  "I'd bet", "my bet is", "no doubt".
 - Never translate words into a number. "Very likely" is not 0.8. A probability without a stated
   number in `verbatim_confidence_language` is discarded mechanically and the candidate rejected.
 
