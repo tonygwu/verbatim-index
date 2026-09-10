@@ -273,6 +273,25 @@ def test_subject_share_cutoff():
     check("judges that wildly disagree still resolve to one decision for the transcript",
           len(kept) in (0, 2) and len(dropped) in (0, 2), f"kept={len(kept)} dropped={len(dropped)}")
 
+    # A judge that says 0 has read the recording and found the subject absent.
+    # MEASURED 2026-09-10 on 558 recordings: 10 were on the board with one or
+    # two judges at 0 and another judge at 42-86, and all 10 were subject-absent
+    # on inspection. The high judge had scored the host, a co-guest or a
+    # biographer. A mean cannot express "the subject is not here", so a zero
+    # from any judge drops the recording whole.
+    zero_dissent = [g("x", "t7", "fable", 0), g("x", "t7", "astra", 0), g("x", "t7", "gemini", 68)]
+    kept, dropped = a.filter_unscorable(zero_dissent, a.MIN_SUBJECT_SHARE)
+    check("two judges at 0 drop the recording although the mean is 22.7",
+          len(dropped) == 3 and not kept, f"kept={len(kept)} dropped={len(dropped)}")
+    lone_zero = [g("x", "t8", "fable", 0), g("x", "t8", "astra", 73), g("x", "t8", "gemini", 68)]
+    kept, dropped = a.filter_unscorable(lone_zero, a.MIN_SUBJECT_SHARE)
+    check("one judge at 0 drops the recording although the mean is 47",
+          len(dropped) == 3 and not kept, f"kept={len(kept)} dropped={len(dropped)}")
+    low_not_zero = [g("x", "t9", "fable", 1), g("x", "t9", "astra", 80), g("x", "t9", "gemini", 70)]
+    kept, dropped = a.filter_unscorable(low_not_zero, a.MIN_SUBJECT_SHARE)
+    check("a low estimate that is not zero is still a mean decision (1, 80, 70 is kept)",
+          len(kept) == 3 and not dropped, f"kept={len(kept)} dropped={len(dropped)}")
+
 
 # ---------------------------------------------------------------------------
 # 9. Astra's web searches must be counted.

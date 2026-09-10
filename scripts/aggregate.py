@@ -78,6 +78,9 @@ def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE
                       ) -> tuple[list[dict], list[dict]]:
     """Split grades into (kept, dropped) on subject speech share, per TRANSCRIPT.
 
+    Dropped when the judges' mean share is under `cutoff`, or when any judge
+    put the share at exactly 0.
+
     The decision is made once per recording, on the mean of whatever judges
     estimated it, and applies to all of that recording's grades. It used to be
     made per grade, so one judge saying 14% and the other 16% dropped one and
@@ -92,17 +95,27 @@ def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE
 
     A grade with no share estimate is kept. Guessing a number for it would be
     exactly the accept-and-guess this repo forbids.
+
+    A zero from ANY judge drops the recording, whatever the mean. A judge that
+    says 0 has read the recording and found the subject absent, and a mean
+    cannot express that: 0, 0 and 68 average to 22.7 and pass. MEASURED
+    2026-09-10 on 558 recordings: 10 were on the board with one or two judges
+    at 0 and another judge at 42 to 86, and all 10 were subject-absent on
+    inspection (hosts discussing Tim Cook, a biographer of Demis Hassabis, a
+    devotional talk filed under Arvind Krishna). The high judge had scored the
+    host, the co-guest or the biographer and said so in its own notes. Under
+    this rule 0 of the 10 survive; a median rule keeps 4 of them.
     """
     by_tx: dict[tuple, list[int]] = defaultdict(list)
     for g in grades:
         v = (g.get("grade") or {}).get("subject_speech_share_pct")
         if isinstance(v, int):
             by_tx[(g["leader_slug"], g["source_id"], g["mode"])].append(v)
-    out = {k: st.mean(v) for k, v in by_tx.items() if v}
+    out = {k: (st.mean(v) < cutoff or min(v) == 0) for k, v in by_tx.items() if v}
     kept, dropped = [], []
     for g in grades:
         key = (g["leader_slug"], g["source_id"], g["mode"])
-        (dropped if key in out and out[key] < cutoff else kept).append(g)
+        (dropped if out.get(key) else kept).append(g)
     return kept, dropped
 
 
