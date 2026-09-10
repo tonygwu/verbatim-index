@@ -129,8 +129,8 @@ milestones, medicine, energy physics), `society` (work, education, behaviour), `
 `prediction_type`: `numeric` (a number or range: "10-15 gigawatts", "30% of code"), `milestone`
 (a capability or event reached: "AGI", "humans on Mars", "a cure for X"), `binary_event` (a
 specific thing happens or not by a date: "GPT-5 ships this year"), `trend_direction` (rises,
-falls, overtakes: "rates will be lower", "open models will catch up"), `ranking` (X will be the
-largest, the first, ahead of Y), `other`.
+falls, overtakes: "rates will be lower", "open models will catch up"), `comparative` (X will be
+the largest, the first, ahead of Y, better than Z on a named measure), `other`.
 
 ## 9. What is NOT a prediction. Each of these fails at least one gate.
 

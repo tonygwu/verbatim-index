@@ -51,7 +51,7 @@
       "properties": {
         "normalized_claim": {"type": "string", "minLength": 1},
         "category": {"enum": ["ai_capability", "technology_product", "company_business", "market_industry", "macro_economy", "policy_regulation", "science", "society", "other"]},
-        "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "ranking", "other"]},
+        "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "comparative", "other"]},
         "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD."},
         "target_date_text": {"type": ["string", "null"], "description": "The speaker's own words that fix the date."},
         "horizon": {"enum": ["explicit", "inferable", "none"]},

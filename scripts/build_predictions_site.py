@@ -298,7 +298,7 @@ const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;
 const CAT = {ai_capability:"AI capability", technology_product:"Technology & product", company_business:"Company & business",
   market_industry:"Market & industry", macro_economy:"Macro & economy", policy_regulation:"Policy & regulation",
   science:"Science", society:"Society", other:"Other"};
-const TYPE = {numeric:"Numeric", milestone:"Milestone", binary_event:"Binary event", trend_direction:"Trend / direction", ranking:"Ranking", other:"Other"};
+const TYPE = {numeric:"Numeric", milestone:"Milestone", binary_event:"Binary event", trend_direction:"Trend / direction", comparative:"Comparative", other:"Other"};
 const HOR = {explicit:"Explicit date", inferable:"Inferable from context", none:"No date"};
 const CTRL = {external:"External to the speaker", partial:"Partly under the speaker's control", own:"Under the speaker's own control"};
 

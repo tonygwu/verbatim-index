@@ -145,8 +145,6 @@ def main() -> int:
 
         body = re.sub(r"<!-- disclaimer:start -->.*?<!-- disclaimer:end -->", "", html, flags=re.S)
         body = re.sub(r"const (DATA|SRC|PRED) = .*?;\n", "", body, flags=re.S)
-        # The prediction_type enum value "ranking" (X will be first/largest) is a label key, not prose.
-        body = re.sub(r"const TYPE = \{.*?\};\n", "", body, flags=re.S)
         hits = sorted(set(m.group(0).lower() for m in re.finditer(
             r"\b(accuracy|accurate|brier|correct|incorrect|resolved|leaderboard|best forecaster|best predictor|score|skill|edge|rank|ranking|outperform)\b", body, re.I)))
         check("NEUTRAL: no evaluative vocabulary outside the disclaimer and the data", not hits, str(hits))

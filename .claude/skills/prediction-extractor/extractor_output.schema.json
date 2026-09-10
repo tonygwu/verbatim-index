@@ -33,7 +33,7 @@
           "gate_notes": {"type": "string", "description": "Why each gate passes, briefly. A human auditor reads this."},
           "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> will / will not <threshold>."},
           "category": {"enum": ["ai_capability", "technology_product", "company_business", "market_industry", "macro_economy", "policy_regulation", "science", "society", "other"]},
-          "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "ranking", "other"]},
+          "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "comparative", "other"]},
           "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD; the latest date the speaker's words allow."},
           "target_date_text": {"type": ["string", "null"], "description": "The speaker's exact words that fix the date."},
           "horizon": {"enum": ["explicit", "inferable", "none"]},
