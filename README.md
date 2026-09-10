@@ -1,6 +1,6 @@
 # Verbatim Index
 
-Ranks 40 well-known technology leaders on the thinking their public speech
+Ranks 50 well-known technology leaders on the thinking their public speech
 demonstrates, scored **only** from transcripts of interviews, podcasts and
 keynotes. Nothing about company performance, market value or reputation enters
 a score.
@@ -129,7 +129,7 @@ Five repeat gradings of one unchanged transcript per judge, `data/logs/calibrati
 .claude/skills/polite-bulk-fetching/       rate-limit discipline, researched
 scripts/                                   pipeline, one stage per file
 data/                                      PRIVATE repo, cloned here, gitignored
-  roster/final.json                          the 40, with exclusions recorded
+  roster/final.json                          the 50, exclusions and withdrawals
   sources/discovered.json                    559 ranked candidates
   logs/                                      QA, calibration, errors, block state
   transcripts*/ grades/ results.json         working data and judge output

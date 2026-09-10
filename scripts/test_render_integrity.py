@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -300,6 +301,57 @@ def test_render_failure_is_loud() -> None:
           "a silent exit 0 is what let this run for 13 hours")
 
 
+def test_the_method_section_counts_the_roster(tmp: Path) -> None:
+    """The page must not state a roster size that the roster does not hold.
+
+    The literal "A roster of 40" sat in build_site.py for the whole time the
+    roster held 40, so nothing ever contradicted it. Expanding to 50 would have
+    left the page asserting 40 with no test failing. Rendering the SAME results
+    against two rosters of different sizes is what separates a derived number
+    from a literal: a literal gives the same answer twice.
+    """
+    print("\nmethod section counts the roster")
+    src = (REPO / "scripts" / "build_site.py").read_text()
+    check("no bare roster size is written into the method section",
+          "A roster of 40" not in src,
+          "a literal here cannot follow the roster")
+
+    results = REPO / "data" / "results.json"
+    audit = REPO / "data" / "results_audit.json"
+    calib = REPO / "data" / "logs" / "calibration.json"
+    real = REPO / "data" / "roster" / "final.json"
+    if not all(p.exists() for p in (results, audit, calib, real)):
+        check("live data present to render against", False, "skipped: data/ not readable")
+        return
+
+    roster = json.loads(real.read_text())
+    sizes = {}
+    for n in (len(roster["roster"]), len(roster["roster"]) + 7):
+        trimmed = dict(roster)
+        # Grow by duplicating entries under fresh slugs; the method section only
+        # counts them, and aggregate is not re-run here.
+        extra = [dict(roster["roster"][0], slug=f"pad-{i}") for i in range(n - len(roster["roster"]))]
+        trimmed["roster"] = roster["roster"] + extra
+        rpath = tmp / f"roster-{n}.json"
+        rpath.write_text(json.dumps(trimmed))
+        out = tmp / f"site-{n}.html"
+        r = subprocess.run([PY, str(REPO / "scripts" / "build_site.py"),
+                            "--results", str(results), "--audit", str(audit),
+                            "--roster", str(rpath), "--calibration", str(calib),
+                            "--out", str(out)], capture_output=True, text=True)
+        if r.returncode != 0:
+            check(f"build_site renders a {n}-name roster", False, r.stderr[-300:])
+            return
+        m = re.search(r"A roster of (\d+)", out.read_text())
+        sizes[n] = int(m.group(1)) if m else None
+
+    for n, said in sizes.items():
+        check(f"a roster of {n} renders as {n}", said == n, f"page said {said}")
+    check("the two renders disagree, so the number is derived and not a literal",
+          len(set(sizes.values())) == 2,
+          "identical output from different rosters means the size is hardcoded")
+
+
 def main() -> int:
     print("render-integrity guards")
     with tempfile.TemporaryDirectory() as td:
@@ -308,6 +360,7 @@ def main() -> int:
         test_invalid_record_is_split_out_first(tmp)
         test_the_reorder_moves_no_published_number(tmp)
         test_an_unmarked_non_grade_is_loud(tmp)
+        test_the_method_section_counts_the_roster(tmp)
     test_render_failure_is_loud()
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

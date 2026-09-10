@@ -826,6 +826,10 @@ def judge_count_word(results: dict) -> str:
 def build_method(results: dict, calib: dict, roster: dict) -> str:
     d = results["diagnostics"]
     w = d["weights"]
+    # Read from the roster, never written as a literal. The page claimed "a
+    # roster of 40" for the whole time the roster held 40, and would have gone
+    # on claiming it after the expansion to 50.
+    roster_n = len(roster["roster"])
     # The panel, and how far each judge has actually reached. A judge added
     # partway through the corpus does not hold every transcript, and averaging
     # over "the judges" without saying which ones is how the page came to claim
@@ -899,7 +903,7 @@ being guarded against.</li>
 
 <h3>The pipeline</h3>
 <ul>
-<li>A roster of 40 was built by 12 parallel sector scouts pooling 240 candidates, merged, then
+<li>A roster of {roster_n} was built by 12 parallel sector scouts pooling 240 candidates, merged, then
 attacked by four adversarial critics checking fame, availability, factual accuracy, and coverage
 bias. Contested cases were settled by measuring actual long-form supply, not by argument.</li>
 <li>Transcripts are verbatim automatic captions of publicly posted recordings, pulled
