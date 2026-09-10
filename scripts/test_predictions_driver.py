@@ -233,6 +233,16 @@ def test_dryrun(D, L) -> None:
         p = subprocess.run([PY, str(script), "--single", str(tx / "s1.json"), "--roster", str(roster), "--out", str(out),
                             "--dry-run", "--no-exclude", "--fable-bin", "cl"], capture_output=True, text=True, cwd=REPO, env=env)
         check("DRYRUN: --fable-bin cl is refused", p.returncode != 0 and "dangerously" in p.stderr)
+        # --list selects exactly the named files, and a missing one is refused.
+        lst = Path(td) / "list.txt"
+        lst.write_text(f"{tx / 's1.json'}\n")
+        p = subprocess.run([PY, str(script), "--list", str(lst), "--roster", str(roster), "--out", str(out),
+                            "--stage", "extract", "--dry-run", "--no-exclude"], capture_output=True, text=True, cwd=REPO, env=env)
+        check("DRYRUN: --list selects the named transcript", p.returncode == 0 and '"dry_run": 1' in p.stdout, p.stdout + p.stderr[-200:])
+        lst.write_text(f"{tx / 'nope.json'}\n")
+        p = subprocess.run([PY, str(script), "--list", str(lst), "--roster", str(roster), "--out", str(out),
+                            "--stage", "extract", "--dry-run", "--no-exclude"], capture_output=True, text=True, cwd=REPO, env=env)
+        check("DRYRUN: --list with a missing file is refused", p.returncode != 0 and "missing file" in p.stderr, p.stderr[-200:])
         # An excluded transcript is marked and never prompted.
         excl = Path(td) / "ex.json"
         excl.write_text(json.dumps({"schema_version": 1, "exclusions": [{"transcript_id": "ada/s1", "reason": "wrong_person", "evidence": "e"}]}))

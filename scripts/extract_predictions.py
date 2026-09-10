@@ -455,6 +455,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--limit-per-leader", type=int, default=None)
     ap.add_argument("--leaders", default="", help="comma-separated slugs; empty means all")
     ap.add_argument("--single", default=None)
+    ap.add_argument("--list", default=None, help="a file naming one transcript path per line; replaces --transcripts")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--errors", default=None, help="default <out>/_runs/<run_id>_errors.jsonl")
     ap.add_argument("--exclude", default=str(L.REPO / "scripts" / "predictions_exclusions.json"))
@@ -482,6 +483,11 @@ def main(argv: list[str] | None = None) -> int:
     exclusions = {} if args.no_exclude else L.load_exclusions(args.exclude)
     if args.single:
         paths = [Path(args.single)]
+    elif args.list:
+        paths = [Path(line.strip()) for line in Path(args.list).read_text().splitlines() if line.strip()]
+        missing = [str(p) for p in paths if not p.exists()]
+        if missing:
+            raise SystemExit(f"--list names {len(missing)} missing file(s): {missing[:3]}")
     else:
         paths = sorted(Path(args.transcripts).rglob("*.json"))
     if args.leaders:
