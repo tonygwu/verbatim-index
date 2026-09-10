@@ -1,0 +1,113 @@
+{
+ "positives": [
+  {
+   "gold_id": "P5",
+   "quote": "a humanoid robot will be doing useful work in a real factory shift by the end of 2025 that is going to happen",
+   "horizon": "explicit",
+   "target_date": "2025-12-31",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "technology_product",
+   "prediction_type": "milestone",
+   "subject_control": "partial",
+   "must_contain": [
+    "humanoid",
+    "factory",
+    "2025"
+   ],
+   "char_start": 383,
+   "char_end": 492
+  },
+  {
+   "gold_id": "P6",
+   "quote": "interest rates will be substantially lower by the end of next year than they are today",
+   "horizon": "explicit",
+   "target_date": "2025-12-31",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "macro_economy",
+   "prediction_type": "trend_direction",
+   "subject_control": "external",
+   "must_contain": [
+    "interest rate",
+    "lower",
+    "2025"
+   ],
+   "char_start": 779,
+   "char_end": 865
+  },
+  {
+   "gold_id": "P7",
+   "quote": "I'm quite sure that within three years half of new warehouses will open with robot picking as the default",
+   "horizon": "explicit",
+   "target_date": "2027-09",
+   "confidence_type": "qualitative",
+   "probability": null,
+   "category": "market_industry",
+   "prediction_type": "numeric",
+   "subject_control": "external",
+   "must_contain": [
+    "half",
+    "warehouse",
+    "robot"
+   ],
+   "char_start": 976,
+   "char_end": 1081
+  },
+  {
+   "gold_id": "P8",
+   "quote": "by 2028 the cost of a humanoid robot will be under 20,000 dollars and most of them will be built outside the United States",
+   "horizon": "explicit",
+   "target_date": "2028",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "technology_product",
+   "prediction_type": "numeric",
+   "subject_control": "external",
+   "must_contain": [
+    "20,000",
+    "2028"
+   ],
+   "char_start": 579,
+   "char_end": 701
+  }
+ ],
+ "negatives": [
+  {
+   "quote": "five years ago nobody believed a robot could walk on ice",
+   "reason": "historical",
+   "char_start": 58,
+   "char_end": 114
+  },
+  {
+   "quote": "our vision is that every home has a robot and the robot understands you",
+   "reason": "present_tense_vision",
+   "char_start": 195,
+   "char_end": 266
+  },
+  {
+   "quote": "we are going to be the most trusted robotics company in the world",
+   "reason": "confident_grammar_no_test",
+   "char_start": 1116,
+   "char_end": 1181
+  },
+  {
+   "quote": "we want to build the safest robot ever made",
+   "reason": "aspiration",
+   "char_start": 1235,
+   "char_end": 1278
+  },
+  {
+   "quote": "if regulators required a remote kill switch on every unit you could see the whole market slow by a year",
+   "reason": "hypothetical",
+   "char_start": 1467,
+   "char_end": 1570
+  },
+  {
+   "quote": "Lumnn Dynamics says they'll be at a million units by 2027 that's their number not mine",
+   "reason": "quoted_third_party",
+   "char_start": 1629,
+   "char_end": 1715
+  }
+ ]
+}

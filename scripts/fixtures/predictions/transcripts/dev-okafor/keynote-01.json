@@ -1,0 +1,26 @@
+{
+ "leader_slug": "dev-okafor",
+ "source_id": "keynote-01",
+ "video_id": "fixDev001",
+ "url": "https://www.youtube.com/watch?v=fixDev001",
+ "declared_title": "Lumen Robotics keynote 2024",
+ "declared_venue": "Lumen Robotics",
+ "declared_kind": "keynote",
+ "declared_year": 2024,
+ "caption_track": "auto",
+ "word_count": 344,
+ "char_count": 1753,
+ "duration_sec": 240,
+ "n_timestamp_marks": 3,
+ "fetched_at_utc": "2026-09-10T00:00:00Z",
+ "fetch_method": "youtube_transcript_api",
+ "yt_title": "Lumen Robotics keynote 2024",
+ "yt_channel": "Lumen Robotics",
+ "yt_description": null,
+ "text": "[00:00:00] good morning everyone thank you for being here five years ago nobody believed a robot could walk on ice and now you have seen it on this stage twice so let me tell you where this goes our vision is that every home has a robot and the robot understands you that is the north star and it does not change but I want to be concrete because concrete is what you can hold me to a humanoid robot will be doing useful work in a real factory shift by the end of 2025 that is going to happen not a demo a shift with a badge and a supervisor [00:01:00] and here is my actual bet by 2028 the cost of a humanoid robot will be under 20,000 dollars and most of them will be built outside the United States I know that second part is unpopular in this room the macro picture helps us interest rates will be substantially lower by the end of next year than they are today and that changes the math on every capex decision our customers make everyone thinks robot demos are hype and I'm quite sure that within three years half of new warehouses will open with robot picking as the default not as a pilot [00:02:00] [Music] we are going to be the most trusted robotics company in the world that is a promise to every customer in this room and we want to build the safest robot ever made period now questions yes in the back thanks so when do you think a robot beats a human at folding laundry honestly I don't know and I'm not going to guess on stage what I will say is that if regulators required a remote kill switch on every unit you could see the whole market slow by a year but I don't expect that rule and last one your competitor Lumnn Dynamics says they'll be at a million units by 2027 that's their number not mine I'll let them defend it thank you all",
+ "normalization": {
+  "mode": "open",
+  "fixture": true
+ },
+ "yt_upload_date": "20240920"
+}

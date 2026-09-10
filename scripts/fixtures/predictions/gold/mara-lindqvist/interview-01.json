@@ -1,0 +1,88 @@
+{
+ "positives": [
+  {
+   "gold_id": "P9",
+   "quote": "stablecoin settlement will overtake card networks for cross border business payments I have no doubt about it",
+   "horizon": "none",
+   "target_date": null,
+   "confidence_type": "qualitative",
+   "probability": null,
+   "category": "market_industry",
+   "prediction_type": "trend_direction",
+   "subject_control": "external",
+   "must_contain": [
+    "stablecoin",
+    "card"
+   ],
+   "char_start": 129,
+   "char_end": 238
+  },
+  {
+   "gold_id": "P10",
+   "quote": "our revenue will pass 2 billion this year",
+   "horizon": "explicit",
+   "target_date": "2023-12-31",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "company_business",
+   "prediction_type": "numeric",
+   "subject_control": "own",
+   "must_contain": [
+    "2 billion",
+    "2023"
+   ],
+   "char_start": 565,
+   "char_end": 606
+  }
+ ],
+ "negatives": [
+  {
+   "quote": "will anyone still carry a plastic card in 2040",
+   "reason": "rhetorical",
+   "char_start": 318,
+   "char_end": 364
+  },
+  {
+   "quote": "the analysts at Bernstein think card volumes double by 2030 but that is their model not mine",
+   "reason": "quoted_third_party",
+   "char_start": 402,
+   "char_end": 494
+  },
+  {
+   "quote": "if the regulators banned stablecoins tomorrow you could see volumes collapse overnight",
+   "reason": "hypothetical",
+   "char_start": 667,
+   "char_end": 753
+  },
+  {
+   "quote": "I'm pretty optimistic that things will improve for merchants generally",
+   "reason": "vague_optimism",
+   "char_start": 802,
+   "char_end": 872
+  },
+  {
+   "quote": "thirteen years from now I'll still be at this company I really believe that",
+   "reason": "personal_plan",
+   "char_start": 942,
+   "char_end": 1017
+  },
+  {
+   "quote": "the gap between the banked and the unbanked will be more polarized",
+   "reason": "non_falsifiable",
+   "char_start": 1037,
+   "char_end": 1103
+  },
+  {
+   "quote": "I'm pretty certain that you will be too",
+   "reason": "dangling_quote",
+   "char_start": 1179,
+   "char_end": 1218
+  },
+  {
+   "quote": "I used to think Swiftt would be dead by now and it's clearly still there",
+   "reason": "historical",
+   "char_start": 1290,
+   "char_end": 1362
+  }
+ ]
+}

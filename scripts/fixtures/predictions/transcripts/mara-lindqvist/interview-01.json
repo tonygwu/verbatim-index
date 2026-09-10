@@ -1,0 +1,26 @@
+{
+ "leader_slug": "mara-lindqvist",
+ "source_id": "interview-01",
+ "video_id": "fixMara01",
+ "url": "https://www.youtube.com/watch?v=fixMara01",
+ "declared_title": "Mara Lindqvist on payment rails",
+ "declared_venue": "Fintech Hour",
+ "declared_kind": "tv_interview",
+ "declared_year": 2024,
+ "caption_track": "auto",
+ "word_count": 253,
+ "char_count": 1424,
+ "duration_sec": 240,
+ "n_timestamp_marks": 3,
+ "fetched_at_utc": "2026-09-10T00:00:00Z",
+ "fetch_method": "youtube_transcript_api",
+ "yt_title": "Mara Lindqvist on payment rails",
+ "yt_channel": "Fintech Hour",
+ "yt_description": null,
+ "text": "[00:00:00] Mara thanks for sitting down with us let's talk about where payments are going you've been loud about this yes I have stablecoin settlement will overtake card networks for cross border business payments I have no doubt about it the unit economics are not close and merchants are not sentimental about rails will anyone still carry a plastic card in 2040 I mean think about that for a second the analysts at Bernstein think card volumes double by 2030 but that is their model not mine I don't publish a volume model [00:01:00] what about your own numbers our revenue will pass 2 billion this year we said that in the last letter and nothing has changed and if the regulators banned stablecoins tomorrow you could see volumes collapse overnight but that is a thought experiment not a forecast I'm pretty optimistic that things will improve for merchants generally the tooling is getting better people ask where you'll be in a decade thirteen years from now I'll still be at this company I really believe that [00:02:00] [Music] the gap between the banked and the unbanked will be more polarized that's the sad part and honestly when I look at the founders coming up now I'm pretty certain that you will be too the question is only when what's one thing you've changed your mind on I used to think Swiftt would be dead by now and it's clearly still there so I don't make that prediction anymore thanks Mara thank you",
+ "normalization": {
+  "mode": "open",
+  "fixture": true
+ },
+ "yt_upload_date": "20230610"
+}

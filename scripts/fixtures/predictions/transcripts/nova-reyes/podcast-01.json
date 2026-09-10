@@ -1,0 +1,26 @@
+{
+ "leader_slug": "nova-reyes",
+ "source_id": "podcast-01",
+ "video_id": "fixNova01",
+ "url": "https://www.youtube.com/watch?v=fixNova01",
+ "declared_title": "Nova Reyes on the inference build-out",
+ "declared_venue": "Compute Weekly",
+ "declared_kind": "podcast",
+ "declared_year": 2024,
+ "caption_track": "auto",
+ "word_count": 419,
+ "char_count": 2213,
+ "duration_sec": 300,
+ "n_timestamp_marks": 4,
+ "fetched_at_utc": "2026-09-10T00:00:00Z",
+ "fetch_method": "youtube_transcript_api",
+ "yt_title": "Nova Reyes on the inference build-out",
+ "yt_channel": "Compute Weekly",
+ "yt_description": null,
+ "text": "[00:00:00] welcome back to the show today we have Nova Reyes who runs Helix Compute thanks for coming on thanks for having me it's great to be here so let's start with the obvious question everybody is asking where does all this capacity go I mean we are seeing enormous demand for inference right now honestly more than we can serve and that's the thing people don't quite get about this cycle it's not training anymore it's serving so what does that look like in numbers well I think by the end of 2026 we will see 30 gigawatts of new data center capacity come online in the US and that is a conservative read the announced projects alone get you most of the way there [00:01:00] okay and the models themselves do they keep getting better at the same pace this is where I'll go out on a limb I'd put a 70% chance that a model passes a full bar exam blind by the end of next year not with retrieval not with tools blind and people will say that already happened and no it did not not under those conditions so you're saying by 2030 nobody writes code by hand yeah I mean that's fair I think that's roughly right although I'd phrase it differently [00:02:00] the cost side is the part I'm most sure about I'm almost certain that inference costs fall by another 10x over the next two years the hardware roadmap alone gets you 4x and the rest is software what could stop it I mean it's possible that we see a real slowdown in scaling who knows nobody actually knows that and anyone who says they do is selling something [Music] let's talk about your own roadmap what's coming we will ship our second generation chip to customers by June that is locked the tape out was in November and we have the Hellix two silicon back already [00:03:00] and after that you'll all be replaced by toasters ha ha no seriously the toaster thing is a joke we are not doing toasters what I actually want to say is we want to build the most reliable inference platform anyone has used and that is what the team is focused on every single day last question what did you get wrong last year I thought open models would stall and they did not they kept pace and I was wrong about that so I've stopped making that call thanks Nova thank you",
+ "normalization": {
+  "mode": "open",
+  "fixture": true
+ },
+ "yt_upload_date": "20250115"
+}

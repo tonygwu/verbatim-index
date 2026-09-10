@@ -1,0 +1,98 @@
+{
+ "positives": [
+  {
+   "gold_id": "P11",
+   "quote": "by 2030 launch cost to low earth orbit will be under 500 dollars a kilogram for a commercial customer buying a full manifest",
+   "horizon": "explicit",
+   "target_date": "2030",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "technology_product",
+   "prediction_type": "numeric",
+   "subject_control": "partial",
+   "must_contain": [
+    "500",
+    "2030"
+   ],
+   "char_start": 326,
+   "char_end": 450
+  },
+  {
+   "gold_id": "P12",
+   "quote": "under 500 dollars a kilo by 2030 that is the number and I'm happy to be held to it",
+   "horizon": "explicit",
+   "target_date": "2030",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "technology_product",
+   "prediction_type": "numeric",
+   "subject_control": "partial",
+   "must_contain": [
+    "500",
+    "2030"
+   ],
+   "char_start": 1160,
+   "char_end": 1242
+  },
+  {
+   "gold_id": "P13",
+   "quote": "the first commercial [00:02:00] orbital fuel depot will be operating before the end of 2027",
+   "horizon": "explicit",
+   "target_date": "2027-12-31",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "technology_product",
+   "prediction_type": "milestone",
+   "subject_control": "own",
+   "must_contain": [
+    "depot",
+    "2027"
+   ],
+   "char_start": 614,
+   "char_end": 705
+  },
+  {
+   "gold_id": "P14",
+   "quote": "the whole small launcher category is going to consolidate down to two or three players by the end of 2026",
+   "horizon": "explicit",
+   "target_date": "2026-12-31",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "market_industry",
+   "prediction_type": "numeric",
+   "subject_control": "external",
+   "must_contain": [
+    "launcher",
+    "2026"
+   ],
+   "char_start": 1262,
+   "char_end": 1367
+  }
+ ],
+ "negatives": [
+  {
+   "quote": "right now we have about 200 engineers",
+   "reason": "current_state",
+   "char_start": 102,
+   "char_end": 139
+  },
+  {
+   "quote": "launch costs go to 100 dollars a kilo by 2030 right no I don't think that",
+   "reason": "interviewer_prediction",
+   "char_start": 228,
+   "char_end": 301
+  },
+  {
+   "quote": "I don't know and I'm not going to put a date on it",
+   "reason": "non_falsifiable",
+   "char_start": 867,
+   "char_end": 917
+  },
+  {
+   "quote": "sure maybe possibly I mean anything could happen in this industry",
+   "reason": "hedged",
+   "char_start": 1009,
+   "char_end": 1074
+  }
+ ]
+}

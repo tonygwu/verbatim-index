@@ -1,0 +1,111 @@
+{
+ "positives": [
+  {
+   "gold_id": "P1",
+   "quote": "I think by the end of 2026 we will see 30 gigawatts of new data center capacity come online in the US",
+   "horizon": "explicit",
+   "target_date": "2026-12-31",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "technology_product",
+   "prediction_type": "numeric",
+   "subject_control": "external",
+   "must_contain": [
+    "30",
+    "gigawatt",
+    "2026"
+   ],
+   "char_start": 478,
+   "char_end": 579
+  },
+  {
+   "gold_id": "P2",
+   "quote": "I'd put a 70% chance that a model passes a full bar exam blind by the end of next year",
+   "horizon": "explicit",
+   "target_date": "2026-12-31",
+   "confidence_type": "explicit_probability",
+   "probability": 0.7,
+   "category": "ai_capability",
+   "prediction_type": "milestone",
+   "subject_control": "external",
+   "must_contain": [
+    "bar exam",
+    "2026"
+   ],
+   "char_start": 794,
+   "char_end": 880
+  },
+  {
+   "gold_id": "P3",
+   "quote": "I'm almost certain that inference costs fall by another 10x over the next two years",
+   "horizon": "explicit",
+   "target_date": "2027-01",
+   "confidence_type": "qualitative",
+   "probability": null,
+   "category": "technology_product",
+   "prediction_type": "numeric",
+   "subject_control": "external",
+   "must_contain": [
+    "10x",
+    "inference"
+   ],
+   "char_start": 1205,
+   "char_end": 1288
+  },
+  {
+   "gold_id": "P4",
+   "quote": "we will ship our second generation chip to customers by June",
+   "horizon": "explicit",
+   "target_date": "2025-06",
+   "confidence_type": "none",
+   "probability": null,
+   "category": "company_business",
+   "prediction_type": "binary_event",
+   "subject_control": "own",
+   "must_contain": [
+    "chip",
+    "June"
+   ],
+   "char_start": 1574,
+   "char_end": 1634
+  }
+ ],
+ "negatives": [
+  {
+   "quote": "we are seeing enormous demand for inference right now",
+   "reason": "current_state",
+   "char_start": 248,
+   "char_end": 301
+  },
+  {
+   "quote": "so you're saying by 2030 nobody writes code by hand yeah I mean that's fair",
+   "reason": "interviewer_prediction",
+   "char_start": 1008,
+   "char_end": 1083
+  },
+  {
+   "quote": "it's possible that we see a real slowdown in scaling who knows",
+   "reason": "hedged",
+   "char_start": 1379,
+   "char_end": 1441
+  },
+  {
+   "quote": "you'll all be replaced by toasters ha ha no seriously",
+   "reason": "joke",
+   "char_start": 1753,
+   "char_end": 1806
+  },
+  {
+   "quote": "we want to build the most reliable inference platform anyone has used",
+   "reason": "aspiration",
+   "char_start": 1892,
+   "char_end": 1961
+  },
+  {
+   "quote": "I thought open models would stall and they did not",
+   "reason": "historical",
+   "char_start": 2066,
+   "char_end": 2116
+  }
+ ]
+}

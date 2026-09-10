@@ -1,0 +1,32 @@
+{
+ "roster": [
+  {
+   "slug": "nova-reyes",
+   "name": "Nova Reyes",
+   "role": "CEO, Helix Compute",
+   "company": "Helix Compute",
+   "sector": "AI infrastructure"
+  },
+  {
+   "slug": "dev-okafor",
+   "name": "Dev Okafor",
+   "role": "CEO, Lumen Robotics",
+   "company": "Lumen Robotics",
+   "sector": "Robotics"
+  },
+  {
+   "slug": "mara-lindqvist",
+   "name": "Mara Lindqvist",
+   "role": "CEO, Northwind Payments",
+   "company": "Northwind Payments",
+   "sector": "Fintech"
+  },
+  {
+   "slug": "kenji-sato",
+   "name": "Kenji Sato",
+   "role": "CTO, Orbital Foundry",
+   "company": "Orbital Foundry",
+   "sector": "Space"
+  }
+ ]
+}
