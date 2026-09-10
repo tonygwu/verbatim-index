@@ -40,7 +40,11 @@ it wrong. Write that observation in `resolution_criteria` in your own words, in 
 "By <date or dated event>, <observable> will / will not <threshold>". If you cannot write it, G2
 is false. Confident grammar without a test ("we'll be the most transparent company in the world",
 "this changes everything") fails. Value words ("better", "the best", "useful") are not
-observations.
+observations. An undated
+claim passes only if its observable is specific and genuinely uncertain; an undated announcement
+that something will be launched, shipped, released or "possible" with no named deliverable,
+threshold or date ("we're launching our new model soon") is certain to come true as a matter of
+course and fails.
 
 **G3 `committed`.** Asserted as the speaker's own expectation: will, is going to, expect, I
 think X will, believe, probably, likely, I'd bet. Hedges fail: might, could, may, maybe, possibly,

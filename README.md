@@ -7,6 +7,13 @@ a score.
 
 Live leaderboard: **[verbatim-index.tonygwu.com](https://verbatim-index.tonygwu.com)**
 
+A sibling product, **Verbatim Predictions**, turns the same transcripts into an
+auditable index of the falsifiable predictions each leader made, each grounded
+in a verbatim quote at a known timestamp and accepted only when two model
+families agree. It is an index of what was said, not a ranking of who predicts
+well: **[verbatim-predictions.tonygwu.com](https://verbatim-predictions.tonygwu.com)**,
+design and limits in `docs/PREDICTIONS.md`.
+
 This repository is the code: rubric, pipeline, grading harness and the tests
 that guard them (MIT, see `LICENSE`). The transcripts, raw judge output and
 per-leader results live in a separate private repository that the pipeline

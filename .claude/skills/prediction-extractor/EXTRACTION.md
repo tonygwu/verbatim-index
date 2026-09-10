@@ -92,8 +92,12 @@ and units exactly. Do not add precision the speaker did not give: "a lot more" s
   (your best point estimate, in years from the statement date) and `horizon_evidence` (the words
   that fix it). Fill `target_date` only if the evidence gives a date.
 - `none`: no time anchor at all ("eventually", "someday", "in the long run", or nothing). A
-  claim can still pass G2 with `none` when the criterion names an event that will happen and be
-  observable; set `specificity` to `low` or `medium` accordingly.
+  claim can still pass G2 with `none` only when the criterion names a specific, non-trivial
+  observable: a number, a named capability, a named event that is genuinely uncertain. Set
+  `specificity` to `low` or `medium` accordingly. An undated announcement that something will be
+  launched, shipped, released, improved or "possible" with no named deliverable, threshold or date
+  ("we're launching our new model soon", "we'll be able to analyze video", "we will announce more
+  things") is certain to come true eventually as a matter of course and fails G2.
 
 ## 6. Confidence. Never invent a number.
 
@@ -149,6 +153,7 @@ the largest, the first, ahead of Y, better than Z on a named measure), `other`.
 | Rhetorical question | "Will anyone still be writing code by hand in 2035?" | G3 |
 | Personal plan, no external test | "Thirteen years from now I'll still be at this company." | G2 |
 | Non-falsifiable | "The gap between the haves and have-nots will be more polarised." | G2 |
+| Undated roadmap, no deliverable | "We're launching our new model soon." / "We'll be able to analyze video." | G2 |
 | Dangling quote | "I'm pretty certain that you will be." | G5 |
 | Hedged | "It's very possible the number of instances skyrockets." | G3 |
 | Disowned | "Some say we'll hit AGI in 2027. I don't buy it." | G4 |
