@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Verbatim Predictions record, schema_version 1",
+  "description": "One extracted candidate prediction, accepted or not. Stored one per line in data/predictions/<leader_slug>/<source_id>.jsonl. Every field a model wrote is stored next to the mechanical check of it, so a reader can audit the record without re-running anything. This file is read by validate_predictions.py and by tests; it is never sent to a model.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "prediction_id", "transcript_id", "leader_slug", "source_id", "speaker", "accepted", "status", "source", "prediction", "confidence", "extraction", "verification", "resolution", "consensus"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "prediction_id": {"type": "string", "minLength": 16, "maxLength": 16, "description": "sha256(transcript_id + '\\n' + normalise(quote))[:16]. Stable across runs and models; changes only if the transcript or the located text changes."},
+    "transcript_id": {"type": "string", "minLength": 3, "description": "leader_slug/source_id"},
+    "leader_slug": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "speaker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["slug", "name", "role", "company"],
+      "properties": {
+        "slug": {"type": "string"}, "name": {"type": "string"},
+        "role": {"type": ["string", "null"]}, "company": {"type": ["string", "null"]}
+      }
+    },
+    "accepted": {"type": "boolean", "description": "DERIVED: extraction.qualifies and verification.qualifies. Never written by a model."},
+    "status": {"const": "pending", "description": "V0: no resolution has been attempted."},
+
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["url", "video_id", "title", "venue", "kind", "statement_date", "statement_date_basis", "quote", "quote_original", "quote_char_start", "quote_char_end", "quote_word_count", "quote_occurrences", "timestamp_mark", "context_before", "context_after"],
+      "properties": {
+        "url": {"type": ["string", "null"]},
+        "video_id": {"type": ["string", "null"]},
+        "title": {"type": ["string", "null"]},
+        "venue": {"type": ["string", "null"]},
+        "kind": {"type": ["string", "null"]},
+        "statement_date": {"type": ["string", "null"], "description": "YYYY-MM-DD, or null when the record carries no date."},
+        "statement_date_basis": {"enum": ["youtube_upload_date", "unknown"], "description": "youtube_upload_date is an UPPER bound on the recording date. declared_year is never used: it is a hardcoded constant in the corpus."},
+        "quote": {"type": "string", "minLength": 1, "description": "The span as the model wrote it."},
+        "quote_original": {"type": "string", "minLength": 1, "description": "text[quote_char_start:quote_char_end] from the original transcript. May contain a [hh:mm:ss] mark."},
+        "quote_char_start": {"type": "integer", "minimum": 0},
+        "quote_char_end": {"type": "integer", "minimum": 1},
+        "quote_word_count": {"type": "integer", "minimum": 1, "description": "Whitespace tokens of quote_original with timestamp marks removed."},
+        "quote_occurrences": {"type": "integer", "minimum": 1, "description": "How many places the normalised quote matched in the transcript."},
+        "timestamp_mark": {"type": "string", "description": "[hh:mm:ss], the nearest mark at or before quote_char_start, or 'unmarked'."},
+        "context_before": {"type": "string"},
+        "context_after": {"type": "string"}
+      }
+    },
+
+    "prediction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["normalized_claim", "category", "prediction_type", "target_date", "target_date_text", "horizon", "horizon_years_inferred", "horizon_evidence", "resolution_criteria", "specificity", "subject_control"],
+      "properties": {
+        "normalized_claim": {"type": "string", "minLength": 1},
+        "category": {"enum": ["ai_capability", "technology_product", "company_business", "market_industry", "macro_economy", "policy_regulation", "science", "society", "other"]},
+        "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "ranking", "other"]},
+        "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD."},
+        "target_date_text": {"type": ["string", "null"], "description": "The speaker's own words that fix the date."},
+        "horizon": {"enum": ["explicit", "inferable", "none"]},
+        "horizon_years_inferred": {"type": ["number", "null"], "minimum": 0},
+        "horizon_evidence": {"type": ["string", "null"]},
+        "resolution_criteria": {"type": "string", "minLength": 1, "description": "What observation, on or by what date, would show the claim wrong."},
+        "specificity": {"enum": ["high", "medium", "low"]},
+        "subject_control": {"enum": ["external", "partial", "own"], "description": "own: the outcome is mainly the speaker's or their company's decision (roadmap, guidance). Recorded, not a gate."}
+      }
+    },
+
+    "confidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "probability", "verbatim_confidence_language"],
+      "properties": {
+        "type": {"enum": ["explicit_probability", "qualitative", "none"]},
+        "probability": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Only a number the speaker said. Never inferred, never modified by any later stage."},
+        "verbatim_confidence_language": {"type": ["string", "null"]}
+      }
+    },
+
+    "extraction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["qualifies", "gates", "gate_notes", "harness", "requested_model", "served_model", "served_model_verified", "account", "router_account_id", "contract_id", "run_id", "extracted_at_utc", "telemetry"],
+      "properties": {
+        "qualifies": {"type": "boolean", "description": "DERIVED: every gate true and resolution_criteria non-empty."},
+        "gates": {"$ref": "#/$defs/gates"},
+        "gate_notes": {"type": "string"},
+        "harness": {"enum": ["fable", "astra", "gemini"]},
+        "requested_model": {"type": "string"},
+        "served_model": {"type": ["string", "null"]},
+        "served_model_verified": {"type": "boolean"},
+        "account": {"type": ["string", "null"]},
+        "router_account_id": {"type": ["string", "null"]},
+        "contract_id": {"type": "string", "minLength": 12, "maxLength": 12},
+        "run_id": {"type": "string", "minLength": 1},
+        "extracted_at_utc": {"type": "string", "minLength": 20},
+        "telemetry": {"type": "object"}
+      }
+    },
+
+    "verification": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "harness", "requested_model", "served_model", "served_model_verified", "account", "router_account_id", "contract_id", "run_id", "verified_at_utc", "gates", "attribution", "claim_faithful", "qualifies_stated", "qualifies", "agreement", "verifier_resolution_criteria", "notes", "telemetry"],
+      "properties": {
+        "status": {"enum": ["ok", "not_run", "failed"]},
+        "harness": {"enum": ["fable", "astra", "gemini", null]},
+        "requested_model": {"type": ["string", "null"]},
+        "served_model": {"type": ["string", "null"]},
+        "served_model_verified": {"type": ["boolean", "null"]},
+        "account": {"type": ["string", "null"]},
+        "router_account_id": {"type": ["string", "null"]},
+        "contract_id": {"type": ["string", "null"]},
+        "run_id": {"type": ["string", "null"]},
+        "verified_at_utc": {"type": ["string", "null"]},
+        "gates": {"anyOf": [{"$ref": "#/$defs/gates"}, {"type": "null"}]},
+        "attribution": {"enum": ["subject", "interviewer", "third_party", "unclear", null]},
+        "claim_faithful": {"type": ["boolean", "null"]},
+        "qualifies_stated": {"type": ["boolean", "null"], "description": "What the verifier wrote."},
+        "qualifies": {"type": ["boolean", "null"], "description": "RECOMPUTED: every gate true, attribution == subject, claim_faithful true."},
+        "agreement": {"type": ["boolean", "null"], "description": "extraction.qualifies == verification.qualifies"},
+        "verifier_resolution_criteria": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]},
+        "telemetry": {"type": ["object", "null"]}
+      }
+    },
+
+    "resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status"],
+      "properties": {"status": {"const": "not_started"}},
+      "description": "Phase 2. In V0 this is exactly {\"status\": \"not_started\"}."
+    },
+
+    "consensus": {
+      "description": "Contemporaneous prediction-market evidence. Either the sentinel {\"status\": \"not_searched\"} or a full block written by market_consensus.py. Never influences confidence.probability.",
+      "anyOf": [
+        {"type": "object", "additionalProperties": false, "required": ["status"], "properties": {"status": {"const": "not_searched"}}},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "reason", "cutoff", "market_probability", "exact_match", "proxy_matches", "candidates_considered", "candidates_dropped", "matcher", "searched_at_utc", "error"],
+          "properties": {
+            "status": {"enum": ["no_match", "unavailable", "matched", "failed"]},
+            "reason": {"type": ["string", "null"]},
+            "cutoff": {
+              "type": "object", "additionalProperties": false,
+              "required": ["basis", "requested_cutoff_utc", "precision", "rule"],
+              "properties": {
+                "basis": {"enum": ["publication_timestamp", "publication_date_only", "recording_timestamp", "unknown"]},
+                "requested_cutoff_utc": {"type": ["string", "null"]},
+                "precision": {"enum": ["timestamp", "date", "none"]},
+                "rule": {"type": "string"}
+              }
+            },
+            "market_probability": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "From the exact match's observation only. Null unless status == matched."},
+            "exact_match": {"anyOf": [{"$ref": "#/$defs/market_match"}, {"type": "null"}]},
+            "proxy_matches": {"type": "array", "items": {"$ref": "#/$defs/market_match"}},
+            "candidates_considered": {"type": "integer", "minimum": 0},
+            "candidates_dropped": {"type": "array", "items": {
+              "type": "object", "additionalProperties": false, "required": ["platform", "market_id", "reason"],
+              "properties": {"platform": {"type": "string"}, "market_id": {"type": "string"}, "reason": {"type": "string"}}
+            }},
+            "matcher": {"anyOf": [{"type": "null"}, {
+              "type": "object", "additionalProperties": false,
+              "required": ["harness", "requested_model", "served_model", "served_model_verified", "account", "contract_id", "run_id", "matched_at_utc"],
+              "properties": {
+                "harness": {"enum": ["fable", "astra", "gemini"]},
+                "requested_model": {"type": "string"}, "served_model": {"type": ["string", "null"]},
+                "served_model_verified": {"type": "boolean"}, "account": {"type": ["string", "null"]},
+                "contract_id": {"type": "string"}, "run_id": {"type": "string"}, "matched_at_utc": {"type": "string"}
+              }
+            }]},
+            "searched_at_utc": {"type": ["string", "null"]},
+            "error": {"type": ["string", "null"]}
+          }
+        }
+      ]
+    }
+  },
+
+  "$defs": {
+    "gates": {
+      "type": "object", "additionalProperties": false,
+      "required": ["forward_looking", "falsifiable", "committed", "own_voice", "stands_alone"],
+      "properties": {
+        "forward_looking": {"type": "boolean"},
+        "falsifiable": {"type": "boolean"},
+        "committed": {"type": "boolean"},
+        "own_voice": {"type": "boolean"},
+        "stands_alone": {"type": "boolean"}
+      }
+    },
+    "market_match": {
+      "type": "object", "additionalProperties": false,
+      "required": ["platform", "market_id", "market_slug", "market_url", "question", "resolution_text", "market_open_utc", "market_close_utc", "match_type", "match_confidence", "direction", "rationale", "observation"],
+      "properties": {
+        "platform": {"enum": ["polymarket", "kalshi"]},
+        "market_id": {"type": "string"},
+        "market_slug": {"type": ["string", "null"]},
+        "market_url": {"type": "string"},
+        "question": {"type": "string"},
+        "resolution_text": {"type": ["string", "null"]},
+        "market_open_utc": {"type": ["string", "null"]},
+        "market_close_utc": {"type": ["string", "null"]},
+        "match_type": {"enum": ["exact", "proxy"]},
+        "match_confidence": {"enum": ["high", "medium", "low"]},
+        "direction": {"enum": ["same", "inverse"], "description": "inverse: the market is the negation of the claim; probability_for_claim = 1 - probability_yes."},
+        "rationale": {"type": "string"},
+        "observation": {"anyOf": [{"type": "null"}, {
+          "type": "object", "additionalProperties": false,
+          "required": ["observed_at_utc", "probability_yes", "probability_for_claim", "bid", "ask", "midpoint", "price_kind", "fidelity_minutes", "staleness_sec", "volume", "liquidity", "source_url"],
+          "properties": {
+            "observed_at_utc": {"type": "string"},
+            "probability_yes": {"type": "number", "minimum": 0, "maximum": 1},
+            "probability_for_claim": {"type": "number", "minimum": 0, "maximum": 1},
+            "bid": {"type": ["number", "null"]}, "ask": {"type": ["number", "null"]}, "midpoint": {"type": ["number", "null"]},
+            "price_kind": {"enum": ["polymarket_history_p", "kalshi_candle_close", "kalshi_trade"]},
+            "fidelity_minutes": {"type": ["integer", "null"]},
+            "staleness_sec": {"type": "integer", "minimum": 0, "description": "requested_cutoff_utc minus observed_at_utc. Strictly positive by construction."},
+            "volume": {"type": ["number", "null"]}, "liquidity": {"type": ["number", "null"]},
+            "source_url": {"type": "string"}
+          }
+        }]}
+      }
+    }
+  }
+}

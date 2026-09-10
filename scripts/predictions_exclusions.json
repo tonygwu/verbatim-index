@@ -1,0 +1,234 @@
+{
+ "schema_version": 1,
+ "note": "Transcripts the extractor must never read. Seeded from the retire entries of the withdrawal manifests listed in `sources`; test_predictions_lib.py fails if any retire entry there is missing here. Add predictions-specific exclusions below the seeded ones.",
+ "sources": [
+  "docs/withdrawals-2026-09-10.json"
+ ],
+ "exclusions": [
+  {
+   "transcript_id": "andy-jassy/aws-events-uh6zs2",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "andy-jassy/siliconangle-thecube-8hikrc",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "andy-jassy/tech-news-weekly-qpvhgj",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "andy-jassy/this-week-in-startups-hg-a7t",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "arvind-krishna/preetika-rao-and-s-aishw-n-i6g5",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is a devotional talk; shares [58, 0, 60]"
+  },
+  {
+   "transcript_id": "brian-armstrong/eth-us-8d2nbg",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Vitalik Buterin; shares [65, 60, 62]"
+  },
+  {
+   "transcript_id": "brian-armstrong/r2e2-npc-vhsmtm",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Brian Armstrong, South African academic; shares [100, 100, 100]"
+  },
+  {
+   "transcript_id": "brian-chesky/lenny-s-podcast-r5-ypw",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Chip Conley; shares [76, 64, 68]"
+  },
+  {
+   "transcript_id": "cc-wei/adobe-creative-cloud-1l--yn",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Jing Wei, illustrator; shares [60, 65, 68]"
+  },
+  {
+   "transcript_id": "cc-wei/bankless-tik8am",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Eugene Wei; shares [35, 37, 36]"
+  },
+  {
+   "transcript_id": "cc-wei/danny-haiphong-k-c3ae",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Zhang Weiwei; shares [78, 74, 73]"
+  },
+  {
+   "transcript_id": "cc-wei/george-daniel-swpx7b",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Weivy Wei, DJ; shares [14, 15, 17]"
+  },
+  {
+   "transcript_id": "cc-wei/han-wei-shen-ughuv0",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Han-Wei Shen; shares [100, 100, 100]"
+  },
+  {
+   "transcript_id": "cc-wei/mit-civil-and-environmen-rwmwc3",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Wei Chen; shares [95, 95, 93]"
+  },
+  {
+   "transcript_id": "cc-wei/newton-free-library-9aab7z",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is William Wei; shares [88, 88, 85]"
+  },
+  {
+   "transcript_id": "cc-wei/six-five-media-rmprp4",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Wei Li, Intel; shares [62, 60, 60]"
+  },
+  {
+   "transcript_id": "cc-wei/ted-hahs-iyee3v",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Lord Nat Wei; shares [68, 52, 65]"
+  },
+  {
+   "transcript_id": "cc-wei/usacm-juvcrj",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Wei Chen; shares [92, 92, 91]"
+  },
+  {
+   "transcript_id": "demis-hassabis/metis-strategy-fu1xty",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Sebastian Mallaby, biographer; shares [86, 0, 78]"
+  },
+  {
+   "transcript_id": "elon-musk/hs-elon-musk-begins-training-for-zuckerberg-fig",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "evan-spiegel/group-chat-news-9n0o-s",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "jeff-bezos/bigdeal-by-codie-sanchez-8jqujp",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Ethan Evans; shares [68, 0, 73]"
+  },
+  {
+   "transcript_id": "jeff-bezos/hal-sparks-olznjg",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is hosts discussing Bezos; shares [42, 0, 0]"
+  },
+  {
+   "transcript_id": "jeff-bezos/hs-ai-spending-spree-crypto-winter-and-kara-s-m",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "jeff-bezos/hs-live-jeff-bezos-rocket-new-glenn-attempting",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [1, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "jeff-bezos/this-week-in-startups-l2l5fn",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Jason Calacanis; shares [70, 0, 0]"
+  },
+  {
+   "transcript_id": "lip-bu-tan/oxide-computer-company--syvyy",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Bryan Cantrill and panel; shares [68, 0, 0]"
+  },
+  {
+   "transcript_id": "lip-bu-tan/six-five-media-8thqhc",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "lip-bu-tan/smarttechcheck-podcast-rbrkst",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "lip-bu-tan/stanford-institute-for-e---xk1g",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Mario Draghi; shares [70, 65]"
+  },
+  {
+   "transcript_id": "marc-benioff/dws-news-1g-x70",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Sundar Pichai; Benioff is the host; shares [58, 32, 58]"
+  },
+  {
+   "transcript_id": "mark-zuckerberg/hs-sacha-baron-cohen-has-a-message-for-mark-zuc",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Sacha Baron Cohen; shares [65, 0, 0]"
+  },
+  {
+   "transcript_id": "michael-dell/project-nanda-wj3xga",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is John Roese; shares [81, 80, 81]"
+  },
+  {
+   "transcript_id": "michael-dell/pursuit-jtc6uo",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Adam Dell; shares [83, 83, 80]"
+  },
+  {
+   "transcript_id": "mustafa-suleyman/madras-management-associ-shtk7f",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is panelists discussing his book; shares [71, 0, 0]"
+  },
+  {
+   "transcript_id": "tim-cook/tbpn-cdleju",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "tim-cook/the-bulwark-and-the-prof-zi07-f",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Scott Galloway; shares [68, 0]"
+  },
+  {
+   "transcript_id": "tim-cook/the-compound-wl6bbk",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Josh Brown and Michael Batnick; shares [62, 0, 0]"
+  },
+  {
+   "transcript_id": "tim-cook/the-verge-qs4zd6",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [1, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "tim-cook/this-week-in-tech-dccz4e",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "tim-sweeney/kaput-magazin-f-r-insolv-nddwao",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Tim Sweeney the DJ; shares [68, 72, 76]"
+  },
+  {
+   "transcript_id": "tim-sweeney/macvoicestv-37nach",
+   "reason": "subject_never_speaks",
+   "evidence": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
+  },
+  {
+   "transcript_id": "tim-sweeney/steven-fiorillo-qvbsxi",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is a SoFi retail investor; shares [54, 62, 71]"
+  },
+  {
+   "transcript_id": "tim-sweeney/sudsy-monchik-rk2gnv",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Tim Sweeney the racquetball champion; shares [40, 45, 50]"
+  },
+  {
+   "transcript_id": "yann-lecun/moneycontrol-ogj3eb",
+   "reason": "wrong_person",
+   "evidence": "wrong person, on the board: speaker is Demis Hassabis; LeCun never appears; shares [30, 33, 35]"
+  }
+ ]
+}
