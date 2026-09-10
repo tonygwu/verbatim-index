@@ -26,6 +26,7 @@ from atomicio import write_atomic  # noqa: E402
 from aggregate import (  # noqa: E402
     HIGH_CONFIDENCE_TRANSCRIPTS,
     MIN_TRANSCRIPTS_FOR_CONFIDENCE,
+    MIN_TRANSCRIPTS_TO_RANK,
 )
 
 TEMPLATE = r"""<title>Verbatim Index</title>
@@ -629,6 +630,9 @@ const INFO = {
     <p>The single-judge case is separate on purpose. One judge on eight transcripts
     still reads as LOW, because a second judge is what catches one judge's bias on a
     particular speaker, and no number of transcripts from a single judge replaces it.</p>
+    <p>A leader graded on fewer than __RANK_FLOOR__ transcripts is not on the board at
+    all. The grades and the score are kept, and the row appears once the corpus
+    reaches __RANK_FLOOR__.</p>
     <p class="note">A LOW row is evidence-poor, not a verdict. Read its 95% interval
     rather than its rank.</p>`,
   ci: `<p><b>How firm is that score?</b></p>
@@ -1077,6 +1081,7 @@ def main() -> int:
         .replace("__N_JUDGES_WORD__", judge_count_word(results))
         .replace("__CONF_HIGH_MINUS_1__", str(HIGH_CONFIDENCE_TRANSCRIPTS - 1))
         .replace("__CONF_HIGH__", str(HIGH_CONFIDENCE_TRANSCRIPTS))
+        .replace("__RANK_FLOOR__", str(MIN_TRANSCRIPTS_TO_RANK))
         .replace("__CONF_MIN__", str(MIN_TRANSCRIPTS_FOR_CONFIDENCE))
         .replace("__N_TRANSCRIPTS__", str(d.get("transcripts_with_blinded_consensus", 0)))
         .replace("__N_WORDS__",

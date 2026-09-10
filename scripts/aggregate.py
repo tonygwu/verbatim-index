@@ -63,6 +63,14 @@ MIN_TRANSCRIPTS_FOR_CONFIDENCE = 3
 # day a third judge was promoted; this is the same hazard one column over.
 HIGH_CONFIDENCE_TRANSCRIPTS = 5
 
+# Below this many included transcripts a leader is scored and NOT ranked. The
+# grades and the transcripts stay, the blinded score is still computed and
+# written under "unranked", and the board leaves the leader out rather than
+# carrying a two-transcript placeholder as if it were a score. Set to the
+# high-confidence band on 2026-09-10, when the wrong-person withdrawal left
+# C.C. Wei with 2 real transcripts (docs/CORPUS-INTEGRITY-FOLLOWUP.md).
+MIN_TRANSCRIPTS_TO_RANK = HIGH_CONFIDENCE_TRANSCRIPTS
+
 # Below this share of the words, the subject is not really in the recording and
 # the grade describes somebody else. MEASURED on 785 blinded grades: the share
 # distribution is bimodal. 47 grades sit at 0-4%, a near-empty band of 3 grades
@@ -761,6 +769,14 @@ def main() -> int:
 
     scored = [l for l in leaders_out if l["status"] == "scored"]
     scored.sort(key=lambda l: l["blinded"].get("overall", 0), reverse=True)
+    # A leader under the floor keeps everything except a place on the board.
+    unranked = [l for l in scored if l["n_transcripts"] < MIN_TRANSCRIPTS_TO_RANK]
+    for l in unranked:
+        l["status"] = "unranked"
+        l.pop("rank", None)  # the roster's fame rank, which would read as a board rank
+        l["unranked_reason"] = (f"{l['n_transcripts']} included transcripts, "
+                                f"fewer than MIN_TRANSCRIPTS_TO_RANK={MIN_TRANSCRIPTS_TO_RANK}")
+    scored = [l for l in scored if l["n_transcripts"] >= MIN_TRANSCRIPTS_TO_RANK]
     for i, l in enumerate(scored, 1):
         l["rank"] = i
 
@@ -824,7 +840,10 @@ def main() -> int:
         "min_subject_share_pct": MIN_SUBJECT_SHARE,
         "judge_refusals": len(refusals),
         "judge_refusals_by_leader": refusal_breakdown,
-        "leaders_below_min_transcripts": [l["slug"] for l in scored if l["n_transcripts"] < MIN_TRANSCRIPTS_FOR_CONFIDENCE],
+        "leaders_below_min_transcripts": [l["slug"] for l in scored + unranked
+                                          if l["n_transcripts"] < MIN_TRANSCRIPTS_FOR_CONFIDENCE],
+        "min_transcripts_to_rank": MIN_TRANSCRIPTS_TO_RANK,
+        "leaders_unranked": [l["slug"] for l in unranked],
         # judge|model|mode|dim. The model is part of the key because a judge is
         # an arm, not a model, and the Astra arm can fall back to another one.
         "calibration_params": {"|".join(str(x) for x in k): v for k, v in params.items()},
@@ -870,7 +889,9 @@ def main() -> int:
     write_atomic(args.out, json.dumps({
         "diagnostics": diagnostics,
         "leaders": scored,
-        "unscored": [l for l in leaders_out if l["status"] != "scored"],
+        # Scored, kept, and off the board: fewer than min_transcripts_to_rank.
+        "unranked": unranked,
+        "unscored": [l for l in leaders_out if l["status"] not in ("scored", "unranked")],
         "transcripts": transcripts_out,
     }, indent=1))
     print(json.dumps(diagnostics, indent=2)[:3000])

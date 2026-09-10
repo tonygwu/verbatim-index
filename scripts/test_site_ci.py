@@ -113,7 +113,10 @@ def test_aggregate_emits_ci(tmp: Path) -> None:
     if r.returncode != 0:
         return
     res = json.loads(out.read_text())
-    led = {l["slug"]: l for l in res["leaders"] if l["status"] == "scored"}
+    # alan has 3 transcripts, under MIN_TRANSCRIPTS_TO_RANK, so he is scored
+    # under "unranked" rather than on the board. The interval is still his.
+    led = {l["slug"]: l for l in res["leaders"] + res.get("unranked", [])
+           if l["status"] in ("scored", "unranked")}
     for s in ("ada", "alan"):
         b = led[s]["blinded"]
         check(f"{s} carries ci_low and ci_high",

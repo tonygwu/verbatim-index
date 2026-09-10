@@ -186,7 +186,10 @@ def main() -> int:
     scores: dict[str, dict] = {}
     rf = Path("data/results.json")
     if rf.exists():
-        for l in json.loads(rf.read_text())["leaders"]:
+        res = json.loads(rf.read_text())
+        # "unranked" leaders are scored but under the rank floor; the coverage
+        # table is exactly where their score should still be visible.
+        for l in res["leaders"] + res.get("unranked", []):
             if l.get("blinded"):
                 scores[l["slug"]] = l["blinded"]
 
