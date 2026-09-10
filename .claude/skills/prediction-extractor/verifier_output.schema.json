@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prediction verifier output, version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "transcript_id", "verdicts"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "transcript_id": {"type": "string", "description": "Echo exactly the id given in the prompt."},
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["prediction_id", "attribution", "gates", "claim_faithful", "confidence_type_seen", "qualifies", "resolution_criteria", "notes"],
+        "properties": {
+          "prediction_id": {"type": "string", "minLength": 16, "maxLength": 16},
+          "attribution": {"enum": ["subject", "interviewer", "third_party", "unclear"]},
+          "gates": {
+            "type": "object", "additionalProperties": false,
+            "required": ["forward_looking", "falsifiable", "committed", "own_voice", "stands_alone"],
+            "properties": {
+              "forward_looking": {"type": "boolean"},
+              "falsifiable": {"type": "boolean"},
+              "committed": {"type": "boolean"},
+              "own_voice": {"type": "boolean"},
+              "stands_alone": {"type": "boolean"}
+            }
+          },
+          "claim_faithful": {"type": "boolean"},
+          "confidence_type_seen": {"enum": ["explicit_probability", "qualitative", "none"]},
+          "qualifies": {"type": "boolean", "description": "attribution == subject and every gate true and claim_faithful."},
+          "resolution_criteria": {"type": "string", "minLength": 1, "description": "In your own words, without reference to the extractor's."},
+          "notes": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

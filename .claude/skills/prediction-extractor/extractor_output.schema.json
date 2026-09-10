@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prediction extractor output, version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "transcript_id", "attribution_notes", "subject_speech_share_estimate_pct", "candidates", "candidates_considered", "cap_hit", "estimated_total_qualifying"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "transcript_id": {"type": "string", "description": "Echo exactly the id given in the prompt: leader_slug/source_id."},
+    "attribution_notes": {"type": "string", "description": "One or two sentences on how you told the subject's turns from the interviewer's."},
+    "subject_speech_share_estimate_pct": {"type": "integer", "minimum": 0, "maximum": 100},
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["quote", "timestamp_hint", "normalized_claim", "gates", "gate_notes", "resolution_criteria", "category", "prediction_type", "target_date", "target_date_text", "horizon", "horizon_years_inferred", "horizon_evidence", "specificity", "subject_control", "confidence"],
+        "properties": {
+          "quote": {"type": "string", "minLength": 1, "description": "One contiguous verbatim span, 8 to 60 words, copied character for character."},
+          "timestamp_hint": {"type": "string", "description": "The nearest [hh:mm:ss] mark at or before the quote, or 'unmarked'."},
+          "normalized_claim": {"type": "string", "minLength": 1},
+          "gates": {
+            "type": "object", "additionalProperties": false,
+            "required": ["forward_looking", "falsifiable", "committed", "own_voice", "stands_alone"],
+            "properties": {
+              "forward_looking": {"type": "boolean"},
+              "falsifiable": {"type": "boolean"},
+              "committed": {"type": "boolean"},
+              "own_voice": {"type": "boolean"},
+              "stands_alone": {"type": "boolean"}
+            }
+          },
+          "gate_notes": {"type": "string", "description": "Why each gate passes, briefly. A human auditor reads this."},
+          "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> will / will not <threshold>."},
+          "category": {"enum": ["ai_capability", "technology_product", "company_business", "market_industry", "macro_economy", "policy_regulation", "science", "society", "other"]},
+          "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "ranking", "other"]},
+          "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD; the latest date the speaker's words allow."},
+          "target_date_text": {"type": ["string", "null"], "description": "The speaker's exact words that fix the date."},
+          "horizon": {"enum": ["explicit", "inferable", "none"]},
+          "horizon_years_inferred": {"type": ["number", "null"], "minimum": 0},
+          "horizon_evidence": {"type": ["string", "null"]},
+          "specificity": {"enum": ["high", "medium", "low"]},
+          "subject_control": {"enum": ["external", "partial", "own"]},
+          "confidence": {
+            "type": "object", "additionalProperties": false,
+            "required": ["type", "probability", "verbatim_confidence_language"],
+            "properties": {
+              "type": {"enum": ["explicit_probability", "qualitative", "none"]},
+              "probability": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Only a number the speaker stated. Never a translation of words."},
+              "verbatim_confidence_language": {"type": ["string", "null"], "description": "The speaker's own words of likelihood, copied from inside the quote."}
+            }
+          }
+        }
+      }
+    },
+    "candidates_considered": {"type": "integer", "minimum": 0, "description": "Forward-looking statements you weighed, including those you rejected."},
+    "cap_hit": {"type": "boolean"},
+    "estimated_total_qualifying": {"type": "integer", "minimum": 0, "description": "Equals len(candidates) unless cap_hit."}
+  }
+}

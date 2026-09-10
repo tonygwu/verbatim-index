@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Market matcher output, version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "prediction_id", "verdicts"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "prediction_id": {"type": "string", "minLength": 16, "maxLength": 16, "description": "Echo exactly the id given in the prompt."},
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["platform", "market_id", "match_type", "match_confidence", "direction", "rationale"],
+        "properties": {
+          "platform": {"enum": ["polymarket", "kalshi"]},
+          "market_id": {"type": "string", "minLength": 1, "description": "Echo the candidate's id exactly."},
+          "match_type": {"enum": ["exact", "proxy", "none"]},
+          "match_confidence": {"enum": ["high", "medium", "low"]},
+          "direction": {"enum": ["same", "inverse"]},
+          "rationale": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
