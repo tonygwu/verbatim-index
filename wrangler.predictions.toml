@@ -1,0 +1,17 @@
+# Second static-asset Worker: the predictions index. Separate name, separate
+# assets directory, separate hostname. deploy_predictions.sh always passes
+# `-c wrangler.predictions.toml`; a bare `npx wrangler deploy` still reads
+# wrangler.toml and publishes the leaderboard, never this.
+#
+# not_found_handling is "none": the page has no client-side routes, so a wrong
+# URL is a real 404 rather than a 200 carrying the whole index.
+name = "verbatim-predictions"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "./site-predictions"
+not_found_handling = "none"
+
+[[routes]]
+pattern = "verbatim-predictions.tonygwu.com"
+custom_domain = true

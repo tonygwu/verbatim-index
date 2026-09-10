@@ -20,3 +20,6 @@ site/index.html
 
 # Wrangler's local cache carries the Cloudflare account id.
 .wrangler/
+
+# Build artifact of build_predictions_site.py, deployed from disk like site/index.html.
+site-predictions/index.html
