@@ -190,6 +190,18 @@ the mix even.
   Account routing comes from the `quota_router` library, not the launcher.
 - **Never derive time from file mtime or the local clock.** Read
   `fetched_at_utc` out of the record. Loops touch files constantly.
+- **Never hand-type the judge list in a diagnostic.** Derive it from the grades
+  present. `judge_call_counts`, `judge_raw_means_blinded` and the pairwise
+  agreement were all written out as fable-plus-astra. Gemini left
+  `SHADOW_JUDGES` on 2026-09-08 and contributed 512 blinded grades to published
+  scores, and all three diagnostics kept reporting two judges for two days. The
+  leaderboard was correct the whole time and its evidence was not, so anyone
+  auditing whether the promotion took effect would have concluded the arm was
+  still shadowed. There is no longer a key naming one pair `_overall`: that name
+  is what let a single pair stand in for the panel. `judge_pair_agreement`
+  reports every pair with its own `n`, and `mean_pairwise_correlation` is the
+  one panel-level figure. Guarded by `scripts/test_judge_enumeration.py`, which
+  runs a four-judge fixture as well as a three-judge one.
 - **No clone-absolute paths in committed code.** Use
   `git rev-parse --show-toplevel` or `Path(__file__)`.
 - **Every failure gets a taxonomy entry**, never a bare count. `grade.py`
@@ -295,7 +307,11 @@ the measurement is named so a later reader can re-run it rather than trust it.
   meaningful (`sd >= 3.0`), because rescaling a flat judge amplifies noise.
   Fable currently runs 9.0 points below Astra on clarity, 4.9 on insight and
   2.4 on technical depth. What calibration cannot fix is an uneven judge MIX
-  per leader, so watch `judge_call_counts` when a quota window closes.
+  per leader, so watch `judge_call_counts` when a quota window closes. Gemini
+  runs above Fable on every dimension and above Astra on insight and technical
+  depth. Measured 2026-09-10: raw insight means are Fable 56.0, Astra 60.9,
+  Gemini 61.8. Pairwise agreement on the overall score is Astra-Fable 0.895,
+  Fable-Gemini 0.869, Astra-Gemini 0.848.
 
 - **Calibration is MARGINAL, and a residual judge-by-length effect survives it.**
   `calibrate()` matches each judge's whole-corpus distribution to the pooled one,
