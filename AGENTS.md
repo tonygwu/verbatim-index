@@ -47,7 +47,7 @@ personal one.
 | Clone | Role | What it must not do |
 |---|---|---|
 | `repo-0` | Runs the three daemons (`fetch_loop`, `happyscribe_loop`, `grade_loop`), is the **only writer** of `data/`, and the only clone that commits it. | Feature work that another clone is already doing. |
-| `repo-1`, `repo-2`, … | Code, tests, docs, analysis. Read `data/` freely. Deploy with `scripts/deploy.sh`. | Start any loop. Write under `data/`. Commit `data/`. |
+| `repo-1`, `repo-2`, … | Code, tests, docs, analysis. Read `data/` freely. Deploy with `scripts/deploy.sh`. One exception since 2026-09-10: the prediction pipeline (`extract_predictions.py`, `market_consensus.py`, `aggregate_predictions.py`, `validate_predictions.py`) writes under `data/predictions/` from any clone, because no loop touches that directory; the writer refuses every other path under `data/`. | Start any loop. Write under `data/` outside `data/predictions/`. Commit `data/`. |
 
 Why one writer: the loops rewrite `data/transcripts`, `data/grades`, `data/logs`
 and `site/index.html` every few minutes. A second clone writing there produces
@@ -69,6 +69,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requi
 .venv/bin/python scripts/test_blinding.py
 .venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
 .venv/bin/python scripts/test_render_integrity.py # invalid records, and a loud render
+for t in shared lib schema driver markets eval aggregate site; do .venv/bin/python scripts/test_predictions_$t.py; done  # predictions, no quota
 ```
 
 Python 3.12 or newer: `llm-quota-router`, which `grade.py` imports to route
@@ -660,4 +661,8 @@ new grades incomparable with the corpus already graded.
 - Published site: `site/index.html`, deployed with `npx wrangler deploy` to
   `verbatim-index.tonygwu.com`
 - Per-leader pipeline coverage: `.venv/bin/python scripts/coverage_table.py`
+- Verbatim Predictions (extract, verify, market consensus, validate, aggregate, page): skill in
+  `.claude/skills/prediction-extractor/`, records in `data/predictions/<slug>/<sid>.jsonl`, design and limits in
+  `docs/PREDICTIONS.md`, page built by `scripts/build_predictions_site.py` and deployed with
+  `bash scripts/deploy_predictions.sh` to `verbatim-predictions.tonygwu.com`
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
