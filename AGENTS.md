@@ -716,6 +716,34 @@ points to 5.7 that way.
 Documented rather than fixed, deliberately. Changing any of these now would make
 new grades incomparable with the corpus already graded.
 
+- **HappyScribe discovery admits third-person shows that YouTube discovery
+  rejects, and the corpus pays for them in judge calls.** `discover()` in
+  `fetch_happyscribe.py` applies the same `THIRD_PERSON_TITLE` and
+  `COMMENTARY_SLUG` filters as the YouTube path, and they are weaker against
+  podcast episode slugs. MEASURED on 2026-09-11, from one re-discovery run
+  against the 50-name roster: four admitted recordings were commentary ABOUT the
+  subject rather than the subject speaking, and they were caught only by the QA
+  `subject named` screen AFTER being graded.
+
+  ```
+  hs-sacha-baron-cohen-has-a-message-for-mark-zuc   subject named 12.3 /1000 (limit 1.6)
+  hs-elon-musk-begins-training-for-zuckerberg-fig   subject named 12.3 /1000
+  hs-charlamagne-tha-god-torches-the-democrats-we   subject named 13.9 /1000
+  hs-live-jeff-bezos-rocket-new-glenn-attempting    commentary on a launch
+  ```
+
+  The shapes that get through are possessive and narrative rather than
+  interrogative: "has a message for X", "begins training for X", "live: X
+  attempting". The existing patterns look for the interview forms. Cost was
+  about 15 judge calls across three judges before QA withdrew them, so this is
+  quota rather than correctness: no third-person recording reached the board.
+  A fifth was rejected separately at `oov_rate 0.6789` for being German, which
+  the language gate catches and discovery does not.
+
+  Not fixed, because both sources are currently exhausted and no discovery run
+  is pending to exercise a new pattern. Fix it before the NEXT roster expansion,
+  which is when discovery runs again and the cost repeats.
+
 - **The blinding does not work, and the header still claims it.** Judges are
   confident of the speaker's identity on 99.5% of transcripts and are right
   99.6% of the time. An experiment on 2026-09-07 built five progressively harder
