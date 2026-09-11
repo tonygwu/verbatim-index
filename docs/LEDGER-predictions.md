@@ -27,6 +27,7 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 
 | ID | Decision | Options and costs | Recommendation | If undecided |
 |---|---|---|---|---|
+| VD-3 | Whether the page gets a market-surprise column | (a) none for V0: the table stays descriptive counts, and the contemporaneous market shows per prediction inside the drawer. (b) add a surprise column, the distance between the speaker's claim and the contemporaneous market price, once the market pass has run. It needs no outcome, so it is available in V0, but 3 of 3 searched pilot records came back `no_match`, and a column blank for most rows invites ranking on noise. | (a) until the corpus market pass reports its exact-match rate; build (b) only if exact matches exceed about 20% of accepted predictions. A real forecasting score needs resolution and stays Phase 2. | (a) is what ships |
 | VD-2 | When to run the corpus verification if Fable is spent | (a) run when extraction ends and accept `auth_or_quota` failures, re-run after the reset (claude_c resets ~2026-09-12T02Z, claude_e ~2026-09-13T15Z). (b) pin `--verifier gemini` for the whole pass: one account behind two profiles, unmeasured quota, higher empty-answer rate on long windows. | (a); the pass is resumable and the taxonomy shows exactly what failed | (a) is what the handoff's next-action block does |
 
 ## Decided

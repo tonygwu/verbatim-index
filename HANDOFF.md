@@ -1,4 +1,4 @@
-# Verbatim Index — session handoff, 2026-09-11 03:10Z
+# Verbatim Index — session handoff, 2026-09-11 06:47Z
 
 Written from `repo-2` while the Verbatim Predictions corpus extraction is
 running. Every line here has a check command; do not trust one without
@@ -58,10 +58,18 @@ from repo-0: `git -C data add predictions && git -C data commit`.
 ## Live numbers at handoff time
 
 ```
+extraction: 183/682 transcripts, 174 ok, all astra, ~459 left, ETA about 16:52Z today
+            336 candidates written, 0 ungrounded
 pilot: 13 files, 26 candidates from 407 weighed, 11 accepted, 13 rejected, 2 pending
 golden eval (live): precision 1.000, recall 0.929, 0 false positives on 24 negatives
 page: deployed with the pilot's 11 predictions; index page redeployed with the cross-link
 ```
+
+Two facts the running pass cannot see. repo-0 began applying the withdrawal
+manifest at about 06:00Z, so transcripts keep disappearing under the pass; the
+corpus on disk fell from 702 to 670 within the hour. And the pass enumerated
+its file list at 02:56Z, so the newer transcripts repo-0 has fetched since are
+not in it. The follow-up extract run re-lists the corpus and picks them up.
 
 Verify: `.venv/bin/python scripts/validate_predictions.py` and
 `.venv/bin/python scripts/aggregate_predictions.py`.
