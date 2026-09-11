@@ -6,7 +6,11 @@ floor. This document re-derives each count from the corpus, answers the four
 questions the operator asked, and records a fix with its cost for each.
 
 Nothing under `data/` was written. Every re-grade below wrote to a scratch
-directory outside the repository.
+directory outside the repository. The raw records of those re-grades, 128
+grade files with the judges' raw output, the inputs, the scripts and the
+baseline board, are staged at
+`~/Code/misc/verbatim-index/experiments-inbox/2026-09-10-year-deloop/` with a
+README, for repo-0 to commit under `data/experiments/`.
 
 ## Method
 

@@ -774,5 +774,9 @@ new grades incomparable with the corpus already graded.
 - Wrong-person screen: `.venv/bin/python scripts/wrong_person_screen.py`
 - Corpus-integrity findings and their re-derivation:
   `docs/CORPUS-INTEGRITY-2026-09-10.md`, `docs/CORPUS-INTEGRITY-FOLLOWUP.md`,
-  and the withdrawal manifest `docs/withdrawals-2026-09-10.json`
+  and the withdrawal manifest `docs/withdrawals-2026-09-10.json`. The re-grade
+  records behind the follow-up wait in
+  `~/Code/misc/verbatim-index/experiments-inbox/2026-09-10-year-deloop/` for
+  repo-0 to commit under `data/experiments/`; grades are data and stay out of
+  this public repo.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
