@@ -3,7 +3,7 @@
 Standing state for the predictions product in `docs/PREDICTIONS.md`. Updated
 when an item changes state, not at poll time. Every open item carries the
 command that verifies it. Last verified 2026-09-11T04:36Z from repo-2.
-Last poll answered: 2026-09-11T04:36Z.
+Last poll answered: 2026-09-11T04:36Z. VD-1 decided 2026-09-11 (keep strict).
 
 Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<artifact>`.
 
@@ -26,13 +26,13 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 
 | ID | Decision | Options and costs | Recommendation | If undecided |
 |---|---|---|---|---|
-| VD-1 | Verifier strictness on undated claims | (a) keep: rejects "computers will write the programs" and "persistent agents soon" for lacking a date or threshold; highest precision, lowest yield. (b) loosen the undated rule to admit a named capability with no date: more records, vaguer records, and the probe's dominant false-positive class returns. | (a) for V0; revisit with human labels on real transcripts in Phase 2 | (a) stands; nothing stalls |
 | VD-2 | When to run the corpus verification if Fable is spent | (a) run when extraction ends and accept `auth_or_quota` failures, re-run after the reset (claude_c resets ~2026-09-12T02Z, claude_e ~2026-09-13T15Z). (b) pin `--verifier gemini` for the whole pass: one account behind two profiles, unmeasured quota, higher empty-answer rate on long windows. | (a); the pass is resumable and the taxonomy shows exactly what failed | (a) is what the handoff's next-action block does |
 
 ## Decided
 
 | ID | Decision | Choice | Date |
 |---|---|---|---|
+| VD-1 | Verifier strictness on undated claims | keep strict for V0; revisit with human labels in Phase 2 | 2026-09-11 |
 | VD-0a | Where predictions are written | `data/predictions/` from any clone; writer refuses other data paths | 2026-09-10 |
 | VD-0b | Extraction strategy | extract with one model, verify with a different family, accept only on agreement | 2026-09-10 |
 | VD-0c | Where the page lives | `verbatim-predictions.tonygwu.com`, its own Worker | 2026-09-10 |
