@@ -115,8 +115,9 @@ run, hit the limit, and land in the taxonomy as `auth_or_quota`, so the pass
 looks busy while producing nothing. Check `data/logs/grade_errors_blind.jsonl`
 for that label before assuming a slow pass is a healthy one.
 
-`GEMINI_USERS=tonyagents` adds a macOS user as a Gemini profile; see the
-Antigravity section for what that needs.
+`GEMINI_USERS=tonyagents` adds a macOS user as a Gemini profile, which is the
+only way to get a second Antigravity account on one machine. See the
+Antigravity section for the three preconditions and why `sudo -u` alone fails.
 
 `FABLE_ACCOUNTS` pins the Fable rotation to named accounts, for example
 `FABLE_ACCOUNTS=default`. Use it when only some accounts can serve Fable.
@@ -175,14 +176,39 @@ next refresh under the other; the operator's re-login of `~` as
 tonygwu@gmail.com at 08:25Z lasted until 08:56Z. A second HOME on one macOS
 user adds no quota. `grade.py` now prints `gemini_identities` at the end of
 every run and warns when every profile served one address. A real second
-account is a second macOS user, and `grade.py` supports that directly: a
-profile of the form `user:<name>`, listed in `GEMINI_USERS`, runs the call as
-that user under `sudo -n -u <name> -H`, in a group-writable jail under
-`/Users/Shared/verbatim-index-judge` because TMPDIR is not traversable across
-users. It needs, once: `agy` logged in under that user, that user's session
-left open so its login Keychain stays unlocked, and a sudoers rule scoped to
-the judge binary, which the pass checks for before queueing a job and names if
-missing. Guarded by `scripts/test_gemini_user_profile.py`.
+account is a second macOS user, which has its own login Keychain, and
+`grade.py` supports that as a profile of the form `user:<name>` listed in
+`GEMINI_USERS`.
+
+**`sudo -u <user>` alone does NOT work, and fails in a way that looks like a
+login problem.** MEASURED 2026-09-11: with the sudoers rule correct and the
+binary readable, the call still returned `authentication failed or timed out`,
+and its log said `You are not logged into Antigravity` followed by
+`consumerOAuth: starting OAuth flow`. A process started from another user's
+terminal sits in the wrong macOS security session, so the target user's
+Keychain is unreachable and the judge concludes it has no credential. The fix
+is `launchctl asuser <uid>`, which places the process in that user's login
+session; the same call then answered and logged `ChainedAuth: authenticated
+via keyring`. That belongs in a root-owned wrapper, `scripts/agy_as_user.sh`,
+installed to `/usr/local/libexec/agy-as-user`, because `launchctl asuser`
+needs root and the judge must then drop back to the target user.
+
+Three preconditions, all named by the pass before it queues a job:
+
+1. The judge binary sits outside any home directory. A home is mode 700, so
+   `/Users/<you>/.local/bin/agy` is unreadable to the other user and the call
+   dies with `unable to execute ...: Permission denied`. Copy it to
+   `/usr/local/bin/agy`, and repeat that copy after an Antigravity update.
+2. The wrapper is installed and has one sudoers rule:
+   `<you> ALL=(root) NOPASSWD: /usr/local/libexec/agy-as-user`.
+3. The target user is logged in, through Fast User Switching, so its login
+   Keychain is unlocked. Log that user out and every call routed to it fails.
+
+The jail for such a call lives under `/Users/Shared/verbatim-index-judge`,
+because TMPDIR is per user and not traversable by another. A directory created
+there inherits group `wheel`, which the operator is not in, so `chmod 2775`
+on it fails with EPERM; the jail is re-grouped to `staff` first. Guarded by
+`scripts/test_gemini_user_profile.py`.
 
 **There is no quota measurement, and there cannot be.** `agy` exposes no usage
 subcommand and writes no quota field to disk, so `llm-quota-router` reports both

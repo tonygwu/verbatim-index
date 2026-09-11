@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import glob
+import grp
 import hashlib
 import itertools
 import json
@@ -860,8 +861,18 @@ AGY_HOME_ROOT = Path.home() / ".agy-homes"
 GEMINI_USER_PREFIX = "user:"
 #: Where a user-profile call keeps its jail and log. TMPDIR is per user and not
 #: traversable by another, so the jail for a call that runs as someone else
-#: lives under /Users/Shared, group-writable for staff, which both users are in.
+#: lives under /Users/Shared, group-writable for a group both users are in.
 GEMINI_SHARED_JAIL = Path("/Users/Shared/verbatim-index-judge")
+#: The group both accounts belong to. A directory created under /Users/Shared
+#: inherits group `wheel`, which the operator is NOT in, so the setgid bit
+#: cannot even be set on it. The jail is therefore re-grouped explicitly.
+GEMINI_SHARED_GROUP = os.environ.get("GEMINI_SHARED_GROUP", "staff")
+#: Root-owned wrapper that runs the judge as another macOS user inside that
+#: user's login session. See scripts/agy_as_user.sh for why `sudo -u` alone
+#: does not work: it lands in the wrong security session and the target user's
+#: Keychain is unreachable, so the judge reports "You are not logged into
+#: Antigravity" and falls through to an interactive sign-in.
+GEMINI_USER_WRAPPER = os.environ.get("AGY_AS_USER_WRAPPER", "/usr/local/libexec/agy-as-user")
 
 
 def is_user_profile(profile: str) -> bool:
@@ -874,19 +885,29 @@ def profile_label(profile: str) -> str:
     return Path(profile).name or "default"
 
 
-def gemini_launch(profile: str, cmd: list[str], env: dict) -> tuple[list[str], dict]:
+def gemini_launch(profile: str, cmd: list[str], env: dict,
+                  wrapper: str = GEMINI_USER_WRAPPER) -> tuple[list[str], dict]:
     """The argv and environment that run `cmd` under one profile.
 
-    A HOME profile sets HOME. A user profile prefixes `sudo -n -u <user> -H`,
-    which sets HOME itself and resets the environment, so nothing inherited
-    from this shell can pick the account. `-n` means a missing sudoers rule
-    fails at once instead of waiting on a password prompt nobody will answer.
+    A HOME profile sets HOME, which is the only thing that selects an
+    Antigravity profile directory.
+
+    A user profile goes through the root-owned wrapper, which runs the judge
+    inside that user's login session so the judge can read that user's
+    Keychain. `sudo -n` means a missing sudoers rule fails at once rather than
+    waiting on a password prompt no worker can answer. HOME is dropped because
+    the wrapper sets it for the target user; leaving this shell's HOME in place
+    would point the judge at the wrong profile directory.
+
+    `cmd[0]` is the judge binary and is passed to the wrapper as an argument,
+    not trusted by it: the wrapper refuses any path but its own allowlisted
+    one, so a drifting --agy-bin fails loudly instead of running something else.
     """
     env = dict(env)
     if is_user_profile(profile):
         env.pop("HOME", None)
         user = profile[len(GEMINI_USER_PREFIX):]
-        return ["sudo", "-n", "-u", user, "-H"] + list(cmd), env
+        return ["sudo", "-n", wrapper, user] + list(cmd), env
     env["HOME"] = profile
     return list(cmd), env
 
@@ -899,12 +920,28 @@ def gemini_jail(profile: str, workdir: str | None, shared_root: Path = GEMINI_SH
         jail = Path(workdir) if workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "judge-jail"
         jail.mkdir(parents=True, exist_ok=True)
         return jail
-    shared_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(shared_root, 0o2775)
-    jail = shared_root / (Path(workdir).name if workdir else "judge-jail")
-    jail.mkdir(parents=True, exist_ok=True)
-    os.chmod(jail, 0o2775)
-    return jail
+    for d in (shared_root, shared_root / (Path(workdir).name if workdir else "judge-jail")):
+        d.mkdir(parents=True, exist_ok=True)
+        _share_with_group(d)
+    return shared_root / (Path(workdir).name if workdir else "judge-jail")
+
+
+def _share_with_group(path: Path, group: str = GEMINI_SHARED_GROUP) -> None:
+    """Make one directory writable by the group both accounts share.
+
+    FOUND 2026-09-11: a directory created under /Users/Shared inherits group
+    `wheel`, and chmod 2775 on it fails with EPERM because the operator is not
+    in wheel. So the group is set first, to one both users are in, and only
+    then the mode. Both steps are best-effort: a pass that cannot share the
+    jail still runs every HOME profile, and the user profile fails loudly on
+    its own check instead of here.
+    """
+    try:
+        os.chown(path, -1, grp.getgrnam(group).gr_gid)
+        os.chmod(path, 0o2775)
+    except (KeyError, OSError) as exc:  # noqa: BLE001
+        log(f"    warning: could not share {path} with group {group!r}: {exc}. "
+            f"A judge running as another user will not be able to write its log there.")
 
 
 def check_user_profiles(profiles: list[str], binary: str = "agy", runner=subprocess.run) -> None:
@@ -924,19 +961,23 @@ def check_user_profiles(profiles: list[str], binary: str = "agy", runner=subproc
         if not is_user_profile(p):
             continue
         user = p[len(GEMINI_USER_PREFIX):]
-        proc = runner(["sudo", "-n", "-u", user, "-H", binary, "--help"],
-                      capture_output=True, text=True)
+        argv, env = gemini_launch(p, [binary, "--help"], dict(os.environ))
+        proc = runner(argv, capture_output=True, text=True, env=env)
         if proc.returncode != 0:
-            me = os.environ.get("USER", "tonygwu")
+            me = os.environ.get("USER", "you")
             raise SystemExit(
-                f"Gemini profile {p!r} cannot run {binary!r} as {user} without a password "
-                f"({(proc.stderr or '').strip()[:160]}). The binary must sit where that user "
-                f"can read it, outside any home directory, and the sudoers rule must name "
-                f"that path. For example:\n"
-                f"  sudo cp {shutil.which(binary) or binary} /usr/local/bin/agy && sudo chmod 755 /usr/local/bin/agy\n"
-                f"  sudo visudo -f /etc/sudoers.d/agy-{user}   # containing:\n"
-                f"  {me} ALL=({user}) NOPASSWD: /usr/local/bin/agy\n"
-                f"then run with --agy-bin /usr/local/bin/agy (or AGY_BIN=/usr/local/bin/agy).")
+                f"Gemini profile {p!r} cannot run the judge as {user}: "
+                f"{(proc.stderr or proc.stdout or '').strip()[:200]}\n"
+                f"Three things have to hold, and the message above says which one failed:\n"
+                f"  1. the judge binary sits outside any home directory, readable by {user}:\n"
+                f"     sudo cp {shutil.which(binary) or binary} /usr/local/bin/agy && sudo chmod 755 /usr/local/bin/agy\n"
+                f"  2. the wrapper is installed, because `sudo -u` alone lands in the wrong\n"
+                f"     security session and cannot reach that user's Keychain:\n"
+                f"     sudo install -o root -g wheel -m 755 scripts/agy_as_user.sh {GEMINI_USER_WRAPPER}\n"
+                f"     sudo visudo -f /etc/sudoers.d/agy-as-user   # containing:\n"
+                f"     {me} ALL=(root) NOPASSWD: {GEMINI_USER_WRAPPER}\n"
+                f"  3. {user} is logged in, so its login Keychain is unlocked.\n"
+                f"Then run with --agy-bin /usr/local/bin/agy.")
 
 def agy_profiles(root: Path | None = None, default_home: str | None = None,
                  users: str | None = None) -> list[str]:
