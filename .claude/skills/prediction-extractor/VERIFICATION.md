@@ -58,11 +58,18 @@ referent, and it contains the claim. 8 to 60 words.
 
 ## 4. Claim fidelity
 
-`claim_faithful` is true only if the extractor's normalized claim adds no number, date, entity,
+`claim_faithful` is true only if the extractor's normalized claim adds no number, entity,
 threshold or direction that is absent from the quote and its window, and drops nothing that
-changes the meaning. A claim that turns "most" into "90%", or "in a few years" into "by 2027"
-when no year was said, is not faithful. A claim that resolves a pronoun using the window is
-faithful.
+changes the meaning. A claim that turns "most" into "90%" is not faithful. A claim that resolves
+a pronoun using the window is faithful.
+
+Dates: the extractor was told to resolve a RELATIVE phrase in the quote ("later this year",
+"next year", "within five years", "in a decade") against the statement date in the metadata.
+That resolution is faithful, and the speaker's words are kept beside it in `target_date_text`.
+The statement date is the recording's publication date, an upper bound on when the words were
+said; if the window shows the recording is clearly older, say so in `notes`, but do not fail
+fidelity for it. What is NOT faithful is a date with no phrase behind it: "in a few years"
+rendered as "by 2027", or a year invented when the quote gives none.
 
 ## 5. Confidence seen
 

@@ -86,7 +86,10 @@ and units exactly. Do not add precision the speaker did not give: "a lot more" s
   "next year", "this year", "within 18 months", "before the next election", "by re:Invent").
   Fill `target_date` (YYYY, YYYY-MM or YYYY-MM-DD, the latest date the words allow) and
   `target_date_text` (the speaker's exact words). A relative phrase such as "next year" is
-  explicit when the statement date is known; compute the date from it.
+  explicit when the statement date is known; compute the date from it, and remember that the
+  statement date is an upper bound on when the words were said. If the statement date is
+  unknown, a relative phrase gives `target_date` null and `horizon` stays `explicit` with the
+  words in `target_date_text`.
 - `inferable`: the quote has no date but the surrounding context fixes one ("that" refers to a
   named event whose date is known, "once the current fab is done"). Fill `horizon_years_inferred`
   (your best point estimate, in years from the statement date) and `horizon_evidence` (the words
