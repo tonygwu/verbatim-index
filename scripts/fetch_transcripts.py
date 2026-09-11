@@ -66,7 +66,7 @@ class Pacer:
     than the one that caused the block.
     """
 
-    def __init__(self, interval: float, max_interval: float = 90.0):
+    def __init__(self, interval: float, max_interval: float = 15.0):
         self.interval = interval
         self.max_interval = max_interval
         self._lock = threading.Lock()
@@ -84,7 +84,19 @@ class Pacer:
             time.sleep(sleep_for)
 
     def slow_down(self, factor: float = 2.0) -> float:
-        """Widen permanently. A rate that got pushed back on was too fast."""
+        """Widen permanently. A rate that got pushed back on was too fast.
+
+        One-way WITHIN a pass, and the ceiling is what keeps that honest. The
+        ceiling used to be 90s with no way to set it, which let a throttled pass
+        hide: cycle 43 on 2026-09-10 pinned the gap at 90s in its first minutes,
+        then ground for six hours over 6 of 14 leaders while throttling 158 more
+        times. Breaker never fired, because record_ok() clears its consecutive
+        counter on every success and at 90s most requests do succeed. So a
+        refusing endpoint read as slow rather than stopping, which is the exact
+        case Breaker exists to catch, and nobody was ever asked to rotate the IP.
+        A ceiling low enough to stay uncomfortable keeps the throttles coming
+        until Breaker trips and the loop asks for the cheap fix.
+        """
         with self._lock:
             self.interval = min(self.interval * factor, self.max_interval)
             return self.interval
@@ -464,6 +476,11 @@ def main() -> int:
     ap.add_argument("--min-interval", type=float, default=2.0,
                     help="Minimum seconds between caption requests across ALL workers, jittered. "
                          "The yt-dlp wiki suggests 5 to 10 seconds as the remedy for HTTP 429.")
+    ap.add_argument("--max-interval", type=float, default=15.0,
+                    help="Ceiling the shared gap may widen to when the endpoint pushes back. "
+                         "Deliberately LOW. Recovery here is an IP rotation, not patience, so a "
+                         "throttled pass should keep tripping the circuit breaker and ask for a "
+                         "new exit rather than grinding quietly at a comfortable pace.")
     args = ap.parse_args()
 
     out_dir = Path(args.out)
@@ -490,7 +507,7 @@ def main() -> int:
 
     log(f"manifest: {len(sources)} unique sources ({dupes} duplicate video_id rows dropped)")
 
-    pacer = Pacer(args.min_interval)
+    pacer = Pacer(args.min_interval, max_interval=args.max_interval)
     breaker = Breaker()
     results: list[dict] = []
 

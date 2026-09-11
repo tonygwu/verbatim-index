@@ -35,6 +35,12 @@ BASE_SLEEP="${BASE_SLEEP:-120}"       # 2 min between productive cycles
 MAX_SLEEP="${MAX_SLEEP:-900}"         # 15 min ceiling; the fix is a new IP, not patience
 PROBE_EVERY="${PROBE_EVERY:-60}"      # re-probe every minute so a rotation is seen fast
 PACE="${PACE:-2}"                     # seconds between caption requests
+# Ceiling the fetcher's shared gap may widen to under throttling. Same economics
+# as MAX_SLEEP above: the fix is a new IP, not patience. Kept low on purpose so a
+# throttled pass stays uncomfortable, keeps tripping the circuit breaker, and
+# raises NEEDS_IP_ROTATION instead of grinding. It was hardcoded at 90s and
+# unreachable from here, which cost six hours on cycle 43 (2026-09-10).
+PACE_CEILING="${PACE_CEILING:-15}"    # widening stops here; then trip, do not crawl
 WORKERS="${WORKERS:-6}"
 STATE=data/logs/fetch_loop_state.jsonl
 ROTATE_FLAG=data/logs/NEEDS_IP_ROTATION
@@ -93,7 +99,7 @@ PYEOF
 sleep_for=$BASE_SLEEP
 cycle=0
 barren=0
-say "fetch loop started. target ${TARGET}/leader, pace ${PACE}s, ${WORKERS} workers"
+say "fetch loop started. target ${TARGET}/leader, pace ${PACE}s (ceiling ${PACE_CEILING}s), ${WORKERS} workers"
 
 while true; do
   cycle=$((cycle + 1))
@@ -148,6 +154,7 @@ while true; do
     --out data/transcripts \
     --errors "data/logs/fetch_errors_cycle${cycle}.jsonl" \
     --workers "$WORKERS" --target-per-leader "$TARGET" --min-interval "$PACE" \
+    --max-interval "$PACE_CEILING" \
     --have-dir data/transcripts_blind \
     >/dev/null 2>>data/logs/fetch_loop.err
   after=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
