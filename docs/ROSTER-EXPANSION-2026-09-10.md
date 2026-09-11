@@ -224,6 +224,36 @@ scored-but-unranked. That is a weaker action than the operator asked for. He is
 removed from the roster here, which removes him from `by_slug` and therefore from
 the board entirely.
 
+## Two traps in the fetch path, both found by following this document
+
+The first version of the runbook below had three defects. All three were caught
+by `repo-0` while applying it, and all three are fixed above. They are recorded
+because each is a silent failure rather than an error.
+
+**`discover_sources.py` is not the fetch input.** It writes
+`data/sources/discovered.json`; `fetch_loop.sh` reads `data/sources/all.jsonl`
+and never reads the other file. `sources_to_manifest.py` bridges them. Without
+that step the loop reported `cycle 1: 614 transcripts, 39/50 leaders at target`
+and then `no new transcripts this pass`: it knew eleven leaders were short and
+fetched nothing, because the manifest still held 662 rows for the old 40 and not
+one row for any new name. A quiet no-op, not an error.
+
+**A withdrawn leader survives in `discovered.json` and the rebuild puts him
+back.** `--only` rewrites just the named leaders' blocks, so `cc-wei` stayed in
+that file after leaving the roster, and the first manifest rebuild returned 12
+`cc-wei` rows. Eleven carry a `.json.superseded` marker and would have been
+skipped. The twelfth, `cc-wei/norush-invest-9-odmj`, was never fetched and has no
+marker, so the fetcher would have downloaded it and
+`normalize_transcripts.py` would then have refused a transcript with no roster
+entry, **breaking both loops on every cycle from then on**. Step 6b exists for
+this.
+
+**`--qa` is not optional.** `grade_loop.sh:96` passes
+`--qa data/logs/transcript_qa.json` to the same script. The runbook omitted it,
+so a manual run re-derived 52 QA-rejected transcripts and the loop's next cycle
+removed them again: 116 files churned through git for a net corpus change of
+zero.
+
 ## Applying this, in repo-0 only
 
 The loops rewrite `data/` every few minutes. Stop them first.
@@ -245,24 +275,55 @@ ST=~/Code/misc/verbatim-index/roster-expansion-2026-09-10
 cp $ST/final.json   data/roster/final.json
 cp $ST/aliases.json data/sources/aliases.json
 
-# 5. let the next grade_loop cycle prune the derived copies and the grades, or
-#    force it now
+# 5. prune the derived copies and the grades, in BOTH modes.
+#    --qa IS REQUIRED. grade_loop.sh:96 passes it; a run without it re-derives
+#    every QA-rejected transcript, and the loop's next cycle deletes them again.
+#    Cost is 116 files churned through git for a net corpus change of zero.
 .venv/bin/python scripts/normalize_transcripts.py \
     --transcripts data/transcripts --roster data/roster/final.json \
     --repairs data/sources/repairs.json --aliases data/sources/aliases.json \
+    --qa data/logs/transcript_qa.json \
     --mode blinded --out data/transcripts_blind --grades data/grades \
     --log data/logs/normalize_blinded.json
 .venv/bin/python scripts/normalize_transcripts.py \
     --transcripts data/transcripts --roster data/roster/final.json \
     --repairs data/sources/repairs.json --aliases data/sources/aliases.json \
+    --qa data/logs/transcript_qa.json \
     --mode open --out data/transcripts_open --grades data/grades \
     --log data/logs/normalize_open.json
 
-# 6. discover sources for the 11 new leaders only
+# 6a. discover sources for the 11 new leaders only
 .venv/bin/python scripts/discover_sources.py --roster data/roster/final.json \
     --out data/sources/discovered.json --target 14 --workers 8 \
     --only tobi-lutke,michael-saylor,eric-schmidt,ilya-sutskever,aaron-levie,\
 dylan-field,amjad-masad,george-hotz,greg-brockman,vlad-tenev,alexandr-wang
+
+# 6b. DROP THE WITHDRAWN LEADER FROM discovered.json BEFORE rebuilding the
+#     manifest. discover_sources.py --only leaves every other leader's block
+#     untouched, so cc-wei survives there even though he is off the roster, and
+#     the rebuild would put his rows back. See "Two traps in the fetch path".
+python3 - <<'PYEOF'
+import json
+p = "data/sources/discovered.json"
+d = json.load(open(p))
+roster = {x["slug"] for x in json.load(open("data/roster/final.json"))["roster"]}
+if isinstance(d, list):
+    kept = [e for e in d if e.get("leader_slug", e.get("slug")) in roster]
+else:
+    kept = {k: v for k, v in d.items() if k in roster}
+json.dump(kept, open(p, "w"), indent=1)
+print("discovered.json now holds", len(kept), "leaders")
+PYEOF
+
+# 6c. REBUILD THE FETCH MANIFEST. fetch_loop.sh reads data/sources/all.jsonl and
+#     never reads discovered.json, so without this the new leaders are never
+#     fetched and the loop says "no new transcripts this pass" with no error.
+#     sources_to_manifest.py also REWRITES aliases.json and repairs.json, so send
+#     those to scratch and re-check the installed aliases.json afterwards.
+.venv/bin/python scripts/sources_to_manifest.py \
+    --sources data/sources/discovered.json --manifest data/sources/all.jsonl \
+    --aliases /tmp/aliases-scratch.json --repairs /tmp/repairs-scratch.json
+shasum -a 256 data/sources/aliases.json | cut -c1-16   # must still be 4126314c60fab7a2
 
 # 7. restart the loops with TARGET=14, then check
 bash scripts/status.sh
