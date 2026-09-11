@@ -73,8 +73,47 @@ def retire(root: Path, slug: str, sid: str, apply: bool) -> dict:
     return {"status": "failed", "detail": "source not found on any shelf"}
 
 
+def normalized_at(root: Path, slug: str, sid: str) -> str | None:
+    """When the derived copies of this recording were last written, in UTC.
+
+    Read out of the record, never from a file mtime, because the loops touch
+    these files every cycle. Returns None for a record written before
+    normalize_transcripts.py began stamping this.
+    """
+    stamps = []
+    for mode in ("transcripts_blind", "transcripts_open"):
+        p = root / "data" / mode / slug / f"{sid}.json"
+        if not p.exists():
+            continue
+        try:
+            stamps.append((json.loads(p.read_text()).get("normalization") or {}).get("normalized_at_utc"))
+        except (OSError, ValueError):
+            continue
+    live = [s for s in stamps if s]
+    return max(live) if live else None
+
+
 def regrade(root: Path, slug: str, sid: str, apply: bool) -> dict:
-    """Orphan every grade for one recording so the loop makes fresh ones."""
+    """Orphan every grade for one recording so the loop makes fresh ones.
+
+    A grade written AFTER the derived text was last normalized already
+    describes the current text, so orphaning it throws away good work and buys
+    a re-grade of something that does not need one.
+
+    FOUND 2026-09-11: nine re-grade entries in the 2026-09-10 manifest were
+    already satisfied. repo-0 had pulled the paragraph-loop collapse, the loop
+    re-normalized and re-graded, and the new grades read the collapsed text.
+    The clearest evidence was in the judges' own notes: the old Fable grade of
+    sam-altman/the-economic-times-vfilis said "the same eight-minute interview
+    repeats about 39 times", and the new one said "real content runs roughly
+    nine to ten minutes". Applying the manifest at that point would have
+    orphaned 27 fresh grades and spent 27 judge calls remaking them.
+
+    So a re-grade skips when every live grade post-dates the normalization.
+    A record with no `normalized_at_utc`, written before that stamp existed,
+    cannot be judged this way and proceeds, because refusing on a missing
+    field would silently stop withdrawing the older half of the corpus.
+    """
     grades = root / "data" / "grades"
     hits = [p for p in grades.glob(f"*/{slug}/{sid}__*.json") if "_raw" not in p.parts]
     if not hits:
@@ -83,6 +122,20 @@ def regrade(root: Path, slug: str, sid: str, apply: bool) -> dict:
             return {"status": "skipped", "detail": "no live grades; already orphaned",
                     "count": len(already)}
         return {"status": "failed", "detail": "no grades found for this recording"}
+
+    stamp = normalized_at(root, slug, sid)
+    if stamp:
+        graded = []
+        for p in hits:
+            try:
+                graded.append(json.loads(p.read_text()).get("graded_at_utc") or "")
+            except (OSError, ValueError):
+                graded.append("")
+        if graded and all(g > stamp for g in graded):
+            return {"status": "skipped", "count": len(hits),
+                    "detail": f"all {len(hits)} grades post-date the normalization at "
+                              f"{stamp}, so they already describe the current text"}
+
     for p in hits:
         if apply:
             p.rename(str(p) + ".orphaned")

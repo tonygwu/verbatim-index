@@ -268,59 +268,5 @@
   "source_id": "macvoicestv-37nach",
   "action": "retire",
   "reason": "about the subject, subject never speaks; every judge at share [0, 0, 0]; already off the board"
- },
- {
-  "leader_slug": "sam-altman",
-  "source_id": "the-economic-times-vfilis",
-  "action": "regrade",
-  "reason": "96.5% repeated text; collapse_paragraph_loops shortens it 64068 -> 1803 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "sam-altman",
-  "source_id": "ani-news-ulh6ww",
-  "action": "regrade",
-  "reason": "94.4% repeated text; collapse_paragraph_loops shortens it 27811 -> 1371 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "dario-amodei",
-  "source_id": "india-today-global-jny7oq",
-  "action": "regrade",
-  "reason": "80.6% repeated text; collapse_paragraph_loops shortens it 6118 -> 1098 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "demis-hassabis",
-  "source_id": "ht-india-mg8tpp",
-  "action": "regrade",
-  "reason": "78.9% repeated text; collapse_paragraph_loops shortens it 42995 -> 8226 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "sam-altman",
-  "source_id": "cnbc-tv18-on-bjz",
-  "action": "regrade",
-  "reason": "50.4% repeated text; collapse_paragraph_loops shortens it 12206 -> 5897 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "sundar-pichai",
-  "source_id": "tracy-heffernan-kogow7",
-  "action": "regrade",
-  "reason": "45.0% repeated text; collapse_paragraph_loops shortens it 3603 -> 1972 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "sergey-brin",
-  "source_id": "badbellabear-9uzqfz",
-  "action": "regrade",
-  "reason": "36.2% repeated text; collapse_paragraph_loops shortens it 5137 -> 3210 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "sergey-brin",
-  "source_id": "leena-buban-5ejtuf",
-  "action": "regrade",
-  "reason": "10.2% repeated text; collapse_paragraph_loops shortens it 7581 -> 6761 words, so the existing grades describe text that is no longer on disk"
- },
- {
-  "leader_slug": "reed-hastings",
-  "source_id": "tim-ferriss-x6-sfu",
-  "action": "regrade",
-  "reason": "6.1% repeated text; collapse_paragraph_loops shortens it 11675 -> 10929 words, so the existing grades describe text that is no longer on disk"
  }
 ]

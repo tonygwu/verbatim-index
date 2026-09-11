@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -562,6 +563,12 @@ def main() -> int:
             rec_out["word_count"] = len(text.split())
         rec_out["normalization"] = {
             "mode": args.mode,
+            # When this derived copy was written, in UTC, read from the clock
+            # and never from a file mtime: the loops touch these files every
+            # cycle. It is what lets a later step tell a grade of THIS text
+            # apart from a grade of the text this replaced, which is the
+            # difference between a needed re-grade and 27 wasted judge calls.
+            "normalized_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "loop_collapse": loopfix,
             "paragraph_loop_collapse": parafix,
             "repairs_applied": applied,

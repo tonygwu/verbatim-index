@@ -15,7 +15,7 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 | CI-3 | Share cutoff averaged a zero away | **succeeded**, any-judge-zero rule pushed (60ec078), live in repo-0 | `git -C ../repo-0 log --oneline -1` is at or after 60ec078 |
 | CI-4 | Caption looping, 10 transcripts | **succeeded**, collapse pushed (b348d0f), live in repo-0; re-grade of the 9 is inside CI-6 | `.venv/bin/python scripts/test_loop_collapse.py` |
 | CI-5 | Leaderboard floor of 5 transcripts | **succeeded** (fork, 170f908), live in repo-0 | `.venv/bin/python scripts/test_rank_floor.py` |
-| CI-6 | Withdraw 45 recordings and re-grade 9, per `docs/withdrawals-2026-09-10.json` | **blocked-on-repo-0 running** `scripts/withdraw_sources.py docs/withdrawals-2026-09-10.json --apply`. C.C. Wei's 10 already retired and pruned; the other 35 retirements and 9 re-grades not yet applied. | `.venv/bin/python scripts/withdraw_sources.py docs/withdrawals-2026-09-10.json \| head -1` (2026-09-11T02:54Z: `done 44, skipped 10, failed 0`, i.e. not applied) |
+| CI-6 | Withdraw the recordings in `docs/withdrawals-2026-09-10.json` | **attempted**: 41 of 45 retirements already applied by repo-0. 4 remain, all Happyscribe sources. The 9 re-grade entries were REMOVED 2026-09-11, verified already satisfied: repo-0's loop re-normalized and re-graded the looped transcripts, and the new grades read the collapsed text. Applying them would have orphaned 27 fresh grades. | `.venv/bin/python scripts/withdraw_sources.py docs/withdrawals-2026-09-10.json \| head -1` (2026-09-11T06:05Z: `attempted 45, done 4, skipped 41`) |
 | CI-7 | Re-grade records for CI-1 and CI-4 into the private data repo | **blocked-on-repo-0 committing** `~/Code/misc/verbatim-index/experiments-inbox/2026-09-10-year-deloop/` under `data/experiments/` | `ls ~/Code/misc/verbatim-index/experiments-inbox/2026-09-10-year-deloop/` shows 7 entries |
 | CI-8 | repo-0 pull of the year fix and the Gemini identity guard | **blocked-on-repo-0 pulling**. repo-0 is at f5971da; the fix is 476d973, the ledger f83bcb6 and later. Until then new grades still read "Approximate year: 2024" | `git -C ../repo-0 log --oneline -1` |
 | CI-9 | Gemini: two profiles serve one account (shared Keychain item) | **succeeded 2026-09-11**: the two accounts are now separate, see CI-14. The warning in `grade.py` stays as the guard. Since 2026-09-10T09:00Z: 115 Gemini grades, all gptwufamily@gmail.com | `python3 -c` tally of `telemetry.profile_identity` over `data/grades/gemini` |
@@ -50,5 +50,7 @@ If undecided: both sit unused; the next wrong-person recording scores until some
 - 2026-09-10: leaderboard floor is 5, tied to the high-confidence band (fork).
 
 ## Poll log
+
+- 2026-09-11T06:05Z: repo-0 is at b87b519 and its grade loop runs with `GEMINI_USERS=tonyagents`, so CI-14 is live. CI-6 is down to 4 Happyscribe retirements; its 9 re-grades were verified satisfied and removed. CI-7 still waits: `data/experiments/` does not exist.
 
 - 2026-09-11T02:54Z: state above verified; delta since 2026-09-10T09:40Z: repo-0 pulled to f5971da, C.C. Wei's derived copies pruned, 115 more Gemini grades all on one account, nothing else moved.

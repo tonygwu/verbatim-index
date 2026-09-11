@@ -88,6 +88,37 @@ with tempfile.TemporaryDirectory() as td:
     t2 = ws.run(root, MANIFEST, apply=True)
     check("a second apply is all skipped or failed, never done again", t2["done"] == 0, str(t2["done"]))
 
+print("a re-grade that is already satisfied is skipped, not repeated")
+with tempfile.TemporaryDirectory() as td:
+    root = Path(td) / "repo-0"; tree(root, "repo-0")
+    for mode in ("transcripts_blind", "transcripts_open"):
+        d = root / "data" / mode / "x"; d.mkdir(parents=True)
+        (d / "c.json").write_text(json.dumps({"leader_slug": "x", "source_id": "c", "text": "hi",
+                                              "normalization": {"normalized_at_utc": "2026-09-11T05:00:00Z"}}))
+    for j in ("fable", "astra", "gemini"):
+        p = root / "data" / "grades" / j / "x" / f"c__{j}__blinded__r0.json"
+        p.write_text(json.dumps({"graded_at_utc": "2026-09-11T06:00:00Z"}))
+    r = ws.regrade(root, "x", "c", apply=False)
+    check("grades newer than the normalization are left alone",
+          r["status"] == "skipped" and "post-date" in r["detail"], str(r))
+    for j in ("fable", "astra", "gemini"):
+        p = root / "data" / "grades" / j / "x" / f"c__{j}__blinded__r0.json"
+        p.write_text(json.dumps({"graded_at_utc": "2026-09-11T04:00:00Z"}))
+    r = ws.regrade(root, "x", "c", apply=False)
+    check("grades older than the normalization are re-graded", r["status"] == "done", str(r))
+    for j in ("fable", "astra", "gemini"):
+        p = root / "data" / "grades" / j / "x" / f"c__{j}__blinded__r0.json"
+        p.write_text(json.dumps({"graded_at_utc": "2026-09-11T06:00:00Z"}))
+    (root / "data" / "transcripts_blind" / "x" / "c.json").write_text(json.dumps(
+        {"leader_slug": "x", "source_id": "c", "text": "hi", "normalization": {}}))
+    (root / "data" / "transcripts_open" / "x" / "c.json").write_text(json.dumps(
+        {"leader_slug": "x", "source_id": "c", "text": "hi", "normalization": {}}))
+    r = ws.regrade(root, "x", "c", apply=False)
+    check("a record with no normalization stamp proceeds, rather than silently refusing",
+          r["status"] == "done", str(r))
+    check("normalized_at reads the stamp out of the record, never a file mtime",
+          "st_mtime" not in (REPO / "scripts" / "withdraw_sources.py").read_text())
+
 print("clone guard")
 with tempfile.TemporaryDirectory() as td:
     root = Path(td) / "repo-3"; tree(root, "repo-0")
@@ -114,10 +145,12 @@ if man.exists():
           all(all(k in e for k in ("leader_slug", "source_id", "action", "reason")) for e in entries))
     check("actions are known", all(e["action"] in ws.ACTIONS for e in entries))
     check("no recording is listed twice", len(keys) == len(entries))
-    # 9, not 10: brian-armstrong/eth-us-8d2nbg is both looped and wrong-person,
-    # and a retirement makes its re-grade moot.
-    check("45 retirements and 9 re-grades",
-          sum(e["action"] == "retire" for e in entries) == 45 and sum(e["action"] == "regrade" for e in entries) == 9,
+    # 45 retirements and no re-grades. The manifest carried 9 re-grades for the
+    # looped transcripts; VERIFIED 2026-09-11 that repo-0's loop had already
+    # re-normalized and re-graded them, so they were removed rather than left
+    # to orphan 27 fresh grades. regrade() now refuses that case on its own.
+    check("45 retirements and no stale re-grades",
+          sum(e["action"] == "retire" for e in entries) == 45 and sum(e["action"] == "regrade" for e in entries) == 0,
           f"retire={sum(e['action']=='retire' for e in entries)} regrade={sum(e['action']=='regrade' for e in entries)}")
 else:
     check("docs/withdrawals-2026-09-10.json exists", False)
