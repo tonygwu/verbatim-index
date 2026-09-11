@@ -29,10 +29,29 @@ CANDS=data/sources/happyscribe_candidates.json
 stamp(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
 say(){ printf '[%s] %s\n' "$(stamp)" "$*"; }
 
-# Discovery walks 38 sitemaps, so it is done once and reused. Delete the
-# candidates file to force a refresh when new episodes are worth picking up.
-if [ ! -s "$CANDS" ]; then
-  say "no candidate file; running discovery"
+# Discovery walks 38 sitemaps, so it is not repeated for its own sake. It IS
+# repeated when the roster gains a leader the pool has never been searched for,
+# because the pool is derived from the roster and has to track it.
+#
+# This used to read `if [ ! -s "$CANDS" ]`, so the pool was built once and the
+# roster could move underneath it forever. It did: the roster grew from 40 to 50
+# on 2026-09-10 and eleven leaders were never searched, while C.C. Wei stayed in
+# the pool after leaving the study. This loop reported COMPLETE throughout,
+# truthfully, because every candidate it knew of had been fetched. It knew of
+# none for those eleven, and no log line said so. The operator found it by asking.
+#
+# A leader present with an EMPTY list counts as searched. Larry Ellison, Michael
+# Dell and Sergey Brin were searched and genuinely have no podcast appearances,
+# so treating empty as unsearched would re-walk all 38 sitemaps every cycle.
+unsearched=$($PY scripts/fetch_happyscribe.py --report-unsearched \
+    --roster data/roster/final.json --candidates "$CANDS" \
+    2>>data/logs/happyscribe_loop.err)
+if [ ! -s "$CANDS" ] || [ -n "$unsearched" ]; then
+  if [ -n "$unsearched" ]; then
+    say "roster has unsearched leaders, re-running discovery: ${unsearched}"
+  else
+    say "no candidate file; running discovery"
+  fi
   $PY scripts/fetch_happyscribe.py --discover --roster data/roster/final.json \
       --candidates "$CANDS" --interval "$INTERVAL" >/dev/null 2>>data/logs/happyscribe_loop.err
 fi

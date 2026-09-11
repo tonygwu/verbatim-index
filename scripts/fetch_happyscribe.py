@@ -19,7 +19,9 @@ dedupe_transcripts.py. This script never decides what to keep; it only fetches.
 
 Usage:
   fetch_happyscribe.py --discover --roster data/roster/final.json \
-      --out data/sources/happyscribe_candidates.json
+      --candidates data/sources/happyscribe_candidates.json
+  fetch_happyscribe.py --report-unsearched --roster data/roster/final.json \
+      --candidates data/sources/happyscribe_candidates.json
   fetch_happyscribe.py --fetch --candidates data/sources/happyscribe_candidates.json \
       --out data/transcripts_hs --target-per-leader 5
 """
@@ -123,6 +125,35 @@ COMMENTARY_SLUG = re.compile(
 def get(session: requests.Session, url: str, pacer: Pacer, timeout: int = 60) -> requests.Response:
     pacer.wait()
     return session.get(url, timeout=timeout, allow_redirects=True)
+
+
+def unsearched_leaders(roster_path, pool_path) -> tuple[list[str], list[str]]:
+    """Which roster slugs the candidate pool has never been searched for.
+
+    Returns (unsearched, stale). The pool is DERIVED from the roster, so it has
+    to track it. happyscribe_loop.sh used to run discovery only when the pool
+    file was missing, which meant the roster could move underneath it forever.
+    It did: the roster grew from 40 to 50 on 2026-09-10 and eleven leaders were
+    never searched, while C.C. Wei stayed in the pool after being removed from
+    the study. The loop reported COMPLETE the whole time, truthfully, because
+    every candidate it knew of had been fetched. It simply knew of none for them.
+
+    A leader PRESENT with an empty list counts as SEARCHED. Larry Ellison,
+    Michael Dell and Sergey Brin were searched and genuinely have no podcast
+    appearances, so treating empty as unsearched would re-walk 38 sitemaps every
+    cycle forever and hide the real gap behind constant activity.
+
+    An absent or empty pool file means nobody has been searched, rather than an
+    error: that is the first-run case the loop already handles.
+    """
+    roster = [r["slug"] for r in json.loads(Path(roster_path).read_text())["roster"]]
+    pool_path = Path(pool_path)
+    pool: dict = {}
+    if pool_path.is_file() and pool_path.stat().st_size:
+        pool = json.loads(pool_path.read_text())
+    unsearched = [s for s in roster if s not in pool]
+    stale = [k for k in pool if k not in roster]
+    return unsearched, sorted(stale)
 
 
 def discover(roster: list[dict], session: requests.Session, pacer: Pacer,
@@ -338,10 +369,27 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--max-sitemaps", type=int, default=40)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--report-unsearched", action="store_true",
+                    help="Print the roster slugs absent from the candidate pool and exit. "
+                         "The pool is derived from the roster, so the loop uses this to notice "
+                         "a roster change instead of assuming one never happens.")
     args = ap.parse_args()
 
     session = make_session()
     pacer = Pacer(args.interval)
+
+    if args.report_unsearched:
+        # Space-separated on stdout so the loop can test it for emptiness, with
+        # the detail on stderr so a human reading the log sees who and why.
+        unsearched, stale = unsearched_leaders(args.roster, args.candidates)
+        if stale:
+            print(f"pool holds {len(stale)} leader(s) no longer on the roster: "
+                  f"{', '.join(stale)}", file=sys.stderr)
+        if unsearched:
+            print(f"{len(unsearched)} roster leader(s) never searched: "
+                  f"{', '.join(unsearched)}", file=sys.stderr)
+        print(" ".join(unsearched))
+        return 0
 
     if args.discover:
         roster = json.loads(Path(args.roster).read_text())["roster"]
@@ -359,7 +407,7 @@ def main() -> int:
         return 0
 
     if not args.fetch:
-        ap.error("pass --discover or --fetch")
+        ap.error("pass --discover, --fetch or --report-unsearched")
 
     cands = json.loads(Path(args.candidates).read_text())
     out_dir = Path(args.out)
