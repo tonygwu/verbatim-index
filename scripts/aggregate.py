@@ -570,6 +570,24 @@ def main() -> int:
     excluded = [g for g in grades if g.get("_excluded")]
     grades = [g for g in grades if not g.get("_excluded")]
 
+    # Refusals come out BEFORE the scorable filter, for the same reason the
+    # invalid records above do: a judge who declined to score a recording should
+    # not get a vote on whether that recording is scorable.
+    #
+    # This split used to run AFTER filter_unscorable and the guard below. A
+    # refusal carries no subject_speech_share_pct, because the judge never read
+    # the recording that way, and filter_unscorable works per TRANSCRIPT: when
+    # the other judges put the subject at 0 the whole transcript is dropped, and
+    # the refusal rides along into `unscorable` with no share of its own. The
+    # guard then correctly refused to publish. On 2026-09-11 astra declined
+    # mark-zuckerberg/hs-sacha-baron-cohen-has-a-message-for-mark-zuc, rightly,
+    # since the recording is Kara Swisher interviewing Sacha Baron Cohen ABOUT
+    # Zuckerberg, who never speaks. aggregate.py then died on three consecutive
+    # cycles while results.json and site/index.html kept serving the last build
+    # that succeeded. Guarded by scripts/test_refusal_ordering.py.
+    refusals = [g for g in grades if g.get("refused")]
+    grades = [g for g in grades if not g.get("refused")]
+
     grades, unscorable = filter_unscorable(grades, MIN_SUBJECT_SHARE)
     # Every record here has passed schema validation, so it HAS a share. The
     # subscript stays a subscript on purpose: a missing key means a record that
@@ -589,8 +607,6 @@ def main() -> int:
         "score_it_would_have_contributed": g["grade"].get("overall"),
     } for g in unscorable]
 
-    refusals = [g for g in grades if g.get("refused")]
-    grades = [g for g in grades if not g.get("refused")]
     refusal_breakdown: dict[str, dict] = {}
     for g in refusals:
         e = refusal_breakdown.setdefault(g["leader_slug"], {"count": 0, "judges": set(), "reason": ""})

@@ -161,13 +161,27 @@ def run_aggregate(script: Path, grades: Path, roster: Path, out: Path,
 def build_prefix_copy(tmp: Path) -> Path | None:
     """Rebuild the pre-fix ordering from today's source, or return None."""
     src = (REPO / "scripts" / "aggregate.py").read_text()
-    split = '''    excluded = [g for g in grades if g.get("_excluded")]
-    grades = [g for g in grades if not g.get("_excluded")]
-
-    grades, unscorable = filter_unscorable'''
-    if split not in src:
+    # Two splits now sit above filter_unscorable: the invalid records, and the
+    # refusals lifted there on 2026-09-11 (see test_refusal_ordering.py). The
+    # pre-fix ordering had BOTH below it, so both are removed here and put back
+    # where they used to live. Matched by pattern rather than by literal so that
+    # a comment added between them does not silently disable this whole file.
+    m = re.search(
+        r'    excluded = \[g for g in grades if g\.get\("_excluded"\)\]\n'
+        r'.*?'
+        r'    grades, unscorable = filter_unscorable',
+        src, re.S)
+    if not m:
         return None
-    src = src.replace(split, "    grades, unscorable = filter_unscorable", 1)
+    src = src[:m.start()] + "    grades, unscorable = filter_unscorable" + src[m.end():]
+    # Refusals went back to just above their breakdown, which is where they were.
+    anchor = "    refusal_breakdown: dict[str, dict] = {}"
+    if anchor not in src:
+        return None
+    src = src.replace(anchor,
+                      '    refusals = [g for g in grades if g.get("refused")]\n'
+                      '    grades = [g for g in grades if not g.get("refused")]\n'
+                      + anchor, 1)
     guard_start = src.find('    for g in unscorable:\n        if "subject_speech_share_pct" not in')
     report_start = src.find("    unscorable_report = [{")
     if -1 in (guard_start, report_start) or guard_start > report_start:
