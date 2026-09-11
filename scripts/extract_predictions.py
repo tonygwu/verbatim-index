@@ -162,6 +162,23 @@ def paths_for(out: Path, slug: str, sid: str) -> tuple[Path, Path]:
     return out / slug / f"{sid}.jsonl", out / slug / f"{sid}.meta.json"
 
 
+def read_transcript(rec_path: Path, tid: str) -> dict:
+    """Load the transcript, or fail with a label that names what is missing.
+
+    repo-0 retires recordings while a pass runs, so a file listed at launch can
+    be gone by the time a worker reaches it. That is a withdrawn transcript, not
+    a model or CLI failure, and the taxonomy must say so.
+    """
+    try:
+        rec = json.loads(rec_path.read_text())
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{L.E_TRANSCRIPT_MISSING}: {tid} is no longer on disk at {rec_path}") from exc
+    if (rec["leader_slug"], rec["source_id"]) != tuple(tid.split("/", 1)):
+        raise RuntimeError(f"{L.E_TRANSCRIPT_MISSING}: {rec_path} holds "
+                           f"{rec['leader_slug']}/{rec['source_id']}, not {tid}")
+    return rec
+
+
 def read_meta(meta_path: Path) -> dict:
     if meta_path.exists():
         return json.loads(meta_path.read_text())
@@ -229,9 +246,10 @@ def ground_candidates(rec: dict, roster_entry: dict | None, obj: dict, provenanc
 def extract_one(job: dict) -> dict:
     t0 = time.time()
     args, rec_path = job["args"], Path(job["path"])
-    rec = json.loads(rec_path.read_text())
-    slug, sid = rec["leader_slug"], rec["source_id"]
-    tid = f"{slug}/{sid}"
+    # The id comes from the path, so an excluded or withdrawn transcript is
+    # skipped without opening a file repo-0 may have deleted since the listing.
+    tid = L.transcript_id_from_path(rec_path)
+    slug, sid = tid.split("/", 1)
     jsonl_path, meta_path = paths_for(job["out"], slug, sid)
     meta = read_meta(meta_path)
     meta["transcript_id"] = tid
@@ -246,6 +264,7 @@ def extract_one(job: dict) -> dict:
         return {**base, "status": "excluded"}
     if meta["extract"].get("status") == "ok" and not args.force:
         return {**base, "status": "cached"}
+    rec = read_transcript(rec_path, tid)
 
     workdir = job["workroot"] / f"{slug}-{sid}__extract__{job['run_id']}"
     workdir.mkdir(parents=True, exist_ok=True)
@@ -329,9 +348,8 @@ def apply_verdicts(records: list[dict], verdicts: list[dict], provenance: dict, 
 def verify_one(job: dict) -> dict:
     t0 = time.time()
     args, rec_path = job["args"], Path(job["path"])
-    rec = json.loads(rec_path.read_text())
-    slug, sid = rec["leader_slug"], rec["source_id"]
-    tid = f"{slug}/{sid}"
+    tid = L.transcript_id_from_path(rec_path)
+    slug, sid = tid.split("/", 1)
     jsonl_path, meta_path = paths_for(job["out"], slug, sid)
     meta = read_meta(meta_path)
     base = {"id": tid, "stage": "verify", "run": job["run_id"]}
@@ -339,6 +357,7 @@ def verify_one(job: dict) -> dict:
         return {**base, "status": "skipped", "reason": f"extract status {meta['extract'].get('status')}"}
     if meta["verify"].get("status") in ("ok", "nothing_to_verify") and not args.force:
         return {**base, "status": "cached"}
+    rec = read_transcript(rec_path, tid)
     records = L.parse_lines(jsonl_path.read_text(), str(jsonl_path))
     pending = [r for r in records if r["extraction"]["qualifies"]
                and (args.force or r["verification"]["status"] == "not_run")]
@@ -528,14 +547,14 @@ def main(argv: list[str] | None = None) -> int:
                  "spec": specs[stage], "schema": schemas[stage],
                  "schema_text": json.dumps(schemas[stage], indent=1)} for p in paths]
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futs = [ex.submit(fn, j) for j in jobs]
+            futs = {ex.submit(fn, j): j for j in jobs}
             for fut in cf.as_completed(futs):
                 try:
                     r = fut.result()
                 except L.RefusedDataWrite:
                     raise
                 except Exception as exc:  # noqa: BLE001 -- one job must not kill the pass
-                    r = {"id": "?", "stage": stage, "run": run_id, "status": "failed",
+                    r = {"id": L.transcript_id_from_path(futs[fut]["path"]), "stage": stage, "run": run_id, "status": "failed",
                          "error_type": L.classify_exception_detail(str(exc)), "detail": f"{type(exc).__name__}: {exc}"[:600]}
                 results.append(r)
                 log(json.dumps(r, ensure_ascii=False)[:400])

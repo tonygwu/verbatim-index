@@ -12,6 +12,7 @@ under --out.
   VERIFY  verdicts write the verification block and the derived booleans
   SUMMARY attempted equals the sum of the outcome buckets, with a taxonomy
   DRYRUN  --dry-run writes the prompt to the workdir and nothing under --out; a bad --out is refused
+  MISSING a transcript deleted mid-pass is excluded or labelled, never a CLI failure
 
   .venv/bin/python scripts/test_predictions_driver.py
 """
@@ -26,6 +27,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -259,6 +261,41 @@ def test_dryrun(D, L) -> None:
               '"excluded": 1' in p.stdout and not list(Path(td).glob("predict-work/*/prompt.txt")), p.stdout + p.stderr[-200:])
 
 
+def test_missing(D, L) -> None:
+    """A transcript deleted under a running pass: repo-0 applies the withdrawal manifest
+    while this pass holds a file list taken at launch, so the file can vanish mid-run."""
+    with tempfile.TemporaryDirectory() as td:
+        gone = Path(td) / "tx" / "ada" / "s1.json"
+        gone.parent.mkdir(parents=True)
+        out = Path(td) / "out"
+        args = types.SimpleNamespace(dry_run=False, force=False, verifier="auto")
+        job = {"args": args, "path": str(gone), "out": out, "roster": {"ada": ROSTER}, "run_id": "r1",
+               "exclusions": {"ada/s1": {"reason": "wrong_person", "evidence": "e"}},
+               "workroot": Path(td) / "work", "spec": "s", "schema": {}, "schema_text": "{}"}
+        check("MISSING: the transcript id comes from the path, not from the file",
+              L.transcript_id_from_path(gone) == "ada/s1", L.transcript_id_from_path(gone))
+        r = D.extract_one(job)
+        check("MISSING: an excluded transcript whose file is gone is excluded, not failed",
+              r["status"] == "excluded" and r["id"] == "ada/s1", json.dumps(r))
+        job["exclusions"] = {}
+        try:
+            r = D.extract_one(job)
+            detail = json.dumps(r)
+            etype = r.get("error_type", "")
+        except Exception as exc:  # the pass classifies what the job raised
+            detail = f"{type(exc).__name__}: {exc}"
+            etype = L.classify_exception_detail(str(exc))
+        check("MISSING: a transcript that is gone and not excluded is labelled transcript_missing",
+              etype == L.E_TRANSCRIPT_MISSING, f"{etype}: {detail}")
+        check("MISSING: transcript_missing is in the taxonomy", L.E_TRANSCRIPT_MISSING in L.ALL_ERROR_TYPES)
+        check("MISSING: the failure names the transcript, never '?'", "ada/s1" in detail, detail)
+        # verify_one meets the same file and must not crash on the read either.
+        job["exclusions"] = {"ada/s1": {"reason": "wrong_person", "evidence": "e"}}
+        r = D.verify_one(job)
+        check("MISSING: verify skips a transcript whose file is gone, naming it",
+              r["status"] in ("skipped", "excluded") and r["id"] == "ada/s1", json.dumps(r))
+
+
 def main() -> int:
     L = load("predictions_lib")
     D = load("extract_predictions")
@@ -268,6 +305,7 @@ def main() -> int:
     test_verify(D, L)
     test_summary(D)
     test_dryrun(D, L)
+    test_missing(D, L)
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))

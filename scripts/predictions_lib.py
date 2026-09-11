@@ -63,11 +63,24 @@ GATES = ("forward_looking", "falsifiable", "committed", "own_voice", "stands_alo
 HARNESSES = ("fable", "astra", "gemini")
 PROVIDER_TO_HARNESS = {"claude": "fable", "codex": "astra", "antigravity": "gemini"}
 
-# Failure taxonomy: grade.py's labels plus the two this pipeline can add.
+# Failure taxonomy: grade.py's labels plus the ones this pipeline can add.
 E_ROUTER = "router_no_account"
 E_VERIFIER_SAME = "verifier_same_harness"
 E_UNGROUNDED = "quote_not_grounded"
-ALL_ERROR_TYPES = tuple(_GRADE_ERROR_TYPES) + (E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED)
+E_TRANSCRIPT_MISSING = "transcript_missing"
+ALL_ERROR_TYPES = tuple(_GRADE_ERROR_TYPES) + (E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING)
+
+
+def transcript_id_from_path(path) -> str:
+    """<leader_slug>/<source_id> from the file's own location.
+
+    A pass lists the corpus once at launch and repo-0 keeps retiring recordings
+    under it, so a job may reach a file that no longer exists. The id must be
+    knowable without opening the file, or an excluded transcript that has just
+    been withdrawn reads as a crash instead of a skip.
+    """
+    p = Path(path)
+    return f"{p.parent.name}/{p.stem}"
 
 
 def classify_exception_detail(detail: str) -> str:

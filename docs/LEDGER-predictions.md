@@ -21,6 +21,7 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 | VP-8 | Commit of `data/predictions/` into the private data repo | **blocked-on-repo-0 running** `git -C data add predictions && git -C data commit` (only repo-0 commits data); best done after VP-5 | `git -C data status --short \| grep -c predictions` |
 | VP-9 | Live golden eval re-run under the final specs (belief verbs, undated rule, relative dates) | **not started**: costs about 8 calls; the saved tree predates three spec clarifications | `PREDICT_LIVE=1 .venv/bin/python scripts/eval_predictions.py --out <dir>` |
 | VP-10 | 35 wrong-person recordings still on disk; skipped by the exclusion list | **blocked-on-CI-6** (repo-0 applying the withdrawal manifest); harmless meanwhile | `.venv/bin/python -c` count of excluded ids present under `data/transcripts_open` |
+| VP-11 | A transcript withdrawn by repo-0 mid-pass crashed the job instead of being skipped | **succeeded**: `extract_one` read the file before the exclusion check, so three withdrawn recordings failed as `cli_nonzero_exit` with `"id": "?"`; the id now comes from the path, a missing file raises `transcript_missing`, and the pass names the transcript | `.venv/bin/python scripts/test_predictions_driver.py` (MISSING labels) |
 
 ## Decisions waiting
 
