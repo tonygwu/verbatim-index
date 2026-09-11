@@ -30,7 +30,8 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 - One account, one profile: log in once, rename `~/.agy-homes/gptwufamily` away, restart `grade_loop.sh`. Cost: the quota you have had all along. Gain: the identity stops flipping and the record is honest.
 - A second macOS user for the second Google account, with `grade.py` running `agy` as that user. Cost: setup work and a subprocess change. Gain: real second quota.
 - Do nothing. Cost: the default profile follows whichever HOME refreshed last; every grade since 09:00Z is gptwufamily regardless of profile.
-Recommendation: one account, one profile, now; the second user only if Gemini quota ever binds.
+- API-key mode (2026-09-11 probe): `agy` carries a `geminiAPIKeyAuth` provider reading `GEMINI_API_KEY`, and a fresh HOME never touches the Keychain, so two HOMEs on API keys would be two accounts. Not reachable headlessly: env var, two settings keys and two token-file `auth_method` values all fell through to OAuth or the Keychain; the method appears to be chosen in the interactive `/login` menu. Unknowns: whether that build offers it, whether `gemini-3.8-flash-high` is served under an API key, and the per-token Gemini API bill for ~570 calls per pass. Cost to find out: one interactive `/login` in the second HOME and one real key.
+Recommendation: one account, one profile, now; the second user or the API-key route only if Gemini quota ever binds.
 If undecided: nothing breaks, the corpus stays single-account, and the `gemini_identities` warning prints on every run once repo-0 pulls.
 
 **D-2. Which wrong-person tool to keep** (CI-12). Undecided.
