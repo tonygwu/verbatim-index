@@ -196,6 +196,29 @@ def main() -> int:
                 if c > best[0]:
                     best = (c, other, "youtube" if (other, osh) in yt_sh else "happyscribe")
             score, match, side = best
+            # A WITHDRAWN source must stay withdrawn. withdraw_sources.py retires
+            # a recording by renaming it to <id>.json.superseded, and fetch_one
+            # honours that name so YouTube never re-downloads it. This path did
+            # not, so a retired Happy Scribe recording was re-merged on the next
+            # cycle and came back. Observed 2026-09-11: four sources sat as both
+            # <id>.json and <id>.json.superseded at once, and the withdrawal
+            # manifest reported them actionable again within the hour.
+            #
+            # This is the standing rule "a retirement must be visible to the
+            # fetcher" arriving on the second fetcher.
+            withdrawn = (Path(args.youtube) / slug /
+                         f"{rec['source_id']}.json.superseded").exists()
+            if withdrawn:
+                decisions.append({
+                    "leader_slug": slug, "hs_source_id": rec["source_id"],
+                    "verdict": "withdrawn", "containment": None,
+                    "matches": None, "matches_source": None,
+                    "action": "none",
+                    "why": "a .json.superseded marker retires this recording; re-merging "
+                           "it would undo a withdrawal",
+                })
+                continue
+
             already = any(o.get("source_id") == rec["source_id"] for o, _ in yt_sh)
             if already:
                 decisions.append({
@@ -308,12 +331,18 @@ def main() -> int:
 
     if args.merge:
         by_id = {(r["leader_slug"], r["source_id"]): r for recs in hs.values() for r in recs}
-        merged = replaced = 0
+        merged = replaced = withheld = 0
         for d in decisions:
             if d["action"] not in ("merge", "replace_existing"):
                 continue
             rec = by_id[(d["leader_slug"], d["hs_source_id"])]
             dest = Path(args.youtube) / d["leader_slug"] / f"{d['hs_source_id']}.json"
+            # Re-read the marker HERE as well as at the decision stage, because
+            # a withdrawal can land between the two. prune_orphans does the same
+            # for the same reason: the cheap check is worth more than the race.
+            if dest.with_name(dest.name + ".superseded").exists():
+                withheld += 1
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             payload = {k: v for k, v in rec.items() if k != "_path"}
             payload["dedupe"] = {k: d[k] for k in ("verdict", "containment", "matches") if k in d}
@@ -330,6 +359,9 @@ def main() -> int:
                     replaced += 1
         summary["merged_into_corpus"] = merged
         summary["superseded_existing"] = replaced
+        # Never a bare count: a withheld merge is a withdrawal holding, and
+        # silence here is what let four retired recordings come back.
+        summary["withheld_already_withdrawn"] = withheld
         Path(args.out).write_text(json.dumps({"summary": summary, "decisions": decisions}, indent=1))
 
     print(json.dumps(summary, indent=2))
