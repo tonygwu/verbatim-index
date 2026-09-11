@@ -22,11 +22,12 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 | CI-10 | C.C. Wei source rediscovery, company name required in title or description | **blocked-on-a new discovery run** in repo-0; he is at n=2 and off the board under CI-5 | `ls data/transcripts/cc-wei/ \| grep -vc superseded` (2 real sources plus 2 unscreened) |
 | CI-11 | Fable re-run drift, +2.44 against 1-4 day old grades, sd 3.24 | **not started**: recorded in AGENTS.md Known limits; needs its own experiment, same transcripts and account a day apart | `docs/CORPUS-INTEGRITY-FOLLOWUP.md` section 1, re-run noise table |
 | CI-12 | Two wrong-person tools now exist: `wrong_person_screen.py` (repo-3) and `identity_audit.py` (09e23ef, another clone) | **blocked-on-operator choosing** one to keep; both pass their tests, neither is wired into the loop | `ls scripts/wrong_person_screen.py scripts/identity_audit.py` |
+| CI-14 | Second Gemini account via the `tonyagents` macOS user | **attempted**: `user:` profile kind shipped in `grade.py` (56190a3) with 21 checks; operator logged that user into Antigravity. **blocked-on-a sudoers rule** letting `tonygwu` run `~/.local/bin/agy` and `/usr/bin/true` as `tonyagents` without a password, and on that user's session staying open so its Keychain is unlocked. Then: one probe call as that user, one `grade.py --single` to scratch with `GEMINI_USERS=tonyagents`, then `GEMINI_USERS=tonyagents` on `grade_loop.sh` in repo-0. | `sudo -n -u tonyagents -H /Users/tonygwu/.local/bin/agy --help` runs without a prompt |
 | CI-13 | HANDOFF.md still says `agy` = tonygwu@gmail.com | **not started**: it is repo-0's file; the correct statement is in AGENTS.md under "Two profiles do not mean two accounts" | `grep -n "tonygwu@gmail.com" HANDOFF.md` |
 
 ## Decisions waiting
 
-**D-1. Which Gemini account setup?** Undecided as of 2026-09-11T02:54Z.
+**D-1. Which Gemini account setup?** Decided 2026-09-11: a second macOS user, `tonyagents`, logged into Antigravity as gptwufamily@gmail.com (done by the operator, 21:49 local). Now CI-14.
 - One account, one profile: log in once, rename `~/.agy-homes/gptwufamily` away, restart `grade_loop.sh`. Cost: the quota you have had all along. Gain: the identity stops flipping and the record is honest.
 - A second macOS user for the second Google account, with `grade.py` running `agy` as that user. Cost: setup work and a subprocess change. Gain: real second quota.
 - Do nothing. Cost: the default profile follows whichever HOME refreshed last; every grade since 09:00Z is gptwufamily regardless of profile.
@@ -43,6 +44,7 @@ If undecided: both sit unused; the next wrong-person recording scores until some
 ## Decided
 
 - 2026-09-10: keep the `agy` default profile on tonygwu@gmail.com. Superseded by the finding that the Keychain item is shared; re-opened as D-1.
+- 2026-09-11: D-1 decided, second macOS user `tonyagents` for gptwufamily@gmail.com (CI-14).
 - 2026-09-10: withdraw all 45, not only the 31 on the board. Manifest written.
 - 2026-09-10: stage the re-grade records outside the public repo (CI-7).
 - 2026-09-10: leaderboard floor is 5, tied to the high-confidence band (fork).

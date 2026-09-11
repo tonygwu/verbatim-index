@@ -74,6 +74,7 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requi
 .venv/bin/python scripts/test_declared_year.py    # the year the judge is told
 .venv/bin/python scripts/test_withdraw_sources.py # guarded withdrawal tool
 .venv/bin/python scripts/test_gemini_identity.py  # one account behind two profiles
+.venv/bin/python scripts/test_gemini_user_profile.py # a Gemini profile that is a macOS user
 for t in shared lib schema driver markets eval aggregate site; do .venv/bin/python scripts/test_predictions_$t.py; done  # predictions, no quota
 ```
 
@@ -113,6 +114,9 @@ Raising `WORKERS` when Fable is already short does not fail loudly. The jobs
 run, hit the limit, and land in the taxonomy as `auth_or_quota`, so the pass
 looks busy while producing nothing. Check `data/logs/grade_errors_blind.jsonl`
 for that label before assuming a slow pass is a healthy one.
+
+`GEMINI_USERS=tonyagents` adds a macOS user as a Gemini profile; see the
+Antigravity section for what that needs.
 
 `FABLE_ACCOUNTS` pins the Fable rotation to named accounts, for example
 `FABLE_ACCOUNTS=default`. Use it when only some accounts can serve Fable.
@@ -171,7 +175,14 @@ next refresh under the other; the operator's re-login of `~` as
 tonygwu@gmail.com at 08:25Z lasted until 08:56Z. A second HOME on one macOS
 user adds no quota. `grade.py` now prints `gemini_identities` at the end of
 every run and warns when every profile served one address. A real second
-account needs a second macOS user, or one account and one profile.
+account is a second macOS user, and `grade.py` supports that directly: a
+profile of the form `user:<name>`, listed in `GEMINI_USERS`, runs the call as
+that user under `sudo -n -u <name> -H`, in a group-writable jail under
+`/Users/Shared/verbatim-index-judge` because TMPDIR is not traversable across
+users. It needs, once: `agy` logged in under that user, that user's session
+left open so its login Keychain stays unlocked, and a sudoers rule scoped to
+the judge binary, which the pass checks for before queueing a job and names if
+missing. Guarded by `scripts/test_gemini_user_profile.py`.
 
 **There is no quota measurement, and there cannot be.** `agy` exposes no usage
 subcommand and writes no quota field to disk, so `llm-quota-router` reports both
