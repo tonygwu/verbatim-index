@@ -154,17 +154,21 @@ recorded here. `BLIND_JUDGES` in `grade_loop.sh` now names all three, because a
 new transcript graded by a subset would reintroduce the uneven mix and widen it
 every cycle.
 
-Two Antigravity profiles are in rotation. A profile follows `$HOME`, because
-`agy` has no `AGY_CONFIG_DIR`:
+Two profiles are in rotation, and they are of two different KINDS:
 
-| Invocation | HOME |
-|---|---|
-| `agy` | `~` |
-| `agy-b` | `~/.agy-homes/gptwufamily` |
+| Profile | Account | How the call is made |
+|---|---|---|
+| `/Users/tonygwu` | tonygwu@gmail.com | `HOME=...` on the subprocess |
+| `user:tonyagents` | gptwufamily@gmail.com | through the root-owned wrapper, in that user's login session |
 
-`agy-profiles` derives that table rather than restating it. `grade.py` sets
-`HOME` per subprocess and records which account served each grade in
-`telemetry.profile_identity`.
+`grade.py` records which account served each grade in
+`telemetry.profile_identity`, read from that call's own log. VERIFIED
+2026-09-11: one call through each profile returned SUCCESS and named a
+different account.
+
+An extra HOME under one macOS user is SKIPPED, loudly, and `agy-profiles` will
+still list it. `~/.agy-homes/gptwufamily` is such a directory and is no longer
+in the rotation.
 
 **Two profiles do not mean two accounts.** MEASURED 2026-09-10: all 567 Gemini
 grades in the corpus were served by gptwufamily@gmail.com, 282 through `~`

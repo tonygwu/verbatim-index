@@ -547,10 +547,14 @@ def test_dead_scaffold_is_not_a_profile(g) -> None:
     with no credential in it. One entered a 501-job rotation and would have
     failed every third call.
 
-    The default home is exempt because it authenticates from the macOS Keychain
-    and answers with its token file deleted outright. A NON-default home cannot:
-    its keychain search list resolves under its own $HOME, which has no
-    keychain, so no token means no credential by either route.
+    SUPERSEDED IN PART, 2026-09-10. This used to also assert that a non-default
+    HOME carrying a token stays in the rotation, on the belief that such a home
+    could not reach the Keychain and therefore held its own account. It can
+    reach it: both HOMEs logged "authenticated via keyring", and all 567 Gemini
+    grades in the corpus came from ONE account while two HOMEs alternated. The
+    credential is one Keychain item per macOS USER, so every HOME under this
+    user serves the same account. An extra HOME is now skipped, loudly, and a
+    second account is a `user:` profile. See scripts/test_gemini_user_profile.py.
     """
     with tempfile.TemporaryDirectory() as td:
         root, home = Path(td) / ".agy-homes", Path(td) / "home"
@@ -560,13 +564,22 @@ def test_dead_scaffold_is_not_a_profile(g) -> None:
         (live / "antigravity-oauth-token").write_text("{}")
         (root / "scaffold" / ".gemini" / "antigravity-cli").mkdir(parents=True)  # no token
         got = g.agy_profiles(root=root, default_home=str(home))
+        os.environ["GEMINI_EXTRA_HOMES"] = "1"
+        try:
+            forced = g.agy_profiles(root=root, default_home=str(home))
+        finally:
+            del os.environ["GEMINI_EXTRA_HOMES"]
 
     check("agy_profiles: the default home is kept even with no token (Keychain auth)",
           str(home) in got, f"got {got}")
-    check("agy_profiles: a non-default profile WITH a token is kept",
-          str(root / "live") in got, f"got {got}")
+    check("agy_profiles: an extra HOME is skipped; it shares one Keychain item "
+          "and so cannot be a second account",
+          str(root / "live") not in got, f"got {got}")
+    check("agy_profiles: GEMINI_EXTRA_HOMES=1 puts it back for a future agy",
+          str(root / "live") in forced, f"got {forced}")
     check("agy_profiles: a scaffold with no token is not a profile",
-          str(root / "scaffold") not in got, f"got {got}")
+          str(root / "scaffold") not in got and str(root / "scaffold") not in forced,
+          f"got {got} / {forced}")
 
 
 def test_a_spent_profile_is_stepped_around(g) -> None:
@@ -631,13 +644,21 @@ def test_gemini_profiles(g) -> None:
         # A directory that is not a profile at all must not join the rotation.
         (root / "not-a-profile").mkdir(parents=True)
         got = g.agy_profiles(root=root, default_home=str(home))
+        os.environ["GEMINI_EXTRA_HOMES"] = "1"
+        try:
+            forced = g.agy_profiles(root=root, default_home=str(home))
+        finally:
+            del os.environ["GEMINI_EXTRA_HOMES"]
 
     check("agy_profiles: default HOME leads the rotation",
           got and got[0] == str(home), f"got {got}")
-    check("agy_profiles: finds every profile under the root, sorted",
-          [Path(p).name for p in got[1:]] == ["alpha", "zeta"], f"got {got}")
+    check("agy_profiles: extra HOMEs are skipped, so the rotation is the default alone",
+          got == [str(home)], f"got {got}")
+    check("agy_profiles: under GEMINI_EXTRA_HOMES they return, still sorted",
+          [Path(p).name for p in forced[1:]] == ["alpha", "zeta"], f"got {forced}")
     check("agy_profiles: a directory without antigravity-cli is not a profile",
-          str(root / "not-a-profile") not in got, f"got {got}")
+          str(root / "not-a-profile") not in got and str(root / "not-a-profile") not in forced,
+          f"got {got} / {forced}")
 
 
 def test_gemini_identity_is_not_read_by_mtime(g) -> None:

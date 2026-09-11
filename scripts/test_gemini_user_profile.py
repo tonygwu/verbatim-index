@@ -27,9 +27,19 @@ with tempfile.TemporaryDirectory() as td:
     root = Path(td) / "agy-homes"; (root / "b" / ".gemini" / "antigravity-cli").mkdir(parents=True)
     (root / "b" / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").write_text("{}")
     homes = g.agy_profiles(root=root, default_home="/h/default", users="tonyagents, other")
-    check("HOME profiles come first, then one user profile per GEMINI_USERS name",
-          homes == ["/h/default", str(root / "b"), "user:tonyagents", "user:other"], str(homes))
-    check("no users means no user profiles", g.agy_profiles(root=root, default_home="/h/default", users="") == ["/h/default", str(root / "b")])
+    # An extra HOME under this macOS user shares its one Keychain item, so it
+    # serves the same account and only takes calls. MEASURED 2026-09-10: all
+    # 567 Gemini grades came from one account while two HOMEs alternated.
+    check("an extra HOME is skipped, because it cannot be a second account",
+          homes == ["/h/default", "user:tonyagents", "user:other"], str(homes))
+    check("no users means only the default HOME",
+          g.agy_profiles(root=root, default_home="/h/default", users="") == ["/h/default"])
+    os.environ["GEMINI_EXTRA_HOMES"] = "1"
+    try:
+        check("GEMINI_EXTRA_HOMES=1 puts it back, for a future agy that separates them",
+              g.agy_profiles(root=root, default_home="/h/default", users="") == ["/h/default", str(root / "b")])
+    finally:
+        del os.environ["GEMINI_EXTRA_HOMES"]
     check("a user profile is recognised", g.is_user_profile("user:tonyagents") and not g.is_user_profile("/h/default"))
     check("labels", g.profile_label("user:tonyagents") == "user:tonyagents" and g.profile_label("/h/default") == "default"
           and g.profile_label(str(root / "b")) == "b")

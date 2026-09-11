@@ -998,14 +998,24 @@ def agy_profiles(root: Path | None = None, default_home: str | None = None,
     token file deleted outright, so a token check would wrongly drop the main
     account.
 
-    A NON-DEFAULT home must carry a token. It was believed on 2026-09-07 that
-    such a home could not reach the Keychain at all and fell back to the file.
-    MEASURED 2026-09-10 on agy 1.2.0: it CAN, and does. Both HOMEs logged
-    "authenticated via keyring", and a refresh under the second HOME rewrote
-    the one Keychain item the default HOME reads, so both served the same
-    account. The token file is still the marker of a configured profile; it is
-    not the credential. A second ACCOUNT on this machine is a `user:` profile,
-    see GEMINI_USER_PREFIX.
+    EXTRA HOMES ARE SKIPPED, and that is the point of this function now. It was
+    believed on 2026-09-07 that a non-default home could not reach the Keychain
+    and fell back to its own token file, which would have made it a second
+    account. MEASURED 2026-09-10 on agy 1.2.0: it CAN reach the Keychain, and
+    does. Both HOMEs logged "authenticated via keyring", and a refresh under
+    the second rewrote the one item the first reads. All 567 Gemini grades in
+    the corpus came from ONE account while two HOMEs alternated, and the
+    rotation could not see it.
+
+    The credential is one Keychain item per MACOS USER: service "gemini",
+    account "antigravity". Every HOME under this user therefore serves the same
+    account, and a second one adds no quota while taking half the calls. A
+    second ACCOUNT is a `user:` profile, see GEMINI_USER_PREFIX.
+
+    Skipping is loud and names what it skipped, because a directory somebody
+    configured on purpose should not vanish from a run in silence. Set
+    GEMINI_EXTRA_HOMES=1 to rotate over them anyway, for a future agy that
+    separates them.
 
     FOUND 2026-09-07: `agy` scaffolds $HOME/.gemini/... on startup, so any stray
     `HOME=... agy` invocation leaves behind a directory that looks exactly like
@@ -1017,14 +1027,22 @@ def agy_profiles(root: Path | None = None, default_home: str | None = None,
     root = AGY_HOME_ROOT if root is None else root
     default = default_home or str(Path.home())
     homes = [default]
+    allow_extra = os.environ.get("GEMINI_EXTRA_HOMES", "") not in ("", "0")
     if root.is_dir():
         for d in sorted(root.iterdir()):
             if not (d / ".gemini" / "antigravity-cli").is_dir():
                 continue
             if not (d / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").exists():
-                log(f"skipping Antigravity profile {d.name}: no token, and a non-default "
-                    f"profile cannot reach the Keychain, so it has no credential at all")
                 continue
+            if not allow_extra:
+                log(f"skipping Antigravity HOME {d.name}: it shares this macOS user's one "
+                    f"Keychain item, so it serves the SAME account as the default profile "
+                    f"and would take calls without adding quota. A second account is a "
+                    f"macOS user, named in GEMINI_USERS. Set GEMINI_EXTRA_HOMES=1 to "
+                    f"rotate over it anyway.")
+                continue
+            log(f"GEMINI_EXTRA_HOMES is set, so Antigravity HOME {d.name} joins the "
+                f"rotation; it probably serves the same account as the default profile")
             homes.append(str(d))
     # `user:` profiles come from GEMINI_USERS, never from a hardcoded name: this
     # operator's account list changes, and two hardcoded lists have already
