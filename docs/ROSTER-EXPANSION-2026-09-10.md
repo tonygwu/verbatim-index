@@ -340,6 +340,61 @@ leaders scored, the 11 new ones correctly reported as `unscored`, C.C. Wei
 absent, and only the six leaders ranked below him moved, each up exactly one
 place.
 
+## State as applied, 2026-09-11
+
+`repo-0` applied this on 2026-09-10 (`data` commit `cabe302`). Verified here
+rather than taken on report:
+
+```
+python3 -c "import json;r=json.load(open('data/roster/final.json'))['roster'];print(len(r),'cc-wei' in {p['slug'] for p in r})"
+# 50 False
+shasum -a 256 data/roster/final.json    | cut -c1-16   # 502019a4da8594a0
+shasum -a 256 data/sources/aliases.json | cut -c1-16   # 4126314c60fab7a2
+ls data/transcripts/cc-wei/*.json 2>/dev/null | wc -l  # 0
+```
+
+All 11 new leaders are fetched AND graded. Judge volume is balanced: the
+largest fable/astra/gemini spread on any new leader is 1 grade, so the uneven
+judge mix that `calibrate()` cannot repair did not appear.
+
+### Three things still open
+
+**The published site is STALE.** `data/` holds the 50-name board and `repo-0`
+has a current build on disk, but `verbatim-index.tonygwu.com` still serves the
+old page: it says "A roster of 40" and still lists C.C. Wei. Nothing is wrong
+with the data; the deploy simply has not been run.
+
+```
+curl -s https://verbatim-index.tonygwu.com/ | grep -o "A roster of [0-9]*"
+# stale while this prints "A roster of 40"
+bash scripts/deploy.sh            # fixes it; runnable from ANY clone, read-only on data/
+bash scripts/deploy.sh --refresh  # re-aggregates first; repo-0 ONLY, it writes results.json
+```
+
+**`fetch_loop.sh` has finished and will not resume itself.** It exited on its
+own stopping condition, not a crash: `EXHAUSTED: 3 passes with no new
+transcripts`. Every leader is well past the ranking floor of 5, but 12 are short
+of `TARGET=14`: `ilya-sutskever` 7, `michael-dell` 11, then `aaron-levie`,
+`alexandr-wang`, `george-hotz`, `greg-brockman`, `larry-ellison`,
+`michael-saylor`, `sergey-brin`, `tobi-lutke` at 12, and `eric-schmidt`,
+`vlad-tenev` at 13. Restarting the loop unchanged will re-exhaust immediately,
+because the candidate lists are spent. Widening means going DEEPER into the
+ranked list, `discover_sources.py --candidates-per-leader` above its default of
+14, which is the safe widening; lowering `MIN_SEC` or raising `MAX_PER_CHANNEL`
+instead admits clips and re-uploads.
+
+```
+tail -1 data/logs/fetch_loop.log        # the EXHAUSTED line and who is short
+pgrep -fl "fetch_loop.sh" || echo "not running"
+```
+
+**Ilya Sutskever is the board's thinnest evidence and its highest score.** 73.6
+on 6 graded transcripts, against a corpus median near 14. This is the Jeff Bezos
+pattern named under "Known limits of the published score": a top rank resting on
+the least material. It is not a defect in the pipeline, and it is a reason not to
+read his rank as settled. Topping him up is the fix, and he is the leader the
+retry budget should go to first.
+
 ## Recommended follow-up, not done here
 
 `discover_sources.name_in()` is still surname-only, so the defect that produced
