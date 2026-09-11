@@ -778,5 +778,6 @@ new grades incomparable with the corpus already graded.
   records behind the follow-up wait in
   `~/Code/misc/verbatim-index/experiments-inbox/2026-09-10-year-deloop/` for
   repo-0 to commit under `data/experiments/`; grades are data and stay out of
-  this public repo.
+  this public repo. Open items and waiting decisions for that workstream:
+  `docs/LEDGER-corpus-integrity.md`.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
