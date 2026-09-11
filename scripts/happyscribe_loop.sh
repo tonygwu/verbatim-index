@@ -43,6 +43,20 @@ TARGET="${TARGET:-12}"
 INTERVAL="${INTERVAL:-1.5}"      # seconds between requests to happyscribe
 WORKERS="${WORKERS:-3}"
 CYCLE_SLEEP="${CYCLE_SLEEP:-1800}"
+# Consecutive cycles adding no transcripts before this loop gives up.
+#
+# The only other exit is "every discovered candidate has been fetched", which
+# counts fetched files against candidates and so assumes every candidate is
+# eventually fetchable. MEASURED 2026-09-11: 59 of 92 were fetched and the
+# remaining 33 kept failing, so that condition could never be met and this loop
+# would retry them every 30 minutes forever.
+#
+# fetch_loop.sh has had this guard since 329fb87; this loop is its sibling and
+# never got it. That became load-bearing the day grade_loop.sh was fixed to wait
+# for EVERY transcript source: a source that never exits means a grader that
+# never exits either. Kept equal to fetch_loop's default on purpose, since both
+# feed one corpus and one grader. Guarded by scripts/test_hs_barren_guard.py.
+BARREN_LIMIT="${BARREN_LIMIT:-3}"
 CANDS=data/sources/happyscribe_candidates.json
 
 stamp(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -76,6 +90,7 @@ if [ ! -s "$CANDS" ] || [ -n "$unsearched" ]; then
 fi
 
 cycle=0
+barren=0
 while true; do
   cycle=$((cycle + 1))
   say "cycle ${cycle}: fetching"
@@ -97,6 +112,21 @@ while true; do
   if [ "${hs:-0}" -ge "${cand:-0}" ]; then
     say "COMPLETE: every discovered candidate has been fetched (${hs}/${cand})"
     exit 0
+  fi
+
+  # Progress is measured on the CORPUS, not on transcripts_hs, because a fetch
+  # that lands a duplicate adds a file here and nothing to the corpus. Counting
+  # the hs directory would read a cycle of pure duplicates as progress.
+  if [ "$after" -gt "$before" ]; then
+    barren=0
+  else
+    barren=$(( barren + 1 ))
+    unfetched=$(( ${cand:-0} - ${hs:-0} ))
+    say "  no new transcripts this cycle (${barren}/${BARREN_LIMIT}). ${unfetched} candidate(s) unfetched."
+    if [ "$barren" -ge "$BARREN_LIMIT" ]; then
+      say "EXHAUSTED: ${BARREN_LIMIT} cycles with no new transcripts. ${unfetched} of ${cand} candidate(s) never fetched (${hs} fetched). Retrying them is not producing anything; see data/logs/happyscribe_loop.err for why."
+      exit 0
+    fi
   fi
   sleep "$CYCLE_SLEEP"
 done
