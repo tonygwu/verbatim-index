@@ -518,7 +518,10 @@ def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_i
         if merrs:
             raise RuntimeError(f"{L.E_SCHEMA}: {'; '.join(merrs[:3])}")
     except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
-        return {**base, "error": f"{E_MATCHER}: {exc}"[:600]}
+        # Keep the taxonomy label the failure came with at the front, so the run's
+        # error_taxonomy files it as router_no_account or schema_validation_failed
+        # rather than as a generic crash; the stage is named in `reason`.
+        return {**base, "reason": E_MATCHER, "error": str(exc)[:600]}
     base["matcher"] = {**{k: prov.get(k) for k in ("harness", "requested_model", "served_model", "served_model_verified", "account")},
                        "contract_id": contract["contract_id"], "run_id": run_id, "matched_at_utc": L.utc_now()}
     try:
@@ -565,7 +568,9 @@ def make_matcher(router: Router, args, run_id: str, workroot: Path):
 def process_file(job: dict) -> dict:
     args, path = job["args"], Path(job["path"])
     recs = L.parse_lines(path.read_text(), str(path))
-    todo = [r for r in recs if r["accepted"] and (args.force or r["consensus"] == L.SENTINEL_CONSENSUS)]
+    # A record that failed (an API or model error) is retried by default; only a
+    # settled status (matched, no_match, unavailable) needs --force to redo.
+    todo = [r for r in recs if r["accepted"] and (args.force or r["consensus"].get("status") in ("not_searched", "failed"))]
     res = {"file": str(path), "records": len(recs), "todo": len(todo), "by_status": {}, "errors": []}
     if not todo:
         return {**res, "status": "nothing_to_do"}
@@ -576,7 +581,7 @@ def process_file(job: dict) -> dict:
         try:
             c = consensus_for_record(r, job["cache"], job["matcher"], job["contract"], job["run_id"], job["kalshi"])
         except (RouterUnavailable, RuntimeError) as exc:
-            c = {"status": "failed", "reason": None, "cutoff": L.publication_cutoff(r), "market_probability": None,
+            c = {"status": "failed", "reason": E_MATCHER, "cutoff": L.publication_cutoff(r), "market_probability": None,
                  "exact_match": None, "proxy_matches": [], "candidates_considered": 0, "candidates_dropped": [],
                  "matcher": None, "searched_at_utc": L.utc_now(), "error": str(exc)[:600]}
         r["consensus"] = c

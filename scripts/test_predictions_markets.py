@@ -244,7 +244,9 @@ def test_match_and_status(M, L) -> None:
     r4 = copy.deepcopy(rec)
     c4 = M.consensus_for_record(r4, cache, matcher_returning(exact_v[:1]), contract, "r")
     check("STATUS: an incomplete matcher answer -> failed with the error, and the record is still accepted",
-          c4["status"] == "failed" and "no verdict" in c4["error"] and r4["accepted"] is True, json.dumps(c4)[:300])
+          c4["status"] == "failed" and "no verdict" in c4["error"] and c4["reason"] == M.E_MATCHER and r4["accepted"] is True, json.dumps(c4)[:300])
+    check("STATUS: a failed record is retried by default; a settled one is not",
+          "in (\"not_searched\", \"failed\")" in inspect.getsource(M.process_file))
     # HTTP failure -> failed.
     bad = M.Cache(Path(tempfile.mkdtemp()), fetcher=lambda u: (500, "boom"), write=wr)
     c5 = M.consensus_for_record(copy.deepcopy(rec), bad, m, contract, "r")

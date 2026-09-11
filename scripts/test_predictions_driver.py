@@ -74,6 +74,11 @@ def test_route(D, L) -> None:
             check(f"ROUTE: {name} raises RouterUnavailable", str(exc).startswith(L.E_ROUTER))
     r = D.route_from_selection(sel("codex", "codex", degraded=[{"account": "codex"}]), ACCOUNTS, True)
     check("ROUTE: degraded pick allowed with --allow-degraded, and marked", r["degraded"] is True)
+    fits = sel("codex", "codex", degraded=[{"account": "codex", "reason": "usage reading is 18m old"}])
+    fits["decision"]["fits"] = True
+    r = D.route_from_selection(fits, ACCOUNTS, False)
+    check("ROUTE: a degraded pick the router still calls a fit proceeds, with the reason recorded",
+          r["degraded"] is True and "18m old" in r["degraded_reason"])
     check("ROUTE: a degraded entry about ANOTHER account does not block",
           D.route_from_selection(sel("codex", "codex", degraded=[{"account": "antigravity_gemini"}]), ACCOUNTS, False)["degraded"] is False)
     check("ROUTE: accounts_of_harness lists every account of the extractor's provider",

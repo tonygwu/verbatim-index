@@ -82,8 +82,13 @@ def route_from_selection(selection: dict, accounts: list[tuple], allow_degraded:
     if harness is None:
         raise RouterUnavailable(f"{L.E_ROUTER}: provider {provider!r} of account {acct} has no harness")
     degraded = [d for d in (selection.get("degraded") or ()) if acct in json.dumps(d)]
-    if degraded and not allow_degraded:
-        raise RouterUnavailable(f"{L.E_ROUTER}: pick {acct} is degraded and --allow-degraded is off: {json.dumps(degraded)[:300]}")
+    # A degraded entry is the router saying its reading of this account is imperfect
+    # (a stale usage snapshot, most often). It is fatal only when the router's own
+    # verdict on the pick is not a clean fit; a pick it still calls fitting proceeds
+    # with the flag and the reason recorded on the route, so the run can be audited.
+    if degraded and not allow_degraded and decision.get("fits") is not True:
+        raise RouterUnavailable(f"{L.E_ROUTER}: pick {acct} is degraded and the router does not call it a fit; "
+                                f"--allow-degraded is off: {json.dumps(degraded)[:300]}")
     row = next((a for a in accounts if a[0] == acct), None)
     config_dir = None
     if harness == "fable":
@@ -91,7 +96,8 @@ def route_from_selection(selection: dict, accounts: list[tuple], allow_degraded:
             raise RouterUnavailable(f"{L.E_ROUTER}: account {acct} is not in the router config")
         config_dir = "__DEFAULT__" if row[3] else str(row[2])
     return {"harness": harness, "account_id": acct, "config_dir": config_dir,
-            "degraded": bool(degraded), "provider": provider}
+            "degraded": bool(degraded), "degraded_reason": json.dumps(degraded)[:200] if degraded else None,
+            "provider": provider}
 
 
 def accounts_of_harness(accounts: list[tuple], harness: str) -> list[str]:
