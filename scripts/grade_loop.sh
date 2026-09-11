@@ -40,6 +40,24 @@ FABLE_ACCOUNTS="${FABLE_ACCOUNTS:-}"  # pin Fable to named accounts, e.g. "defau
 MIN_TO_START="${MIN_TO_START:-4}"      # do not spin up the expensive stage for 1 file
 IDLE_EXIT="${IDLE_EXIT:-3}"            # consecutive no-op cycles with fetch gone -> stop
 
+# Publish to verbatim-index.tonygwu.com ONCE, at the COMPLETE exit. Off unless
+# set to 1, because a loop that can push to a public site is a different thing
+# from a loop that writes files.
+#
+# WHY IT EXISTS. This loop rebuilds site/index.html every cycle and has never
+# published it, so the live page only moves when a person runs deploy.sh. On
+# 2026-09-09 that left a 13-hour stale board, and it recurred three more times
+# in the two days after. The loop already knows the one moment when publishing
+# is right: it has finished grading, and it rebuilt the board successfully.
+#
+# ONCE, and only at the exit, on purpose. Publishing every cycle would push a
+# Cloudflare version every few minutes, nearly all of them transient states
+# halfway through a grading pass.
+#
+# Reaching this point already proves the board is not stale: render_fail > 0
+# exits 1 above, before the COMPLETE line.
+PUBLISH_ON_COMPLETE="${PUBLISH_ON_COMPLETE:-0}"
+
 stamp(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
 say(){ printf '[%s] %s\n' "$(stamp)" "$*"; }
 count_tx(){ find data/transcripts -name '*.json' ! -name '*.tmp' 2>/dev/null | wc -l | tr -d ' '; }
@@ -192,6 +210,25 @@ while true; do
           say "  bash scripts/deploy.sh --refresh"
           say "  see data/logs/grade_loop.err"
           exit 1
+        fi
+        if [ "$PUBLISH_ON_COMPLETE" = "1" ]; then
+          # Plain deploy.sh, NOT --refresh. This cycle already aggregated and
+          # rendered, so results.json is current; --refresh would re-aggregate
+          # and also carries the daemon-clone precondition, which this does not
+          # need. deploy.sh stays read-only on data/.
+          say "  PUBLISH_ON_COMPLETE=1: publishing ${g1} grades to the live site"
+          if bash scripts/deploy.sh >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err; then
+            say "  published. live site now matches this build"
+          else
+            # Grading succeeded and the board on disk is good; only the push
+            # failed. Say which, and exit non-zero so it is not mistaken for a
+            # clean finish. Silence here would recreate the bug this replaces.
+            say "PUBLISH FAILED: grading finished and site/index.html is current on disk,"
+            say "  but the deploy did not complete, so the LIVE site is unchanged."
+            say "  last line of data/logs/grade_loop.err: $(tail -n 1 data/logs/grade_loop.err)"
+            say "  retry by hand: bash scripts/deploy.sh"
+            exit 1
+          fi
         fi
         say "COMPLETE: nothing left to grade. leaderboard at site/index.html"
         exit 0
