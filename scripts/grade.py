@@ -850,7 +850,85 @@ GEMINI_MODEL = "gemini-3.8-flash-high"
 #: Where the non-default Antigravity profiles live. See agy_profiles().
 AGY_HOME_ROOT = Path.home() / ".agy-homes"
 
-def agy_profiles(root: Path | None = None, default_home: str | None = None) -> list[str]:
+#: A Gemini profile is either a HOME directory or `user:<macos-user>`. The
+#: second kind exists because two HOMEs under ONE macOS user share ONE Keychain
+#: item (service "gemini", account "antigravity"), so they were never two
+#: accounts: MEASURED 2026-09-10, all 567 Gemini grades in the corpus came from
+#: gptwufamily@gmail.com through both HOMEs. A second macOS user has its own
+#: login Keychain, and the call runs there under `sudo -n -u <user> -H`.
+GEMINI_USER_PREFIX = "user:"
+#: Where a user-profile call keeps its jail and log. TMPDIR is per user and not
+#: traversable by another, so the jail for a call that runs as someone else
+#: lives under /Users/Shared, group-writable for staff, which both users are in.
+GEMINI_SHARED_JAIL = Path("/Users/Shared/verbatim-index-judge")
+
+
+def is_user_profile(profile: str) -> bool:
+    return profile.startswith(GEMINI_USER_PREFIX)
+
+
+def profile_label(profile: str) -> str:
+    if is_user_profile(profile):
+        return profile
+    return Path(profile).name or "default"
+
+
+def gemini_launch(profile: str, cmd: list[str], env: dict) -> tuple[list[str], dict]:
+    """The argv and environment that run `cmd` under one profile.
+
+    A HOME profile sets HOME. A user profile prefixes `sudo -n -u <user> -H`,
+    which sets HOME itself and resets the environment, so nothing inherited
+    from this shell can pick the account. `-n` means a missing sudoers rule
+    fails at once instead of waiting on a password prompt nobody will answer.
+    """
+    env = dict(env)
+    if is_user_profile(profile):
+        env.pop("HOME", None)
+        user = profile[len(GEMINI_USER_PREFIX):]
+        return ["sudo", "-n", "-u", user, "-H"] + list(cmd), env
+    env["HOME"] = profile
+    return list(cmd), env
+
+
+def gemini_jail(profile: str, workdir: str | None, shared_root: Path = GEMINI_SHARED_JAIL) -> Path:
+    """Working directory for one call. Under TMPDIR for a HOME profile; under
+    the shared root, group-writable, for a user profile, because `agy` writes
+    its log there as the other user and this process reads it back."""
+    if not is_user_profile(profile):
+        jail = Path(workdir) if workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "judge-jail"
+        jail.mkdir(parents=True, exist_ok=True)
+        return jail
+    shared_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(shared_root, 0o2775)
+    jail = shared_root / (Path(workdir).name if workdir else "judge-jail")
+    jail.mkdir(parents=True, exist_ok=True)
+    os.chmod(jail, 0o2775)
+    return jail
+
+
+def check_user_profiles(profiles: list[str], runner=subprocess.run) -> None:
+    """Refuse a pass whose user profile cannot be switched to without a prompt.
+
+    A password prompt inside a worker would hang the pass, and `-n` turns that
+    into an immediate refusal, which is checked here once rather than
+    discovered 500 jobs in. The message names the sudoers line that fixes it.
+    """
+    for p in profiles:
+        if not is_user_profile(p):
+            continue
+        user = p[len(GEMINI_USER_PREFIX):]
+        proc = runner(["sudo", "-n", "-u", user, "-H", "/usr/bin/true"],
+                      capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise SystemExit(
+                f"Gemini profile {p!r} cannot be switched to without a password "
+                f"({(proc.stderr or '').strip()[:120]}). Add a sudoers rule scoped to the "
+                f"judge binary, e.g. with `sudo visudo -f /etc/sudoers.d/agy-{user}`:\n"
+                f"  {os.environ.get('USER', 'tonygwu')} ALL=({user}) NOPASSWD: "
+                f"/Users/{os.environ.get('USER', 'tonygwu')}/.local/bin/agy, /usr/bin/true")
+
+def agy_profiles(root: Path | None = None, default_home: str | None = None,
+                 users: str | None = None) -> list[str]:
     """Every Antigravity profile on this machine, DERIVED rather than listed.
 
     A profile is a HOME: `agy` reads $HOME/.gemini/antigravity-cli/ and there is
@@ -868,11 +946,14 @@ def agy_profiles(root: Path | None = None, default_home: str | None = None) -> l
     token file deleted outright, so a token check would wrongly drop the main
     account.
 
-    A NON-DEFAULT home must carry a token, because it has neither of the two
-    ways to be usable otherwise. Its Keychain search list resolves under its own
-    $HOME, which holds no keychain, so it cannot reach the Keychain at all; a
-    first login there raises "Keychain Not Found" and falls back to the file.
-    No token therefore means no credential by either route.
+    A NON-DEFAULT home must carry a token. It was believed on 2026-09-07 that
+    such a home could not reach the Keychain at all and fell back to the file.
+    MEASURED 2026-09-10 on agy 1.2.0: it CAN, and does. Both HOMEs logged
+    "authenticated via keyring", and a refresh under the second HOME rewrote
+    the one Keychain item the default HOME reads, so both served the same
+    account. The token file is still the marker of a configured profile; it is
+    not the credential. A second ACCOUNT on this machine is a `user:` profile,
+    see GEMINI_USER_PREFIX.
 
     FOUND 2026-09-07: `agy` scaffolds $HOME/.gemini/... on startup, so any stray
     `HOME=... agy` invocation leaves behind a directory that looks exactly like
@@ -893,6 +974,12 @@ def agy_profiles(root: Path | None = None, default_home: str | None = None) -> l
                     f"profile cannot reach the Keychain, so it has no credential at all")
                 continue
             homes.append(str(d))
+    # `user:` profiles come from GEMINI_USERS, never from a hardcoded name: this
+    # operator's account list changes, and two hardcoded lists have already
+    # gone stale on this machine.
+    names = os.environ.get("GEMINI_USERS", "") if users is None else users
+    for name in [n.strip() for n in names.split(",") if n.strip()]:
+        homes.append(GEMINI_USER_PREFIX + name)
     return homes
 
 
@@ -1201,7 +1288,6 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     this call's own log and the answer is recorded on the grade, not assumed.
     """
     env = dict(os.environ)
-    env["HOME"] = profile_home
     # A stale value for either of these in the inherited shell would silently
     # change which account or which backend answers. GEMINI_API_KEY switches agy
     # to the raw Gemini API when settings.json names that provider, which would
@@ -1212,12 +1298,11 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     # Run outside the repository, like the Fable arm: the judge should not stand
     # in a directory holding the roster it is blinded against. Reads outside the
     # working directory are refused by agy, so the jail is what makes that bite.
-    jail = Path(workdir) if workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "judge-jail"
-    jail.mkdir(parents=True, exist_ok=True)
+    jail = gemini_jail(profile_home, workdir)
 
     print_timeout = max(60, timeout - 60)
     log_path = jail / "agy-cli.log"
-    cmd = gemini_command(prompt, model, binary, print_timeout, log_path)
+    cmd, env = gemini_launch(profile_home, gemini_command(prompt, model, binary, print_timeout, log_path), env)
 
     # A transient is retried; an exhaustion or a bad model is not.
     #
@@ -1268,7 +1353,7 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     if attempts > 1:
         log(f"    gemini: {attempts} attempts "
             f"({empty_retries} after an empty answer) "
-            f"({Path(profile_home).name or 'default'})")
+            f"({profile_label(profile_home)})")
 
     events = []
     for line in (proc.stdout or "").splitlines():
@@ -1292,7 +1377,7 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
             until = agy_exhausted_until(blob, time.time())
             bench_gemini_profile(profile_home, until)
             if until:
-                log(f"    gemini: benching {Path(profile_home).name or 'default'} for "
+                log(f"    gemini: benching {profile_label(profile_home)} for "
                     f"{round(until - time.time())}s; it reported its own reset time")
         raise RuntimeError(detail)
 
@@ -1611,6 +1696,7 @@ def main() -> int:
         # Paths only. The account each profile serves is recorded per grade
         # from that call's own log; asserting it here, before any call has been
         # made, would mean guessing from stale files.
+        check_user_profiles(gem_profiles)
         log(f"gemini profiles in rotation (round-robin, no headroom is measurable): "
             f"{gem_profiles}")
 
