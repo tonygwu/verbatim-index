@@ -276,7 +276,72 @@ Phase 2, explicitly not built here:
 The interfaces are the two reserved blocks and the stage boundaries above.
 Nothing in V0 needs a migration to start Phase 2.
 
-## 9. Measured on the pilot
+## 9. Measured on the pilot (2026-09-10 to 2026-09-11)
 
-Filled in from the pilot runs of 2026-09-10; see the section of the same name
-appended below once the audit is complete.
+The corpus at run time: 50 leaders, 682 transcripts in `data/transcripts_open`,
+9.05 million words, 35 of them on the exclusion list.
+
+**Golden eval, live, four synthetic transcripts, 13 gold positives and 24
+negatives** (extractor Astra, verifier Fable):
+
+| metric | value | threshold |
+|---|---|---|
+| precision | 1.000 | 0.85 |
+| recall | 0.929 | 0.60 |
+| false positives on any of the 24 negative spans | 0 | 0 |
+| attribution correctness | 1.000 | 1.00 |
+| quote fidelity (every quote grounds exactly) | 1.000 | 1.00 |
+| claim fidelity | 0.923 | 0.90 |
+| horizon correctness | 1.000 | 0.90 |
+| probability exactness | 1.000 | 1.00 |
+| confidence type | 0.846 | 0.90 |
+
+The one soft miss was a spec gap, not a model error: "I think" and "my bet"
+were tagged as qualitative confidence before the specs said belief verbs are
+commitment and only degree words are confidence. The tree that produced these
+numbers predates that clarification.
+
+**Ten real transcripts plus one, one per leader, shortest dated recording each,
+plus the George Hotz transcript used for the first live call.** Extraction on
+Astra, verification on Fable after two Gemini failures were retried:
+
+```
+candidates weighed by the extractor   407
+candidates returned                    26   (4 per 10,000 words)
+grounded exactly                       26   (0 ungrounded)
+verifier accepted                      11
+verifier rejected                      13   falsifiable 11, stands_alone 2, claim_faithful 1
+extraction failures                     0 of 11
+verification failures                   2 of 11 on the first pass (both Gemini: an empty answer
+                                        after a denied tool, and a status ERROR), 0 after retry
+```
+
+Accepted: 10 with an explicit date, 1 inferable; 5 under the speaker's own
+control (guidance and roadmaps), 6 external; 5 with qualitative confidence,
+none with a stated number. The market stage found no exact or proxy market for
+any of them, which is the expected result for claims of this shape.
+
+Three things the pilot taught, each already folded into the specs:
+
+- **Overlap is not duplication.** The first live transcript returned two
+  distinct claims in overlapping spans and the first dedupe rule kept one.
+- **Undated announcements pass the gates and mean nothing.** "We're launching
+  our new model soon" and "I'm sure we'll be able to analyze video" reached the
+  verifier. Both specs now fail an undated claim with no named deliverable.
+- **The two specs must agree on dates.** The extractor resolved "later this
+  year" against the statement date as told; the verifier called the resolved
+  date unfaithful. Reconciling the specs raised acceptance on the same 15
+  candidates from 3 to 8.
+
+One limitation the pilot made concrete: Elon Musk's "SolarCity will probably
+go public later this year" carries a statement date of 2014-10-07 from the
+upload date of a recording that is plainly older, so the resolved target of
+2014-12-31 inherits the upload date's error. The words are kept beside the
+date in `target_date_text` so a reader can re-derive it.
+
+What the pilot cannot say: whether the verifier's strictness is right. It
+rejected Jensen Huang's undated visions of AI-written software and Sam
+Altman's "persistent agents soon", which read as predictions to a human but
+fail the gate that demands a date or a threshold. That is the precision-first
+choice working as specified, and it is the first thing Phase 2 should revisit
+with human labels on real transcripts.

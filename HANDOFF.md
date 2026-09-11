@@ -1,89 +1,77 @@
-# Verbatim Index — session handoff, 2026-09-10 08:25Z
+# Verbatim Index — session handoff, 2026-09-11 03:10Z
 
-Written before a context compaction. Every line here has a check command; do
-not trust one without running it.
+Written from `repo-2` while the Verbatim Predictions corpus extraction is
+running. Every line here has a check command; do not trust one without
+running it.
 
 ## Pinned revision
 
 | Repo | Commit | Pushed |
 |---|---|---|
-| code (`repo-0`, public) | `329fb87` on `main` | yes |
-| data (`data/`, private) | `91356d5` (moves every cycle; re-check) | check |
+| code (`repo-2`, public) | `git log --oneline -1` after this file's commit | see `git status --short --branch` |
+| data (`data/`, private) | moves every grade cycle; `git -C data log --oneline -1` | repo-0 commits it; `data/predictions/` is uncommitted until repo-0 adds it |
 
-Verify: `git -C /Users/tonygwu/Code/misc/verbatim-index/repo-0 status --short --branch`
+Verify: `git status --short --branch` in repo-2; `git -C data status --short | head`.
 
 ## What this session did
 
-Added a THIRD judge — Gemini 3.8 Flash via the Antigravity CLI (`agy`) — and
-promoted it to published. It joins Fable 5.1 (`claude -p`) and GPT-6 Astra
-(`codex exec`). Everything below is recorded in AGENTS.md; this file is only
-the live state.
+Built Verbatim Predictions V0, documented in `docs/PREDICTIONS.md`:
+extraction, verification by a second model family, a market-consensus stage,
+validator, golden eval, descriptive aggregate, and the page at
+`verbatim-predictions.tonygwu.com`. Eight `scripts/test_predictions_*.py`
+suites guard it. The existing leaderboard is unchanged except for a link in
+its eyebrow and the design tokens moving byte for byte into
+`scripts/site_theme.py` (render diff: one line).
 
-- Two Antigravity accounts, selected by `$HOME` (there is no AGY_CONFIG_DIR).
-  `agy` = tonygwu@gmail.com, `agy-b` = gptwufamily@gmail.com. Run
-  `agy-profiles` to derive the mapping; never infer it from the alias.
-- Gemini is in `BLIND_JUDGES` in `grade_loop.sh`, so new transcripts get all
-  three judges. It was NOT, earlier, and coverage silently drifted to 87%.
-- A fork fixed the fetch target to count GRADEABLE transcripts rather than raw
-  downloads (`329fb87`). The loop had declared 40/40 at target when the truth
-  was 26/40.
+## Background process STILL RUNNING (from repo-2)
 
-## Background processes STILL RUNNING
+| Process | Started | Check |
+|---|---|---|
+| `extract_predictions.py --stage extract --workers 4` over all 682 transcripts | 2026-09-11 02:56Z | `pgrep -f "stage extract --workers 4"`; log `ls -t data/predictions/_runs/extract-corpus-*.log \| head -1` |
 
-| Process | Check |
-|---|---|
-| `fetch_loop.sh` (TARGET=14) | `pgrep -f fetch_loop.sh` |
-| `grade_loop.sh` (OPEN_PER_LEADER=0) | `pgrep -f grade_loop.sh` |
+It skips transcripts whose meta says extraction succeeded, so re-running the
+same command after a stop resumes. Watch `error_taxonomy` in the log's last
+line for `auth_or_quota` and `router_no_account` before calling a slow pass
+healthy. It competes with `grade_loop` (repo-0) for the same Codex and Fable
+quota; Fable was near 0% on most accounts when it started, so it will run
+mostly on Astra.
 
-Both exit on their own when work runs out. `happyscribe_loop` is stopped.
+## The single next action
 
-**The fetch loop needs a human when YouTube blocks the exit IP.** It prints
-`BLOCKED on IP <addr>`, re-probes every 60s, and resumes by itself once the VPN
-is rotated. Two exits were burned today, each lasting under an hour at the
-current 2s pace / 6 workers.
+When extraction exits:
+
+```
+.venv/bin/python scripts/extract_predictions.py --stage extract --workers 4   # fills any failures
+nohup .venv/bin/python scripts/extract_predictions.py --stage verify --workers 4 > data/predictions/_runs/verify-corpus.log 2>&1 &
+.venv/bin/python scripts/market_consensus.py --workers 2
+.venv/bin/python scripts/validate_predictions.py
+.venv/bin/python scripts/aggregate_predictions.py
+bash scripts/deploy_predictions.sh --dry-run && bash scripts/deploy_predictions.sh
+```
+
+Verification needs a model family other than the extractor's per transcript;
+with extraction on Astra that means Fable or Gemini. If Fable is spent, the
+pass will fail into `auth_or_quota` and can be re-run when a window resets
+(`quotapick status`). Then ask the operator to commit `data/predictions/`
+from repo-0: `git -C data add predictions && git -C data commit`.
 
 ## Live numbers at handoff time
 
 ```
-corpus     574 gradeable
-at target  36/40  short: michael-dell 11/14, cc-wei 12/14, larry-ellison 12/14, sergey-brin 12/14
-fable      570/574 (99.3%)
-astra      567/574 (98.8%)
-gemini     552/574 (96.2%)
+pilot: 13 files, 26 candidates from 407 weighed, 11 accepted, 13 rejected, 2 pending
+golden eval (live): precision 1.000, recall 0.929, 0 false positives on 24 negatives
+page: deployed with the pilot's 11 predictions; index page redeployed with the cross-link
 ```
 
-Verify: `bash scripts/status.sh`
+Verify: `.venv/bin/python scripts/validate_predictions.py` and
+`.venv/bin/python scripts/aggregate_predictions.py`.
 
 ## Open decisions, with costs
 
-1. **Slow the fetch pace?** Exits are lasting <1h at 2s/6 workers with ~9
-   transcripts left to fetch. Slower may finish with fewer VPN rotations.
-   Cost of doing nothing: more manual rotations.
-2. **Add rank agreement to `aggregate.py` diagnostics?** It is computed ad hoc
-   today (see AGENTS.md). Recomputing per run would make judge drift visible
-   early. Cost: more diagnostics surface to maintain.
-3. **Upgrade `calibrate()` to a two-way `score ~ transcript + judge` fit?**
-   AGENTS.md records why it is defensible not to. Cost of doing it: re-deriving
-   ~2,000 grades for a measured effect of at most 0.18 points.
-
-## Known open issue, upstream
-
-The 20-odd transcripts Gemini cannot grade are all >32k words and hit an
-Antigravity CLI bug: an auto-denied tool ends the run with exit 0 and
-`status: SUCCESS` and an empty response. Filed and confirmed on macOS 1.1.28 at
-https://github.com/google-antigravity/antigravity-cli/issues/794 — it is NOT
-deterministic, so re-running recovers some each pass.
-
-## Single next action
-
-Watch for `BLOCKED on IP` in `data/logs/fetch_loop.log` and rotate the VPN when
-it appears; otherwise let both loops run to their own completion.
-
-## Verification command
-
-```
-\
-  git status --short --branch && \
-  pgrep -fl 'fetch_loop.sh|grade_loop.sh' && \
-  bash scripts/status.sh --brief
-```
+1. **Verifier strictness.** It rejects undated visions ("computers will write
+   the programs") on the falsifiability gate. Loosening the undated rule raises
+   recall and admits vaguer claims; the pilot audit in `docs/PREDICTIONS.md`
+   section 9 has the examples either way. Recommendation: keep it for V0.
+2. **Wrong-person transcripts.** 35 excluded recordings are still on disk in
+   `data/transcripts_open`; the extractor skips them by list. They leave when
+   repo-0's loop applies the withdrawal manifest.
