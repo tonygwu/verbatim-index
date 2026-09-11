@@ -23,7 +23,26 @@ cd "$(dirname "$0")/.."
 require_daemon_clone || exit 1
 
 PY=.venv/bin/python
-TARGET="${TARGET:-5}"                 # GRADEABLE transcripts wanted per leader
+# GRADEABLE transcripts wanted per leader. Set to 12 on 2026-09-11, by
+# measurement rather than preference.
+#
+# The YouTube manifest was built with a median of exactly 14 candidates per
+# leader for a target of 14, so it assumed every candidate would work. Across
+# the corpus, fetch keeps 93% of candidates and QA keeps 92% of those, about
+# 85% combined. 14 candidates therefore yield about 12, and ten of the twelve
+# leaders short of target were sitting on exactly 12. Both sources are now
+# exhausted, so 12 is what the sources hold, not a compromise.
+#
+# The old default of 5 was a trap: every real run passed TARGET=14, so the
+# default existed only to be overridden, and restarting without it made this
+# loop print "COMPLETE: all 50 leaders have 5 transcripts" in under a second.
+#
+# Raising this to 14 again needs roughly 17 candidates per leader in the
+# manifest, weighted toward recordings that survive the subject-named screen.
+# This is a FETCHING goal and reaches no published number; the board is gated
+# by MIN_TRANSCRIPTS_TO_RANK in aggregate.py. Guarded by
+# scripts/test_target_default.py.
+TARGET="${TARGET:-12}"
 BARREN_LIMIT="${BARREN_LIMIT:-3}"     # consecutive empty passes before giving up
 MIN_ACCEPT="${MIN_ACCEPT:-3}"         # below this a leader is reported as thin
 PROBE_VIDEO="${PROBE_VIDEO:-93piVCwqXz8}"
