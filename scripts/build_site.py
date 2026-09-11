@@ -366,7 +366,7 @@ footer{
   <div><dt>Words graded</dt><dd>__N_WORDS__</dd></div>
   <div><dt>Judge calls</dt><dd>__N_CALLS__</dd></div>
   <div><dt>Tie band</dt><dd>&plusmn;__TIEBAND__<small>pts</small></dd></div>
-  <div><dt>Fable vs Astra</dt><dd>__CORR__<small>r</small></dd></div>
+  <div><dt>Judge agreement</dt><dd>__CORR__<small>r</small></dd></div>
 </dl>
 
 <div class="sec">
@@ -770,6 +770,10 @@ JUDGE_LABELS = {
     "astra": "OpenAI GPT-6 Astra",
     "gemini": "Google Gemini 3.8 Flash",
 }
+# What to call a judge mid-sentence. An arm not listed here falls back to its
+# own slug rather than being dropped, so a new judge appears unnamed but never
+# invisible.
+JUDGE_SHORT = {"fable": "Fable", "astra": "Astra", "gemini": "Gemini"}
 NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
 
 
@@ -815,9 +819,25 @@ def build_method(results: dict, calib: dict, roster: dict) -> str:
                 f"(<code>{esc(served)}</code>, {per_judge.get(j, 0)} transcripts)")
 
     leak = d.get("blinding_leakage_rate")
-    corr = d.get("inter_judge_correlation_overall")
-    gap = d.get("mean_abs_judge_gap_overall")
+    pair_agree = d.get("judge_pair_agreement") or {}
+    corr = d.get("mean_pairwise_correlation")
     raw = d.get("judge_raw_means_blinded", {})
+
+    # Generated from the judges present. Naming them in the prose is what went
+    # stale last time: the panel grew to three and the copy still said two.
+    def _label(j: str) -> str:
+        return JUDGE_SHORT.get(j, j.title())
+
+    insight_means = ", ".join(
+        f"{_label(j)} {raw.get(j, {}).get('d2_insight', '&ndash;')}" for j in sorted(raw)
+    ) or "&ndash;"
+    pair_rows = "".join(
+        f"<br><b>{_label(a)} vs {_label(b)}</b>: r&nbsp;=&nbsp;{v.get('correlation_overall', '&ndash;')}, "
+        f"mean absolute gap {v.get('mean_abs_gap_overall', '&ndash;')} points "
+        f"on {v.get('n', 0)} shared transcripts."
+        for (a, b), v in ((k.split("|", 1), v) for k, v in sorted(pair_agree.items()))
+    ) or ""
+
     head = (calib.get("headline") or {})
     noise = head.get("mean_within_judge_sd_overall")
     dropped = roster.get("dropped_for_no_transcripts", [])
@@ -897,14 +917,14 @@ are not distinguishable. The bracket in the rank column marks those groups.</li>
 (standard deviation 0.00), so the judges read the same conversation the same way every time.</li>
 </ul>
 <div class="callout">
-<b>Fable and Astra disagree in a specific, correctable way.</b>
-Across blinded grades the raw means were Fable {raw.get('fable', {}).get('d2_insight', '&ndash;')} and
-Astra {raw.get('astra', {}).get('d2_insight', '&ndash;')} on insight, a consistent offset rather than
-genuine disagreement about who is impressive. Each judge's distribution is therefore recentred on the
-pooled distribution before averaging, so only real disagreement moves a leader.
-Correlation between those two judges on the Overall score: <b>r&nbsp;=&nbsp;{corr}</b>.
-Mean absolute gap: <b>{gap} points</b>. Both figures compare Fable with Astra alone; they have
-not been recomputed across every pair since the panel grew.
+<b>The judges disagree in a specific, correctable way.</b>
+Across blinded grades their raw means on insight were {insight_means}, a consistent offset
+rather than genuine disagreement about who is impressive. Each judge's distribution is
+therefore recentred on the pooled distribution before averaging, so only real disagreement
+moves a leader.
+{pair_rows}
+Each figure is computed on the transcripts that both judges of the pair graded, so it
+compares judges rather than the different transcripts each one happened to reach.
 </div>
 """)
 
@@ -1059,7 +1079,7 @@ def main() -> int:
                  (f"{words/1e6:.1f}M" if words >= 1e6 else f"{words/1000:.0f}k")
                  if words else "&ndash;")
         .replace("__N_CALLS__", str(d.get("grades_used", 0)))
-        .replace("__CORR__", str(d.get("inter_judge_correlation_overall") or "&ndash;"))
+        .replace("__CORR__", str(d.get("mean_pairwise_correlation") or "&ndash;"))
         .replace("__NOISE__", str(head.get("mean_within_judge_sd_overall", "1.5")))
         .replace("__TIEBAND__", str(head.get("least_significant_difference_95pct", 4.3))))
 

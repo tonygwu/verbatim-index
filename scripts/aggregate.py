@@ -782,20 +782,52 @@ def main() -> int:
 
     # Run-level diagnostics.
     all_b = [t for t in transcripts_out if t["mode"] == "blinded"]
-    fable = [g for g in usable if g["judge"] == "fable" and g["mode"] == "blinded"]
-    astra = [g for g in usable if g["judge"] == "astra" and g["mode"] == "blinded"]
+    # DERIVED, never typed. Every run-level judge diagnostic below is built from
+    # the judges actually present in the grades. The original pair was written
+    # out by hand here and stayed two judges wide straight through the Gemini
+    # promotion on 2026-09-08, so 514 grades that moved published scores were
+    # missing from the very numbers that exist to audit that. The leaderboard
+    # was right and its evidence was not, which is the harder failure to catch.
+    # Same hazard as the hand-typed judge count at HIGH_CONFIDENCE_TRANSCRIPTS.
+    # Guarded by scripts/test_judge_enumeration.py, on three judges and on four.
+    blinded = [g for g in usable if g["mode"] == "blinded"]
+    judges_blinded = sorted({g["judge"] for g in blinded})
+    by_judge = {j: [g for g in blinded if g["judge"] == j] for j in judges_blinded}
+
     paired = defaultdict(dict)
-    for g in usable:
-        if g["mode"] == "blinded":
-            paired[(g["leader_slug"], g["source_id"])][g["judge"]] = g["grade"]["overall"]
-    both = [(v["fable"], v["astra"]) for v in paired.values() if "fable" in v and "astra" in v]
-    corr = None
-    if len(both) > 2:
-        xs, ys = zip(*both)
-        mx, my = st.mean(xs), st.mean(ys)
-        num = sum((x - mx) * (y - my) for x, y in both)
-        den = math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
-        corr = round(num / den, 3) if den else None
+    for g in blinded:
+        paired[(g["leader_slug"], g["source_id"])][g["judge"]] = g["grade"]["overall"]
+
+    def pair_agreement(a: str, b: str) -> dict:
+        """Agreement for ONE pair, over the transcripts both judges graded.
+
+        Paired deliberately. An unpaired comparison of two judges' means would
+        confound the judges with the different transcripts each happened to
+        reach, and coverage is uneven: Gemini is 3.5 points behind Fable.
+
+        `n` is always reported, including when it is too small to correlate, so
+        a thin pair is visible rather than silently absent.
+        """
+        both = [(v[a], v[b]) for v in paired.values() if a in v and b in v]
+        out = {"n": len(both), "correlation_overall": None, "mean_abs_gap_overall": None}
+        if len(both) > 2:
+            xs, ys = zip(*both)
+            mx, my = st.mean(xs), st.mean(ys)
+            num = sum((x - mx) * (y - my) for x, y in both)
+            den = math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
+            out["correlation_overall"] = round(num / den, 3) if den else None
+            out["mean_abs_gap_overall"] = round(st.mean([abs(x - y) for x, y in both]), 1)
+        return out
+
+    # judges_blinded is sorted, so the key is always "<earlier>|<later>".
+    pair_agreements = {f"{a}|{b}": pair_agreement(a, b)
+                       for i, a in enumerate(judges_blinded)
+                       for b in judges_blinded[i + 1:]}
+    _pair_corrs = [v["correlation_overall"] for v in pair_agreements.values()
+                   if v["correlation_overall"] is not None]
+    # One panel-level number for the site header. The mean over pairs, not a
+    # chosen pair, so adding a judge cannot leave it describing the old panel.
+    mean_pairwise_corr = round(st.mean(_pair_corrs), 3) if _pair_corrs else None
 
     diagnostics = {
         "grading_contracts": dict(contracts),
@@ -805,16 +837,19 @@ def main() -> int:
         "grades_used": len(usable),
         "grades_excluded_validation": len(excluded),
         "transcripts_with_blinded_consensus": len(all_b),
-        "judge_call_counts": {"fable_blinded": len(fable), "astra_blinded": len(astra)},
+        "judge_call_counts": {f"{j}_blinded": len(by_judge[j]) for j in judges_blinded},
         # Collected, reported, and deliberately NOT in any number above.
         # See SHADOW_JUDGES for why an arm waits here.
         "shadow_judges": shadow_report(shadow, usable, len(all_b) or None),
         "judge_raw_means_blinded": {
-            "fable": {d: round(st.mean([g["grade"]["dimensions"][d]["score"] for g in fable]), 1) for d in DIMS} if fable else {},
-            "astra": {d: round(st.mean([g["grade"]["dimensions"][d]["score"] for g in astra]), 1) for d in DIMS} if astra else {},
+            j: {d: round(st.mean([g["grade"]["dimensions"][d]["score"] for g in by_judge[j]]), 1)
+                for d in DIMS}
+            for j in judges_blinded
         },
-        "inter_judge_correlation_overall": corr,
-        "mean_abs_judge_gap_overall": round(st.mean([abs(a - b) for a, b in both]), 1) if both else None,
+        # Every pair, each with its own n. There is no key naming a single pair
+        # "overall": that name is what let one pair stand in for the panel.
+        "judge_pair_agreement": pair_agreements,
+        "mean_pairwise_correlation": mean_pairwise_corr,
         "blinding_leakage_rate": round(
             sum(1 for t in all_b if t["identity_recognised"]) / len(all_b), 3) if all_b else None,
         "unscorable_subject_absent": len(unscorable),
