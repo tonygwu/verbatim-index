@@ -33,6 +33,33 @@ WORKERS="${WORKERS:-8}"
 # transcript graded by only two would reintroduce exactly the uneven judge MIX
 # the backfill existed to remove, and drift it wider every cycle. Set this to
 # fable,astra to fall back to two judges if the Antigravity arm has to be pulled.
+# Every process that can ADD transcripts to the corpus. This loop must not
+# declare COMPLETE while any of them is still feeding it.
+#
+# It used to test one literal, `pgrep -f "fetch_loop.sh"`, written when YouTube
+# was the only source. Happy Scribe was added later as a deliberately
+# independent second source and this check never learned about it. On
+# 2026-09-11 grade_loop declared itself finished at 04:17:37Z, happyscribe_loop
+# merged 8 transcripts at 04:49:11Z, and nothing graded them. The comment avoids
+# quoting the COMPLETE sentinel verbatim on purpose: two tests locate that
+# string by POSITION to assert the stale-board check runs before it, and a
+# quotation up here reads as a first occurrence and breaks them.
+# Nothing said so either; it was noticed only because the coverage numbers
+# stopped matching, and the loop had to be restarted by hand.
+#
+# Same shape as the hand-typed judge list in aggregate.py: a name written out
+# in one place goes stale the day something is added beside it. A third source
+# belongs HERE and nowhere else. Guarded by scripts/test_fetcher_detection.py.
+FETCHERS=("fetch_loop.sh" "happyscribe_loop.sh")
+
+fetcher_running(){
+  local f
+  for f in "${FETCHERS[@]}"; do
+    pgrep -f "$f" > /dev/null && return 0
+  done
+  return 1
+}
+
 BLIND_JUDGES="${BLIND_JUDGES:-fable,astra,gemini}"
 OPEN_PER_LEADER="${OPEN_PER_LEADER:-2}"
 CYCLE_SLEEP="${CYCLE_SLEEP:-300}"
@@ -191,10 +218,10 @@ while true; do
   gained=$(( g1 - g0 ))
   say "cycle ${cycle} done: +${gained} grades (total ${g1})"
 
-  # Stop only when nothing is arriving AND the fetcher has finished for good.
+  # Stop only when nothing is arriving AND every source has finished for good.
   if [ "$gained" -eq 0 ]; then
-    if pgrep -f "fetch_loop.sh" > /dev/null; then
-      say "  no new grades, but fetch loop is still running. waiting."
+    if fetcher_running; then
+      say "  no new grades, but a transcript source is still running. waiting."
       idle=0
     else
       idle=$((idle + 1))
