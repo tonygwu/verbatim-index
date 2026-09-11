@@ -53,9 +53,27 @@ WORKERS="${WORKERS:-8}"
 FETCHERS=("fetch_loop.sh" "happyscribe_loop.sh")
 
 fetcher_running(){
+  # `pgrep -f X` matches any process whose FULL COMMAND LINE contains X, which
+  # includes every shell wrapper, editor, grep and agent command that merely
+  # names the script. A false positive here makes this loop wait forever for a
+  # source that is not running, and that is the house rule learned the hard way:
+  # six poll loops once kept spinning because their pgrep pattern matched their
+  # own command line. On 2026-09-11 `pgrep -f grade_loop.sh` returned two pids
+  # and only one was running the loop; the other was a /bin/zsh -c wrapper.
+  #
+  # `ps -Ao comm=,args=` gives comm, then argv0, then the rest. A shell running
+  # a SCRIPT has the script path in the third field; a shell running a command
+  # STRING has -c there. So a -c payload that mentions the script is excluded
+  # and a real `bash scripts/happyscribe_loop.sh` is kept.
   local f
   for f in "${FETCHERS[@]}"; do
-    pgrep -f "$f" > /dev/null && return 0
+    if ps -Ao comm=,args= | awk -v s="$f" '
+         $1 !~ /(^|\/)(bash|sh|zsh|dash)$/ { next }
+         $3 == "-c" { next }
+         index($0, s) { found = 1; exit }
+         END { exit !found }'; then
+      return 0
+    fi
   done
   return 1
 }
