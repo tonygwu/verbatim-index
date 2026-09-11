@@ -61,15 +61,16 @@ class R:
 calls = []
 def ok_runner(argv, **kw): calls.append(argv); return R(0)
 def bad_runner(argv, **kw): calls.append(argv); return R(1, "sudo: a password is required")
-g.check_user_profiles(["/h/default", "user:tonyagents"], runner=ok_runner)
-check("only user profiles are probed, with sudo -n and /usr/bin/true",
-      calls == [["sudo", "-n", "-u", "tonyagents", "-H", "/usr/bin/true"]], str(calls))
+g.check_user_profiles(["/h/default", "user:tonyagents"], binary="/usr/local/bin/agy", runner=ok_runner)
+check("only user profiles are probed, with sudo -n and the REAL binary, not /usr/bin/true",
+      calls == [["sudo", "-n", "-u", "tonyagents", "-H", "/usr/local/bin/agy", "--help"]], str(calls))
 try:
-    g.check_user_profiles(["user:tonyagents"], runner=bad_runner); raised = None
+    g.check_user_profiles(["user:tonyagents"], binary="agy", runner=bad_runner); raised = None
 except SystemExit as e:
     raised = str(e)
 check("a refused switch stops the pass before any job", raised is not None)
-check("and the message names the sudoers rule", raised is not None and "NOPASSWD" in raised and "sudoers.d/agy-tonyagents" in raised, str(raised)[:200])
+check("and the message names the sudoers rule and a readable install path",
+      raised is not None and "NOPASSWD" in raised and "sudoers.d/agy-tonyagents" in raised and "/usr/local/bin/agy" in raised, str(raised)[:300])
 g.check_user_profiles(["/h/default"], runner=bad_runner)
 check("HOME profiles never trigger the check", True)
 
@@ -77,7 +78,7 @@ print("wiring")
 src = (REPO / "scripts" / "grade.py").read_text()
 check("call_gemini launches through gemini_launch", "cmd, env = gemini_launch(profile_home," in src)
 check("call_gemini jails through gemini_jail", "jail = gemini_jail(profile_home, workdir)" in src)
-check("main checks user profiles before queueing", "check_user_profiles(gem_profiles)" in src)
+check("main checks user profiles before queueing, with the configured binary", "check_user_profiles(gem_profiles, args.agy_bin)" in src)
 check("no bare HOME assignment survives in call_gemini",
       'env["HOME"] = profile_home' not in src.split("def call_gemini")[1].split("\ndef ")[0])
 check("GEMINI_USERS is read from the environment, no name is hardcoded",

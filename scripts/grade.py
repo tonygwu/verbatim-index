@@ -33,6 +33,7 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -906,26 +907,36 @@ def gemini_jail(profile: str, workdir: str | None, shared_root: Path = GEMINI_SH
     return jail
 
 
-def check_user_profiles(profiles: list[str], runner=subprocess.run) -> None:
-    """Refuse a pass whose user profile cannot be switched to without a prompt.
+def check_user_profiles(profiles: list[str], binary: str = "agy", runner=subprocess.run) -> None:
+    """Refuse a pass whose user profile cannot run the judge binary without a prompt.
 
-    A password prompt inside a worker would hang the pass, and `-n` turns that
-    into an immediate refusal, which is checked here once rather than
-    discovered 500 jobs in. The message names the sudoers line that fixes it.
+    Probes with the REAL binary and `--help`, not with /usr/bin/true. FOUND
+    2026-09-11: the sudoers rule was right and `true` ran, and the judge still
+    failed with "unable to execute ...: Permission denied", because the binary
+    sat under a home directory the other user cannot enter. A probe that runs
+    something else cannot see that. A password prompt inside a worker would
+    hang the pass, and `-n` turns it into an immediate refusal, checked here
+    once rather than discovered 500 jobs in. The message names the two things
+    that fix it: a root-owned, world-readable copy of the binary, and a
+    sudoers line naming that path.
     """
     for p in profiles:
         if not is_user_profile(p):
             continue
         user = p[len(GEMINI_USER_PREFIX):]
-        proc = runner(["sudo", "-n", "-u", user, "-H", "/usr/bin/true"],
+        proc = runner(["sudo", "-n", "-u", user, "-H", binary, "--help"],
                       capture_output=True, text=True)
         if proc.returncode != 0:
+            me = os.environ.get("USER", "tonygwu")
             raise SystemExit(
-                f"Gemini profile {p!r} cannot be switched to without a password "
-                f"({(proc.stderr or '').strip()[:120]}). Add a sudoers rule scoped to the "
-                f"judge binary, e.g. with `sudo visudo -f /etc/sudoers.d/agy-{user}`:\n"
-                f"  {os.environ.get('USER', 'tonygwu')} ALL=({user}) NOPASSWD: "
-                f"/Users/{os.environ.get('USER', 'tonygwu')}/.local/bin/agy, /usr/bin/true")
+                f"Gemini profile {p!r} cannot run {binary!r} as {user} without a password "
+                f"({(proc.stderr or '').strip()[:160]}). The binary must sit where that user "
+                f"can read it, outside any home directory, and the sudoers rule must name "
+                f"that path. For example:\n"
+                f"  sudo cp {shutil.which(binary) or binary} /usr/local/bin/agy && sudo chmod 755 /usr/local/bin/agy\n"
+                f"  sudo visudo -f /etc/sudoers.d/agy-{user}   # containing:\n"
+                f"  {me} ALL=({user}) NOPASSWD: /usr/local/bin/agy\n"
+                f"then run with --agy-bin /usr/local/bin/agy (or AGY_BIN=/usr/local/bin/agy).")
 
 def agy_profiles(root: Path | None = None, default_home: str | None = None,
                  users: str | None = None) -> list[str]:
@@ -1696,7 +1707,7 @@ def main() -> int:
         # Paths only. The account each profile serves is recorded per grade
         # from that call's own log; asserting it here, before any call has been
         # made, would mean guessing from stale files.
-        check_user_profiles(gem_profiles)
+        check_user_profiles(gem_profiles, args.agy_bin)
         log(f"gemini profiles in rotation (round-robin, no headroom is measurable): "
             f"{gem_profiles}")
 
