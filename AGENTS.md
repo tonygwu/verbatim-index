@@ -62,21 +62,17 @@ ln -s ../data data          # ONE shared checkout, cloned once at verbatim-index
 git config user.email 446441+tonygwu@users.noreply.github.com
 git -C data config user.email 446441+tonygwu@users.noreply.github.com
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
-.venv/bin/python scripts/test_grade_harness.py     # pure checks, no quota
-.venv/bin/python scripts/test_pipeline_dedupe.py  # pure checks, no quota
-.venv/bin/python scripts/test_shared_data.py      # pure checks, no quota
-.venv/bin/python scripts/test_venue_calibration.py # pure checks, no quota
-.venv/bin/python scripts/test_blinding.py
-.venv/bin/python scripts/test_coverage_table.py   # per-judge columns in the table
-.venv/bin/python scripts/test_render_integrity.py # invalid records, and a loud render
-.venv/bin/python scripts/test_wrong_person_screen.py # identity guesses against the roster
-.venv/bin/python scripts/test_loop_collapse.py    # paragraph-scale replays
-.venv/bin/python scripts/test_declared_year.py    # the year the judge is told
-.venv/bin/python scripts/test_withdraw_sources.py # guarded withdrawal tool
-.venv/bin/python scripts/test_gemini_identity.py  # one account behind two profiles
-.venv/bin/python scripts/test_gemini_user_profile.py # a Gemini profile that is a macOS user
-for t in shared lib schema driver markets eval aggregate site; do .venv/bin/python scripts/test_predictions_$t.py; done  # predictions, no quota
+for t in scripts/test_*.py; do .venv/bin/python "$t" >/dev/null || echo "FAILED $t"; done
 ```
+
+The suite is GLOBBED, not typed out. A typed list is the defect this repo has
+already paid for twice, in the hand-written judge list in `aggregate.py` and in
+the single fetcher name in `grade_loop.sh`: a name written in one place goes
+stale the day something is added beside it. The earlier version of this block
+reached 21 of the files, 13 by hand and 8 through a typed predictions loop, and
+had fallen 18 behind. RUN 2026-09-11: the glob finds 39 test files, all 39 pass,
+and none of them spends judge quota, so the whole suite is safe in a fresh clone
+before any account is wired up.
 
 Python 3.12 or newer: `llm-quota-router`, which `grade.py` imports to route
 Fable calls by measured quota, requires it.
@@ -84,17 +80,38 @@ Fable calls by measured quota, requires it.
 ## Daemons (repo-0 only)
 
 ```
-TARGET=14 nohup bash scripts/fetch_loop.sh >> data/logs/fetch_loop.log 2>&1 &
+nohup bash scripts/fetch_loop.sh >> data/logs/fetch_loop.log 2>&1 &
 nohup bash scripts/happyscribe_loop.sh >> data/logs/happyscribe_loop.log 2>&1 &
 OPEN_PER_LEADER=0 nohup bash scripts/grade_loop.sh >> data/logs/grade_loop.log 2>&1 &
 bash scripts/status.sh                 # live state of all three, plus coverage
 ```
 
-`TARGET=14` is the transcripts-per-leader goal. Without it the loop defaults
-to 5, sees every leader already there, and exits at once; that happened on
-the 2026-09-06 restart. `OPEN_PER_LEADER=0` skips the unblinded control pass. It competes with the
+`TARGET` is the transcripts-per-leader goal and now defaults to 12, so the
+command line no longer carries it. It used to default to 5 and every real run
+passed `TARGET=14`, which made the default a trap: a restart without it read 5,
+found every leader already above it, and printed COMPLETE in under a second.
+14 was never reachable either. The YouTube manifest was built at a median of
+exactly 14 candidates per leader, and MEASURED yield is about 85% end to end
+(fetch keeps 93% of candidates, QA keeps 92% of those), so 14 candidates give
+about 12. Both sources are now exhausted, so 12 is what the sources hold rather
+than a compromise; going back to 14 needs about 17 candidates per leader.
+TARGET is a FETCHING goal and gates no published number: it appears zero times
+in `aggregate.py` and `build_site.py`, and the board is gated by
+`MIN_TRANSCRIPTS_TO_RANK` instead. `scripts/test_target_default.py` asserts that
+separation as well as the number.
+
+`OPEN_PER_LEADER=0` skips the unblinded control pass. It competes with the
 blinded pass for the same Fable quota and the blinded pass is the published
 score.
+
+`PUBLISH_ON_COMPLETE=1` makes `grade_loop.sh` deploy to the live site ONCE, at
+the COMPLETE exit and nowhere else, and it is off by default. Plain
+`deploy.sh`, not `--refresh`: the last cycle already aggregated and rendered, so
+`results.json` is current, and `deploy.sh` stays read-only on `data/`. A failed
+push says so and exits 1 rather than reading as a clean finish, because silence
+there would recreate the stale-board bug it sits next to. Guarded by
+`scripts/test_publish_on_complete.py`, which also pins the publish block AFTER
+the stale-board check.
 
 `WORKERS` is a judgment call between 6 and 10, and the loop defaults to 8.
 The number does not change how much quota a pass spends, because the work is
@@ -257,6 +274,17 @@ the mix even.
   "Dell" is also a company, "Clément" is "Clem", "the DJ, not the Epic Games
   founder", and a guess that opens with the real speaker and then names the
   leader.
+  The screen is the DETECTOR, not the fix; the cause is under "Discovery still
+  matches on the surname alone" in Known limits. Two shapes it catches that a
+  simple "do the judges agree with the label" test does not: the leader can be
+  the INTERVIEWER, as in `alexandr-wang/cohere-u8fjas`, where the speaker is
+  Aidan Gomez and one judge wrote "interviewed by Alexandr Wang of Scale"; and
+  the speaker can be a genuine NAMESAKE, as in
+  `eric-schmidt/the-letterman-podcast--c4juv`, a standup comedian of that name,
+  where one judge hedged "possibly Eric Schmidt". A labelled fixture of those
+  cases is `scripts/test_wrong_person_regressions.py`. RUN 2026-09-11 after the
+  withdrawals: 664 recordings screened, 0 flagged, 0 on the board, with 35
+  recordings on the softer R3 review list that a human still reads.
 - **Withdrawals go through a manifest and a guarded tool.** A retirement is a
   rename in `data/`, which only repo-0 writes. `scripts/withdraw_sources.py`
   takes a manifest such as `docs/withdrawals-2026-09-10.json`, dry-runs by
@@ -316,11 +344,43 @@ the mix even.
   also re-reads the shelf at deletion time, so it is safe even under a race.
   Found by adversarial review of a78baf5, after that commit made a previously
   write-only path destructive.
-- **A retirement must be visible to the fetcher.** The sweep renames a source
+- **A retirement must be visible to EVERY fetcher.** The sweep renames a source
   to `<source_id>.json.superseded`, which `dest.exists()` does not match, so
   the fetcher re-downloaded it every cycle and the sweep retired it every
   cycle. `fetch_one` now honours that name, and reports the skip as its own
   `superseded` category rather than letting the tally stop adding up.
+  The same rule arrived on the SECOND fetcher on 2026-09-10. `withdraw_sources.py`
+  retires by that same rename and YouTube honoured it, but the Happy Scribe path
+  never looked at the marker, so `dedupe_transcripts.py --merge` re-created the
+  live copy on the next cycle. OBSERVED: four sources sat as both `<id>.json`
+  and `<id>.json.superseded` at once, and the withdrawal manifest reported them
+  actionable again within the hour, so the ledger read as a command repo-0 had
+  failed to run rather than as a bug. The marker is now read twice, once at the
+  decision stage, which records a `withdrawn` verdict with action `none`, and
+  once immediately before the write, because a withdrawal can land between the
+  two. `prune_orphans` re-reads for the same reason. The hold is counted as
+  `withheld_already_withdrawn`, never skipped silently, because silence is how
+  this hid. Guarded by `scripts/test_hs_withdrawal.py`, 9 checks, verified
+  failing 4 of them against the pre-fix code.
+- **A loop may not declare COMPLETE while another SOURCE is still writing.**
+  `grade_loop.sh` decided it was finished with one literal,
+  `pgrep -f "fetch_loop.sh"`, written when YouTube was the only source. Happy
+  Scribe was added later as a deliberately independent second source and this
+  check never learned about it. OBSERVED 2026-09-11: grade_loop finished at
+  04:17:37Z, happyscribe_loop merged 8 transcripts at 04:49:11Z, nothing graded
+  them and nothing reported it; it was caught only because the coverage numbers
+  stopped matching. The sources are declared once in the `FETCHERS` array and
+  the exit check iterates it, so a third source is one edit in an obvious place.
+  The detector is NOT `pgrep -f`, which matches any process whose full command
+  line merely contains the name: on 2026-09-11 `pgrep -f grade_loop.sh` returned
+  two pids and only one was the loop, the other a `/bin/zsh -c` wrapper. A false
+  positive there makes the grader wait for ever for a source that is not
+  running, which is this house's own six-spinning-poll-loops failure arriving
+  again. `fetcher_running()` reads `ps -Ao comm=,args=` and drops any shell whose
+  third field is `-c`. Guarded by `scripts/test_fetcher_detection.py` and
+  `scripts/test_fetcher_false_positive.py`, which start real processes rather
+  than inspecting source, because source inspection cannot tell a working
+  pattern from one that never matches.
 - **The duplicate sweep runs in `grade_loop.sh`, before normalize.** Most
   duplicates are one talk re-uploaded to several YouTube channels, and those
   arrive through `fetch_loop.sh`. The sweep used to run only in
@@ -396,6 +456,43 @@ the mix even.
 
 These change the published number. Each was measured before it was chosen, and
 the measurement is named so a later reader can re-run it rather than trust it.
+
+- **The roster is 50 people, and `longform_availability` means two different
+  things.** It was 40 until 2026-09-10, when C.C. Wei was withdrawn and eleven
+  were added: Tobi Lütke, Michael Saylor, Eric Schmidt, Ilya Sutskever, Aaron
+  Levie, Dylan Field, Amjad Masad, George Hotz, Greg Brockman, Vlad Tenev and
+  Alexandr Wang. Any figure in this file that says "of 40" is a record of a
+  measurement taken on the smaller board and is left alone; re-running it today
+  would give a different number. `docs/ROSTER-EXPANSION-2026-09-10.md` carries
+  the selection reasoning, including why Marc Andreessen and Garry Tan are still
+  out.
+  The field trap is `longform_availability`. It now holds ONE measured quantity
+  for all 50: the number of long-form YouTube results that pass
+  `discover_sources`' own duration, clip and third-person filters AND an
+  identity screen wanting the full name, or the surname together with a company
+  token, in the title or channel. The old scout-estimate medians are preserved
+  per person as `longform_availability_scout_median`, on the 39 that had one.
+  **The two scales are not interchangeable.** RE-COMPUTED 2026-09-11 from
+  `data/roster/final.json`: Pearson r is 0.74 over those 39, scout mean 74 on a
+  7-200 range against measured mean 39 on a 19-65 range, and
+  the measured scale is compressed because the search pool caps near 90 results.
+  Read the field name before comparing two leaders. The identity screen is the
+  part that earned its keep: C.C. Wei scores 20% purity on it and every other
+  leader scores 83% or better, which is how the wrong-person class was sized.
+
+- **A leader is not ranked below `MIN_TRANSCRIPTS_TO_RANK` included
+  transcripts, and is kept and scored anyway.** Five, which is the
+  high-confidence band, so the floor is one constant rather than a second number
+  to keep in step. Below it the leader keeps every grade and every transcript
+  and keeps a blinded score in `results.json` under `unranked`, but takes no
+  rank and does not appear on the page. Asked for 2026-09-10, when the
+  wrong-person withdrawal left C.C. Wei with 2 real transcripts: a
+  two-transcript row is a placeholder and the board should not carry it as a
+  score. `diagnostics` carries `min_transcripts_to_rank` and `leaders_unranked`,
+  `coverage_table.py` still shows an unranked leader's score, and the page
+  explains the floor from the constant instead of a typed number. Guarded by
+  `scripts/test_rank_floor.py`, 13 checks. On the corpus today the floor binds on
+  nobody: `min_transcripts_to_rank 5`, `leaders_unranked []`, 50 of 50 scored.
 
 - **Per-judge calibration.** `calibrate()` maps each judge's score distribution
   onto the pooled one, per dimension, and only when that judge's spread is
@@ -508,9 +605,17 @@ the measurement is named so a later reader can re-run it rather than trust it.
   leader-level uncertainty into one interval; `diagnostics.bootstrap` records
   that choice. The interval reads the SAME adjusted values as the point
   estimate, or the published dot lands outside its own bar.
-  What it shows: 0 of 39 adjacent pairs separate at 95%, and the median leader's
-  rank range is 13 places wide. The board distinguishes the top from the bottom
-  and does not distinguish rank 9 from rank 12.
+  What it shows, RE-MEASURED 2026-09-11 on the 50-name board in
+  `data/results.json`: 1 of 49 adjacent pairs separates at 95%, and it is the
+  last one, rank 49 Tim Cook [43.4, 50.4] against rank 50 Marc Benioff
+  [35.6, 39.8]. Every other neighbouring pair overlaps. The board distinguishes
+  the top from the bottom, over a 75.7 to 37.9 span, and does not distinguish
+  rank 9 from rank 12. The earlier reading of this was 0 of 39 on the 40-name
+  board, so growing the roster moved the count by one pair and changed nothing
+  about the conclusion. The companion figure quoted elsewhere in this file, a
+  median rank range 13 places wide, was measured on that 40-name board and has
+  not been re-derived on 50; `results.json` carries no `rank_range`, so it needs
+  its own pass.
 
 - **Subject share still predicts the score, and is deliberately NOT corrected.**
   Holding the leader fixed, a transcript where the subject speaks 15-49% scores
@@ -524,9 +629,10 @@ the measurement is named so a later reader can re-run it rather than trust it.
 
 ## Experiments run, and what they showed
 
-Four experiments settled questions that guesswork would have got wrong. Each is
-recorded with its method, because the conclusions are only as good as the setup
-and a later agent should be able to challenge them.
+These settled questions that guesswork would have got wrong. Each is recorded
+with its method, because the conclusions are only as good as the setup and a
+later agent should be able to challenge them. The count is deliberately not
+written out here: it said "Four" while eleven stood below it.
 
 **Are the graded transcripts really unique?** (2026-09-07) Compared every pair
 within each leader in `data/transcripts_blind` on 5-gram containment, the same
@@ -716,6 +822,107 @@ points to 5.7 that way.
 Documented rather than fixed, deliberately. Changing any of these now would make
 new grades incomparable with the corpus already graded.
 
+- **Discovery still matches on the SURNAME alone, so recordings of other people
+  keep entering the corpus.** This is the largest single cause behind the
+  wrong-person rule above, and it is unfixed. `name_in()` in `discover_sources.py` takes
+  `person["name"].split()[-1]`, lowercases it, accepts a bare substring hit in
+  the title OR the channel, and then also accepts any 4-letter-or-longer token
+  within a 0.85 `SequenceMatcher` ratio of it. Nothing checks the given name and
+  nothing checks the company. VERIFIED 2026-09-11 by importing the live
+  function: `name_in("Eugene Wei on tech and taste", {"name": "C.C. Wei"})` is
+  True, and so is the racquetball champion Tim Sweeney and the standup comedian
+  Eric Schmidt.
+
+  What that cost, MEASURED 2026-09-10 (`docs/CORPUS-INTEGRITY-2026-09-10.md`,
+  `docs/CORPUS-INTEGRITY-FOLLOWUP.md`): 44 wrong-person recordings in the
+  corpus, 31 of them live on the published board. C.C. Wei was the worst and was
+  removed from the roster over it. 14 recordings were fetched under his slug and
+  only 2 mention TSMC at all; the other 12 are Jing Wei, Eugene Wei, Zhang
+  Weiwei, Weivy Wei, Han-Wei Shen, Linwei Wang, Wei Chen twice, William Wei, Sha
+  Xin Wei, Wei Li of Intel and Lord Nat Wei. Tim Sweeney carried a DJ, a
+  racquetball champion and a SoFi retail investor. Withdrawing the 31 moved Tim
+  Sweeney from rank 13 to 3 and 65.2 to 72.7, Jeff Bezos 7 to 2, and changed the
+  rank of 26 of the 40 leaders then on the board.
+
+  The corpus review named two failure modes in source selection, and a third
+  turned up later. SURNAME COLLISION, 13 cases, where the title names a
+  different person whose surname matches: every C.C. Wei entry, Adam Dell under
+  `michael-dell`, the Beats in Space DJ under `tim-sweeney`. "ABOUT the subject"
+  mistaken for "BY the subject", 2 cases, such as two hosts discussing Bezos.
+  And the leader NAMED IN THE TITLE but not the speaker being graded, which
+  `name_in()` waves through legitimately: Jensen Huang under `lisa-su`, all
+  three judges naming him; Demis Hassabis under `yann-lecun`, where LeCun never
+  appears; Vitalik Buterin under `brian-armstrong`; Mario Draghi under
+  `lip-bu-tan`; Riccardo Biasini of comma.ai under `george-hotz`; Sundar Pichai
+  under `marc-benioff`, where Benioff is the host. The Eric Schmidt standup
+  comedian is a fourth shape again, a genuine NAMESAKE carrying the full name.
+  The subject-share filter catches NONE of them, because somebody is speaking
+  throughout and the share comes back high: three of C.C. Wei's read 100, 94 and
+  92 with maximum judge agreement.
+
+  Not fixed here because a tighter gate rejects real material as well, and both
+  sources are currently exhausted so no discovery run is pending to exercise a
+  new rule. The roster expansion measured the alternative rather than arguing
+  it: an identity screen wanting the full name, or the surname plus a company
+  token, gives every surviving leader 83% purity or better and C.C. Wei 20%.
+  Tighten `name_in()` toward that BEFORE the next discovery run, and keep
+  `wrong_person_screen.py` running after every pass either way, because a screen
+  that reads the judges' own `identity_guess` catches what a title cannot.
+
+- **The blinder replaces ordinary English words, because an alias list carries
+  bare parts of a company name.** `blind()` applies every entry in
+  `data/sources/aliases.json` unconditionally, case-insensitively, through the
+  NAME path, so the replacement token is `[SUBJECT]` and not `[COMPANY]`. The
+  alias lists come from the discovery workflow and hold the parts of a
+  multi-word company: `yann-lecun` has "Machine", "Intelligence" and "Labs" out
+  of "Advanced Machine Intelligence Labs", `tim-sweeney` has "Games",
+  `fei-fei-li` has "World", `clem-delangue` has "Face", `thomas-kurian` has
+  "Cloud". `company_variants()` can do the same on its own path, and only
+  `fuzzy_targets()` consults the system dictionary; neither the exact-form path
+  nor the alias path does.
+
+  MEASURED 2026-09-11 over `data/transcripts_blind`, taking every substitution
+  whose token is a bare part of a multi-word company name and counting the
+  LOWERCASE occurrences of that token in the matching unblinded file under
+  `data/transcripts_open`. Lowercase, because that is the ordinary-prose use
+  rather than the company reference, and the blinder's regex is case-insensitive
+  so it takes both. Two readings, because the wide one is not all damage:
+
+  ```
+  any bare company part          2,976 occurrences  176 transcripts  20 leaders
+  token also a dictionary word   2,038 occurrences  130 transcripts  15 leaders
+  ```
+
+  The wide figure includes "uber" 250 and "google" 109, which really are the
+  company said in lowercase and are correctly removed. The narrow one is the
+  floor, and its largest entries are "world" 453 for Fei-Fei Li, "machine" 300
+  and "intelligence" 230 for Yann LeCun, "face" 225 for Clem Delangue and
+  "cloud" 206 for Thomas Kurian. Add "games" 377 for Tim Sweeney, which the
+  narrow measure misses only because `/usr/share/dict/words` holds no plurals.
+  What the judge actually reads is `"the history of artificial [SUBJECT]"` and
+  `"the experience of playing and creating video [SUBJECT]"`.
+
+  Two reasons this is worse than the leakage it sits beside. The damage lands on
+  exactly the domain vocabulary the rubric grades, so a game designer loses the
+  word "games" and an AI researcher loses "machine" and "intelligence". And the
+  token inserted is the one that means "the person being graded", so the judge
+  reads an ordinary noun as a reference to the subject.
+
+  `scripts/test_blinding.py` passes and cannot catch this. All five of its cases
+  probe the FUZZY path for overreach, no case puts a common word in the alias
+  list, and the one bare company part they do assert survives is "cloud", which
+  `GENERIC_COMPANY_WORDS` already exempts by hand. The roster works around the
+  defect per person in the one place it was noticed, recording Michael Saylor's
+  company as "MicroStrategy" rather than its current legal name "Strategy",
+  because `company="Strategy"` redacted the ordinary word "strategy" three times
+  in an 80-word test paragraph. The reason is written into his
+  `selection_rationale`. That is a patch on one name, not a fix.
+  Left alone because re-blinding the corpus invalidates every grade already
+  collected. Fix it when the grades are next re-derived, and note that a system
+  dictionary alone is not enough, since it did not contain "games". The alias
+  list is the place to intervene, because the discovery workflow is what put a
+  bare company part in it.
+
 - **HappyScribe discovery admits third-person shows that YouTube discovery
   rejects, and the corpus pays for them in judge calls.** `discover()` in
   `fetch_happyscribe.py` applies the same `THIRD_PERSON_TITLE` and
@@ -841,7 +1048,14 @@ new grades incomparable with the corpus already graded.
 - Published site: `site/index.html`, deployed with `npx wrangler deploy` to
   `verbatim-index.tonygwu.com`
 - Per-leader pipeline coverage: `.venv/bin/python scripts/coverage_table.py`
-- Wrong-person screen: `.venv/bin/python scripts/wrong_person_screen.py`
+- Wrong-person screen: `.venv/bin/python scripts/wrong_person_screen.py`. It
+  replaced `identity_audit.py`, which was deleted on 2026-09-10 after both were
+  run on the same corpus: the screen flagged 4 recordings, 2 of them live on the
+  board, where `identity_audit` found 0. Its labelled fixture survives as
+  `scripts/test_wrong_person_regressions.py`.
+- The roster, 50 people: `data/roster/final.json`, with the expansion reasoning
+  and the two meanings of `longform_availability` in
+  `docs/ROSTER-EXPANSION-2026-09-10.md`
 - Corpus-integrity findings and their re-derivation:
   `docs/CORPUS-INTEGRITY-2026-09-10.md`, `docs/CORPUS-INTEGRITY-FOLLOWUP.md`,
   and the withdrawal manifest `docs/withdrawals-2026-09-10.json`. The re-grade
@@ -853,5 +1067,12 @@ new grades incomparable with the corpus already graded.
 - Verbatim Predictions (extract, verify, market consensus, validate, aggregate, page): skill in
   `.claude/skills/prediction-extractor/`, records in `data/predictions/<slug>/<sid>.jsonl`, design and limits in
   `docs/PREDICTIONS.md`, page built by `scripts/build_predictions_site.py` and deployed with
-  `bash scripts/deploy_predictions.sh` to `verbatim-predictions.tonygwu.com`
+  `bash scripts/deploy_predictions.sh` to `verbatim-predictions.tonygwu.com`.
+  This is a SECOND published site with its own domain and its own index, and it
+  goes stale independently of the leaderboard: `data/predictions/index.json` is
+  rebuilt only by `aggregate_predictions.py`, which nothing runs on a loop.
+  `deploy_predictions.sh` compares the index's `files_read` and `records_read`
+  against the files on disk and prints `STALE` when they differ, so read that
+  line before publishing. Only repo-0 can refresh it, because `--refresh`
+  carries the daemon-clone precondition.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
