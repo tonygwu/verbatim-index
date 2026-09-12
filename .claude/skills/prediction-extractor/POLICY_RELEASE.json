@@ -1,0 +1,7 @@
+{
+  "release": "predictions-2.0",
+  "contracts": {
+    "extract": "99d9132159a2",
+    "verify": "820583f899f6"
+  }
+}

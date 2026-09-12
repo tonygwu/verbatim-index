@@ -102,7 +102,7 @@ ROSTER = {"name": "Ada L", "role": "CEO", "company": "Co", "sector": "AI"}
 
 
 def test_prompt(D, L) -> None:
-    spec = (L.SKILL / L.EXTRACTION_SPEC).read_text()
+    spec = L.read_spec(L.SKILL / L.EXTRACTION_SPEC)
     schema = json.dumps(json.loads((L.SKILL / L.EXTRACTOR_SCHEMA).read_text()))
     p = L.build_extraction_prompt(REC, ROSTER, spec, schema)
     for needle in ("Speaker: Ada L", "Role (current roster entry; may postdate this recording): CEO", "Company (current roster entry): Co", "Title: Ada on code", "Venue: Pod",
@@ -117,7 +117,7 @@ def test_prompt(D, L) -> None:
           "Statement date: unknown" in p2 and "Speaker: Ada" in p2)
     with tempfile.TemporaryDirectory() as td:
         sk = Path(td)
-        for f in (L.EXTRACTION_SPEC, L.EXTRACTOR_SCHEMA):
+        for f in (L.EXTRACTION_SPEC, L.EXTRACTOR_SCHEMA, L.POLICY_SPEC):
             (sk / f).write_bytes((L.SKILL / f).read_bytes())
         before = L.extraction_contract(sk)["contract_id"]
         (sk / L.EXTRACTION_SPEC).write_text((sk / L.EXTRACTION_SPEC).read_text() + "\nx")
@@ -128,7 +128,7 @@ def test_prompt(D, L) -> None:
     # The spec states the same numbers as the constants.
     check("PROMPT: EXTRACTION.md states the quote bounds and the cap that the code enforces",
           f"{L.MIN_QUOTE_WORDS} to {L.MAX_QUOTE_WORDS} words" in spec and f"at most\n{L.MAX_CANDIDATES} candidates" in spec.replace("at most 40", "at most\n40"))
-    vspec = (L.SKILL / L.VERIFICATION_SPEC).read_text()
+    vspec = L.read_spec(L.SKILL / L.VERIFICATION_SPEC)
     check("PROMPT: VERIFICATION.md names the window size the code cuts", f"{L.CONTEXT_WORDS} words" in vspec)
     bundle = {"header": "H", "transcript_id": "ada/s1", "candidates": [
         {"prediction_id": "a" * 16, "quote_original": "Q", "normalized_claim": "C", "timestamp_mark": "[00:01:00]",

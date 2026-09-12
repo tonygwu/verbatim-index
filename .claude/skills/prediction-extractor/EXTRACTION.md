@@ -1,4 +1,4 @@
-# Prediction extraction specification, version 1
+# Prediction extraction specification, release 2
 
 You are reading one transcript of a named technology leader speaking in public. Your job is to
 return every statement in it that is a genuine, falsifiable prediction made by that speaker, and
@@ -20,45 +20,9 @@ The metadata gives the statement date when it is known. Judge "future" relative 
 relative to today. You are not told today's date on purpose. Do not judge whether any prediction
 came true, and do not let anything you know about later events change what you extract.
 
-## 2. The five gates. A candidate must pass all five.
+## 2. Shared eligibility and evidence rules
 
-**G1 `forward_looking`.** The statement describes a state of the world at some time AFTER the
-moment of speaking. It fails for a description of the present ("we are seeing", "our vision is",
-"we are building toward"), for history, and for a present-tense mission or philosophy statement
-however confident it sounds.
-
-**G2 `falsifiable`.** There is a specific observation, on or by a specific date or dated event,
-that would show the statement wrong. You prove this by writing that observation in
-`resolution_criteria`, in the form:
-
-> By <date or dated event>, <observable measurement or event> will / will not <threshold>.
-
-If you cannot write that sentence, the statement fails G2, however forward-looking and confident
-it is. Confident grammar with no observable test fails: "we're going to be the most transparent
-company in the world", "this will change everything", "the future is bright", "AI will be
-transformational". Value judgements ("better", "the best", "useful", "transformative") are not
-observations unless the speaker names how they would be measured.
-
-**G3 `committed`.** The speaker asserts the outcome as their own expectation.
-Passes: "will", "is going to", "I expect", "I think X will", "I believe", "I'm confident",
-"probably", "likely", "very likely", "I'd bet", "I suspect X will happen", "my prediction is".
-Fails: "might", "could", "may", "maybe", "possibly", "it's possible", "I wouldn't be surprised if",
-"some people think", "one scenario is", "if X then Y" offered as a conditional, a question, a
-scenario raised for argument's sake, and anything said as a joke.
-The line is whether the speaker would accept being held to it. "Pretty optimistic that things
-will improve" fails: it is hedged and it has no observable test.
-
-**G4 `own_voice`.** The claim is the subject's own. It fails when the interviewer framed the
-prediction and the subject merely agreed ("yeah", "right", "that's fair"); when the subject is
-quoting, paraphrasing or summarising someone else's forecast ("Jensen says", "the analysts think",
-"the headline was"); when the subject describes a hypothetical held by others; when the subject
-immediately disowns it ("but I don't believe that"); and when the sentence is sarcasm or comedy.
-A prediction the subject states in answer to a question is the subject's, if the words are theirs.
-
-**G5 `stands_alone`.** The quote is intelligible with nothing around it. No dangling pronoun or
-referent: "I'm pretty certain that you will be" fails, "that's going to double" fails unless "that"
-is named inside the quote. Between 8 and 60 words. If the subject spread one prediction across
-several sentences, quote the contiguous span that contains the whole claim, within 60 words.
+{{ELIGIBILITY_POLICY}}
 
 ## 3. The quote
 
@@ -94,13 +58,8 @@ and units exactly. Do not add precision the speaker did not give: "a lot more" s
   named event whose date is known, "once the current fab is done"). Fill `horizon_years_inferred`
   (your best point estimate, in years from the statement date) and `horizon_evidence` (the words
   that fix it). Fill `target_date` only if the evidence gives a date.
-- `none`: no time anchor at all ("eventually", "someday", "in the long run", or nothing). A
-  claim can still pass G2 with `none` only when the criterion names a specific, non-trivial
-  observable: a number, a named capability, a named event that is genuinely uncertain. Set
-  `specificity` to `low` or `medium` accordingly. An undated announcement that something will be
-  launched, shipped, released, improved or "possible" with no named deliverable, threshold or date
-  ("we're launching our new model soon", "we'll be able to analyze video", "we will announce more
-  things") is certain to come true eventually as a matter of course and fails G2.
+- `none`: no time anchor. Apply the shared policy's undated-milestone rule.
+  Set `specificity` to `low` or `medium`; never invent a date.
 
 ## 6. Confidence. Never invent a number.
 
@@ -142,27 +101,9 @@ specific thing happens or not by a date: "GPT-5 ships this year"), `trend_direct
 falls, overtakes: "rates will be lower", "open models will catch up"), `comparative` (X will be
 the largest, the first, ahead of Y, better than Z on a named measure), `other`.
 
-## 9. What is NOT a prediction. Each of these fails at least one gate.
+## 9. Eligibility examples
 
-| Kind | Example | Fails |
-|---|---|---|
-| Aspiration or mission | "We want to build the best model in the world." | G1, G2 |
-| Current state | "We are seeing enormous demand for inference right now." | G1 |
-| History | "Two years ago nobody thought this would work." | G1 |
-| Vague optimism or pessimism | "I'm pretty optimistic that things will improve." | G2, G3 |
-| Confident grammar, no test | "We're going to be the most transparent company in the world." | G2 |
-| Present-tense vision | "Our vision for the interface is that you always have the device with you." | G1 |
-| Hypothetical | "If regulation stalled, you could see a decade of delay." | G3 |
-| Interviewer's prediction | Interviewer: "So by 2030 this is everywhere?" Subject: "Yeah." | G4 |
-| Quoted third party | "Jensen thinks the data centre market doubles by 2028." | G4 |
-| Joke or sarcasm | "Sure, and next year we'll all have flying cars." | G3, G4 |
-| Rhetorical question | "Will anyone still be writing code by hand in 2035?" | G3 |
-| Personal plan, no external test | "Thirteen years from now I'll still be at this company." | G2 |
-| Non-falsifiable | "The gap between the haves and have-nots will be more polarised." | G2 |
-| Undated roadmap, no deliverable | "We're launching our new model soon." / "We'll be able to analyze video." | G2 |
-| Dangling quote | "I'm pretty certain that you will be." | G5 |
-| Hedged | "It's very possible the number of instances skyrockets." | G3 |
-| Disowned | "Some say we'll hit AGI in 2027. I don't buy it." | G4 |
+Use the shared policy above for both positive and negative cases.
 
 ## 10. What IS a prediction. Filled examples.
 

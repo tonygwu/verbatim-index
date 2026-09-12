@@ -171,7 +171,10 @@ bash scripts/deploy_predictions.sh --dry-run
 bash scripts/deploy_predictions.sh
 ```
 
-Every stage skips a transcript its meta says is done; `--force` redoes it.
+Extraction and verification reuse successful results only when their contracts,
+policy release, inputs, prompts and model requests match. A mismatch fails
+without a model call or overwrite. `--force` explicitly replaces the stage's
+results; verification still requires a compatible extraction.
 `--dry-run` builds prompts into the workdir and writes nothing. The driver
 refuses `--fable-bin cl`, refuses an `--out` anywhere under `data/` other than
 `data/predictions`, and prints attempted / succeeded / cached / excluded /

@@ -23,8 +23,12 @@ re-running anything.
 | `prediction_record.schema.json` | `validate_predictions.py`, tests, humans | no |
 | this file | agents | no |
 
-Only the pair a model actually sees is hashed, and the hash is stamped on every record, exactly
-as `grade.py` does with the rubric. Editing this file cannot move a result.
+Both stage specs include `ELIGIBILITY.md` through the `{{ELIGIBILITY_POLICY}}`
+marker. The contract hashes the expanded spec and the output schema, so an
+eligibility change changes both hashes. `POLICY_RELEASE.json` names the
+compatible pair. The runner refuses a release whose pins do not match its
+files. Historical specs without the marker retain their original hashes.
+Editing this agent-facing file cannot move a result.
 
 ## The pipeline
 
@@ -56,6 +60,18 @@ Phase 2, not built:  resolution  ->  scoring  ->  forecasting leaderboard
 - This clone writes under `data/predictions/` and nowhere else under `data/`; the writer refuses
   any other path. Commits of `data/` stay with repo-0.
 - Every write is atomic; every failure carries a taxonomy label; every run has a manifest.
+- Successful stages are reused only when the contract, policy release, input,
+  prompt set and model request match. A stale stage fails as `cache_stale`
+  without overwriting the old result or calling a model. Verification refuses
+  an incompatible extraction as `policy_release_mismatch`, even with `--force`.
+- A new policy release requires a deliberate update of both contract pins.
+  Keep pilot outputs separate before replacing existing corpus records.
+- Records keep policy and input provenance in `telemetry.prediction_audit`.
+  The metadata stores the same audit block. `_inputs/` preserves exact inputs
+  and ordered prompts; `_raw/responses/` preserves complete Astra/Fable CLI
+  responses before parsing. The prompt digest hashes the ordered JSON list.
+  The code revision is provenance, not a cache key: unrelated commits do not
+  invalidate a result whose actual inputs and prompts remain identical.
 
 ## Commands
 

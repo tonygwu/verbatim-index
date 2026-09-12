@@ -47,6 +47,9 @@ VERIFIER_SCHEMA = "verifier_output.schema.json"
 MATCHING_SPEC = "MATCHING.md"
 MATCHER_SCHEMA = "matcher_output.schema.json"
 RECORD_SCHEMA = "prediction_record.schema.json"
+POLICY_SPEC = "ELIGIBILITY.md"
+POLICY_RELEASE_FILE = "POLICY_RELEASE.json"
+POLICY_MARKER = "{{ELIGIBILITY_POLICY}}"
 
 # Bounds that appear in the model-facing spec text as well. test_predictions_driver
 # asserts the spec states the same numbers, so a change here is a contract change.
@@ -68,7 +71,10 @@ E_ROUTER = "router_no_account"
 E_VERIFIER_SAME = "verifier_same_harness"
 E_UNGROUNDED = "quote_not_grounded"
 E_TRANSCRIPT_MISSING = "transcript_missing"
-ALL_ERROR_TYPES = tuple(_GRADE_ERROR_TYPES) + (E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING)
+E_CACHE_STALE = "cache_stale"
+E_POLICY = "policy_release_mismatch"
+ALL_ERROR_TYPES = tuple(_GRADE_ERROR_TYPES) + (
+    E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING, E_CACHE_STALE, E_POLICY)
 
 
 def transcript_id_from_path(path) -> str:
@@ -419,9 +425,40 @@ def load_exclusions(path: str | Path) -> dict[str, dict]:
 # Contracts
 # ---------------------------------------------------------------------------
 
+def read_spec(spec_path: Path) -> str:
+    """Expand the shared policy before hashing AND before constructing a prompt.
+
+    Historical specs without the marker retain their original contract hashes.
+    """
+    text = spec_path.read_text()
+    if POLICY_MARKER not in text:
+        return text
+    if text.count(POLICY_MARKER) != 1:
+        raise PredictionError(f"{E_POLICY}: {spec_path} must include the shared policy exactly once")
+    return text.replace(POLICY_MARKER, (spec_path.parent / POLICY_SPEC).read_text())
+
+
+def json_sha256(value) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def load_policy_release(skill_dir: Path = SKILL) -> dict:
+    """A named release pins one compatible pair; edits require an explicit new pin."""
+    path = skill_dir / POLICY_RELEASE_FILE
+    release = json.loads(path.read_text())
+    actual = {"extract": extraction_contract(skill_dir)["contract_id"],
+              "verify": verification_contract(skill_dir)["contract_id"]}
+    if not isinstance(release.get("release"), str) or not release["release"].strip():
+        raise PredictionError(f"{E_POLICY}: {path} has no release name")
+    if release.get("contracts") != actual:
+        raise PredictionError(f"{E_POLICY}: {path} pins {release.get('contracts')}, files yield {actual}")
+    return release
+
+
 def _contract(spec_path: Path, schema_path: Path) -> dict:
     """Same shape as grade.grading_contract: the pair of files a model sees, hashed together."""
-    sb = spec_path.read_bytes()
+    sb = read_spec(spec_path).encode()
     jb = schema_path.read_bytes()
     return {
         "contract_id": hashlib.sha256(sb + jb).hexdigest()[:12],

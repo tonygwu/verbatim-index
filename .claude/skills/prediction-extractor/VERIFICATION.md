@@ -1,4 +1,4 @@
-# Prediction verification specification, version 1
+# Prediction verification specification, release 2
 
 You are the second, independent judge. Another model read a full transcript and proposed
 candidate predictions. For each candidate you see only: the speaker metadata, a mechanically cut
@@ -30,46 +30,15 @@ Using the window, decide who said the quote:
 
 Only `subject` can qualify. `unclear` does not qualify. Be conservative.
 
-## 3. The five gates. All must be true.
+## 3. Shared eligibility and evidence rules
 
-**G1 `forward_looking`.** Describes a state of the world after the moment of speaking. Present-
-tense descriptions, mission statements, "our vision is", and history fail.
-
-**G2 `falsifiable`.** A specific observation, on or by a specific date or dated event, could show
-it wrong. Write that observation in `resolution_criteria` in your own words, in the form
-"By <date or dated event>, <observable> will / will not <threshold>". If you cannot write it, G2
-is false. Confident grammar without a test ("we'll be the most transparent company in the world",
-"this changes everything") fails. Value words ("better", "the best", "useful") are not
-observations. An undated
-claim passes only if its observable is specific and genuinely uncertain; an undated announcement
-that something will be launched, shipped, released or "possible" with no named deliverable,
-threshold or date ("we're launching our new model soon") is certain to come true as a matter of
-course and fails.
-
-**G3 `committed`.** Asserted as the speaker's own expectation: will, is going to, expect, I
-think X will, believe, probably, likely, I'd bet. Hedges fail: might, could, may, maybe, possibly,
-it's possible, wouldn't be surprised, a conditional, a question, a joke.
-
-**G4 `own_voice`.** The subject's own claim, in earnest. Agreeing with the interviewer's framing,
-quoting others, hypotheticals held by others, disowned claims, sarcasm and comedy fail.
-
-**G5 `stands_alone`.** The quote is intelligible with nothing around it: no dangling pronoun or
-referent, and it contains the claim. 8 to 60 words.
+{{ELIGIBILITY_POLICY}}
 
 ## 4. Claim fidelity
 
-`claim_faithful` is true only if the extractor's normalized claim adds no number, entity,
-threshold or direction that is absent from the quote and its window, and drops nothing that
-changes the meaning. A claim that turns "most" into "90%" is not faithful. A claim that resolves
-a pronoun using the window is faithful.
-
-Dates: the extractor was told to resolve a RELATIVE phrase in the quote ("later this year",
-"next year", "within five years", "in a decade") against the statement date in the metadata.
-That resolution is faithful, and the speaker's words are kept beside it in `target_date_text`.
-The statement date is the recording's publication date, an upper bound on when the words were
-said; if the window shows the recording is clearly older, say so in `notes`, but do not fail
-fidelity for it. What is NOT faithful is a date with no phrase behind it: "in a few years"
-rendered as "by 2027", or a year invented when the quote gives none.
+Apply the shared evidence boundary. Set `claim_faithful` true only when the
+normalized claim passes that rule. Do not apply a stricter eligibility bar
+than the shared policy or add requirements that it does not contain.
 
 ## 5. Confidence seen
 
@@ -78,16 +47,9 @@ states a number, percentage or odds; `qualitative` for words of DEGREE ("very li
 certain", "I'm sure", "probably", "I'd bet", "no doubt"); `none` otherwise. Belief verbs ("I
 think", "I believe", "I expect") are commitment, not confidence. Never a number of your own.
 
-## 6. What is not a prediction
+## 6. Eligibility examples
 
-Aspirations, current state, history, vague optimism, confident grammar with no test,
-present-tense vision, hypotheticals, the interviewer's prediction, quoted third parties, jokes,
-rhetorical questions, personal plans with no external observable, non-falsifiable statements,
-dangling fragments, hedged statements, and disowned claims. Each fails at least one gate.
-
-A company's own roadmap or financial guidance ("we will ship X by June", "we'll do 140 billion
-this year") IS a prediction when a third party can observe the outcome; it qualifies on the gates
-and is tagged elsewhere as being under the speaker's control.
+Use the shared policy above for both positive and negative cases.
 
 ## 7. Output
 

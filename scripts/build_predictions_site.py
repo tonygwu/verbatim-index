@@ -684,6 +684,17 @@ def build_method(index: dict, loaded: dict) -> str:
         f"{e(dated)} of {e(c['accepted'])} accepted predictions carry one. Predictions under the speaker's own control "
         f"(roadmaps, guidance) are kept and tagged ({e(c['by_subject_control'].get('own', 0))} of them) so a reader can set them aside.</p>",
     ]
+    pairs = c.get("verifier_acceptance_by_contract_pair", [])
+    if pairs:
+        descriptions = [
+            f"{e(p['extraction_policy_release'] or 'legacy')} / "
+            f"{e(p['verification_policy_release'] or 'legacy')} "
+            f"(<code>{e(p['extraction_contract'])} / {e(p['verification_contract'])}</code>): "
+            f"{e(p['accepted'])} of {e(p['reviewed'])} ({e(round(p['acceptance_rate'] * 100))}%)"
+            for p in pairs
+        ]
+        parts.append("<h3>Verifier acceptance by policy pair</h3><p>"
+                     + "; ".join(descriptions) + ".</p>")
     if cons and set(cons) - {"not_searched"}:
         parts.append(
             f"<h3>Contemporaneous markets</h3>"

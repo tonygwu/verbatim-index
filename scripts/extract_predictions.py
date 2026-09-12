@@ -139,13 +139,18 @@ class Router:
         return route
 
 
-def call_harness(route: dict, prompt: str, timeout: int, workdir: Path, args) -> tuple[str, dict, str | None]:
+def call_harness(route: dict, prompt: str, timeout: int, workdir: Path, args,
+                 raw_response_path: Path | None = None) -> tuple[str, dict, str | None]:
     h = route["harness"]
+    if raw_response_path is not None:
+        raw_response_path = L.guard_data_path(raw_response_path)
     if h == "fable":
-        text, tel = call_fable(prompt, route["config_dir"], timeout, binary=args.fable_bin, workdir=str(workdir))
+        text, tel = call_fable(prompt, route["config_dir"], timeout, binary=args.fable_bin, workdir=str(workdir),
+                               raw_response_path=raw_response_path)
         return text, tel, account_label(route["config_dir"])
     if h == "astra":
-        text, tel = call_astra(prompt, timeout, workdir, model=args.astra_model)
+        text, tel = call_astra(prompt, timeout, workdir, model=args.astra_model,
+                               raw_response_path=raw_response_path)
         return text, tel, "codex"
     if h == "gemini":
         text, tel = call_gemini(prompt, route["profile_home"], timeout, workdir=str(workdir),
@@ -188,6 +193,44 @@ def read_meta(meta_path: Path) -> dict:
 
 def write_meta(meta_path: Path, meta: dict) -> None:
     L.write_prediction_file(meta_path, json.dumps(meta, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+
+
+def stage_audit(job: dict, stage: str, inputs: dict, prompts: list[str]) -> dict:
+    args = job["args"]
+    pin = getattr(args, "extractor" if stage == "extract" else "verifier")
+    return {
+        "policy_release": job["release"]["release"],
+        "code_revision": job["code_revision"],
+        "input_sha256": L.json_sha256(inputs),
+        # Hash the ordered JSON list, even when it contains just one prompt.
+        "prompt_sha256": L.json_sha256(prompts),
+        "model_request": {
+            "harness": pin,
+            "astra_model": args.astra_model if pin in ("auto", "astra") else None,
+            "gemini_model": args.gemini_model if pin in ("auto", "gemini") else None,
+        },
+    }
+
+
+def cache_failure(base: dict, detail: str, label: str = L.E_CACHE_STALE) -> dict:
+    """A stale successful result stays intact; no automatic paid rerun."""
+    return {**base, "status": "failed", "error_type": label,
+            "detail": f"{detail}. Use a separate --out or explicitly re-extract with --force."}
+
+
+def cache_matches(saved: dict, audit: dict, contract: str) -> bool:
+    old = saved.get("audit") or {}
+    return saved.get("contract_id") == contract and all(
+        old.get(k) == audit[k]
+        for k in ("policy_release", "input_sha256", "prompt_sha256", "model_request"))
+
+
+def save_inputs(job: dict, stage: str, slug: str, sid: str,
+                inputs: dict, prompts: list[str], audit: dict) -> None:
+    path = job["out"] / "_inputs" / stage / slug / f"{sid}__{job['run_id']}.json"
+    payload = {"inputs": inputs, "prompts": prompts, "audit": audit,
+               "contract": job["contract"], "policy_release": job["release"]}
+    L.write_prediction_file(path, json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n")
 
 
 def parse_model_output(text: str, schema: dict, expect_tid: str) -> dict:
@@ -262,20 +305,29 @@ def extract_one(job: dict) -> dict:
             if not args.dry_run:
                 write_meta(meta_path, meta)
         return {**base, "status": "excluded"}
-    if meta["extract"].get("status") == "ok" and not args.force:
-        return {**base, "status": "cached"}
+    cached = meta["extract"].get("status") == "ok" and not args.force
+    if cached and meta["extract"].get("contract_id") != job["contract"]["contract_id"]:
+        return cache_failure(base, f"{tid}: extraction contract changed")
     rec = read_transcript(rec_path, tid)
 
     workdir = job["workroot"] / f"{slug}-{sid}__extract__{job['run_id']}"
-    workdir.mkdir(parents=True, exist_ok=True)
     prompt = L.build_extraction_prompt(rec, job["roster"].get(slug), job["spec"], job["schema_text"])
+    inputs = {"transcript": rec, "roster_entry": job["roster"].get(slug)}
+    audit = stage_audit(job, "extract", inputs, [prompt])
+    if cached:
+        if cache_matches(meta["extract"], audit, job["contract"]["contract_id"]):
+            return {**base, "status": "cached"}
+        return cache_failure(base, f"{tid}: extraction input, prompt, policy or model request changed or lacks provenance")
+    workdir.mkdir(parents=True, exist_ok=True)
     if args.dry_run:
         (workdir / "prompt.txt").write_text(prompt)
         return {**base, "status": "dry_run", "prompt_chars": len(prompt), "workdir": str(workdir)}
 
+    save_inputs(job, "extract", slug, sid, inputs, [prompt], audit)
     try:
         route = job["router"].pick(None if args.extractor == "auto" else args.extractor, None)
-        text, telemetry, account = call_harness(route, prompt, args.timeout, workdir, args)
+        response_path = job["out"] / "_raw" / "responses" / slug / f"{sid}__extract__{job['run_id']}.json"
+        text, telemetry, account = call_harness(route, prompt, args.timeout, workdir, args, response_path)
     except subprocess.TimeoutExpired:
         detail = f"{E_TIMEOUT}: no answer within {args.timeout}s"
         return _extract_failed(meta, meta_path, base, detail, t0, args)
@@ -292,10 +344,12 @@ def extract_one(job: dict) -> dict:
 
     provenance = L.normalise_provenance(route["harness"], telemetry, account, route["account_id"])
     records, ungrounded, dropped = ground_candidates(rec, job["roster"].get(slug), obj, provenance,
-                                                     job["contract"]["contract_id"], job["run_id"], extracted_at, telemetry)
+                                                     job["contract"]["contract_id"], job["run_id"], extracted_at,
+                                                     {**telemetry, "prediction_audit": audit})
     L.write_prediction_file(jsonl_path, L.serialise_lines(records))
     meta["extract"] = {
         "status": "ok", "run_id": job["run_id"], **provenance, "contract_id": job["contract"]["contract_id"],
+        "audit": audit,
         "extracted_at_utc": extracted_at, "elapsed_sec": round(time.time() - t0, 1),
         "candidates_returned": len(obj["candidates"]), "candidates_grounded": len(records) + len(dropped),
         "candidates_written": len(records), "qualifying_written": sum(1 for r in records if r["extraction"]["qualifies"]),
@@ -355,18 +409,23 @@ def verify_one(job: dict) -> dict:
     base = {"id": tid, "stage": "verify", "run": job["run_id"]}
     if meta["extract"].get("status") != "ok":
         return {**base, "status": "skipped", "reason": f"extract status {meta['extract'].get('status')}"}
-    if meta["verify"].get("status") in ("ok", "nothing_to_verify") and not args.force:
-        return {**base, "status": "cached"}
     rec = read_transcript(rec_path, tid)
     records = L.parse_lines(jsonl_path.read_text(), str(jsonl_path))
-    pending = [r for r in records if r["extraction"]["qualifies"]
-               and (args.force or r["verification"]["status"] == "not_run")]
-    if not pending:
-        meta["verify"] = {"status": "nothing_to_verify", "run_id": job["run_id"], "candidates_verified": 0,
-                          "accepted": sum(1 for r in records if r["accepted"]), "rejected": 0}
-        if not args.dry_run:
-            write_meta(meta_path, meta)
-        return {**base, "status": "nothing_to_verify"}
+    source_inputs = {"transcript": rec, "roster_entry": job["roster"].get(slug)}
+    expected_extract = job["release"]["contracts"]["extract"]
+    ex_audit = meta["extract"].get("audit") or {}
+    expected_prompt = L.build_extraction_prompt(
+        rec, job["roster"].get(slug), job["extraction_spec"], job["extraction_schema_text"])
+    if (meta["extract"].get("contract_id") != expected_extract
+            or ex_audit.get("policy_release") != job["release"]["release"]
+            or ex_audit.get("input_sha256") != L.json_sha256(source_inputs)
+            or ex_audit.get("prompt_sha256") != L.json_sha256([expected_prompt])
+            or any(r["extraction"]["contract_id"] != expected_extract
+                   or (r["extraction"]["telemetry"].get("prediction_audit") or {}) != ex_audit
+                   for r in records)):
+        return cache_failure(base, f"{tid}: extraction is incompatible with this policy release or source input",
+                             L.E_POLICY)
+    pending = [r for r in records if r["extraction"]["qualifies"]]
 
     ext_harness = meta["extract"].get("harness")
     if args.verifier != "auto" and args.verifier == ext_harness:
@@ -375,19 +434,37 @@ def verify_one(job: dict) -> dict:
 
     header = L.speaker_header(rec, job["roster"].get(slug))
     workdir = job["workroot"] / f"{slug}-{sid}__verify__{job['run_id']}"
-    workdir.mkdir(parents=True, exist_ok=True)
     batches = [pending[i:i + L.VERIFY_BATCH] for i in range(0, len(pending), L.VERIFY_BATCH)]
-    all_verdicts: list[dict] = []
-    provenance = None
-    telemetry_all: list[dict] = []
-    for bi, batch in enumerate(batches):
-        bundle = {"header": header, "transcript_id": tid,
+    bundles = [
+        {"header": header, "transcript_id": tid,
                   "candidates": [{"prediction_id": r["prediction_id"], "quote_original": r["source"]["quote_original"],
                                   "normalized_claim": r["prediction"]["normalized_claim"],
                                   "timestamp_mark": r["source"]["timestamp_mark"],
                                   "context_before": r["source"]["context_before"],
                                   "context_after": r["source"]["context_after"]} for r in batch]}
-        prompt = L.build_verification_prompt(bundle, job["spec"], job["schema_text"])
+        for batch in batches]
+    prompts = [L.build_verification_prompt(bundle, job["spec"], job["schema_text"]) for bundle in bundles]
+    inputs = {"source": source_inputs, "batches": bundles, "extraction_contract": expected_extract}
+    audit = stage_audit(job, "verify", inputs, prompts)
+    if meta["verify"].get("status") in ("ok", "nothing_to_verify") and not args.force:
+        if cache_matches(meta["verify"], audit, job["contract"]["contract_id"]):
+            return {**base, "status": "cached"}
+        return cache_failure(base, f"{tid}: verification input, prompt, policy or model request changed or lacks provenance")
+    if not pending:
+        meta["verify"] = {"status": "nothing_to_verify", "run_id": job["run_id"], "candidates_verified": 0,
+                          "accepted": 0, "rejected": 0, "audit": audit,
+                          "contract_id": job["contract"]["contract_id"]}
+        if not args.dry_run:
+            save_inputs(job, "verify", slug, sid, inputs, prompts, audit)
+            write_meta(meta_path, meta)
+        return {**base, "status": "nothing_to_verify"}
+    workdir.mkdir(parents=True, exist_ok=True)
+    if not args.dry_run:
+        save_inputs(job, "verify", slug, sid, inputs, prompts, audit)
+    all_verdicts: list[dict] = []
+    provenance = None
+    telemetry_all: list[dict] = []
+    for bi, (batch, prompt) in enumerate(zip(batches, prompts)):
         if args.dry_run:
             (workdir / f"prompt_{bi}.txt").write_text(prompt)
             continue
@@ -395,7 +472,8 @@ def verify_one(job: dict) -> dict:
             route = job["router"].pick(None if args.verifier == "auto" else args.verifier, ext_harness)
             if route["harness"] == ext_harness:
                 raise RuntimeError(f"{L.E_VERIFIER_SAME}: router returned the extractor's harness {ext_harness}")
-            text, telemetry, account = call_harness(route, prompt, args.timeout, workdir / f"b{bi}", args)
+            response_path = job["out"] / "_raw" / "responses" / slug / f"{sid}__verify__{job['run_id']}_b{bi}.json"
+            text, telemetry, account = call_harness(route, prompt, args.timeout, workdir / f"b{bi}", args, response_path)
         except subprocess.TimeoutExpired:
             return _verify_failed(meta, meta_path, base, f"{E_TIMEOUT}: no answer within {args.timeout}s", t0, args)
         except (RuntimeError, OSError) as exc:
@@ -419,10 +497,11 @@ def verify_one(job: dict) -> dict:
 
     verified_at = L.utc_now()
     apply_verdicts(records, all_verdicts, provenance, job["contract"]["contract_id"], job["run_id"], verified_at,
-                   {"batches": telemetry_all})
+                   {"batches": telemetry_all, "prediction_audit": audit})
     L.write_prediction_file(jsonl_path, L.serialise_lines(records))
     accepted = sum(1 for r in records if r["accepted"])
     meta["verify"] = {"status": "ok", "run_id": job["run_id"], **provenance, "contract_id": job["contract"]["contract_id"],
+                      "audit": audit,
                       "verified_at_utc": verified_at, "elapsed_sec": round(time.time() - t0, 1),
                       "candidates_verified": len(pending), "batches": len(batches),
                       "accepted": accepted, "rejected": len(pending) - sum(1 for r in pending if r["accepted"]),
@@ -502,6 +581,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("refusing --fable-bin cl: it injects --dangerously-skip-permissions (see AGENTS.md)")
     out = L.guard_data_path(args.out)  # raises before any call if --out is elsewhere under data/
     skill = Path(args.skill_dir)
+    release = L.load_policy_release(skill)  # reject an unreviewed contract pair before any routing or call
+    code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=L.REPO, text=True).strip()
     stages = ["extract", "verify"] if args.stage == "both" else [args.stage]
 
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
@@ -526,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     run_id = f"{L.utc_now().replace(':', '').replace('-', '')}-{args.stage}-{secrets.token_hex(4)}"
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "predict-work"
     contracts = {"extract": L.extraction_contract(skill), "verify": L.verification_contract(skill)}
-    specs = {"extract": (skill / L.EXTRACTION_SPEC).read_text(), "verify": (skill / L.VERIFICATION_SPEC).read_text()}
+    specs = {"extract": L.read_spec(skill / L.EXTRACTION_SPEC), "verify": L.read_spec(skill / L.VERIFICATION_SPEC)}
     schemas = {"extract": json.loads((skill / L.EXTRACTOR_SCHEMA).read_text()),
                "verify": json.loads((skill / L.VERIFIER_SCHEMA).read_text())}
     log(f"[run {run_id}] {len(paths)} transcripts, stages {stages}, out {out}, "
@@ -544,6 +625,9 @@ def main(argv: list[str] | None = None) -> int:
         fn = extract_one if stage == "extract" else verify_one
         jobs = [{"args": args, "path": str(p), "out": out, "roster": roster, "exclusions": exclusions,
                  "router": router, "run_id": run_id, "workroot": workroot, "contract": contracts[stage],
+                 "release": release, "code_revision": code_revision,
+                 "extraction_spec": specs["extract"],
+                 "extraction_schema_text": json.dumps(schemas["extract"], indent=1),
                  "spec": specs[stage], "schema": schemas[stage],
                  "schema_text": json.dumps(schemas[stage], indent=1)} for p in paths]
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
@@ -565,6 +649,7 @@ def main(argv: list[str] | None = None) -> int:
         errors_path = Path(args.errors) if args.errors else out / "_runs" / f"{run_id}_errors.jsonl"
         L.write_prediction_file(errors_path, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in failed))
         manifest = {"run_id": run_id, "args": {k: v for k, v in vars(args).items()}, "stages": stages,
+                    "policy_release": release, "code_revision": code_revision,
                     "extraction_contract": contracts["extract"], "verification_contract": contracts["verify"],
                     "transcripts": len(paths), "summaries": summaries, "results": results,
                     "router_accounts": [a[0] for a in router.accounts] if router else None,

@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -44,6 +44,7 @@ def summarise_records(recs: list[dict]) -> dict:
         "verification_pending": sum(1 for r in recs if r["extraction"]["qualifies"] and r["verification"]["status"] == "not_run"),
         "extractor_disqualified": sum(1 for r in recs if not r["extraction"]["qualifies"]),
         "agreement_rate": _rate([r for r in recs if r["verification"]["agreement"] is not None], lambda r: r["verification"]["agreement"]),
+        "verifier_acceptance_by_contract_pair": acceptance_by_contract_pair(recs),
         "by_horizon": _counter(r["prediction"]["horizon"] for r in acc),
         "by_confidence_type": _counter(r["confidence"]["type"] for r in acc),
         "by_category": _counter(r["prediction"]["category"] for r in acc),
@@ -60,6 +61,27 @@ def summarise_records(recs: list[dict]) -> dict:
         "market_matched": sum(1 for c in cons if c == "matched"),
         "transcripts_with_accepted": len({r["transcript_id"] for r in acc}),
     }
+
+
+def acceptance_by_contract_pair(recs: list[dict]) -> list[dict]:
+    """Reviewed extractor proposals only; keep different policy pairs visible."""
+    groups = defaultdict(list)
+    for r in recs:
+        x, v = r["extraction"], r["verification"]
+        if not x["qualifies"] or v["status"] != "ok":
+            continue
+        xa = (x.get("telemetry") or {}).get("prediction_audit") or {}
+        va = (v.get("telemetry") or {}).get("prediction_audit") or {}
+        groups[(x["contract_id"], v["contract_id"],
+                xa.get("policy_release", ""), va.get("policy_release", ""))].append(r)
+    return [
+        {"extraction_contract": x, "verification_contract": v,
+         "extraction_policy_release": xp or None, "verification_policy_release": vp or None,
+         "reviewed": len(rows), "accepted": sum(r["accepted"] for r in rows),
+         "rejected": sum(not r["accepted"] for r in rows),
+         "acceptance_rate": _rate(rows, lambda r: r["accepted"])}
+        for (x, v, xp, vp), rows in sorted(groups.items())
+    ]
 
 
 def _rate(rows, fn) -> float | None:

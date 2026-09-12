@@ -1086,3 +1086,9 @@ new grades incomparable with the corpus already graded.
   line before publishing. Only repo-0 can refresh it, because `--refresh`
   carries the daemon-clone precondition.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
+- Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
+  pins the compatible extraction and verification contracts. Both load
+  `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`
+  for cache and compatibility checks. A stale cache never triggers an automatic
+  paid rerun. The bounded release-2 pilot and its frozen inputs are documented
+  in `docs/PREDICTIONS-RERUN-2026-09-12.md`.

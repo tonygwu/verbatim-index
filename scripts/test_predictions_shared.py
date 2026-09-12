@@ -60,8 +60,8 @@ def test_import(g) -> None:
 
 def test_signatures(g) -> None:
     want = {
-        "call_fable": ["prompt", "config_dir", "timeout", "binary", "workdir"],
-        "call_astra": ["prompt", "timeout", "workdir", "model"],
+        "call_fable": ["prompt", "config_dir", "timeout", "binary", "workdir", "raw_response_path"],
+        "call_astra": ["prompt", "timeout", "workdir", "model", "raw_response_path"],
         "call_gemini": ["prompt", "profile_home", "timeout", "workdir", "model", "binary"],
     }
     for fn, params in want.items():

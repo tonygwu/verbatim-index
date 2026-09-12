@@ -711,8 +711,16 @@ def fable_command(prompt: str, binary: str) -> list[str]:
     ]
 
 
+def save_cli_response(path: Path | None, proc) -> None:
+    """Optional capture before parsing, including provider errors and usage."""
+    if path is not None:
+        from atomicio import write_atomic
+        write_atomic(path, json.dumps({"returncode": proc.returncode, "stdout": proc.stdout,
+                                      "stderr": proc.stderr}, ensure_ascii=False) + "\n")
+
+
 def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude",
-               workdir: str | None = None) -> tuple[str, dict]:
+               workdir: str | None = None, raw_response_path: Path | None = None) -> tuple[str, dict]:
     """Run the Claude Fable 5.1 judge. Returns (text, telemetry).
 
     `binary` must be the plain `claude` CLI. The account is chosen here, per
@@ -734,6 +742,7 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
     jail.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                           env=env, cwd=str(jail), stdin=subprocess.DEVNULL)
+    save_cli_response(raw_response_path, proc)
     if proc.returncode != 0:
         _etype, detail = classify_cli_failure(proc.returncode, proc.stdout, proc.stderr)
         raise RuntimeError(detail)
@@ -762,7 +771,7 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
 
 
 def call_astra(prompt: str, timeout: int, workdir: Path,
-               model: str = "gpt-6-astra") -> tuple[str, dict]:
+               model: str = "gpt-6-astra", raw_response_path: Path | None = None) -> tuple[str, dict]:
     """Run the Astra judge via codex exec. Returns (text, telemetry).
 
     `model` is a parameter because this arm falls back to another model when
@@ -783,6 +792,7 @@ def call_astra(prompt: str, timeout: int, workdir: Path,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL, cwd=str(workdir))
+    save_cli_response(raw_response_path, proc)
     events = []
     for line in (proc.stdout or "").splitlines():
         line = line.strip()
