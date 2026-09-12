@@ -654,6 +654,12 @@ def build_method(index: dict, loaded: dict) -> str:
     cons = c.get("consensus_by_status", {})
     dated = c["accepted"] - c["statement_date_unknown"]
     e = lambda s: str(s).replace("&", "&amp;").replace("<", "&lt;")  # noqa: E731
+    reviewed = c["accepted"] + c["rejected_by_verifier"]
+    acceptance = (
+        f"Verifier acceptance: {e(c['accepted'])} of {e(reviewed)} extractor-proposed candidates reviewed "
+        f"({e(round(c['accepted'] / reviewed * 100))}%)."
+        if reviewed else "Verifier acceptance: not yet measured (no extractor-proposed candidates reviewed)."
+    )
     parts = [
         f"<h3>Where the predictions come from</h3>",
         f"<p>Extraction ran on {e(cov['extract'].get('ok', 0))} transcripts and failed on {e(cov['extract'].get('failed', 0))}; "
@@ -663,10 +669,10 @@ def build_method(index: dict, loaded: dict) -> str:
         f"speaker's own voice, and intelligible on its own. Every quote was then matched mechanically against the transcript; "
         f"{e(cov['ungrounded_candidates_total'])} candidates that did not match exactly were discarded.</p>",
         f"<p>A second, independent model family ({e(ve)}) then re-judged each candidate from a window of about "
-        f"{e(L.CONTEXT_WORDS)} words around the quote and the extractor's one-sentence claim, without seeing the extractor's "
+        f"{e(L.CONTEXT_WORDS)} words on each side of the quote and the extractor's one-sentence claim, without seeing the extractor's "
         f"reasoning. Of {e(c['candidates'])} candidates written, {e(c['accepted'])} were accepted by both and "
         f"{e(c['rejected_by_verifier'])} were rejected by the verifier; {e(c['verification_pending'])} await verification. "
-        f"The two models agreed on {e(round((c['agreement_rate'] or 0) * 100))}% of the candidates they both judged.</p>",
+        f"{acceptance}</p>",
         f"<h3>What is recorded</h3>",
         f"<p>Each record keeps the verbatim span at its character offsets, the nearest timestamp, {e(L.CONTEXT_WORDS)} words of "
         f"context each side, a normalized claim, the extractor's and the verifier's resolution criteria, a time horizon "
