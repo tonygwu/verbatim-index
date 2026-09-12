@@ -840,9 +840,19 @@ new grades incomparable with the corpus already graded.
   only 2 mention TSMC at all; the other 12 are Jing Wei, Eugene Wei, Zhang
   Weiwei, Weivy Wei, Han-Wei Shen, Linwei Wang, Wei Chen twice, William Wei, Sha
   Xin Wei, Wei Li of Intel and Lord Nat Wei. Tim Sweeney carried a DJ, a
-  racquetball champion and a SoFi retail investor. Withdrawing the 31 moved Tim
-  Sweeney from rank 13 to 3 and 65.2 to 72.7, Jeff Bezos 7 to 2, and changed the
-  rank of 26 of the 40 leaders then on the board.
+  racquetball champion and a SoFi retail investor. PROJECTED before the
+  withdrawal, on the 40-leader board and over all 31 cases: Tim Sweeney rank 13
+  to 3 and 65.2 to 72.7, Jeff Bezos 7 to 2, 26 of the 40 leaders changing rank
+  (`docs/CORPUS-INTEGRITY-FOLLOWUP.md`).
+  MEASURED when the sweep actually ran, 2026-09-11T05:50Z, comparing the board
+  immediately before and after on the 50-leader roster: Tim Sweeney rank 17 to 4
+  and 64.5 to 71.7, 46 of 50 leaders moving but 44 of them by 0.1 to 0.4 points,
+  which is calibration reacting to a changed pooled distribution rather than a
+  change in anyone's evidence. Lip-Bu Tan went the other way, 40 to 46 and -2.7,
+  because his removed Mario Draghi transcript had scored ABOVE his own average.
+  The two sets of numbers are kept apart on purpose: the first is a projection
+  over a board that no longer exists, and quoting it as the outcome is the kind
+  of thing this file exists to stop.
 
   The corpus review named two failure modes in source selection, and a third
   turned up later. SURNAME COLLISION, 13 cases, where the title names a
