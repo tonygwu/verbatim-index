@@ -217,38 +217,30 @@ four HappyScribe recordings that were commentary ABOUT the subject.
   appears zero times in `aggregate.py` and `build_site.py`, so it changes no
   score, rank, or board membership.
 
+- **Run markers replace the process-list check** (operator chose option (a),
+  2026-09-13 01:59Z; `b6cbb8d`). The grader early exit at 07:49:51Z on 2026-09-11 came
+  from `fetcher_running()` reading the process list. That code is gone. Each
+  fetch loop now claims `data/logs/running/<script>.marker` at start and
+  removes it on exit; `grade_loop.sh` counts a marker only while its pid is
+  alive with the recorded UTC start time, and stops loudly on an unreadable
+  one. The root cause of the old miss is still unknown, and no longer matters
+  to the grader. Two behaviour changes to know: a second copy of a fetch loop
+  now refuses to start, and a marker left by `kill -9` is replaced loudly on
+  the next start.
+
 ## Open decisions, with costs
 
-1. **UNEXPLAINED: `grade_loop` exited while a transcript source was running.**
-   The exit rule is "stop only when no transcript source is running".
-   `fetcher_running()` (reads the process list and looks for a shell running a
-   script named in `FETCHERS`) answered "none" at 07:49:51Z, yet
-   `happyscribe_loop` kept running until 08:24:33Z. The loop that exited
-   started at 07:31:31Z, 7 seconds after `0a3b32c` landed, so it had the
-   hardened function. Against a live `bash scripts/happyscribe_loop.sh` the
-   same function answers correctly, and these were ruled out: `ps` truncating
-   its output, the awk field positions, and a stale script on disk. No cause is
-   known. It cost nothing this time: 664 gradeable transcripts, 0 with no grade.
-   It would cost ungraded transcripts the next time both loops run together,
-   which already happened once at 04:17Z.
-   OPTIONS: (a) replace the process-list check with a marker file that each
-   fetch loop creates at start and removes in a `trap` on exit, and have the
-   grader test for the file; about an hour with a failing-then-passing test,
-   and it removes all process-text parsing. (b) keep investigating the current
-   check; open-ended, because the failure has not reproduced. (c) leave it and
-   restart `grade_loop` by hand after any fetch run. RECOMMENDATION: (a). Check
-   for the file's EXISTENCE only, never its mtime.
-2. **Existing history still holds about 200 MB of the old stderr log.**
+1. **Existing history still holds about 200 MB of the old stderr log.**
    Shrinking it needs a history rewrite, which is disruptive across clones.
    RECOMMENDATION: leave it; the growth is stopped.
-3. **Eight leaders are below 12**, and no fetch run can move them because both
+2. **Eight leaders are below 12**, and no fetch run can move them because both
    sources are exhausted. Reaching 12 needs new manifest candidates. Before the
    next discovery run, tighten the HappyScribe third-person filter; see
    `AGENTS.md`, Known limits.
 
 ## The single next action
 
-Decide open decision 1. Nothing is running and nothing is blocked.
+None required. Nothing is running and nothing is blocked.
 
 ## Verification command
 
@@ -256,6 +248,7 @@ Decide open decision 1. Nothing is running and nothing is blocked.
 git status --short --branch && git -C data status --short --branch | head -1
 ps -Ao comm=,args= | awk '$1 ~ /bash$/ && $3 != "-c" && /(grade|fetch|happyscribe)_loop\.sh/' | wc -l   # expect 0
 tail -1 data/logs/grade_loop.log data/logs/happyscribe_loop.log
+ls data/logs/running/ 2>/dev/null | wc -l    # expect 0 while no fetch loop runs
 for t in scripts/test_*.py; do .venv/bin/python "$t" >/dev/null || echo "FAIL $t"; done
 .venv/bin/python -c "import json;d=json.load(open('data/results.json'));print(d['diagnostics']['judge_call_counts'])"
 ```

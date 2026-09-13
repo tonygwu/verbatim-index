@@ -325,6 +325,15 @@ the mix even.
   reports every pair with its own `n`, and `mean_pairwise_correlation` is the
   one panel-level figure. Guarded by `scripts/test_judge_enumeration.py`, which
   runs a four-judge fixture as well as a three-judge one.
+- **A transcript source says it is running; nothing infers it.** Every fetch
+  loop calls `claim_run_marker "$(basename "$0")"` from `scripts/run_marker.sh`
+  right after the daemon guard, and every such script is listed in `FETCHERS`
+  in `grade_loop.sh`. Do not reintroduce `pgrep` or `ps` text matching for
+  this. It failed twice on 2026-09-11: one literal name missed the second
+  source, and a hardened process-list parse said no source was running for 35
+  minutes while one was, and never reproduced. A marker counts only while its
+  pid is alive with the recorded start time, read with `TZ=UTC`; never read its
+  mtime. Guarded by `scripts/test_run_marker.py`.
 - **No clone-absolute paths in committed code.** Use
   `git rev-parse --show-toplevel` or `Path(__file__)`.
 - **Every failure gets a taxonomy entry**, never a bare count. `grade.py`
