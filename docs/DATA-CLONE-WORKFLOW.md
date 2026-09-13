@@ -242,5 +242,48 @@ Work record, repo-4:
 
 - DC-1 (opt-in clone preparation and migration tooling): succeeded. Temporary repository tests passed.
 - DC-2 (production publication and ownership guards): succeeded. Both deployment entry points passed the source and revision checks.
-- DC-3 (temporary repository tests and quota-free suite): succeeded. All 41 `scripts/test_*.py` files passed. No model quota or deployment.
-- DC-4 (repo-4 migration and preservation of `policy-2-2026-09-12`): pending completed tests and a fresh consumer check.
+- DC-3 (temporary repository tests and quota-free suite): succeeded. All 41 `scripts/test_*.py` files passed on the rebased implementation, including `test_run_marker.py`. No model quota or deployment.
+- DC-4 (repo-4 migration and preservation of `policy-2-2026-09-12`): blocked-on-active-consumer-guard. The symlink remains `../data`.
+
+Implementation commit: `c2ca65690be87a2158a7ea6530bb691193b23c2b`, pushed to public main.
+It includes the production run-marker changes that arrived during this work.
+The production data HEAD advanced to `2796391e8562d3d497a8f3798b2cbffd26ff4c40` independently.
+The migration dry run still pins the requested experiment baseline `06f1ec2a1b41aeed5cec0d1c4f0ae85cd180c399`.
+No command changed the shared private Git checkout.
+
+The consumer check found eight app helper processes with working directories in repo-4:
+PIDs 6517, 6518, 6519, 6593, 7120, 7121, 7122, and 7128.
+They run computer-use, artifact-picker, or JavaScript helper services.
+This observation does not prove that they are active data jobs.
+The guard conservatively refuses any such non-ancestor process, so migration remains pending.
+No process was terminated to make the check pass.
+Only descendants of an earlier temporary test were stopped while correcting slow network-name lookup in its scanner.
+The corrected scanner disables network-name lookup and has a 30-second timeout.
+
+The owned experiment contains 154 files totaling 3,186,003 bytes.
+Its shared originals remain uncommitted. A final comparison matched all 154 file hashes,
+the shared Git index, and every existing clone symlink to the preflight snapshot.
+No independent repo-4 private checkout has been created, and no private commit or push was performed.
+Do not claim that this experiment is durable merely because the public implementation is pushed.
+
+After the associated app helper sessions release repo-4, run this exact command from repo-4:
+
+```bash
+.venv/bin/python scripts/data_clone_workflow.py setup \
+  --source ../data --revision 06f1ec2a1b41aeed5cec0d1c4f0ae85cd180c399 \
+  --branch codex/repo-4-policy-2-preserved-2026-09-12 \
+  --copy-owned predictions/_experiments/policy-2-2026-09-12 --apply
+```
+
+The command performs its own fresh process check. Do not bypass the refusal or terminate unrelated jobs.
+After it succeeds, check the copied file hashes against `.git/verbatim-clone.json` in the independent private checkout.
+Then commit and push only that preserved run:
+
+```bash
+git -C data add predictions/_experiments/policy-2-2026-09-12
+git -C data commit -m "Preserve the policy-2 prediction experiment"
+git -C data push -u origin codex/repo-4-policy-2-preserved-2026-09-12
+```
+
+The preserved run contains historical commands with old paths and code pins.
+Treat those commands as evidence. Create a new unique run for future model calls.
