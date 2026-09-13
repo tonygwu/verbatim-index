@@ -1,4 +1,4 @@
-# Verbatim Index — session handoff, 2026-09-11 06:47Z
+# Verbatim Index — session handoff, 2026-09-13 01:50Z
 
 Written from `repo-2` while the Verbatim Predictions corpus extraction is
 running. Every line here has a check command; do not trust one without
@@ -27,14 +27,24 @@ its eyebrow and the design tokens moving byte for byte into
 
 | Process | Started | Check |
 |---|---|---|
-| `extract_predictions.py --stage extract --workers 4` over all 682 transcripts | 2026-09-11 02:56Z | `pgrep -f "stage extract --workers 4"`; log `ls -t data/predictions/_runs/extract-corpus-*.log \| head -1` |
+| `extract_predictions.py --stage verify --workers 4` over the whole corpus | 2026-09-13 01:32Z | `pgrep -f "stage verify --workers 4"`; log `data/predictions/_runs/verify-20260913T013224Z.log` |
 
-It skips transcripts whose meta says extraction succeeded, so re-running the
-same command after a stop resumes. Watch `error_taxonomy` in the log's last
-line for `auth_or_quota` and `router_no_account` before calling a slow pass
-healthy. It competes with `grade_loop` (repo-0) for the same Codex and Fable
-quota; Fable was near 0% on most accounts when it started, so it will run
-mostly on Astra.
+Extraction is DONE. Two passes: the 02:56Z corpus pass and a fill pass that
+retried its failures. Combined result, 664 transcripts, 0 outstanding failures,
+1470 candidates, 0 ungrounded. The 46 failures of the first pass were 36
+transcripts repo-0 withdrew under the running pass and 10 transient Astra
+websocket disconnects; all 10 succeeded on the retry.
+
+Verification runs on Fable, because every extraction ran on Astra and the
+verifier must be another model family. Only `claude_c` has Fable headroom, and
+its FIVE-HOUR window is the binding constraint, not its Fable weekly window:
+27% left at 01:48Z, 63% over pace. Expect `auth_or_quota` or a Gemini fallback
+later in the pass. Re-running the same command fills whatever failed.
+
+Watch for `model_identity_mismatch` in the taxonomy. One call has already
+failed that way, with telemetry naming `claude-haiku-4-5` and `claude-opus-5`
+and no Fable model. That is the identity assertion working: a call served by
+another model is refused rather than recorded as a Fable verification.
 
 ## The single next action
 
@@ -58,7 +68,10 @@ from repo-0: `git -C data add predictions && git -C data commit`.
 ## Live numbers at handoff time
 
 ```
-extraction: 183/682 transcripts, 174 ok, all astra, ~459 left, ETA about 16:52Z today
+verification: 29/449 transcripts at 01:48Z, 28 ok, 1 failed, all fable;
+              59 candidates verified, 31 accepted, 53% acceptance; ETA about 04:46Z
+extraction: DONE, 664 transcripts, 0 failures, 1470 candidates, 0 ungrounded
+old extraction line: 183/682 transcripts, 174 ok, all astra, ~459 left, ETA about 16:52Z today
             336 candidates written, 0 ungrounded
 pilot: 13 files, 26 candidates from 407 weighed, 11 accepted, 13 rejected, 2 pending
 golden eval (live): precision 1.000, recall 0.929, 0 false positives on 24 negatives
