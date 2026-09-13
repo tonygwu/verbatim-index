@@ -8,59 +8,61 @@ Several Claude Code agents work this project at once, one per clone, under
 The `agent-fleet-git` skill governs how you commit; this file records what is
 specific to this repo.
 
-## Two repositories, nested
+## Two repositories, independent experiment clones
 
-| Repo | Visibility | Where it is checked out | Holds |
-|---|---|---|---|
-| `tonygwu/verbatim-index` | public | the clone root, `repo-N/` | code, rubric, tests, docs |
-| `tonygwu/verbatim-index-data` | private | **one** checkout at `verbatim-index/data`, reached from every clone through a `repo-N/data` symlink | transcripts, grades, logs, roster, results |
+`tonygwu/verbatim-index` is public and holds code, specifications, tests, and docs.
+`tonygwu/verbatim-index-data` is private and holds transcripts, grades, logs, and results.
+The shared live checkout remains at `verbatim-index/data`, owned by `repo-0`.
+Unmigrated public clones reach it through their `data` symlink.
 
-There is exactly one data checkout. Every clone points at it, so all clones
-read the same bytes at the same instant and any clone can deploy a current
-leaderboard with `bash scripts/deploy.sh`. Before 2026-09-07 each clone held
-its own copy, which drifted: repo-0's live tree ran hundreds of grades ahead of
-what the others could see, and only repo-0 could publish.
+Experiment clones can opt into independent private checkouts with their own Git
+indexes, branches, commits, and pushes. This is authorized for experiment owners.
+The setup command prepares `.data-clones/experiment` before switching only the
+requesting clone's `data` symlink. Full procedure and integration requirements:
+[docs/DATA-CLONE-WORKFLOW.md](docs/DATA-CLONE-WORKFLOW.md).
 
-The sharing has a cost. A loop started in the wrong clone now writes the live
-corpus instead of a private copy, so the three loops refuse to start unless
-`data/.daemon-clone` names the clone they are in. Git commands are not
-guarded, and one shared checkout means one `.git`: two agents running
-`git -C data ...` at once contend on `index.lock`. **Only `repo-0` commits
-`data/`.** That one stays a rule, not a precondition.
+Both `/data` and `/.data-clones/` are ignored by the public repository.
+Private records must never enter public commits. Stage named files in the correct repository.
+Author email remains `446441+tonygwu@users.noreply.github.com` in both repositories.
 
-The root `.gitignore` lists `data/`, so `git status` at the root never shows
-data changes and a public commit cannot sweep in a transcript. Data commits
-are made inside `data/` with `git -C data ...`, by `repo-0` only. Scripts
-address data as `data/...` relative to the root, unchanged from the single-repo
-days. `site/index.html` is a build artifact, rendered from `data/results.json`
-and gitignored; deploy it from disk.
-
-Until 2026-09-06 code and data shared one private repo. Its full history is
-kept read-only as `tonygwu/verbatim-index-archive`.
-
-Author email in every clone, root and `data/`, is the GitHub noreply address
-`446441+tonygwu@users.noreply.github.com`; GitHub rejects pushes carrying the
-personal one.
+Until 2026-09-06 code and data shared one private repo. Its full history remains
+read-only as `tonygwu/verbatim-index-archive`.
 
 ## Clone roles
 
-| Clone | Role | What it must not do |
-|---|---|---|
-| `repo-0` | Runs the three daemons (`fetch_loop`, `happyscribe_loop`, `grade_loop`), is the **only writer** of `data/`, and the only clone that commits it. | Feature work that another clone is already doing. |
-| `repo-1`, `repo-2`, … | Code, tests, docs, analysis. Read `data/` freely. Deploy with `scripts/deploy.sh`. One exception since 2026-09-10: the prediction pipeline (`extract_predictions.py`, `market_consensus.py`, `aggregate_predictions.py`, `validate_predictions.py`) writes under `data/predictions/` from any clone, because no loop touches that directory; the writer refuses every other path under `data/`. | Start any loop. Write under `data/` outside `data/predictions/`. Commit `data/`. |
+- **Production owner (`repo-0`):** owns the shared live Git index, commits, and pushes.
+  Runs ingestion, withdrawals, daemon-managed writes, and production aggregation.
+  Only this owner changes production-managed inputs or incorporates selected experiment results.
+- **Unmigrated non-daemon clones:** read shared data. Existing authorized prediction
+  jobs can write under shared `data/predictions/`, but cannot commit the shared checkout.
+  Do not start production loops or write outside that exception.
+- **Independent experiment clones:** own their private branches and may commit and
+  push their own experiment outputs. Use unique directories under
+  `data/predictions/_experiments/`. Preserve input data and code commits, model identity,
+  policy versions, and specification hashes. Do not run production jobs or push private `main`.
 
-Why one writer: the loops rewrite `data/transcripts`, `data/grades`, `data/logs`
-and `site/index.html` every few minutes. A second clone writing there produces
-merge conflicts on multi-megabyte JSON with no meaningful resolution. If you
-need new data, ask the operator to pull it through `repo-0`.
+`scripts/data_clone_workflow.py setup` defaults to a dry run. It refuses the
+production owner and active consumers, preserves shared uncommitted files, and
+copies only explicitly named owned experiment directories. It never pulls,
+resets, stages, or commits the shared checkout. Never change another clone's symlink.
+
+An independent clone carries `verbatim.role=experiment` in local private Git
+config. Daemon, withdrawal, pipeline, and production aggregation guards reject
+that role for production work. Prediction writers require an experiment run
+subdirectory and refuse writes back into the registered shared checkout.
+
+Any clone can render for an authorized deployment from an explicit production
+source and revision. Both deployment scripts require `--production-data` and
+`--data-revision`. Experimental sources, stale copied checkouts, and changes
+during rendering are refused. Only the production owner can use `--refresh`.
+Never bypass these checks with a direct production `npx wrangler deploy`.
 
 ## Setup in a fresh clone
 
 ```
 git clone git@github.com:tonygwu/verbatim-index.git repo-N && cd repo-N
-ln -s ../data data          # ONE shared checkout, cloned once at verbatim-index/data
+ln -s ../data data          # optional shared read view; opt into an independent clone below
 git config user.email 446441+tonygwu@users.noreply.github.com
-git -C data config user.email 446441+tonygwu@users.noreply.github.com
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 for t in scripts/test_*.py; do .venv/bin/python "$t" >/dev/null || echo "FAILED $t"; done
 ```
@@ -73,6 +75,10 @@ reached 21 of the files, 13 by hand and 8 through a typed predictions loop, and
 had fallen 18 behind. RUN 2026-09-11: the glob finds 39 test files, all 39 pass,
 and none of them spends judge quota, so the whole suite is safe in a fresh clone
 before any account is wired up.
+
+For experiments, follow `docs/DATA-CLONE-WORKFLOW.md` after setup.
+`data_clone_workflow.py new-run` creates a unique run with provenance.
+`test_data_clone_workflow.py` proves migration and publication guards with temporary repositories.
 
 Python 3.12 or newer: `llm-quota-router`, which `grade.py` imports to route
 Fable calls by measured quota, requires it.
@@ -107,7 +113,8 @@ score.
 `PUBLISH_ON_COMPLETE=1` makes `grade_loop.sh` deploy to the live site ONCE, at
 the COMPLETE exit and nowhere else, and it is off by default. Plain
 `deploy.sh`, not `--refresh`: the last cycle already aggregated and rendered, so
-`results.json` is current, and `deploy.sh` stays read-only on `data/`. A failed
+`results.json` is current. The loop supplies its production source and current
+data revision explicitly, and `deploy.sh` stays read-only on data. A failed
 push says so and exits 1 rather than reading as a clean finish, because silence
 there would recreate the stale-board bug it sits next to. Guarded by
 `scripts/test_publish_on_complete.py`, which also pins the publish block AFTER
@@ -459,7 +466,8 @@ the mix even.
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing
   under `data/` may be committed there. `git -C data add <paths>` and
-  `git -C data push`, from `repo-0` only.
+  `git -C data push`. Only repo-0 commits the shared live checkout. Each independent
+  experiment owner can commit and push their own private branch and named run directories.
 
 ## Measurement decisions, and why
 
@@ -1064,7 +1072,7 @@ new grades incomparable with the corpus already graded.
 
 - Rubric and schema (the grading contract, fingerprinted into every grade):
   `.claude/skills/leader-transcript-grader/`
-- Published site: `site/index.html`, deployed with `npx wrangler deploy` to
+- Published site: `site/index.html`, deployed with the guarded `scripts/deploy.sh` to
   `verbatim-index.tonygwu.com`
 - Per-leader pipeline coverage: `.venv/bin/python scripts/coverage_table.py`
 - Wrong-person screen: `.venv/bin/python scripts/wrong_person_screen.py`. It
@@ -1086,13 +1094,12 @@ new grades incomparable with the corpus already graded.
 - Verbatim Predictions (extract, verify, market consensus, validate, aggregate, page): skill in
   `.claude/skills/prediction-extractor/`, records in `data/predictions/<slug>/<sid>.jsonl`, design and limits in
   `docs/PREDICTIONS.md`, page built by `scripts/build_predictions_site.py` and deployed with
-  `bash scripts/deploy_predictions.sh` to `verbatim-predictions.tonygwu.com`.
+  `bash scripts/deploy_predictions.sh --production-data ../data --data-revision FULL-SHA` to `verbatim-predictions.tonygwu.com`.
   This is a SECOND published site with its own domain and its own index, and it
   goes stale independently of the leaderboard: `data/predictions/index.json` is
   rebuilt only by `aggregate_predictions.py`, which nothing runs on a loop.
   `deploy_predictions.sh` compares the index's `files_read` and `records_read`
-  against the files on disk and prints `STALE` when they differ, so read that
-  line before publishing. Only repo-0 can refresh it, because `--refresh`
+  against the files on disk and refuses publication when they differ. Only repo-0 can refresh it, because `--refresh`
   carries the daemon-clone precondition.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`

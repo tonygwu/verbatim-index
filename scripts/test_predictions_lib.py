@@ -175,7 +175,7 @@ def test_guard(L) -> None:
         except L.RefusedDataWrite:
             check("GUARD: write_prediction_file refuses data/grades", not (root / "grades" / "f.json").exists())
     check("GUARD: the real data root resolves through the symlink",
-          L.data_root().name == "data" and not L.data_root().is_symlink())
+          L.data_root() == (REPO / "data").resolve() and not L.data_root().is_symlink())
 
 
 def test_exclude(L) -> None:

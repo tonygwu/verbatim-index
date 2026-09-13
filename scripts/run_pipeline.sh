@@ -12,6 +12,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+. scripts/daemon_guard.sh
+require_daemon_clone || exit 1
+
 PY=.venv/bin/python
 STAGES="${STAGES:-1 2 3 4 5 6 7 8}"
 WORKERS="${WORKERS:-12}"

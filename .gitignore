@@ -4,18 +4,12 @@ __pycache__/
 *.superseded
 *.orphaned
 
-# The private data repository (github.com/tonygwu/verbatim-index-data) is one
-# checkout at ../data, and every clone reaches it through a data/ SYMLINK. It
-# has its own .git; this repo never tracks it. Transcripts and raw grades are
-# working data and stay private.
-#
-# No trailing slash. "data/" means "directory only", and git treats a symlink
-# as a file, so "data/" would NOT ignore the link and the first 
-# would commit it into this public repo. Verified before the layout changed.
+# Private data symlink or directory. No trailing slash: Git treats a symlink
+# as a file. Independent preparation checkouts are ignored separately below.
 /data
 
 # Build artifact, rendered from data/results.json by scripts/build_site.py and
-# deployed straight from disk with `npx wrangler deploy`.
+# published through scripts/deploy.sh with an explicit production source/revision.
 site/index.html
 
 # Wrangler's local cache carries the Cloudflare account id.
@@ -23,3 +17,6 @@ site/index.html
 
 # Build artifact of build_predictions_site.py, deployed from disk like site/index.html.
 site-predictions/index.html
+
+# Independent private clones, including incomplete migration preparations.
+/.data-clones/

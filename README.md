@@ -27,6 +27,25 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requi
 .venv/bin/python scripts/test_blinding.py
 ```
 
+## Private data and experiments
+
+Production has one live private checkout, managed by its production owner.
+Experiment agents can opt into independent private clones and push their own branches.
+Use the dry-run migration and setup commands in [docs/DATA-CLONE-WORKFLOW.md](docs/DATA-CLONE-WORKFLOW.md).
+The migration preserves shared uncommitted files and copies only explicitly owned runs.
+Both `data` and `.data-clones` remain ignored by this public repository.
+
+Production publication requires an explicit live source and full data revision:
+
+```bash
+bash scripts/deploy.sh --production-data ../data \
+  --data-revision "$(git -C ../data rev-parse HEAD)" --dry-run
+```
+
+Use `deploy_predictions.sh` with the same arguments for the predictions site.
+Only the production owner runs ingestion, withdrawals, production aggregation,
+or `--refresh`. Experiment results use unique `data/predictions/_experiments/` directories.
+
 ## Status
 
 Everything is built and verified except the transcripts. YouTube's caption

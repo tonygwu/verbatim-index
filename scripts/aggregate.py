@@ -506,6 +506,8 @@ def main() -> int:
                          "because averaging scores from different rubrics is a silent "
                          "correctness failure rather than a loud one.")
     args = ap.parse_args()
+    from data_clone_workflow import guard_aggregate
+    guard_aggregate(Path(__file__).resolve().parent.parent, Path(args.out))
 
     roster = json.loads(Path(args.roster).read_text())
     by_slug = {r["slug"]: r for r in roster["roster"]}

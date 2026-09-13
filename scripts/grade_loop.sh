@@ -254,7 +254,7 @@ while true; do
           # and also carries the daemon-clone precondition, which this does not
           # need. deploy.sh stays read-only on data/.
           say "  PUBLISH_ON_COMPLETE=1: publishing ${g1} grades to the live site"
-          if bash scripts/deploy.sh >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err; then
+          if bash scripts/deploy.sh --production-data data --data-revision "$(git -C data rev-parse HEAD)" >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err; then
             say "  published. live site now matches this build"
           else
             # Grading succeeded and the board on disk is good; only the push
@@ -263,7 +263,7 @@ while true; do
             say "PUBLISH FAILED: grading finished and site/index.html is current on disk,"
             say "  but the deploy did not complete, so the LIVE site is unchanged."
             say "  last line of data/logs/grade_loop.err: $(tail -n 1 data/logs/grade_loop.err)"
-            say "  retry by hand: bash scripts/deploy.sh"
+            say '  retry by hand: bash scripts/deploy.sh --production-data data --data-revision "$(git -C data rev-parse HEAD)"'
             exit 1
           fi
         fi

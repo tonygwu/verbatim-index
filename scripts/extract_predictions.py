@@ -201,6 +201,7 @@ def stage_audit(job: dict, stage: str, inputs: dict, prompts: list[str]) -> dict
     return {
         "policy_release": job["release"]["release"],
         "code_revision": job["code_revision"],
+        "input_data_revision": job.get("input_data_revision"),
         "input_sha256": L.json_sha256(inputs),
         # Hash the ordered JSON list, even when it contains just one prompt.
         "prompt_sha256": L.json_sha256(prompts),
@@ -583,6 +584,8 @@ def main(argv: list[str] | None = None) -> int:
     skill = Path(args.skill_dir)
     release = L.load_policy_release(skill)  # reject an unreviewed contract pair before any routing or call
     code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=L.REPO, text=True).strip()
+    from data_clone_workflow import git as data_git
+    input_data_revision = data_git(L.data_root(), "rev-parse", "HEAD") if (L.data_root() / ".git").exists() else None
     stages = ["extract", "verify"] if args.stage == "both" else [args.stage]
 
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
@@ -625,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
         fn = extract_one if stage == "extract" else verify_one
         jobs = [{"args": args, "path": str(p), "out": out, "roster": roster, "exclusions": exclusions,
                  "router": router, "run_id": run_id, "workroot": workroot, "contract": contracts[stage],
-                 "release": release, "code_revision": code_revision,
+                 "release": release, "code_revision": code_revision, "input_data_revision": input_data_revision,
                  "extraction_spec": specs["extract"],
                  "extraction_schema_text": json.dumps(schemas["extract"], indent=1),
                  "spec": specs[stage], "schema": schemas[stage],
@@ -649,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
         errors_path = Path(args.errors) if args.errors else out / "_runs" / f"{run_id}_errors.jsonl"
         L.write_prediction_file(errors_path, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in failed))
         manifest = {"run_id": run_id, "args": {k: v for k, v in vars(args).items()}, "stages": stages,
-                    "policy_release": release, "code_revision": code_revision,
+                    "policy_release": release, "code_revision": code_revision, "input_data_revision": input_data_revision,
                     "extraction_contract": contracts["extract"], "verification_contract": contracts["verify"],
                     "transcripts": len(paths), "summaries": summaries, "results": results,
                     "router_accounts": [a[0] for a in router.accounts] if router else None,

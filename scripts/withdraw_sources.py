@@ -43,6 +43,9 @@ ACTIONS = ("retire", "regrade")
 
 def require_daemon_clone(root: Path) -> str | None:
     """None if this clone owns data/, else the reason it does not."""
+    from data_clone_workflow import role
+    if role((root / "data").resolve()) == "experiment":
+        return "experiment data cannot perform production withdrawals"
     marker = root / "data" / ".daemon-clone"
     if not marker.exists():
         return f"{marker} is missing; it must name the clone that owns data/"

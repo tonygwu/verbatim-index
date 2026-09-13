@@ -154,8 +154,10 @@ The full schema is `prediction_record.schema.json`. The parts that matter:
 
 ```
 # tests, no quota
-for t in shared lib schema driver markets eval aggregate site; do .venv/bin/python scripts/test_predictions_$t.py; done
+for t in scripts/test_*.py; do .venv/bin/python "$t" || exit 1; done
 
+# Production commands below retain their existing quota authorization requirements.
+# In an independent clone, add --out data/predictions/_experiments/YOUR-RUN/results.
 # one transcript, both stages
 .venv/bin/python scripts/extract_predictions.py --stage both --single data/transcripts_open/<slug>/<sid>.json
 
@@ -167,8 +169,8 @@ nohup .venv/bin/python scripts/extract_predictions.py --stage verify  --workers 
 # check, count, render, deploy
 .venv/bin/python scripts/validate_predictions.py
 .venv/bin/python scripts/aggregate_predictions.py
-bash scripts/deploy_predictions.sh --dry-run
-bash scripts/deploy_predictions.sh
+bash scripts/deploy_predictions.sh --production-data ../data --data-revision "$(git -C ../data rev-parse HEAD)" --dry-run
+bash scripts/deploy_predictions.sh --production-data ../data --data-revision "$(git -C ../data rev-parse HEAD)"
 ```
 
 Extraction and verification reuse successful results only when their contracts,
@@ -182,8 +184,10 @@ failed with an error taxonomy. Transcripts on the exclusion list
 (`scripts/predictions_exclusions.json`, seeded from the 2026-09-10 withdrawal
 manifest's retire entries) are marked excluded and never read.
 
-This clone writes only under `data/predictions/`; commits of `data/` stay
-with repo-0. The corpus run competes with the grading loop for the same Fable,
+Only the production owner commits the shared live checkout. Independent experiment
+clones can commit and push their own private branches. Their outputs must use unique
+`data/predictions/_experiments/` run directories. See [DATA-CLONE-WORKFLOW.md](DATA-CLONE-WORKFLOW.md)
+for setup, provenance, integration, and publication checks. The corpus run competes with the grading loop for the same Fable,
 Astra and Gemini quota; check `bash scripts/status.sh` first.
 
 ## 5. Evals

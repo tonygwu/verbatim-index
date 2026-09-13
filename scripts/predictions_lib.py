@@ -388,7 +388,14 @@ def guard_data_path(path: str | Path, root: Path | None = None) -> Path:
     checked on the RESOLVED path so `data/predictions/../grades` is refused too.
     Paths outside data/ entirely (tempdirs in tests) pass through.
     """
+    explicit_root = root is not None
     root = (root or data_root()).resolve()
+    if not explicit_root:
+        from data_clone_workflow import guard_prediction_write
+        try:
+            guard_prediction_write(REPO, Path(path), root)
+        except RuntimeError as exc:
+            raise RefusedDataWrite(f"refusing to write {path}: {exc}") from exc
     allowed = root / "predictions"
     p = Path(path).resolve()
     if p == root or root in p.parents:

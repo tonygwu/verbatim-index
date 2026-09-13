@@ -45,14 +45,16 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def main() -> int:
     src = SH.read_text()
+    parser = (REPO / "scripts/deploy_source.sh").read_text()
+    check("deploy.sh sources the shared argument parser", ". scripts/deploy_source.sh" in src)
     print("\n[1] deploy.sh --refresh")
 
     check("deploy.sh parses flags in a loop, not just $1",
-          'for arg in "$@"' in src, "only the first argument is read")
-    check("--refresh is a recognised flag", "--refresh) REFRESH=1" in src)
-    check("--dry-run still works alongside it", "--dry-run) DRY=1" in src)
+          'while [ "$#" -gt 0 ]' in parser, "only the first argument is read")
+    check("--refresh is a recognised flag", "--refresh) REFRESH=1" in parser)
+    check("--dry-run still works alongside it", "--dry-run) DRY=1" in parser)
     check("an unknown flag is refused rather than silently ignored",
-          re.search(r'\*\)\s*echo "unknown argument', src) is not None,
+          re.search(r'\*\)\s*echo "unknown argument', parser) is not None,
           "a typo like --refesh would deploy stale data and say nothing")
 
     check("--refresh requires the daemon clone, because it writes data/",
@@ -75,7 +77,8 @@ def main() -> int:
     for flag in ("--grades data/grades", "--roster data/roster/final.json",
                  "--transcripts data/transcripts_blind", "--out data/results.json"):
         check(f"the refresh passes {flag}, as grade_loop.sh does",
-              flag in src, "a refreshed deploy would differ from a loop cycle")
+              flag in src.replace('"${PRODUCTION_DATA}/', 'data/').replace('"', ''),
+              "a refreshed deploy would differ from a loop cycle")
     agg, bs = at("scripts/aggregate.py"), at("scripts/build_site.py")
     check("aggregate runs BEFORE the page is rendered",
           -1 not in (agg, bs) and agg < bs,

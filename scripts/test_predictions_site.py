@@ -220,7 +220,7 @@ def main() -> int:
           and not re.search(r"wrangler deploy\s*$", src_sh, re.M))
     check("DEPLOY: --refresh is daemon-guarded before aggregation, and aggregation precedes the build",
           src_sh.index('if [ "$REFRESH" -eq 1 ]') < src_sh.index("require_daemon_clone") < src_sh.index("aggregate_predictions.py") < src_sh.index("build_predictions_site.py"))
-    check("DEPLOY: staleness line and unknown-argument handling are present", "STALE" in src_sh and "cannot be checked" in src_sh and "unknown argument" in src_sh)
+    check("DEPLOY: staleness line and unknown-argument handling are present", "STALE" in src_sh and "cannot be checked" in src_sh and ". scripts/deploy_source.sh" in src_sh and "unknown argument" in (REPO / "scripts/deploy_source.sh").read_text())
     p = subprocess.run(["bash", str(dep), "--nonsense"], capture_output=True, text=True, cwd=REPO)
     check("DEPLOY: an unknown flag exits 2 before anything runs", p.returncode == 2 and "unknown argument" in p.stderr)
     marker = REPO / "data" / ".daemon-clone"

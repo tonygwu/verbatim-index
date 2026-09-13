@@ -176,7 +176,7 @@ def test_deploy_renders_first() -> None:
           bool(i_build) and bool(i_dep) and min(i_build) < min(i_dep),
           f"build@{i_build} deploy@{i_dep}")
     check("it renders from the shared results.json, not a stale artifact",
-          any("data/results.json" in c for c in cmds), f"{cmds}")
+          any('${PRODUCTION_DATA}/results.json' in c for c in cmds), f"{cmds}")
 
     # Ordering alone is not enough. The first version of this script was missing
     # --calibration and --sources, so it parsed fine, ordered fine, and would
@@ -193,17 +193,8 @@ def test_deploy_renders_first() -> None:
           bool(loop) and bool(mine) and flags(mine[0]) == flags(loop[0]),
           f"deploy={flags(mine[0]) if mine else None} loop={flags(loop[0]) if loop else None}")
 
-    if not (REPO / "data" / "results.json").exists():
-        print("  SKIP  no data/results.json in this clone; cannot run the render")
-        return
-    r = subprocess.run(["bash", str(d), "--dry-run"], capture_output=True, text=True, cwd=REPO)
-    check("a dry run renders without error and publishes nothing", r.returncode == 0,
-          (r.stderr or r.stdout)[-500:])
-    check("the dry run reports what it would publish",
-          "about to publish" in r.stdout and "leaders" in r.stdout, r.stdout[-300:])
-    check("it never reaches wrangler on a dry run", "wrangler" not in r.stdout.lower(),
-          r.stdout[-200:])
-    check("it produced a site to publish", (REPO / "site" / "index.html").exists())
+    # Executable source/revision, rendering, and no-publish checks use temporary
+    # repositories in test_data_clone_workflow.py, never the live corpus.
 
 
 # ---------------------------------------------------------------------------

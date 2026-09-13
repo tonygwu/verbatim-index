@@ -204,7 +204,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--transcripts", default="data/transcripts_open")
     ap.add_argument("--out", default=None, help="default <predictions>/index.json")
     args = ap.parse_args(argv)
+    from data_clone_workflow import guard_aggregate
     pred_root = Path(args.predictions)
+    out = Path(args.out) if args.out else pred_root / "index.json"
+    guard_aggregate(Path(__file__).resolve().parent.parent, out)
     if not pred_root.exists():
         print(f"no predictions tree at {pred_root}", file=sys.stderr)
         return 2
@@ -213,7 +216,6 @@ def main(argv: list[str] | None = None) -> int:
     bad = forbidden_keys(index)
     if bad:
         raise SystemExit(f"index carries evaluative keys, refusing to write: {bad[:5]}")
-    out = Path(args.out) if args.out else pred_root / "index.json"
     L.write_prediction_file(out, json.dumps(index, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
     c = index["corpus"]
     print(f"files {index['files_read']}  records {index['records_read']}  accepted {c['accepted']}  "
