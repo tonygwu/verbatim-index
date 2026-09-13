@@ -27,9 +27,8 @@ What is asserted here:
   KNOWS_HS   happyscribe_loop.sh is among the sources it waits for.
   LISTED     the sources live in one named list, so adding a third source is
              one edit in an obvious place rather than a grep for pgrep calls.
-  MATCHES    the patterns actually match a running process of that name. A
-             pattern that never matches would make the loop wait forever, or
-             never wait at all, and source inspection alone cannot tell which.
+  CLAIMS     every script named in FETCHERS claims a run marker. The list and
+             the claims must agree, or a listed source is invisible.
   REASON     the list carries the incident that produced it.
 
   .venv/bin/python scripts/test_fetcher_detection.py
@@ -92,33 +91,19 @@ def main() -> int:
           idx >= 0 and any(w in preceding for w in ("04:17", "COMPLETE", "second source", "Happy Scribe")),
           "no comment ties the list to the incident that produced it")
 
-    # Source inspection cannot tell a working pattern from a dead one.
-    print("\nMATCHES: the patterns match a real process")
-    with tempfile.TemporaryDirectory() as td:
-        tmp = Path(td)
-        procs = []
-        try:
-            for n in (names or ["fetch_loop.sh", "happyscribe_loop.sh"]):
-                p = tmp / n
-                p.write_text("#!/usr/bin/env bash\nsleep 30\n")
-                p.chmod(0o755)
-                procs.append(subprocess.Popen(["bash", str(p)],
-                                              stdout=subprocess.DEVNULL,
-                                              stderr=subprocess.DEVNULL))
-            time.sleep(1.5)
-            for n in (names or []):
-                hit = subprocess.run(["pgrep", "-f", n], capture_output=True)
-                check(f"pgrep -f {n!r} finds a running process of that name",
-                      hit.returncode == 0,
-                      "the pattern never matches, so the loop would never wait")
-        finally:
-            for pr in procs:
-                pr.terminate()
-            for pr in procs:
-                try:
-                    pr.wait(timeout=5)
-                except Exception:
-                    pr.kill()
+    # Liveness is now decided by run markers (scripts/run_marker.sh, tested in
+    # scripts/test_run_marker.py), so a pgrep pattern check would prove nothing.
+    # What this file still owns is the link between the list and the sources:
+    # a name in FETCHERS whose script never claims a marker is never seen as
+    # running, and the grader would finish while that source still fetches.
+    print("\nCLAIMS: every listed source announces itself")
+    for n in names:
+        script = REPO / "scripts" / n
+        src = script.read_text() if script.exists() else ""
+        code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+        check(f"{n} exists and claims a run marker named after itself",
+              'claim_run_marker "$(basename "$0")"' in code,
+              f"{n} is in FETCHERS but never claims a marker, so the grader cannot see it")
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

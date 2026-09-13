@@ -22,6 +22,12 @@ cd "$(dirname "$0")/.."
 . scripts/daemon_guard.sh
 require_daemon_clone || exit 1
 
+# Tell grade_loop.sh that this transcript source is running, for as long as it
+# runs. The marker is removed on exit, including a plain `kill`; after a
+# `kill -9` the grader sees that the pid is gone. See scripts/run_marker.sh.
+. scripts/run_marker.sh
+claim_run_marker "$(basename "$0")" || exit 1
+
 PY=.venv/bin/python
 # GRADEABLE transcripts wanted per leader. Set to 12 on 2026-09-11, by
 # measurement rather than preference.

@@ -34,46 +34,33 @@ WORKERS="${WORKERS:-8}"
 # the backfill existed to remove, and drift it wider every cycle. Set this to
 # fable,astra to fall back to two judges if the Antigravity arm has to be pulled.
 # Every process that can ADD transcripts to the corpus. This loop must not
-# declare COMPLETE while any of them is still feeding it.
+# declare grading finished while any of them is still feeding it.
 #
-# It used to test one literal, `pgrep -f "fetch_loop.sh"`, written when YouTube
-# was the only source. Happy Scribe was added later as a deliberately
-# independent second source and this check never learned about it. On
-# 2026-09-11 grade_loop declared itself finished at 04:17:37Z, happyscribe_loop
-# merged 8 transcripts at 04:49:11Z, and nothing graded them. The comment avoids
-# quoting the COMPLETE sentinel verbatim on purpose: two tests locate that
-# string by POSITION to assert the stale-board check runs before it, and a
-# quotation up here reads as a first occurrence and breaks them.
-# Nothing said so either; it was noticed only because the coverage numbers
-# stopped matching, and the loop had to be restarted by hand.
+# A source counts as running only while it holds a run marker: a small file it
+# creates when it starts and removes when it exits. scripts/run_marker.sh owns
+# the format and the rules, including the kill -9 and pid-reuse cases.
 #
-# Same shape as the hand-typed judge list in aggregate.py: a name written out
-# in one place goes stale the day something is added beside it. A third source
-# belongs HERE and nowhere else. Guarded by scripts/test_fetcher_detection.py.
+# History. The first version tested one literal pgrep name and missed Happy
+# Scribe, the second source: on 2026-09-11 this loop finished at 04:17:37Z and
+# happyscribe_loop merged 8 transcripts at 04:49:11Z that nothing graded. The
+# second version parsed the process list, and on the same day it answered "no
+# source running" at 07:49:51Z while happyscribe_loop ran until 08:24:33Z. That
+# never reproduced, so no cause is known. Process text is a guess about who is
+# running; a marker is a claim the source makes about itself.
+#
+# A third source belongs in FETCHERS and nowhere else, and it must call
+# claim_run_marker. Guarded by scripts/test_run_marker.py and
+# scripts/test_fetcher_detection.py.
+. scripts/run_marker.sh
 FETCHERS=("fetch_loop.sh" "happyscribe_loop.sh")
 
+# 0 a source is running, 1 none is, 2 a marker is unreadable.
 fetcher_running(){
-  # `pgrep -f X` matches any process whose FULL COMMAND LINE contains X, which
-  # includes every shell wrapper, editor, grep and agent command that merely
-  # names the script. A false positive here makes this loop wait forever for a
-  # source that is not running, and that is the house rule learned the hard way:
-  # six poll loops once kept spinning because their pgrep pattern matched their
-  # own command line. On 2026-09-11 `pgrep -f grade_loop.sh` returned two pids
-  # and only one was running the loop; the other was a /bin/zsh -c wrapper.
-  #
-  # `ps -Ao comm=,args=` gives comm, then argv0, then the rest. A shell running
-  # a SCRIPT has the script path in the third field; a shell running a command
-  # STRING has -c there. So a -c payload that mentions the script is excluded
-  # and a real `bash scripts/happyscribe_loop.sh` is kept.
-  local f
+  local f rc
   for f in "${FETCHERS[@]}"; do
-    if ps -Ao comm=,args= | awk -v s="$f" '
-         $1 !~ /(^|\/)(bash|sh|zsh|dash)$/ { next }
-         $3 == "-c" { next }
-         index($0, s) { found = 1; exit }
-         END { exit !found }'; then
-      return 0
-    fi
+    run_marker_alive "$f"; rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    [ "$rc" -eq 2 ] && return 2
   done
   return 1
 }
@@ -238,7 +225,12 @@ while true; do
 
   # Stop only when nothing is arriving AND every source has finished for good.
   if [ "$gained" -eq 0 ]; then
-    if fetcher_running; then
+    fetcher_running; source_rc=$?
+    if [ "$source_rc" -eq 2 ]; then
+      # Waiting forever and exiting early are both guesses. Stop and say which file.
+      say "  STOPPING: a run marker under ${RUN_MARKER_DIR} is unreadable (details above), so whether a transcript source is still running cannot be known. Inspect it, then restart."
+      exit 1
+    elif [ "$source_rc" -eq 0 ]; then
       say "  no new grades, but a transcript source is still running. waiting."
       idle=0
     else
