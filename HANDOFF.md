@@ -86,7 +86,7 @@ Verify: `.venv/bin/python scripts/validate_predictions.py` and
 
 ---
 
-# Leaderboard workstream (repo-0), 2026-09-11 05:30Z
+# Leaderboard workstream (repo-0), updated 2026-09-13 01:29Z
 
 Separate from the predictions handoff above, which is repo-2's. This covers
 the judge panel, the two fetch sources and the grading loops. Every line has
@@ -99,13 +99,19 @@ a check command; do not trust one without running it.
 | code (public) | `git log --oneline -1` | yes, `git status --short --branch` shows no divergence |
 | data (private) | `git -C data log --oneline -1` | yes; `data/predictions/` stays uncommitted for repo-2 |
 
-Four commits from this session, newest last:
+Commits from this workstream, oldest first:
 
 ```
 f5971da  Derive every judge diagnostic from the grades, not a typed pair
 88cfd25  Let the loop set the fetch pace ceiling, and lower it to 15s
 50eb15c  Re-discover HappyScribe candidates when the roster gains a leader
 14cb5d0  Guard the stderr-log ignore, including the half that is easy to miss
+7f957b7  Split refusals out before the scorable filter, not after
+fef03ca  Default the fetch target to 12, the number the sources actually hold
+60bb15b  Record what the HappyScribe re-search cost, not only what it gained
+e91e33f  Wait for every transcript source before declaring grading complete
+af6624a  Give happyscribe_loop the barren-pass guard its sibling already had
+0a3b32c  Count a running source, not a mention of its name
 ```
 
 Plus `7c0f38b` in `data/`, which untracked the 50 MB stderr log.
@@ -151,75 +157,97 @@ Plus `7c0f38b` in `data/`, which untracked the 50 MB stderr log.
    still written to disk. Tracked log bytes went 53.0 MB to 3.0 MB. This does
    NOT shrink existing history.
 
-## Background processes STILL RUNNING
+## Background processes
 
-Both are detached (`ppid 1`), so they survive `/clear`, this session ending,
-and the terminal closing. They were started from repo-0, the daemon clone.
-
-| Process | Started | Check | Restart |
-|---|---|---|---|
-| `grade_loop.sh` | 2026-09-11 04:49Z | `pgrep -f grade_loop.sh`; `tail -5 data/logs/grade_loop.log` | `OPEN_PER_LEADER=0 nohup bash scripts/grade_loop.sh >> data/logs/grade_loop.log 2>&1 &` |
-| `happyscribe_loop.sh` | 2026-09-11 04:49Z | `pgrep -f happyscribe_loop.sh`; `tail -3 data/logs/happyscribe_loop.log` | `TARGET=8 nohup bash scripts/happyscribe_loop.sh >> data/logs/happyscribe_loop.log 2>&1 &` |
-
-`fetch_loop.sh` exited `EXHAUSTED` at 03:44Z and should NOT be restarted: every
-YouTube manifest candidate for the short leaders has already been tried.
-
-The restart commands carry environment that the script defaults do NOT supply.
-`OPEN_PER_LEADER` defaults to 2 and the running loop uses 0. `TARGET` defaults
-to 5 for HappyScribe and the running loop uses 8, inferred from disk because
-`ps eww` returns no environment for another process on macOS: Elon Musk stopped
-at 8 of 43 candidates and Bill Gates took all 8 of 8. Restarting `fetch_loop`
-without `TARGET=14` makes it exit COMPLETE in under a second, which happened
-once in this session.
-
-## Live numbers at handoff time
+NONE are running as of 2026-09-13 01:29Z. Both loops exited on their own on 2026-09-11:
 
 ```
-board        50 leaders ranked, 0 unranked, 0 unscored
-at target    41/50 at TARGET=14       (48/50 would be at target if TARGET were 12)
-short        ilya-sutskever 7, michael-dell 11, aaron-levie 12, alexandr-wang 12,
-             greg-brockman 12, larry-ellison 12, sergey-brin 12, tobi-lutke 12,
-             george-hotz 13
-transcripts  667 blinded        grades 2395
-judge calls  fable 665, astra 655, gemini 633
-pair r       astra|fable 0.875 (n=653), astra|gemini 0.842 (n=621),
-             fable|gemini 0.845 (n=631)
+[2026-09-11T07:49:51Z] grade_loop   COMPLETE: nothing left to grade
+[2026-09-11T08:24:33Z] happyscribe  EXHAUSTED: 3 cycles with no new transcripts.
+                         33 of 92 candidate(s) never fetched (59 fetched).
 ```
 
-Ilya Sutskever sits 4th on n=7, the thinnest evidence base in the top five.
-Anyone quoting the top of this board should know that.
+`fetch_loop.sh` exited `EXHAUSTED` at 03:44Z. Do NOT restart any of the three
+without a reason: both sources are exhausted, and every gradeable transcript
+has at least one grade.
+
+If a restart is needed, pass the environment the script defaults do not supply
+for this run's settings:
+
+```
+OPEN_PER_LEADER=0 nohup bash scripts/grade_loop.sh      >> data/logs/grade_loop.log 2>&1 &
+TARGET=12         nohup bash scripts/happyscribe_loop.sh >> data/logs/happyscribe_loop.log 2>&1 &
+```
+
+`OPEN_PER_LEADER` defaults to 2 and this run used 0. `TARGET` now defaults to
+12 in both fetch loops, so that part is belt and braces.
+
+## Live numbers at handoff time (2026-09-13 01:29Z)
+
+```
+board        50 ranked, 0 unranked, 0 unscored
+grades       2260 read by results.json
+transcripts  653 blinded    refusals 4
+at target    42/50 at TARGET=12
+short        ilya-sutskever 7, michael-dell 9, tim-cook 9, andy-jassy 10, lip-bu-tan 10, tim-sweeney 10, alexandr-wang 11, jeff-bezos 11
+judge calls  astra 643, fable 652, gemini 619
+pair r       astra|fable 0.875 (n=642), astra|gemini 0.846 (n=609), fable|gemini 0.841 (n=618)
+```
+
+The drop from 41/50 at the previous handoff is not a regression. Another agent
+applied a wrong-person withdrawal manifest (36 transcripts), and QA withdrew
+four HappyScribe recordings that were commentary ABOUT the subject.
+
+## Decided since the previous handoff
+
+- **`TARGET` is 12** (operator, 2026-09-11). It is a fetching goal only. It
+  appears zero times in `aggregate.py` and `build_site.py`, so it changes no
+  score, rank, or board membership.
 
 ## Open decisions, with costs
 
-1. **`TARGET=14` or `TARGET=12`.** Both fetch sources are now exhausted, so
-   41/50 is the ceiling from existing candidates. At 12 the board reaches 48/50
-   today with no new fetching, leaving only Ilya Sutskever and Michael Dell
-   short, at a cost of two transcripts of evidence per leader. Ten leaders sit
-   at exactly 12 because the YouTube manifest was built with exactly 14
-   candidates for a target of 14 and combined fetch-and-QA survival is about
-   85%, so 14 candidates yield about 12. Reaching 14 honestly needs roughly 17
-   candidates per leader, which is a sourcing run weighted toward recordings
-   that survive the `subject named` screen. RECOMMENDATION: 12, because the
-   cluster at 12 is the corpus telling you what it supports, and a target the
-   data cannot reach mostly burns loop cycles.
+1. **UNEXPLAINED: `grade_loop` exited while a transcript source was running.**
+   The exit rule is "stop only when no transcript source is running".
+   `fetcher_running()` (reads the process list and looks for a shell running a
+   script named in `FETCHERS`) answered "none" at 07:49:51Z, yet
+   `happyscribe_loop` kept running until 08:24:33Z. The loop that exited
+   started at 07:31:31Z, 7 seconds after `0a3b32c` landed, so it had the
+   hardened function. Against a live `bash scripts/happyscribe_loop.sh` the
+   same function answers correctly, and these were ruled out: `ps` truncating
+   its output, the awk field positions, and a stale script on disk. No cause is
+   known. It cost nothing this time: 664 gradeable transcripts, 0 with no grade.
+   It would cost ungraded transcripts the next time both loops run together,
+   which already happened once at 04:17Z.
+   OPTIONS: (a) replace the process-list check with a marker file that each
+   fetch loop creates at start and removes in a `trap` on exit, and have the
+   grader test for the file; about an hour with a failing-then-passing test,
+   and it removes all process-text parsing. (b) keep investigating the current
+   check; open-ended, because the failure has not reproduced. (c) leave it and
+   restart `grade_loop` by hand after any fetch run. RECOMMENDATION: (a). Check
+   for the file's EXISTENCE only, never its mtime.
 2. **Existing history still holds about 200 MB of the old stderr log.**
    Shrinking it needs a history rewrite, which is disruptive across clones.
    RECOMMENDATION: leave it; the growth is stopped.
+3. **Eight leaders are below 12**, and no fetch run can move them because both
+   sources are exhausted. Reaching 12 needs new manifest candidates. Before the
+   next discovery run, tighten the HappyScribe third-person filter; see
+   `AGENTS.md`, Known limits.
 
 ## The single next action
 
-Wait for `grade_loop` to print `COMPLETE`, then decide the `TARGET` question
-above. Nothing else is blocked.
+Decide open decision 1. Nothing is running and nothing is blocked.
 
 ## Verification command
 
 ```
 git status --short --branch && git -C data status --short --branch | head -1
-pgrep -f 'grade_loop.sh|happyscribe_loop.sh' | wc -l        # expect 2
-tail -3 data/logs/grade_loop.log
+ps -Ao comm=,args= | awk '$1 ~ /bash$/ && $3 != "-c" && /(grade|fetch|happyscribe)_loop\.sh/' | wc -l   # expect 0
+tail -1 data/logs/grade_loop.log data/logs/happyscribe_loop.log
 for t in scripts/test_*.py; do .venv/bin/python "$t" >/dev/null || echo "FAIL $t"; done
 .venv/bin/python -c "import json;d=json.load(open('data/results.json'));print(d['diagnostics']['judge_call_counts'])"
 ```
 
-The last line must name THREE judges. If it names two, the fix in `f5971da`
-has been reverted or overwritten.
+The process count uses `ps` with `-c` excluded rather than `pgrep -f`, because
+`pgrep -f` also matches any command line that merely names the script,
+including the shell running this check. The last line must name THREE judges.
+If it names two, the fix in `f5971da` has been reverted or overwritten.
