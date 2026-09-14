@@ -130,10 +130,24 @@ caption `fetch()` probe every 10 minutes. It runs the pilot fetch as soon as a
 probe clears, and it stops at 15:30Z. The operator can end the block at once by
 rotating the VPN to a new exit.
 
-## Automatic pre-check on the 22 fetched records
+Retry 2: 32 probes from 09:49Z to 15:00Z were all BLOCKED. Probe 33 cleared at
+15:10:30Z, and the fetch ran until the circuit breaker opened again five minutes
+later:
 
 ```
-NEEDS_HUMAN 21   FAIL 1 (uploaded 20191028, outside the window 20210913-20260913)
+attempted 240   newly_fetched 16   cached 22   succeeded 38   failed 202
+error_taxonomy: ip_blocked_or_ratelimited 186, video_unavailable 16
+```
+
+**The fetched set is badly uneven, which is a bias and not a detail.** All 38
+records belong to three of the ten pilot people: asmongold 24, ana-kasparian 8
+and ben-shapiro 6. The other seven have none. Any yield measured now describes
+those three only.
+
+## Automatic pre-check on the 38 fetched records
+
+```
+NEEDS_HUMAN 35   FAIL 3 (uploads from 2017 and 2019, outside the window 20210913-20260913)
 ```
 
 A FAIL is only what the record proves: no upload date, outside the window, after
