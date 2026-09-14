@@ -38,7 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 LEANS = ("left", "right", "heterodox")
 STRINGS = ("slug", "name", "role", "company", "show", "outlet")
 LISTS = ("handles", "own_channels", "identity_tokens")
-CHANNEL_FIELDS = ("url", "channel_name", "verified_by")
+CHANNEL_FIELDS = ("url", "channel_id", "channel_name", "verified_by")
+CHANNEL_ID = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PRIVATE_KEYS = ("lean", "lean_sources", "lean_disputed", "lean_alternative")
@@ -79,6 +80,9 @@ def roster_errors(roster: list[dict]) -> list[str]:
                 errors.append(f"{where}: own_channels[{j}] is missing {missing}")
             elif not ch["url"].startswith("https://www.youtube.com/"):
                 errors.append(f"{where}: own_channels[{j}] url is not a youtube.com URL")
+            elif not CHANNEL_ID.match(ch["channel_id"]):
+                errors.append(f"{where}: own_channels[{j}] channel_id is not a canonical UC... id; "
+                              f"discovery matches on it, so a handle alone is not enough")
         if p.get("archival") is True and not (isinstance(p.get("last_recording_date"), str)
                                               and DATE.match(p["last_recording_date"])):
             errors.append(f"{where}: an archival subject needs `last_recording_date` as YYYY-MM-DD")

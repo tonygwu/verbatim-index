@@ -39,7 +39,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 def person(slug: str, archival: bool = False) -> dict:
     p = {"slug": slug, "name": slug.replace("-", " ").title(), "role": "podcast host",
          "company": "The Show", "show": "The Show", "outlet": "YouTube", "handles": [],
-         "own_channels": [{"url": f"https://www.youtube.com/@{slug}", "channel_name": slug,
+         "own_channels": [{"url": f"https://www.youtube.com/@{slug}", "channel_id": "UC" + "a" * 22, "channel_name": slug,
                            "verified_by": "channel About page links the official site"}],
          "identity_tokens": ["The Show", "co-host"], "archival": archival}
     if archival:
@@ -88,6 +88,9 @@ def main() -> int:
     r = copy.deepcopy(roster)
     r[0]["own_channels"][0]["url"] = "https://www.twitch.tv/x"
     check("an own channel off YouTube fails", has(R.roster_errors(r), "youtube"))
+    r = copy.deepcopy(roster)
+    r[0]["own_channels"][0]["channel_id"] = "@handle"
+    check("an own channel without a canonical channel id fails", has(R.roster_errors(r), "channel_id"))
     r = copy.deepcopy(roster)
     r[0]["own_channels"] = []
     check("an empty own-channel list is allowed and counted, not guessed", R.roster_errors(r) == [])
