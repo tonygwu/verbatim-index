@@ -14,6 +14,10 @@ specific to this repo.
 The repo-0 restriction applies to the shared live checkout and production integration.
 It does not reserve all private data commits for repo-0.
 Before writing experiment data from another clone, use the setup procedure below.
+In such a clone the pipeline writes ONLY under `data/predictions/_experiments/<unique-run>/`;
+every other path is refused, including `predictions/<slug>/`, `predictions/index.json` and `grades/`.
+Commit that run directory by name on your own branch. Never push private `main`: no hook
+enforces that, and branch protection is unavailable on this private repository's plan.
 
 `tonygwu/verbatim-index` is public and holds code, specifications, tests, and docs.
 `tonygwu/verbatim-index-data` is private and holds transcripts, grades, logs, and results.
@@ -38,7 +42,8 @@ read-only as `tonygwu/verbatim-index-archive`.
 - **Production owner (`repo-0`):** owns the shared live Git index, commits, and pushes.
   Runs ingestion, withdrawals, daemon-managed writes, and production aggregation.
   Only this owner changes production-managed inputs or incorporates selected experiment results.
-- **Unmigrated non-daemon clones:** read shared data. Existing authorized prediction
+- **Unmigrated non-daemon clones:** none since 2026-09-14, when repo-1, repo-2 and repo-3
+  migrated; this covers a clone made without the setup procedure. They read shared data. Existing authorized prediction
   jobs can write under shared `data/predictions/`, but cannot commit the shared checkout.
   Do not start production loops or write outside that exception.
 - **Independent experiment clones:** own their private branches and may commit and
