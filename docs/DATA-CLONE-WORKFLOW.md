@@ -242,31 +242,58 @@ Work record, repo-4:
 
 - DC-1 (opt-in clone preparation and migration tooling): succeeded. Temporary repository tests passed.
 - DC-2 (production publication and ownership guards): succeeded. Both deployment entry points passed the source and revision checks.
-- DC-3 (temporary repository tests and quota-free suite): succeeded. All 41 `scripts/test_*.py` files passed on the rebased implementation, including `test_run_marker.py`. No model quota or deployment.
-- DC-4 (repo-4 migration and preservation of `policy-2-2026-09-12`): blocked-on-active-consumer-guard. The symlink remains `../data`.
+- DC-3 (temporary repository tests and quota-free suite): succeeded. All 41 test scripts passed again after migration and the production-source test corrections.
+- DC-4 (repo-4 migration and preservation of `policy-2-2026-09-12`): succeeded on 2026-09-13 with an explicit operator exception for inspected app helpers.
 
 Implementation commit: `c2ca65690be87a2158a7ea6530bb691193b23c2b`, pushed to public main.
-It includes the production run-marker changes that arrived during this work.
-The production data HEAD advanced to `2796391e8562d3d497a8f3798b2cbffd26ff4c40` independently.
-The migration dry run still pins the requested experiment baseline `06f1ec2a1b41aeed5cec0d1c4f0ae85cd180c399`.
-No command changed the shared private Git checkout.
+Migration used public code `32967d10a9ef971d34cb96c5396d9c03d009db6a`.
+The private input baseline remains `06f1ec2a1b41aeed5cec0d1c4f0ae85cd180c399`.
+The shared production checkout remained at `2796391e8562d3d497a8f3798b2cbffd26ff4c40` throughout migration.
+No command pulled, reset, staged, or committed that shared checkout.
 
-The consumer check found eight app helper processes with working directories in repo-4:
-PIDs 6517, 6518, 6519, 6593, 7120, 7121, 7122, and 7128.
-They run computer-use, artifact-picker, or JavaScript helper services.
-This observation does not prove that they are active data jobs.
-The guard conservatively refuses any such non-ancestor process, so migration remains pending.
-No process was terminated to make the check pass.
-Only descendants of an earlier temporary test were stopped while correcting slow network-name lookup in its scanner.
-The corrected scanner disables network-name lookup and has a 30-second timeout.
+### App helper exception
 
-The owned experiment contains 154 files totaling 3,186,003 bytes.
-Its shared originals remain uncommitted. A final comparison matched all 154 file hashes,
-the shared Git index, and every existing clone symlink to the preflight snapshot.
-No independent repo-4 private checkout has been created, and no private commit or push was performed.
-Do not claim that this experiment is durable merely because the public implementation is pushed.
+On 2026-09-12, the conservative consumer guard blocked eight app helper processes:
+two computer-use launchers, two artifact-template picker servers, and four JavaScript runtimes.
+They had inherited repo-4 as their working directory.
+This working-directory reference did not establish that they were using data.
 
-After the associated app helper sessions release repo-4, run this exact command from repo-4:
+On 2026-09-13, the operator explicitly authorized migration with those services running.
+The original eight had exited. A fresh scan found five replacement app helpers:
+PIDs 60679, 60680, 60681, 60747, and 61445.
+Their only repository reference was a `cwd` descriptor for repo-4.
+None had an open file under the shared data checkout.
+
+A one-time migration wrapper applied that authorization to these five identities only.
+It checked each PID's command and UTC process start time to detect replacement or reuse.
+It repeated file-descriptor checks before cloning and before switching the symlink.
+A new process, changed identity, or data-file reference would still block migration.
+The normal migration guard and production safeguards were not changed.
+Two production-only test checks now read the registered production checkout.
+They no longer expect runtime logs or current production ignore rules inside frozen experiment inputs.
+No helper or production job was stopped.
+
+These idle app services are expendable for this task and need not survive context clearing.
+No extraction, migration, or Git job depends on keeping them alive.
+The private migration receipt records the authorization, both process checks,
+source hashes, shared Git index hashes, and the original symlink targets.
+
+### Preserved private experiment
+
+Repo-4 now points `data` to its own `.data-clones/experiment` checkout.
+Its private role is `experiment` and it has an independent Git index and object store.
+Its branch is `codex/repo-4-policy-2-preserved-2026-09-12`.
+The preserved experiment and migration receipt are committed and pushed as:
+
+`bd7a4a56df34e40710fc63cf3e0dcb7738cdef43`
+
+All 154 original files, totaling 3,186,003 bytes, matched their source SHA-256 hashes after copying.
+The commit adds those files plus one `migration-2026-09-13.json` receipt, for 155 files.
+The shared originals remain intact. They are now also durable on the independent private branch.
+The shared Git index and all other clone symlinks matched their preflight snapshots.
+No model quota was spent, no site was deployed, and private main was not changed.
+
+The setup command remains repeatable after migration:
 
 ```bash
 .venv/bin/python scripts/data_clone_workflow.py setup \
@@ -275,15 +302,6 @@ After the associated app helper sessions release repo-4, run this exact command 
   --copy-owned predictions/_experiments/policy-2-2026-09-12 --apply
 ```
 
-The command performs its own fresh process check. Do not bypass the refusal or terminate unrelated jobs.
-After it succeeds, check the copied file hashes against `.git/verbatim-clone.json` in the independent private checkout.
-Then commit and push only that preserved run:
-
-```bash
-git -C data add predictions/_experiments/policy-2-2026-09-12
-git -C data commit -m "Preserve the policy-2 prediction experiment"
-git -C data push -u origin codex/repo-4-policy-2-preserved-2026-09-12
-```
-
-The preserved run contains historical commands with old paths and code pins.
+It recognizes the completed migration and preserves subsequent private commits.
+The original run contains historical commands with old paths and code pins.
 Treat those commands as evidence. Create a new unique run for future model calls.

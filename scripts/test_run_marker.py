@@ -230,8 +230,14 @@ def wiring() -> None:
               'claim_run_marker "$(basename "$0")" || exit 1' in lcode)
         check(f"{loop} claims after the daemon guard", 0 <= guard < claim, f"guard={guard} claim={claim}")
 
-    gi = (REPO / "data" / ".gitignore").read_text() if (REPO / "data" / ".gitignore").exists() else ""
-    check("data/.gitignore ignores the markers", "logs/running/" in gi)
+    # These markers exist only in production. An independent experiment can
+    # deliberately pin a private revision older than the production marker rule.
+    from data_clone_workflow import production_path
+    ignore = production_path(REPO) / ".gitignore"
+    if ignore.exists():
+        check("production data/.gitignore ignores the markers", "logs/running/" in ignore.read_text())
+    else:
+        print("  SKIP  production ignore rules: registered private checkout is not available")
 
 
 def finish() -> int:

@@ -28,7 +28,9 @@ What is asserted here:
   ON_DISK   the file is still written, because the fix is "do not commit it",
             not "stop recording it".
 
-Pure checks: reads data/.gitignore and git's index. No network, no quota.
+Pure checks: reads the registered production checkout and its Git index.
+An experiment data clone is not a source of production runtime evidence.
+No network, no quota.
 
   .venv/bin/python scripts/test_log_bloat.py
 """
@@ -40,7 +42,10 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DATA = REPO / "data"
+# Runtime logs belong to production. A frozen experiment clone intentionally
+# has neither live ignored logs nor necessarily today's production ignore rules.
+from data_clone_workflow import production_path
+DATA = production_path(REPO)
 BLOATED = "logs/grade_loop.err"
 PASS, FAIL = [], []
 
@@ -57,7 +62,7 @@ def git(*args: str) -> subprocess.CompletedProcess:
 def main() -> int:
     print("log bloat")
     if not (DATA / ".git").exists():
-        print("  SKIP  data/ is not a checkout here")
+        print("  SKIP  the registered production checkout is not available here")
         return 0
 
     ignore = (DATA / ".gitignore").read_text()

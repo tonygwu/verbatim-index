@@ -17,11 +17,13 @@ Owner: `repo-4`. The operator authorized the code changes and this bounded rerun
 - PR-1 (shared policy and compatible release): succeeded.
 - PR-2 (cache provenance and acceptance by contract pair): succeeded.
 - PR-3 (original-transcript extraction, verification and offline audit): succeeded.
-- PR-4 (private artifact durability): blocked-on-repo-0-commit; repo-4 may
-  write predictions but may not commit the private data repository.
+- PR-4 (private artifact durability): succeeded on 2026-09-13. Repo-4 preserved
+  the experiment in an independent private clone and pushed commit `bd7a4a5`
+  on `codex/repo-4-policy-2-preserved-2026-09-12`. See
+  [DATA-CLONE-WORKFLOW.md](DATA-CLONE-WORKFLOW.md) for the migration record.
 
-The original live candidates and index remain unchanged. The live check still
-returns exactly `11 13 0.4583`. No corpus-wide pass, market call or deployment
+At completion of the 2026-09-12 rerun, the original live candidates and index
+were unchanged. The live check returned exactly `11 13 0.4583`. No corpus-wide pass, market call or deployment
 was performed. The other 655 successful extractions remain historical results
 under extraction contract `d795f6f1d88b`; this release does not silently reuse
 or automatically replace them.
@@ -235,6 +237,7 @@ accuracy, or a causal improvement over the old 11/24. Keep the new release and
 its provenance safeguards; use agreed reference cases to resolve the remaining
 judgment boundaries before a broader quality comparison or corpus migration.
 
-The private experiment still needs **repo-0** to commit and push
-`predictions/_experiments/policy-2-2026-09-12/` in the data repository. That
-operation should preserve the live corpus and spend no further model quota.
+The private experiment was committed and pushed on 2026-09-13 from repo-4's
+independent data clone as `bd7a4a5`. All 154 original files were preserved with
+matching hashes, and one migration receipt was added. The shared live checkout
+and other clone symlinks were unchanged. No further model quota was spent.
