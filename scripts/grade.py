@@ -774,15 +774,10 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
     return payload.get("result") or "", telemetry
 
 
-def call_astra(prompt: str, timeout: int, workdir: Path,
-               model: str = "gpt-6-astra", raw_response_path: Path | None = None) -> tuple[str, dict]:
-    """Run the Astra judge via codex exec. Returns (text, telemetry).
-
-    `model` is a parameter because this arm falls back to another model when
-    it refuses repeatedly. The served model is recorded in the telemetry, so
-    aggregate.py can calibrate each model on its own distribution."""
-    out_file = workdir / "astra_last_message.txt"
-    cmd = [
+def astra_command(prompt: str, model: str, out_file: Path) -> list[str]:
+    """The Astra judge invocation, in one place like fable_command and gemini_command,
+    so a probe of the harness runs the same argv as production."""
+    return [
         "codex", "exec",
         "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
         "-c", "model_provider=openai",
@@ -794,6 +789,17 @@ def call_astra(prompt: str, timeout: int, workdir: Path,
         "-o", str(out_file),
         prompt,
     ]
+
+
+def call_astra(prompt: str, timeout: int, workdir: Path,
+               model: str = "gpt-6-astra", raw_response_path: Path | None = None) -> tuple[str, dict]:
+    """Run the Astra judge via codex exec. Returns (text, telemetry).
+
+    `model` is a parameter because this arm falls back to another model when
+    it refuses repeatedly. The served model is recorded in the telemetry, so
+    aggregate.py can calibrate each model on its own distribution."""
+    out_file = workdir / "astra_last_message.txt"
+    cmd = astra_command(prompt, model, out_file)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL, cwd=str(workdir))
     save_cli_response(raw_response_path, proc)

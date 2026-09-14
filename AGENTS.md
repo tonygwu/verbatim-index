@@ -1215,6 +1215,15 @@ new grades incomparable with the corpus already graded.
   contract, including a corpus that holds only one obsolete contract.
   `VI_PROFILES_DIR` is a test seam only. Proof:
   `.venv/bin/python scripts/test_pundits_contract.py`.
+- P3 judge probe (pundits, SPENDS QUOTA with `--run`): `scripts/p3_judge_probe.py`.
+  It runs each judge's real argv under `sandbox-exec`, in a jail outside the
+  verbatim-index container, with reads and writes denied under that container. It
+  asks the judge to search the web, read planted canaries, run a shell command and
+  fetch a URL. Each call gets PASS, FAIL or INCONCLUSIVE, and the judge's
+  served-model identity is marked VERIFIED or UNVERIFIED. Raw responses go to
+  `data-pundits/logs/p3_probes/<run>/`. Without `--run` it is a dry run that
+  only proves the sandbox denies the canaries:
+  `.venv/bin/python scripts/p3_judge_probe.py --fable-config-dir ~/.claude-e --gemini-home ~`.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`
