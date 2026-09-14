@@ -1204,6 +1204,17 @@ new grades incomparable with the corpus already graded.
   pundits dashboard through this public repository as usual; only data writes are
   owned. The pundits board is a separate site (verbatim-pundits.tonygwu.com) with
   its own data repository, and it never reads the leaders corpus.
+- Grading contract v2 (pundits; leaders stays on v1): `scripts/grading_contract.py`,
+  recorded in `docs/PUNDITS-P2-CONTRACT.md`. The contract hashes the skill's
+  RUBRIC.md, schema and PROMPT.md, plus the profile's scoring, identity, blinding
+  and judge-request blocks. Paths and domains go in `_provenance/`. A stored v2
+  grade is reused only if study, contract, prompt hash, input hash, mode, judge,
+  requested model and run all match. Otherwise `grade.py` reports `stale_cache`,
+  exits 1, and leaves the file alone; `--force` moves the file to `_obsolete/`
+  first. `aggregate.py` refuses a v2 corpus with any grade from another study or
+  contract, including a corpus that holds only one obsolete contract.
+  `VI_PROFILES_DIR` is a test seam only. Proof:
+  `.venv/bin/python scripts/test_pundits_contract.py`.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`

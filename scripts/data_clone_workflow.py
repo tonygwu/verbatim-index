@@ -359,7 +359,13 @@ def guard_aggregate(repo: Path, path: Path, study: str = 'leaders') -> None:
     SP.check_path(path, study)
     path = path.resolve()
     own = (repo / SP.data_link(study)).resolve()
-    live = production_path(repo, study)
+    try:
+        live = production_path(repo, study)
+    except RuntimeError:
+        # A study with no registered production checkout: its own link is the
+        # only thing that could be production, so writing under it still needs
+        # the owner. Anything else is not production and is allowed.
+        live = own
     if path == live or live in path.parents:
         why = owner_error(repo, study)
         if why or own != live:

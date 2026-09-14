@@ -565,7 +565,7 @@ def prune_orphans(out_root: Path, kept: set[tuple[str, str]], mode: str,
     if grades_root and grades_root.exists():
         drop = {(p.parent.name, p.stem) for p in stale}
         for gp in sorted(grades_root.rglob("*.json")):
-            if "_raw" in gp.parts:
+            if "_raw" in gp.parts or "_obsolete" in gp.parts:
                 continue
             parts = gp.stem.split("__")
             if len(parts) < 3 or parts[2] != mode:

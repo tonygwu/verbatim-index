@@ -115,9 +115,9 @@ def checkout(path: Path, origin: str, slug: str, name: str, study: str | None) -
     return git(path, "rev-parse", "HEAD")
 
 
-def public_clone(parent: Path, links: dict[str, Path]) -> Path:
-    """A public clone named repo-9 carrying the study files and the given data links."""
-    pub = parent / "repo-9"
+def public_clone(parent: Path, links: dict[str, Path], name: str = "repo-9") -> Path:
+    """A public clone, repo-9 by default, carrying the study files and the given data links."""
+    pub = parent / name
     (pub / "scripts").mkdir(parents=True)
     git(pub, "init", "-q", "-b", "main")
     shutil.copytree(REPO / "profiles", pub / "profiles") if (REPO / "profiles").is_dir() else None
@@ -320,6 +320,24 @@ def test_publication(L: Path, P: Path, rev_l: str, rev_p: str, tmp: Path) -> Non
         except (RuntimeError, ValueError):
             unknown = True
         check("an unknown site is refused rather than treated as predictions", unknown)
+        # With NO pundits production registered, the study's own link is still
+        # treated as production: the owner may aggregate into it, anyone else
+        # may not.
+        owner = public_clone(tmp / "agg-owner", {"data-pundits": P})
+        other = public_clone(tmp / "agg-other", {"data-pundits": P}, name="repo-8")
+        try:
+            D.guard_aggregate(owner, P / "results.json", "pundits")
+            owner_ok = True
+        except RuntimeError as exc:
+            owner_ok = False
+            print(f"        {exc}")
+        check("an unregistered study's owner may aggregate into its own link", owner_ok)
+        try:
+            D.guard_aggregate(other, P / "results.json", "pundits")
+            other_refused = False
+        except RuntimeError as exc:
+            other_refused = "repo-9" in str(exc)
+        check("and another clone may not", other_refused)
     except TypeError as exc:
         check("PUBLICATION: functions take a study", False, repr(exc))
 

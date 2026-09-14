@@ -40,17 +40,30 @@ REPO = Path(__file__).resolve().parent.parent
 PROFILES = REPO / "profiles"
 LEGACY_STUDY = "leaders"
 REQUIRED = ("study_id", "data_link", "site_dir", "publication_site",
-            "production_data_key", "data_remote_name", "study_marker_required")
+            "production_data_key", "data_remote_name", "study_marker_required",
+            "contract_version", "skill_dir")
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def profiles_dir() -> Path:
+    """Where profiles are read from.
+
+    VI_PROFILES_DIR is a TEST SEAM, not a configuration knob, in the same spirit
+    as coverage_table.py's VI_SHADOW_JUDGES: it lets a test run a real stage
+    against a temporary profile whose skill directory is a fixture. Production
+    reads profiles/ in this repository.
+    """
+    override = os.environ.get("VI_PROFILES_DIR")
+    return Path(override) if override else PROFILES
 
 
 def load(study: str) -> dict:
     """The profile for `study`, validated. Raises RuntimeError, never guesses."""
     if not isinstance(study, str) or not _NAME.fullmatch(study):
         raise RuntimeError(f"a study name is lowercase letters, digits and '-', got {study!r}")
-    path = PROFILES / f"{study}.json"
+    path = profiles_dir() / f"{study}.json"
     if not path.is_file():
-        raise RuntimeError(f"unknown study {study!r}: there is no profiles/{study}.json")
+        raise RuntimeError(f"unknown study {study!r}: there is no {path}")
     prof = json.loads(path.read_text())
     missing = [k for k in REQUIRED if k not in prof]
     if missing:
@@ -58,6 +71,9 @@ def load(study: str) -> dict:
     if prof["study_id"] != study:
         raise RuntimeError(f"profiles/{study}.json declares study_id {prof['study_id']!r}")
     legacy = study == LEGACY_STUDY
+    if prof["contract_version"] != (1 if legacy else 2):
+        raise RuntimeError(f"profiles/{study}.json has contract_version {prof['contract_version']!r}; "
+                           f"leaders is pinned to 1 and every other study uses 2")
     for key, want in (("data_link", "data" if legacy else f"data-{study}"),
                       ("site_dir", "site" if legacy else f"site-{study}")):
         if prof[key] != want:

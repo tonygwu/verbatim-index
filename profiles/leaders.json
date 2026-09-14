@@ -6,5 +6,7 @@
   "publication_site": "leaderboard",
   "production_data_key": "verbatim.productionData",
   "data_remote_name": null,
-  "study_marker_required": false
+  "study_marker_required": false,
+  "contract_version": 1,
+  "skill_dir": ".claude/skills/leader-transcript-grader"
 }

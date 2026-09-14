@@ -131,7 +131,9 @@ def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE
 def load_grades(root: Path) -> list[dict]:
     out = []
     for path in root.rglob("*.json"):
-        if "_raw" in path.parts:
+        # _obsolete holds grades moved aside by `grade.py --force` under contract
+        # v2. They are evidence of what was replaced, never scores.
+        if "_raw" in path.parts or "_obsolete" in path.parts:
             continue
         rec = json.loads(path.read_text())
         if "grade" not in rec:
@@ -520,6 +522,18 @@ def main() -> int:
     grades = load_grades(Path(args.grades))
     if not grades:
         raise SystemExit("no grades found")
+    # Contract v2 studies refuse, before anything is split or scored, any grade
+    # from another study, another contract or a person not on the roster. A
+    # corpus holding ONE obsolete contract is refused too; the v1 check further
+    # down only notices a MIX. No override: pooling across contracts is the
+    # silent failure this exists to prevent.
+    if SP.load(args.study)["contract_version"] == 2:
+        import grading_contract as GC
+        try:
+            current = GC.contract_v2(SP.load(args.study))
+        except RuntimeError as exc:
+            raise SystemExit(f"REFUSING: {exc}") from None
+        GC.refuse_incompatible(grades, current, set(by_slug))
 
     # Split the shadow arms out FIRST, before filter_unscorable and before
     # calibrate(), so a shadow judge cannot move a published number by any

@@ -155,7 +155,7 @@ def main() -> int:
             if d.is_dir() and d.name != "_raw":
                 seen_judges.add(d.name)
         for p in gdir.rglob("*.json"):
-            if "_raw" in p.parts or p.name.endswith(".tmp"):
+            if "_raw" in p.parts or "_obsolete" in p.parts or p.name.endswith(".tmp"):
                 continue
             try:
                 g = json.loads(p.read_text())

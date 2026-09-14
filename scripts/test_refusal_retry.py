@@ -170,7 +170,11 @@ def test_live_path_uses_the_policy():
     # when the Gemini branch was added between them: the call moved to 1772 and
     # the guard failed while the code was correct. A wider magic number only
     # defers that, so slice to the next top-level def instead.
-    after = src.split('if job["judge"] == "fable"')[1]
+    # Start inside grade_one itself. The contract v2 helper _v2_record_fields
+    # also branches on the fable judge and sits above grade_one, so anchoring on
+    # the first fable test in the FILE sliced that helper instead of the
+    # dispatch, and failed while the dispatch was unchanged.
+    after = src.split("def grade_one(")[1].split('if job["judge"] == "fable"')[1]
     end = after.find("\ndef ")
     astra_branch = after[:end if end != -1 else len(after)]
     check("the astra branch calls grade_with_refusal_policy",

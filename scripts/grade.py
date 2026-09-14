@@ -82,6 +82,9 @@ E_EMPTY = "empty_response"
 E_NOJSON = "no_json_in_response"
 E_BADJSON = "json_parse_error"
 E_SCHEMA = "schema_validation_failed"
+# Contract v2: a stored grade whose identity no longer matches the job that
+# would reuse it. Reported and left in place, never silently reused.
+E_STALE_CACHE = "cache_identity_mismatch"
 E_MODEL_MISMATCH = "model_identity_mismatch"
 E_AUTH = "auth_or_quota"
 E_REFUSED = "judge_declined_to_score"
@@ -117,7 +120,8 @@ REFUSAL_TEXT_KEYS = ("reason", "status", "note", "error", "message", "explanatio
 #: Listed in one place and derived from, never re-typed at the call site: the
 #: first version enumerated a subset inline and silently relabelled the rest.
 ALL_ERROR_TYPES = (E_CLI, E_TIMEOUT, E_EMPTY, E_NOJSON, E_BADJSON, E_SCHEMA,
-                   E_MODEL_MISMATCH, E_AUTH, E_REFUSED, E_TOOL_ATTEMPT, E_TRANSIENT)
+                   E_MODEL_MISMATCH, E_AUTH, E_REFUSED, E_TOOL_ATTEMPT, E_TRANSIENT,
+                   E_STALE_CACHE)
 
 
 def classify_exception_detail(detail: str) -> str:
@@ -1515,15 +1519,88 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     return text, telemetry
 
 
+def _v2_prompt_and_identity(job: dict) -> tuple[str, dict]:
+    """The prompt a contract v2 job sends, and the identity its grade must carry."""
+    import grading_contract as GC
+    values = GC.prompt_values(job["rec"], job["rubric"], job["schema"], job["profile"])
+    prompt = GC.render_prompt(job["template"], job["mode"], values)
+    return prompt, GC.identity(
+        study_id=job["profile"]["study_id"], contract_id=job["contract"]["contract_id"],
+        prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(), input_sha256=job["input_sha256"],
+        mode=job["mode"], judge=job["judge"], requested_model=job["requested_model"], run=job["run"])
+
+
+def v2_identity(job: dict) -> dict:
+    return _v2_prompt_and_identity(job)[1]
+
+
+def _v2_stored(dest: Path, expected: dict, job: dict) -> dict | None:
+    """Decide what an existing v2 grade file means for this job.
+
+    Returns a `cached` result when it matches and --force was not given, a
+    `stale_cache` failure naming every differing field when it does not match,
+    and None when there is nothing stored or --force moved it aside. A stale
+    grade is never overwritten in place: it is either left alone and reported,
+    or moved under `_obsolete/` first, so the evidence survives.
+    """
+    if not dest.exists():
+        return None
+    import grading_contract as GC
+    rec = job["rec"]
+    base = {"id": f"{rec['leader_slug']}/{rec['source_id']}", "judge": job["judge"],
+            "mode": job["mode"], "run": job["run"]}
+    try:
+        why = GC.identity_mismatch(json.loads(dest.read_text()), expected)
+    except (OSError, ValueError) as exc:
+        why = f"identity: the stored record is unreadable ({exc})"
+    if not job["force"]:
+        if why is None:
+            return {"status": "cached", **base}
+        return {"status": "stale_cache", **base, "error_type": E_STALE_CACHE,
+                "detail": f"{dest}: {why}. Not reused and not overwritten; --force moves it aside "
+                          f"and grades again."}
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    aside = Path(job["obsolete_root"]) / job["judge"] / rec["leader_slug"] / f"{dest.stem}.{stamp}.json"
+    aside.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(dest, aside)
+    return None
+
+
+def _v2_record_fields(job: dict, telemetry: dict, expected: dict) -> dict:
+    """Identity and model provenance stamped on every contract v2 grade.
+
+    `served_model_verified` is True only where the response itself names the
+    model: Fable's modelUsage and Gemini's own log. codex echoes the request, so
+    Astra's is recorded as unverified rather than asserted.
+    """
+    t = telemetry or {}
+    if job["judge"] == "fable":
+        served, verified = t.get("judge_model"), bool(t.get("judge_model"))
+    elif job["judge"] == "gemini":
+        served, verified = t.get("served_model"), t.get("served_model_verified") is True
+    else:
+        served, verified = t.get("served_model"), False
+    return {"study_id": job["profile"]["study_id"], "identity": expected,
+            "requested_model": job["requested_model"], "served_model": served,
+            "served_model_verified": verified, "provenance_id": job["provenance_id"]}
+
+
 def grade_one(job: dict) -> dict:
     rec = job["rec"]
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
     dest = Path(job["dest"])
     raw_dest = Path(job["raw_dest"])
-    if dest.exists() and not job["force"]:
-        return {"status": "cached", "id": tid, "judge": job["judge"], "mode": job["mode"], "run": job["run"]}
+    v2 = job.get("contract_version") == 2
+    if v2:
+        prompt, expected = _v2_prompt_and_identity(job)
+        stored = _v2_stored(dest, expected, job)
+        if stored is not None:
+            return stored
+    else:
+        if dest.exists() and not job["force"]:
+            return {"status": "cached", "id": tid, "judge": job["judge"], "mode": job["mode"], "run": job["run"]}
 
-    prompt = build_judge_prompt(rec, job["mode"], job["rubric"], job["schema"])
+        prompt = build_judge_prompt(rec, job["mode"], job["rubric"], job["schema"])
     t0 = time.time()
     try:
         if job["judge"] == "fable":
@@ -1602,6 +1679,7 @@ def grade_one(job: dict) -> dict:
             "refused": True, "refusal_reason": refusal, "grade": obj,
             "validation_errors": [],
             **_policy_fields(job),
+            **(_v2_record_fields(job, telemetry, expected) if v2 else {}),
         }
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(".json.tmp")
@@ -1611,7 +1689,11 @@ def grade_one(job: dict) -> dict:
                 "run": job["run"], "error_type": E_REFUSED, "detail": refusal[:300],
                 "path": str(dest), "elapsed": elapsed}
 
-    errs = validate(obj, tid)
+    if v2:
+        import grading_contract as GC
+        errs = GC.validate_v2(obj, tid, job["profile"]["scoring"])
+    else:
+        errs = validate(obj, tid)
     record = {
         "transcript_id": tid,
         "leader_slug": rec["leader_slug"],
@@ -1626,6 +1708,7 @@ def grade_one(job: dict) -> dict:
         "validation_errors": errs,
         "grade": obj,
         **_policy_fields(job),
+        **(_v2_record_fields(job, telemetry, expected) if v2 else {}),
     }
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".json.tmp")
@@ -1636,6 +1719,11 @@ def grade_one(job: dict) -> dict:
         return {"status": "invalid", "id": tid, "judge": job["judge"], "mode": job["mode"],
                 "run": job["run"], "error_type": E_SCHEMA, "detail": "; ".join(errs)[:600],
                 "path": str(dest), "elapsed": elapsed}
+    if v2:
+        return {"status": "ok", "id": tid, "judge": job["judge"], "mode": job["mode"], "run": job["run"],
+                "overall": obj.get("overall"),
+                "dimensions": {k: (v or {}).get("score") for k, v in (obj.get("dimensions") or {}).items()},
+                "coverage": obj.get("coverage"), "elapsed": elapsed, "path": str(dest)}
     return {"status": "ok", "id": tid, "judge": job["judge"], "mode": job["mode"], "run": job["run"],
             "overall": obj.get("overall"), "d1": obj["dimensions"]["d1_clarity"]["score"],
             "d2": obj["dimensions"]["d2_insight"]["score"], "d3": obj["dimensions"]["d3_technical_depth"]["score"],
@@ -1696,11 +1784,32 @@ def main() -> int:
     args.errors = args.errors or f"{link}/logs/grade_errors.jsonl"
     SP.guard(args.study, args.transcripts, args.single, args.roster, args.out, args.errors)
 
-    rubric = RUBRIC_PATH.read_text()
-    schema = SCHEMA_PATH.read_text()
-    contract = grading_contract()
-    log(f"grading contract {contract['contract_id']} "
-        f"(rubric {contract['rubric_sha256'][:8]}, schema {contract['schema_sha256'][:8]})")
+    prof = SP.load(args.study)
+    template = None
+    provenance_id = None
+    if prof["contract_version"] == 2:
+        # Contract v2: the rubric, schema and prompt template all come from the
+        # study's skill directory, and the contract hashes every one of them.
+        import grading_contract as GC
+        try:
+            contract = GC.contract_v2(prof)
+            sd = GC.skill_dir(prof)
+            rubric = (sd / "RUBRIC.md").read_text()
+            schema = (sd / "judge_output.schema.json").read_text()
+            template = (sd / "PROMPT.md").read_text()
+            prov = GC.provenance(prof, Path(link), sys.argv)
+        except RuntimeError as exc:
+            raise SystemExit(f"REFUSING: {exc}") from None
+        provenance_id = prov["provenance_id"]
+        GC.write_provenance(Path(args.out), prov)
+        log(f"grading contract v2 {contract['contract_id']} for study {args.study}; "
+            f"provenance {provenance_id}")
+    else:
+        rubric = RUBRIC_PATH.read_text()
+        schema = SCHEMA_PATH.read_text()
+        contract = grading_contract()
+        log(f"grading contract {contract['contract_id']} "
+            f"(rubric {contract['rubric_sha256'][:8]}, schema {contract['schema_sha256'][:8]})")
 
     roster_by_slug: dict[str, dict] = {}
     if args.roster and Path(args.roster).exists():
@@ -1789,6 +1898,17 @@ def main() -> int:
         log(f"gemini profiles in rotation (round-robin, no headroom is measurable): "
             f"{gem_profiles}")
 
+    if template is not None:
+        # The contract hashes each judge's REQUESTED model from the profile. A
+        # run whose harness would send a different one would stamp grades with a
+        # contract that does not describe them, so it is refused here.
+        harness_model = {"fable": "claude-fable-5-1", "astra": args.astra_model, "gemini": args.gemini_model}
+        for j in judges:
+            want = (prof["judge_requests"].get(j) or {}).get("model")
+            if want != harness_model.get(j):
+                raise SystemExit(f"REFUSING: study {args.study} requests {want!r} for judge {j!r}, "
+                                 f"but this run would send {harness_model.get(j)!r}")
+
     # One scratch root per study, so two studies' judge workdirs never share a
     # directory. Leaders keeps its original name.
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / (
@@ -1825,6 +1945,16 @@ def main() -> int:
             "dest": str(Path(args.out) / judge / rec["leader_slug"] / f"{stem}.json"),
             "raw_dest": str(Path(args.out) / "_raw" / judge / rec["leader_slug"] / f"{stem}.txt"),
         })
+        if template is not None:
+            jobs[-1].update({
+                "contract_version": 2, "profile": prof, "template": template,
+                # The exact bytes this grade reads. A re-normalized transcript
+                # changes this hash, so its old grade is not silently reused.
+                "input_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "requested_model": prof["judge_requests"][judge]["model"],
+                "provenance_id": provenance_id,
+                "obsolete_root": str(Path(args.out) / "_obsolete"),
+            })
 
     # Order the queue breadth-first across leaders. A judge that runs out of
     # quota mid-pass must leave every leader equally shallow, not leave the
@@ -1861,14 +1991,17 @@ def main() -> int:
     invalid = [r for r in results if r["status"] == "invalid"]
     refused = [r for r in results if r["status"] == "refused"]
     failed = [r for r in results if r["status"] == "failed"]
+    # Contract v2 only: a stored grade whose identity no longer matches its job.
+    # Left in place, named, and counted as a failure of the run.
+    stale = [r for r in results if r["status"] == "stale_cache"]
 
     Path(args.errors).parent.mkdir(parents=True, exist_ok=True)
     with open(args.errors, "w") as fh:
-        for r in failed + invalid + refused:
+        for r in failed + invalid + refused + stale:
             fh.write(json.dumps(stamp_failure(r)) + "\n")
 
     tax: dict[str, int] = {}
-    for r in failed + invalid + refused:
+    for r in failed + invalid + refused + stale:
         tax[r.get("error_type", "unknown")] = tax.get(r.get("error_type", "unknown"), 0) + 1
 
     gemini_ids = gemini_identity_report(results) if "gemini" in judges else None
@@ -1889,7 +2022,12 @@ def main() -> int:
         "error_taxonomy": tax,
         "median_elapsed_sec": sorted(r["elapsed"] for r in ok)[len(ok) // 2] if ok else None,
         "gemini_identities": gemini_ids,
+        "stale_cache": len(stale),
     }, indent=2))
+    if stale:
+        log(f"{len(stale)} stored grade(s) no longer match their job's identity and were NOT reused "
+            f"or overwritten; first: {stale[0].get('detail')}")
+        return 1
     return 0
 
 

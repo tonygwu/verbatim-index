@@ -1,10 +1,41 @@
 {
   "study_id": "pundits",
-  "description": "Verbatim Pundits: political pundits and journalists, scored on intellectual honesty. Its private checkout must carry a .study marker naming this study and an origin named verbatim-pundits-data.",
+  "description": "Verbatim Pundits: political pundits and journalists, scored on intellectual honesty. Its private checkout must carry a .study marker naming this study and an origin named verbatim-pundits-data. The scoring, identity, blinding and judge-request blocks are PROVISIONAL until P3 (judge harness) and P5 (rubric freeze); no grade exists under them yet, and any change moves the contract id.",
   "data_link": "data-pundits",
   "site_dir": "site-pundits",
   "publication_site": "pundits",
   "production_data_key": "verbatim.pundits.productionData",
   "data_remote_name": "verbatim-pundits-data",
-  "study_marker_required": true
+  "study_marker_required": true,
+  "contract_version": 2,
+  "skill_dir": ".claude/skills/pundit-transcript-grader",
+  "scoring": {
+    "dimensions": [
+      {"key": "d1_steelmanning", "label": "Steel-manning and charity", "weight": 0.35,
+       "subcriteria": ["S1", "S2", "S3", "S4"]},
+      {"key": "d2_epistemic_rigor", "label": "Epistemic rigor and calibration", "weight": 0.35,
+       "subcriteria": ["E1", "E2", "E3", "E4", "E5"]},
+      {"key": "d3_good_faith", "label": "Good faith and consistency", "weight": 0.30,
+       "subcriteria": ["G1", "G2", "G3", "G4", "G5"]}
+    ],
+    "min_scored_subcriteria_per_dimension": 2,
+    "min_subject_quotes_per_dimension": 2,
+    "max_quote_words": 25
+  },
+  "identity_treatment": {
+    "transcript_text": "blinded_in_both_modes",
+    "metadata_fields": ["declared_kind", "declared_year", "duration_minutes", "word_count"],
+    "open_mode_adds": ["speaker_name"]
+  },
+  "blinding": {
+    "subject_token": "[SUBJECT]",
+    "affiliation_token": "[AFFILIATION]",
+    "affiliation_fields": ["show", "outlet"],
+    "wordlist": null
+  },
+  "judge_requests": {
+    "fable": {"model": "claude-fable-5-1", "effort": "max", "tool_policy": "deny_all", "sandbox": "separate_user_jail"},
+    "astra": {"model": "gpt-6-astra", "effort": "max", "tool_policy": "deny_all", "sandbox": "separate_user_jail"},
+    "gemini": {"model": "gemini-3.8-flash-high", "effort": "high", "tool_policy": "deny_all", "sandbox": "separate_user_jail"}
+  }
 }
