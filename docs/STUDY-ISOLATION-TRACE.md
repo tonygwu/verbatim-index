@@ -140,7 +140,9 @@ run them. P1 leaves them unchanged, and the byte-identity and existing tests
 cover them:
 - `aggregate_predictions.py`, `build_predictions_site.py`,
   `extract_predictions.py`, `market_consensus.py`, `validate_predictions.py`,
-  `eval_predictions.py`, `predictions_lib.py`
+  `eval_predictions.py`, `predictions_lib.py`, `phase2_resolvability.py`
+  (added upstream after this trace; read-only, defaults to
+  `ROOT / "data" / "predictions"`)
 - `padding_analysis.py`, `padding_probe.py`, `retest_analysis.py`,
   `calibration_report.py`
 
