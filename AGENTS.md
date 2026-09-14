@@ -1180,6 +1180,10 @@ new grades incomparable with the corpus already graded.
   records in place and leave both counts unchanged. Only repo-0 can refresh it, because `--refresh`
   carries the daemon-clone precondition.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
+- Pundits study plan: `docs/PUNDITS-PLAN.md` is the approved plan (revision 2, with the
+  P3 decisions folded in). It is the contract every clone works from: phases P0-P11,
+  their PASS/FAIL/INCONCLUSIVE gates, and the call-budget manifest. Edit the committed
+  copy, not a private one.
 - Pundits study (verbatim-pundits.tonygwu.com, in progress): the P0 leaders
   baseline in `docs/PUNDITS-P0-BASELINE.md`, re-run with
   `.venv/bin/python scripts/leaders_baseline.py --code DIR --snapshot DIR --run-dir NEW --python .venv/bin/python`
