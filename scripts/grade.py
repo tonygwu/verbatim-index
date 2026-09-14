@@ -383,6 +383,36 @@ def order_breadth_first(jobs: list[dict]) -> list[dict]:
     return cached + [t[2] for t in ranked]
 
 
+def order_by_schedule(jobs: list[dict], entries: list[dict]) -> list[dict]:
+    """Return jobs in exactly the order of a schedule manifest (scripts/schedule.py).
+
+    Strict both ways, because a schedule that silently drops or adds calls is
+    no longer the schedule the study's confound controls were built on: an
+    entry with no matching job (a missing transcript, an unrequested judge) is
+    refused, and so is a job the manifest does not name.
+    """
+    by_key: dict[tuple, dict] = {}
+    for job in jobs:
+        key = (job["rec"]["leader_slug"], job["rec"]["source_id"], job["judge"], job["mode"], job["run"])
+        if key in by_key:
+            raise RuntimeError(f"two jobs share {key}")
+        by_key[key] = job
+    ordered, used = [], set()
+    for e in entries:
+        key = (e["slug"], e["source_id"], e["judge"], e["mode"], e["run"])
+        if key in used:
+            raise RuntimeError(f"the schedule names {key} twice")
+        if key not in by_key:
+            raise RuntimeError(f"the schedule names {key}, but no such job was built "
+                               f"(missing transcript, or a judge or mode not requested)")
+        used.add(key)
+        ordered.append(by_key[key])
+    unscheduled = sorted(set(by_key) - used)
+    if unscheduled:
+        raise RuntimeError(f"{len(unscheduled)} job(s) are not in the schedule, e.g. {unscheduled[:3]}")
+    return ordered
+
+
 # How many times a refusing judge is retried on the SAME model.
 # MEASURED 2026-09-07: Astra refused 11 blinded transcripts on content grounds,
 # and a controlled re-run of three found the refusals are not deterministic. It
@@ -1874,6 +1904,10 @@ def main() -> int:
     ap.add_argument("--modes", default="blinded,open")
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--run-offset", type=int, default=0, help="Start run numbering here, to add repeats later.")
+    ap.add_argument("--schedule", default=None,
+                    help="A manifest from scripts/schedule.py. When given, exactly its (transcript, judge, "
+                         "mode, run) calls are built and run in its order, replacing breadth-first ordering "
+                         "and --repeats/--run-offset.")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--limit-per-leader", type=int, default=None,
@@ -2063,10 +2097,28 @@ def main() -> int:
         # even be entered, and would mean the jail is not a jail.
         raise SystemExit(f"REFUSING: judge workroot {workroot} is inside the sandboxed container {sandbox_root}")
 
+    schedule_entries = None
+    wanted = None
+    runs = list(range(args.run_offset, args.run_offset + args.repeats))
+    if args.schedule:
+        import schedule as SCHED
+        SP.guard(args.study, args.schedule)
+        try:
+            schedule_entries = SCHED.read_manifest(Path(args.schedule))
+        except RuntimeError as exc:
+            raise SystemExit(f"REFUSING: {exc}") from None
+        stray = sorted({e["judge"] for e in schedule_entries} - set(judges)
+                       | {e["mode"] for e in schedule_entries} - set(modes))
+        if stray:
+            raise SystemExit(f"REFUSING: the schedule uses judges or modes not requested here: {stray}")
+        wanted = {(e["slug"], e["source_id"], e["judge"], e["mode"], e["run"]) for e in schedule_entries}
+        runs = sorted({e["run"] for e in schedule_entries})
+
     jobs = []
-    for i, (path, judge, mode, run) in enumerate(
-            itertools.product(paths, judges, modes, range(args.run_offset, args.run_offset + args.repeats))):
+    for i, (path, judge, mode, run) in enumerate(itertools.product(paths, judges, modes, runs)):
         rec = json.loads(path.read_text())
+        if wanted is not None and (rec["leader_slug"], rec["source_id"], judge, mode, run) not in wanted:
+            continue
         person = roster_by_slug.get(rec["leader_slug"], {})
         rec["_speaker_name"] = person.get("name", rec["leader_slug"].replace("-", " ").title())
         rec["_speaker_role"] = person.get("role", "technology executive")
@@ -2108,7 +2160,14 @@ def main() -> int:
     # Order the queue breadth-first across leaders. A judge that runs out of
     # quota mid-pass must leave every leader equally shallow, not leave the
     # tail of the alphabet with no grades at all. See order_breadth_first().
-    jobs = order_breadth_first(jobs)
+    if schedule_entries is not None:
+        # The schedule's own order: interleaved modes in lean-mixed blocks.
+        try:
+            jobs = order_by_schedule(jobs, schedule_entries)
+        except RuntimeError as exc:
+            raise SystemExit(f"REFUSING: {exc}") from None
+    else:
+        jobs = order_breadth_first(jobs)
 
     log(f"{len(jobs)} grading calls queued "
         f"({len(paths)} transcripts x {len(judges)} judges x {len(modes)} modes x {args.repeats} repeats)")
