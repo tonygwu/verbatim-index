@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The per-grade stderr log is not committed.
+"""Two reproducible caches are not committed: the per-grade stderr log, and the market cache.
 
 WHY THIS EXISTS. data/logs/grade_loop.err was tracked and reached 50.1 MB, which
 was 95% of all 53.0 MB of tracked bytes under data/logs. It had been committed in
@@ -32,6 +32,17 @@ Pure checks: reads the registered production checkout and its Git index.
 An experiment data clone is not a source of production runtime evidence.
 No network, no quota.
 
+THE SECOND CASE, added 2026-09-13. predictions/_markets is the raw HTTP
+response cache market_consensus.py keeps so a re-run costs no API calls.
+MEASURED: 1,975 files, 292 MB on disk, of which 30 were tracked at 18.5 MB
+against 307.7 MB of tracked bytes in the whole data repo. Committing the rest
+would make the cache half the repo, for ever.
+
+Nothing reads it downstream, and the provenance is in the records: all 475
+accepted predictions carry consensus.status, .cutoff and .searched_at_utc, and
+455 carry candidates_dropped naming every market id, platform and reason.
+0 carry a market_probability, so no published number rests on a cached price.
+
   .venv/bin/python scripts/test_log_bloat.py
 """
 
@@ -47,6 +58,7 @@ REPO = Path(__file__).resolve().parent.parent
 from data_clone_workflow import production_path
 DATA = production_path(REPO)
 BLOATED = "logs/grade_loop.err"
+CACHE = "predictions/_markets"
 PASS, FAIL = [], []
 
 
@@ -98,6 +110,50 @@ def main() -> int:
     check("the log is still written to disk",
           (DATA / BLOATED).exists(),
           "the fix is to stop COMMITTING it, not to stop recording it")
+
+    print("market cache")
+    ignore_has_cache = CACHE + "/" in ignore or CACHE in ignore
+    check("data/.gitignore names the market response cache",
+          ignore_has_cache, "292 MB of cached HTTP bodies is not ignored")
+    idx = ignore.find(CACHE + "/")
+    preceding = ignore[max(0, idx - 900):idx] if idx >= 0 else ""
+    check("the market-cache ignore carries a reason, not just a path",
+          any(w in preceding.lower() for w in ("mb", "cache", "bloat", "history")),
+          "no explanatory comment precedes the entry")
+
+    # The same trap as above, and the one that actually bit: 30 of these files
+    # were already tracked, so the .gitignore line alone would change nothing.
+    still = git("ls-files", CACHE).stdout.split()
+    check("the ignore is in force: git tracks no file under the market cache",
+          not still,
+          f"{len(still)} still tracked; `git rm -r --cached {CACHE}` is required")
+    check("git check-ignore agrees the cache directory is ignored",
+          git("check-ignore", "-q", CACHE + "/kalshi").returncode == 0,
+          "check-ignore says the path is not ignored")
+
+    # The records, not the cache, are where market provenance lives. If this
+    # stops holding, untracking the cache HAS lost evidence.
+    import json
+    seen = missing = 0
+    for f in sorted((DATA / "predictions").glob("*/*.jsonl")):
+        for line in f.read_text().splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            if not r.get("accepted"):
+                continue
+            seen += 1
+            c = r.get("consensus") or {}
+            if not (c.get("status") and c.get("searched_at_utc") and c.get("cutoff")):
+                missing += 1
+    check("every accepted prediction carries its own market provenance",
+          seen > 0 and missing == 0,
+          f"{missing} of {seen} accepted records lack consensus status, cutoff or searched_at_utc")
+
+    # Same rule as the log: stop committing it, do not stop keeping it.
+    check("the cache is still on disk, so a re-run still costs no API calls",
+          (DATA / CACHE).is_dir() and any((DATA / CACHE).iterdir()),
+          "the fix is to stop COMMITTING the cache, not to delete it")
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
