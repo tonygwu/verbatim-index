@@ -477,6 +477,82 @@ def blind(text: str, name: str, company: str, dictionary: set[str],
     return text, counts
 
 
+def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
+                aliases: list[str] | None = None) -> tuple[str, dict]:
+    """Redact a contract v2 study's subject: name, handles, and every affiliation field.
+
+    blind() above is the leaders blinder and stays byte-identical. A pundit is
+    identified by more than a name and one company: handles ("Destiny"), a
+    show ("The Destiny Show") and an outlet ("Twitch"), several of which are
+    ordinary English words. So:
+
+      - tokens and the affiliation fields come from the profile's `blinding`
+        block, which the grading contract hashes;
+      - every form is applied in ONE longest-first pass across both tokens,
+        so a show name that contains the handle is replaced whole instead of
+        becoming "The [SUBJECT] Show";
+      - a form that is both a handle and part of an affiliation is treated as
+        the subject, because naming the person is the stronger leak;
+      - a single-word form that is an ordinary English word is redacted only
+        where it is capitalised, the same signal fuzzy_targets() uses, so
+        "Destiny" and "Twitch" go while "destiny" and "twitch" survive. This
+        study has no corpus-frozen wordlist yet, so the system dictionary
+        decides what counts as ordinary;
+      - speech-recognition corruptions of the name, and of single-word
+        affiliations, are caught as blind() catches them.
+    """
+    subject_token, affiliation_token = blinding["subject_token"], blinding["affiliation_token"]
+    name = person["name"]
+    affiliations: list[str] = []
+    for field in blinding["affiliation_fields"]:
+        value = person.get(field)
+        affiliations += [value] if isinstance(value, str) else list(value or [])
+    affiliations = [a.strip() for a in affiliations if a and a.strip()]
+    affiliation_words = {w.lower() for a in affiliations for w in re.split(r"[\s/&-]+", a) if len(w) >= 4}
+
+    targets: dict[str, tuple[str, str]] = {}
+    for variant in name_variants(name) + [h for h in (person.get("handles") or []) if h]:
+        targets.setdefault(variant, (subject_token, "name"))
+    for a in affiliations:
+        for variant in company_variants(a) + acronyms(a):
+            targets.setdefault(variant, (affiliation_token, "affiliation"))
+    for alias in aliases or []:
+        if alias:
+            names_affiliation = any(w.lower() in affiliation_words for w in re.split(r"\s+", alias))
+            targets.setdefault(alias, (affiliation_token, "affiliation") if names_affiliation
+                               else (subject_token, "name"))
+
+    counts: dict[str, int] = {}
+    for variant in sorted(targets, key=len, reverse=True):
+        token, label = targets[variant]
+        ordinary = " " not in variant and in_dictionary(variant, dictionary) is not None
+        if ordinary:
+            cap = variant[:1].upper() + variant[1:]
+            pattern = re.compile(r"\b" + re.escape(cap) + r"(?:'s|s')?\b")
+        else:
+            pattern = re.compile(r"\b" + re.escape(variant) + r"(?:'s|s')?\b", re.IGNORECASE)
+        text, n = pattern.subn(token, text)
+        if n:
+            counts[f"{label}{':cap' if ordinary else ''}:{variant}"] = n
+
+    parts = [p for p in re.split(r"\s+", name.strip()) if len(p) >= 4]
+    for found, anchor in fuzzy_targets(text, parts, dictionary).items():
+        pattern = re.compile(r"\b" + re.escape(found) + r"(?:'s|s')?\b", re.IGNORECASE)
+        text, n = pattern.subn(subject_token, text)
+        if n:
+            counts[f"name~asr:{found}->{anchor}"] = n
+    affiliation_anchors = [v for a in affiliations for v in company_variants(a) if " " not in v]
+    for found, anchor in fuzzy_targets(text, affiliation_anchors, dictionary).items():
+        pattern = re.compile(r"\b" + re.escape(found) + r"(?:'s|s')?\b", re.IGNORECASE)
+        text, n = pattern.subn(affiliation_token, text)
+        if n:
+            counts[f"affiliation~asr:{found}->{anchor}"] = n
+
+    for token in (subject_token, affiliation_token):
+        text = re.sub(r"(" + re.escape(token) + r"\s+){2,}", token + " ", text)
+    return text, counts
+
+
 # A prune is only ever as trustworthy as the source directory it trusts. If a
 # fetch loop leaves data/transcripts half-written, or a path argument is wrong,
 # an unguarded prune deletes the whole blinded corpus and orphans every grade
@@ -607,6 +683,10 @@ def main() -> int:
     # tree would orphan that study's grades in one pass.
     SP.guard(args.study, args.transcripts, args.out, args.roster, args.repairs,
              args.aliases, args.qa, args.log, args.grades)
+    # A contract v2 study blinds by its profile (name, handles, affiliation
+    # fields, its own tokens). Leaders keeps blind(), byte for byte.
+    study_profile = SP.load(args.study)
+    study_blinding = study_profile["blinding"] if study_profile["contract_version"] == 2 else None
 
     roster = json.loads(Path(args.roster).read_text())
     by_slug = {r["slug"]: r for r in roster["roster"]}
@@ -646,8 +726,12 @@ def main() -> int:
         text, applied = apply_repairs(text, repairs.get(slug, []))
         blind_counts: dict[str, int] = {}
         if args.mode == "blinded":
-            text, blind_counts = blind(text, person["name"], person["company"],
-                                       dictionary, aliases.get(slug, []))
+            if study_blinding is not None:
+                text, blind_counts = blind_study(text, person, study_blinding, dictionary,
+                                                 aliases.get(slug, []))
+            else:
+                text, blind_counts = blind(text, person["name"], person["company"],
+                                           dictionary, aliases.get(slug, []))
 
         rec_out = dict(rec)
         rec_out["text"] = text
