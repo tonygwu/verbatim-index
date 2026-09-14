@@ -1196,8 +1196,10 @@ new grades incomparable with the corpus already graded.
   carry a `.study` marker naming it and an origin named `verbatim-<study>-data`.
   Every stage refuses a path from another study (`scripts/study_profile.py`), and
   `.venv/bin/python scripts/test_study_isolation.py` proves it against two
-  temporary checkouts. Not yet split: the shared Gemini user-profile jail, which
-  waits for P3, so do not run the Gemini arm for another study before then.
+  temporary checkouts. Judge scratch space is split (`grade-work-<study>`). The shared
+  Gemini user-profile jail is not split and does not need to be: after P3 a contract v2
+  study runs Gemini under `sandbox-exec`, which refuses `user:` profiles
+  (`scripts/test_pundits_harness.py`), so only leaders ever uses that jail.
 - Pundits data and ownership (set up 2026-09-14): private repository
   `tonygwu/verbatim-pundits-data`, checked out in repo-3 at `.data-clones/pundits`
   behind the `data-pundits` link, registered with
