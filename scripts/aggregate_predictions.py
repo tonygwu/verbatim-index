@@ -11,6 +11,9 @@ predictions; that is a fact about the corpus, not about foresight.
 Counters are sorted dicts and the leader list is sorted by slug, so two runs
 over the same tree are byte-identical. `files_read` and `records_read` are
 counted before any filter so a deploy can check staleness against disk.
+`inputs_sha256` digests the record and sidecar bytes as well, because
+verification and market consensus rewrite records in place and leave every
+count unchanged.
 
   .venv/bin/python scripts/aggregate_predictions.py
 """
@@ -25,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import predictions_lib as L  # noqa: E402
+from data_clone_workflow import prediction_inputs_sha256  # noqa: E402
 
 FORBIDDEN_KEY_WORDS = ("accuracy", "accurate", "score", "rank", "resolved", "correct", "brier", "edge", "skill")
 
@@ -169,6 +173,7 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | None) ->
         "predictions_root": str(pred_root),
         "files_read": len(files),
         "records_read": records_read,
+        "inputs_sha256": prediction_inputs_sha256(pred_root),
         "run_ids_seen": sorted(run_ids),
         "contracts_seen": {"extraction": sorted(contracts_x), "verification": sorted(contracts_v), "matching": sorted(contracts_m)},
         "corpus": corpus,

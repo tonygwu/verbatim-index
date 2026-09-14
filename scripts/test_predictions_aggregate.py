@@ -143,6 +143,20 @@ def main() -> int:
               json.dumps(strip(idx), sort_keys=True) == json.dumps(strip(idx2), sort_keys=True))
         check("STABLE: contracts and run ids are recorded", idx["contracts_seen"] == {"extraction": ["a" * 12], "verification": ["b" * 12], "matching": []}
               and idx["run_ids_seen"] == ["run-v", "run-x"])
+        # Verification and market consensus rewrite a record in place: same files,
+        # same lines, different content. Only the digest can see that.
+        rec_file = sorted(pr.glob("ada/*.jsonl"))[0]
+        original = rec_file.read_text()
+        recs = [json.loads(line) for line in original.splitlines() if line.strip()]
+        recs[0]["verification"]["notes"] = "edited in place"
+        rec_file.write_text("".join(json.dumps(r) + "\n" for r in recs))
+        idx3 = A.build_index(pr, roster, td / "tx")
+        check("DIGEST: a same-count rewrite changes inputs_sha256 while both counts stay equal",
+              (idx3["files_read"], idx3["records_read"]) == (idx["files_read"], idx["records_read"])
+              and idx3["inputs_sha256"] != idx["inputs_sha256"])
+        rec_file.write_text(original)
+        check("DIGEST: restoring the bytes restores the digest",
+              A.build_index(pr, roster, td / "tx")["inputs_sha256"] == idx["inputs_sha256"])
         p = subprocess.run([PY, str(REPO / "scripts" / "aggregate_predictions.py"), "--predictions", str(pr), "--roster", str(td / "roster.json"),
                             "--transcripts", str(td / "tx")], capture_output=True, text=True, cwd=REPO)
         check("CLI: writes index.json under the predictions root and prints the counts",

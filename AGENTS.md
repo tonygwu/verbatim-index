@@ -1098,8 +1098,10 @@ new grades incomparable with the corpus already graded.
   This is a SECOND published site with its own domain and its own index, and it
   goes stale independently of the leaderboard: `data/predictions/index.json` is
   rebuilt only by `aggregate_predictions.py`, which nothing runs on a loop.
-  `deploy_predictions.sh` compares the index's `files_read` and `records_read`
-  against the files on disk and refuses publication when they differ. Only repo-0 can refresh it, because `--refresh`
+  `deploy_predictions.sh` compares the index's `files_read`, `records_read` and
+  `inputs_sha256` against the files on disk and refuses publication when any differs.
+  The digest is what catches verification and market consensus, which rewrite
+  records in place and leave both counts unchanged. Only repo-0 can refresh it, because `--refresh`
   carries the daemon-clone precondition.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`

@@ -26,6 +26,8 @@ $PY scripts/build_predictions_site.py --index "${PRODUCTION_DATA}/predictions/in
 # What is about to ship, and whether the index is behind the files on disk.
 $PY - "$PRODUCTION_DATA" <<'EOF'
 import json, pathlib, sys
+sys.path.insert(0, "scripts")
+from data_clone_workflow import prediction_inputs_sha256
 data = pathlib.Path(sys.argv[1])
 idx = json.load((data / "predictions/index.json").open())
 c = idx["corpus"]
@@ -34,15 +36,22 @@ print(f"about to publish {len(idx['leaders'])} people, {c['accepted']} accepted 
       f"runs {len(idx['run_ids_seen'])}")
 files = [p for p in (data / "predictions").glob("*/*.jsonl") if not p.parent.name.startswith("_")]
 lines = sum(1 for p in files for _ in open(p))
-if "files_read" not in idx or "records_read" not in idx:
-    print("index.json predates records_read; staleness cannot be checked")
+digest = prediction_inputs_sha256(data / "predictions")
+if any(k not in idx for k in ("files_read", "records_read", "inputs_sha256")):
+    print("index.json predates inputs_sha256; staleness cannot be checked")
     raise SystemExit("REFUSING: refresh the production index before publication")
 elif (idx["files_read"], idx["records_read"]) != (len(files), lines):
     print(f"STALE: index read {idx['files_read']} files / {idx['records_read']} records, disk has {len(files)} / {lines}; "
           f"re-run aggregate_predictions.py from repo-0 before deploying")
     raise SystemExit("REFUSING: stale production index")
+elif idx["inputs_sha256"] != digest:
+    # Verification and market consensus rewrite records in place, so counts can
+    # match while the index describes an older corpus.
+    print(f"STALE: counts match ({len(files)} files, {lines} records) but record contents changed since the index "
+          f"was built (index {idx['inputs_sha256'][:12]}, disk {digest[:12]}); re-run aggregate_predictions.py from repo-0")
+    raise SystemExit("REFUSING: stale production index")
 else:
-    print(f"current: index matches disk ({len(files)} files, {lines} records)")
+    print(f"current: index matches disk ({len(files)} files, {lines} records, inputs sha256 {digest[:12]})")
 EOF
 
 check_publication_unchanged

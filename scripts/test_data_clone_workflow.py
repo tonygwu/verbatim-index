@@ -176,7 +176,8 @@ def main():
                 'leaders': [], 'diagnostics': {'grades_used': 0, 'grade_files_read': 0}}))
             (live / 'predictions/index.json').write_text(json.dumps({
                 'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
-                'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 0, 'records_read': 0}))
+                'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 0, 'records_read': 0,
+                'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}))
             (live / 'roster').mkdir()
             (live / 'roster/final.json').write_text('{}')
             renderer = """import pathlib, sys
@@ -201,12 +202,38 @@ out.write_text('rendered from explicit production source')
                     '--data-revision', revision, '--dry-run', ok=False)
             assert p.returncode and 'changed during rendering' in p.stderr, p.stderr
             # Existing count drift blocks publication before npx too.
-            (live / 'predictions/index.json').write_text(json.dumps({
-                'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
-                'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 0}))
+            drift = {'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
+                     'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 0,
+                     'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}
+            (live / 'predictions/index.json').write_text(json.dumps(drift))
             p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
                     '--data-revision', revision, '--dry-run', ok=False)
             assert p.returncode and 'stale production index' in p.stderr, p.stderr
+            # An index from before the digest existed cannot prove freshness, so it is refused.
+            del drift['inputs_sha256']
+            drift['files_read'] = 0
+            (live / 'predictions/index.json').write_text(json.dumps(drift))
+            p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
+                    '--data-revision', revision, '--dry-run', ok=False)
+            assert p.returncode and 'refresh the production index' in p.stderr, p.stderr
+            # A same-count rewrite blocks publication too. Verification and market
+            # consensus rewrite records in place, so on 2026-09-13 an index built
+            # before verification matched 666 files / 1494 records on disk while
+            # describing 11 accepted predictions instead of 475.
+            rec = live / 'predictions/some-leader/some-talk.jsonl'
+            rec.parent.mkdir(parents=True)
+            rec.write_text('{"accepted": false}\n')
+            (live / 'predictions/index.json').write_text(json.dumps({
+                'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
+                'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 1,
+                'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}))
+            p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
+                    '--data-revision', revision, '--dry-run')
+            assert 'published nothing' in p.stdout, p.stdout + p.stderr
+            rec.write_text('{"accepted": true }\n')
+            p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
+                    '--data-revision', revision, '--dry-run', ok=False)
+            assert p.returncode and 'stale production index' in p.stderr, p.stdout + p.stderr
         finally:
             os.environ['PATH'] = old_path
         run_dir = D.new_run(a, 'unique-new-run', 'astra', 'fable', 'gpt-6-astra')

@@ -289,6 +289,22 @@ def fingerprint(source: Path, site: str) -> str:
     return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
 
 
+def prediction_inputs_sha256(predictions: Path) -> str:
+    """One digest of the record and sidecar bytes a predictions index is built from.
+
+    Counts cannot see an in-place rewrite. Verification and market consensus change
+    records without adding lines, so an index can match every count and still
+    describe an older corpus. Directories starting with _ are skipped, as
+    aggregate_predictions.py skips them.
+    """
+    files = sorted(p for pattern in ('*/*.jsonl', '*/*.meta.json') for p in predictions.glob(pattern)
+                   if not p.parent.name.startswith('_'))
+    h = hashlib.sha256()
+    for p in files:
+        h.update(f'{p.relative_to(predictions)}\0{hashlib.sha256(p.read_bytes()).hexdigest()}\n'.encode())
+    return h.hexdigest()
+
+
 def guard_prediction_write(repo: Path, path: Path, root: Path) -> None:
     path, root = path.resolve(), root.resolve()
     if role(root) != 'experiment':

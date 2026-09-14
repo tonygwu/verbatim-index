@@ -214,8 +214,9 @@ They hash render inputs before and after rendering, including dirty production f
 They print the source path, commit, and content hash.
 Production daemons can legitimately advance uncommitted data, so a clean working tree is not required.
 A changed source, missing freshness counts, or count mismatch stops publication.
-Counts detect missing records but cannot establish semantic freshness after same-count edits.
-After such edits, the production owner must regenerate the aggregate with `--refresh`.
+Counts detect missing records. The predictions index also carries `inputs_sha256`, a digest of every record
+and sidecar file, so a same-count rewrite by verification or market consensus also stops publication.
+After any such change, the production owner must regenerate the aggregate with `--refresh`.
 
 `--refresh` requires the production owner's own data checkout.
 `PUBLISH_ON_COMPLETE=1` retains its existing authorization and supplies explicit source and revision arguments automatically.
