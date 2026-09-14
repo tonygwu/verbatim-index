@@ -32,6 +32,11 @@ Read-only inspection on 2026-09-14 UTC found repo-0 through repo-3 sharing the p
 Repo-4 already used its independent experiment checkout.
 The [ownership review](../architecture/REPORT.md) records the source evidence and verification.
 
+Later on 2026-09-14 UTC, the authorized rollout to repo-1, repo-2, and repo-3 completed.
+Repo-0 now owns the only shared production data target in the local fleet.
+Repo-1 through repo-4 each have an independent private checkout and a pushed branch.
+The [rollout ledger](LEDGER-data-clone-rollout.md) records branches, receipt commits, preservation checks, and the idle-session authorization.
+
 Public code and private records remain in separate repositories.
 Both `/data` and `/.data-clones/` are ignored by the public repository.
 Never force-add either path to a public commit.

@@ -1,5 +1,9 @@
 # Who can commit private data
 
+Rollout update, 2026-09-14 UTC: repo-1 through repo-4 now have independent private checkouts.
+Repo-0 retains production. The [rollout ledger](../docs/LEDGER-data-clone-rollout.md) records the completed migration and verification.
+The inspection observations below describe the layout before this rollout.
+
 Every agent can commit private experiment data from an independent checkout.
 The private remote stores those commits on owned branches.
 Repo-0 owns the shared production checkout and integrates selected results into production.
@@ -76,9 +80,9 @@ They referenced the repository working directory and ran the artifact picker, co
 These app helpers are expendable for this review. No review result depends on keeping them alive.
 No approval question or unresolved implementation decision remains.
 
-For rollout, the next action is to run the documented setup dry run from each unmigrated experiment clone.
-Its owner must let its consumers finish and name any owned outputs to preserve before applying the migration.
-This review changed no other clone's symlink.
+At the end of this review, the next action was to run setup from each unmigrated experiment clone.
+The later operator-authorized rollout completed that action, as recorded in the linked ledger.
+The original review changed no other clone's symlink.
 
 To verify durability after fetching public and private refs:
 
