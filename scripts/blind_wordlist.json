@@ -1,0 +1,341 @@
+{
+ "generated_by": "scripts/build_blind_wordlist.py",
+ "spread_threshold": 0.7,
+ "min_occurrences": 20,
+ "transcripts_measured": 664,
+ "leaders_measured": 51,
+ "rule": "a token is ordinary only if it is in the system dictionary (plurals stripped) AND at least spread_threshold of its lowercase uses fall outside the leader who owns the alias, over at least min_occurrences lowercase uses. An ordinary token is still redacted where it is capitalised.",
+ "ordinary": [
+  "advanced",
+  "cloud",
+  "face",
+  "foundation",
+  "games",
+  "global",
+  "industries",
+  "intelligence",
+  "labs",
+  "machine",
+  "meta",
+  "platforms",
+  "project",
+  "technologies",
+  "world"
+ ],
+ "evidence": [
+  {
+   "token": "Prometheus",
+   "owners": [
+    "jeff-bezos"
+   ],
+   "dictionary": "exact",
+   "lower_own": 0,
+   "lower_other": 1,
+   "spread_outside_owner": 1.0,
+   "ordinary": false
+  },
+  {
+   "token": "Project",
+   "owners": [
+    "jeff-bezos"
+   ],
+   "dictionary": "exact",
+   "lower_own": 10,
+   "lower_other": 1234,
+   "spread_outside_owner": 0.992,
+   "ordinary": true
+  },
+  {
+   "token": "Global",
+   "owners": [
+    "pat-gelsinger"
+   ],
+   "dictionary": "exact",
+   "lower_own": 16,
+   "lower_other": 1111,
+   "spread_outside_owner": 0.9858,
+   "ordinary": true
+  },
+  {
+   "token": "Advanced",
+   "owners": [
+    "yann-lecun"
+   ],
+   "dictionary": "exact",
+   "lower_own": 14,
+   "lower_other": 537,
+   "spread_outside_owner": 0.9746,
+   "ordinary": true
+  },
+  {
+   "token": "World",
+   "owners": [
+    "fei-fei-li"
+   ],
+   "dictionary": "exact",
+   "lower_own": 453,
+   "lower_other": 13839,
+   "spread_outside_owner": 0.9683,
+   "ordinary": true
+  },
+  {
+   "token": "Industries",
+   "owners": [
+    "palmer-luckey"
+   ],
+   "dictionary": "plural -ies",
+   "lower_own": 13,
+   "lower_other": 342,
+   "spread_outside_owner": 0.9634,
+   "ordinary": true
+  },
+  {
+   "token": "Technologies",
+   "owners": [
+    "alex-karp",
+    "dara-khosrowshahi",
+    "michael-dell"
+   ],
+   "dictionary": "plural -ies",
+   "lower_own": 41,
+   "lower_other": 888,
+   "spread_outside_owner": 0.9559,
+   "ordinary": true
+  },
+  {
+   "token": "Platforms",
+   "owners": [
+    "mark-zuckerberg"
+   ],
+   "dictionary": "plural -s",
+   "lower_own": 47,
+   "lower_other": 702,
+   "spread_outside_owner": 0.9372,
+   "ordinary": true
+  },
+  {
+   "token": "Intelligence",
+   "owners": [
+    "yann-lecun"
+   ],
+   "dictionary": "exact",
+   "lower_own": 230,
+   "lower_other": 2715,
+   "spread_outside_owner": 0.9219,
+   "ordinary": true
+  },
+  {
+   "token": "Cloud",
+   "owners": [
+    "thomas-kurian"
+   ],
+   "dictionary": "exact",
+   "lower_own": 206,
+   "lower_other": 2087,
+   "spread_outside_owner": 0.9102,
+   "ordinary": true
+  },
+  {
+   "token": "Machine",
+   "owners": [
+    "yann-lecun"
+   ],
+   "dictionary": "exact",
+   "lower_own": 300,
+   "lower_other": 2149,
+   "spread_outside_owner": 0.8775,
+   "ordinary": true
+  },
+  {
+   "token": "Foundation",
+   "owners": [
+    "bill-gates"
+   ],
+   "dictionary": "exact",
+   "lower_own": 79,
+   "lower_other": 550,
+   "spread_outside_owner": 0.8744,
+   "ordinary": true
+  },
+  {
+   "token": "Labs",
+   "owners": [
+    "demis-hassabis",
+    "fei-fei-li",
+    "yann-lecun"
+   ],
+   "dictionary": "plural -s",
+   "lower_own": 66,
+   "lower_other": 397,
+   "spread_outside_owner": 0.8575,
+   "ordinary": true
+  },
+  {
+   "token": "Meta",
+   "owners": [
+    "alexandr-wang",
+    "mark-zuckerberg"
+   ],
+   "dictionary": "exact",
+   "lower_own": 39,
+   "lower_other": 230,
+   "spread_outside_owner": 0.855,
+   "ordinary": true
+  },
+  {
+   "token": "Google",
+   "owners": [
+    "demis-hassabis",
+    "thomas-kurian"
+   ],
+   "dictionary": null,
+   "lower_own": 59,
+   "lower_other": 236,
+   "spread_outside_owner": 0.8,
+   "ordinary": false
+  },
+  {
+   "token": "Face",
+   "owners": [
+    "clem-delangue"
+   ],
+   "dictionary": "exact",
+   "lower_own": 225,
+   "lower_other": 730,
+   "spread_outside_owner": 0.7644,
+   "ordinary": true
+  },
+  {
+   "token": "Games",
+   "owners": [
+    "tim-sweeney"
+   ],
+   "dictionary": "plural -s",
+   "lower_own": 377,
+   "lower_other": 1042,
+   "spread_outside_owner": 0.7343,
+   "ordinary": true
+  },
+  {
+   "token": "Playground",
+   "owners": [
+    "pat-gelsinger"
+   ],
+   "dictionary": "exact",
+   "lower_own": 12,
+   "lower_other": 19,
+   "spread_outside_owner": 0.6129,
+   "ordinary": false
+  },
+  {
+   "token": "Epic",
+   "owners": [
+    "tim-sweeney"
+   ],
+   "dictionary": "exact",
+   "lower_own": 121,
+   "lower_other": 87,
+   "spread_outside_owner": 0.4183,
+   "ordinary": false
+  },
+  {
+   "token": "DeepMind",
+   "owners": [
+    "demis-hassabis"
+   ],
+   "dictionary": null,
+   "lower_own": 23,
+   "lower_other": 16,
+   "spread_outside_owner": 0.4103,
+   "ordinary": false
+  },
+  {
+   "token": "Fei-Fei",
+   "owners": [
+    "fei-fei-li"
+   ],
+   "dictionary": null,
+   "lower_own": 3,
+   "lower_other": 2,
+   "spread_outside_owner": 0.4,
+   "ordinary": false
+  },
+  {
+   "token": "Palantir",
+   "owners": [
+    "alex-karp"
+   ],
+   "dictionary": null,
+   "lower_own": 8,
+   "lower_other": 2,
+   "spread_outside_owner": 0.2,
+   "ordinary": false
+  },
+  {
+   "token": "Hugging",
+   "owners": [
+    "clem-delangue"
+   ],
+   "dictionary": "exact",
+   "lower_own": 187,
+   "lower_other": 37,
+   "spread_outside_owner": 0.1652,
+   "ordinary": false
+  },
+  {
+   "token": "Uber",
+   "owners": [
+    "dara-khosrowshahi"
+   ],
+   "dictionary": null,
+   "lower_own": 250,
+   "lower_other": 39,
+   "spread_outside_owner": 0.1349,
+   "ordinary": false
+  },
+  {
+   "token": "Isomorphic",
+   "owners": [
+    "demis-hassabis"
+   ],
+   "dictionary": "exact",
+   "lower_own": 12,
+   "lower_other": 1,
+   "spread_outside_owner": 0.0769,
+   "ordinary": false
+  },
+  {
+   "token": "Anduril",
+   "owners": [
+    "palmer-luckey"
+   ],
+   "dictionary": null,
+   "lower_own": 2,
+   "lower_other": 0,
+   "spread_outside_owner": 0.0,
+   "ordinary": false
+  },
+  {
+   "token": "Lip-Bu",
+   "owners": [
+    "lip-bu-tan"
+   ],
+   "dictionary": null,
+   "lower_own": 0,
+   "lower_other": 0,
+   "spread_outside_owner": 0.0,
+   "ordinary": false
+  },
+  {
+   "token": "Mistral",
+   "owners": [
+    "arthur-mensch"
+   ],
+   "dictionary": "exact",
+   "lower_own": 3,
+   "lower_other": 0,
+   "spread_outside_owner": 0.0,
+   "ordinary": false
+  }
+ ]
+}

@@ -232,6 +232,27 @@ def company_variants(company: str) -> list[str]:
     return sorted((v for v in out if len(v) > 2), key=len, reverse=True)
 
 
+def in_dictionary(token: str, dic: set[str]) -> str | None:
+    """How an ordinary English word was matched, or None.
+
+    /usr/share/dict/words is `web2`: 236k entries, no plural forms, and it
+    carries proper nouns such as "Elon" and "Musk". So it is used only ever as
+    ONE of two signals, never alone. Plurals are stripped because "games" and
+    "technologies" are among the largest offenders in the corpus and neither is
+    in the list.
+    """
+    t = token.lower()
+    if t in dic:
+        return "exact"
+    if t.endswith("ies") and t[:-3] + "y" in dic:
+        return "plural -ies"
+    if t.endswith("es") and t[:-2] in dic:
+        return "plural -es"
+    if t.endswith("s") and t[:-1] in dic:
+        return "plural -s"
+    return None
+
+
 def load_dictionary() -> set[str]:
     for path in ("/usr/share/dict/words", "/usr/dict/words"):
         p = Path(path)
@@ -349,8 +370,53 @@ def acronyms(company: str) -> list[str]:
     return [a for a in out if len(a) >= 3]
 
 
+def alias_is_company(alias: str, name: str) -> bool:
+    """True when an alias names the COMPANY rather than the person.
+
+    The alias list is flat, so nothing downstream knew which entries came from
+    the name and which from the company. `blind()` therefore pushed every alias
+    through the name path and stamped `[SUBJECT]` on company references. An
+    alias belongs to the name only if every one of its words is a word of the
+    name, which keeps "Fei-Fei" with the person and sends "Machine" and "AMIL"
+    to the company.
+    """
+    namewords = {w.lower() for w in name.replace("-", " ").split()}
+    words = [w.lower() for w in alias.replace("-", " ").split() if w]
+    return not (words and all(w in namewords for w in words))
+
+
+def load_blind_wordlist(path: Path | None = None) -> set[str]:
+    """Ordinary English words that must survive in lowercase.
+
+    Generated and frozen by scripts/build_blind_wordlist.py. Frozen rather than
+    computed here because one of its two signals is corpus-wide frequency, and
+    a transcript must blind identically whatever the corpus holds that day.
+    """
+    p = path or (Path(__file__).resolve().parent / "blind_wordlist.json")
+    if not p.exists():
+        raise SystemExit(f"no blinding wordlist at {p}; run "
+                         f"scripts/build_blind_wordlist.py --write")
+    return {w.lower() for w in json.loads(p.read_text())["ordinary"]}
+
+
 def blind(text: str, name: str, company: str, dictionary: set[str],
-          aliases: list[str] | None = None) -> tuple[str, dict]:
+          aliases: list[str] | None = None,
+          wordlist: set[str] | None = None) -> tuple[str, dict]:
+    """Redact the subject and their company.
+
+    `wordlist` selects the behaviour, and the default is the ORIGINAL one so
+    that nothing re-blinds the live corpus by accident. Pass the frozen list
+    from `load_blind_wordlist()` to get the corrected behaviour:
+
+      - company aliases are stamped `[COMPANY]`, not `[SUBJECT]`
+      - a single-word company alias that is an ordinary English word is
+        redacted only where it is CAPITALISED, so "Epic Games" and "Games"
+        still go while the ordinary word "games" survives
+
+    Promotion is passing the list, deliberately a diff at the call site rather
+    than a silent default, because changing blinding makes new grades
+    incomparable with every grade already collected.
+    """
     counts: dict[str, int] = {}
     aliases = aliases or []
 
@@ -358,17 +424,39 @@ def blind(text: str, name: str, company: str, dictionary: set[str],
     comp_forms = company_variants(company) + acronyms(company)
     parts = [p for p in re.split(r"\s+", name.strip()) if len(p) >= 4]
 
+    if wordlist is None:
+        # ORIGINAL behaviour, kept byte-identical.
+        subject_targets = name_forms + [a for a in aliases if a]
+        company_targets = comp_forms
+    else:
+        # Split the flat alias list by what it actually names, then run each
+        # side longest-first so "Epic Games" is replaced before bare "Games".
+        name_alias = [a for a in aliases if a and not alias_is_company(a, name)]
+        comp_alias = [a for a in aliases if a and alias_is_company(a, name)]
+        subject_targets = sorted(set(name_forms + name_alias), key=len, reverse=True)
+        company_targets = sorted(set(comp_forms + comp_alias), key=len, reverse=True)
+
+    def _apply(targets: list[str], token: str, label: str, txt: str) -> str:
+        for variant in targets:
+            ordinary = (wordlist is not None
+                        and " " not in variant
+                        and variant.lower() in wordlist)
+            if ordinary:
+                # Only the capitalised form, which is how the company is
+                # written. Same capitalisation signal fuzzy_targets() uses.
+                cap = variant[:1].upper() + variant[1:]
+                pattern = re.compile(r"\b" + re.escape(cap) + r"(?:'s|s')?\b")
+            else:
+                pattern = re.compile(r"\b" + re.escape(variant) + r"(?:'s|s')?\b",
+                                     re.IGNORECASE)
+            txt, n = pattern.subn(token, txt)
+            if n:
+                counts[f"{label}{':cap' if ordinary else ''}:{variant}"] = n
+        return txt
+
     # Exact forms first, longest first so "Jensen Huang" goes before "Huang".
-    for variant in name_forms + [a for a in aliases if a]:
-        pattern = re.compile(r"\b" + re.escape(variant) + r"(?:'s|s')?\b", re.IGNORECASE)
-        text, n = pattern.subn(SUBJECT_TOKEN, text)
-        if n:
-            counts[f"name:{variant}"] = n
-    for variant in comp_forms:
-        pattern = re.compile(r"\b" + re.escape(variant) + r"(?:'s|s')?\b", re.IGNORECASE)
-        text, n = pattern.subn(COMPANY_TOKEN, text)
-        if n:
-            counts[f"company:{variant}"] = n
+    text = _apply(subject_targets, SUBJECT_TOKEN, "name", text)
+    text = _apply(company_targets, COMPANY_TOKEN, "company", text)
 
     # Then speech-recognition corruptions of those same forms.
     for token, anchor in fuzzy_targets(text, parts, dictionary).items():

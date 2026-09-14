@@ -35,6 +35,10 @@ from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from normalize_transcripts import GENERIC_COMPANY_WORDS  # noqa: E402
+from pathlib import Path
+
 MIN_SEC = 900           # 15 minutes. A 25-minute floor was measured against real
                         # search results and threw away almost everything: Kurian's
                         # best material is 15-24 min, Brin's 18-24 min.
@@ -160,7 +164,22 @@ def classify_kind(title: str, channel: str) -> str:
 
 
 def aliases_for(person: dict) -> list[str]:
-    """Names and company forms to hide when blinding. Deterministic, no guessing."""
+    """Names and company forms to hide when blinding. Deterministic, no guessing.
+
+    A bare word of a multi-word company name is skipped when it carries no
+    identifying force on its own. `GENERIC_COMPANY_WORDS` is the list that
+    decides, and it is imported from the blinder rather than restated here, so
+    the two cannot drift. Without this, "Google Cloud" put bare "Cloud" on the
+    list, `blind()` replaced every "cloud" in ordinary prose, and the exemption
+    `company_variants()` already applied was bypassed by the alias path.
+
+    This is only the first of two guards, and it is the weaker one. It cannot
+    judge "Machine" or "Games", which are ordinary English but not generic
+    company suffixes, because that needs corpus-wide frequency and a new leader
+    has no transcripts yet. `scripts/blind_wordlist.json` makes that call at
+    blinding time. See "The blinder replaces ordinary English words" in
+    AGENTS.md.
+    """
     out: set[str] = set()
     parts = [p for p in person["name"].split() if len(p) > 2]
     out.update(parts)
@@ -170,7 +189,7 @@ def aliases_for(person: dict) -> list[str]:
         if len(chunk) > 2:
             out.add(chunk)
             words = [w for w in re.split(r"\s+", chunk) if len(w) >= 4]
-            out.update(words)
+            out.update(w for w in words if w.lower() not in GENERIC_COMPANY_WORDS)
             if len(words) >= 2:
                 out.add("".join(w[0] for w in words).upper())
     return sorted(w for w in out if len(w) > 2)
