@@ -189,6 +189,24 @@ def name_density_after_intro(text: str, surname: str) -> tuple[float, int]:
     return (hits / (len(body.split()) / 1000.0)), hits
 
 
+def apply_own_channel_skip(sig: dict, rec: dict, person: dict) -> None:
+    """Skip the name-density rejection for an upload from one of the person's own channels.
+
+    Pundits plan, P6. On a pundit's own show guests and callers name the host
+    constantly, so the density that marks a leaders video as a show ABOUT the
+    person marks nothing here. The proof is the video's canonical channel id
+    matching a roster own channel. A record without `yt_channel_id`, or a roster
+    entry without `own_channels` (every leaders entry), keeps the check. The
+    measured rate is kept in the report, and only the density rejection is
+    skipped: every other gate still applies.
+    """
+    own = {ch.get("channel_id") for ch in person.get("own_channels") or [] if ch.get("channel_id")}
+    if rec.get("yt_channel_id") and rec["yt_channel_id"] in own:
+        sig["name_per_1k_after_intro_measured"] = sig.get("name_per_1k_after_intro")
+        sig["name_per_1k_after_intro"] = None
+        sig["name_density_check"] = "skipped_own_channel"
+
+
 def gate(sig: dict, name_hits: int, company_hits: int) -> tuple[str, list[str]]:
     """Return (verdict, reasons). Verdict is pass, review, or reject."""
     reasons: list[str] = []
@@ -273,6 +291,7 @@ def main() -> int:
         rate, after_intro_hits = name_density_after_intro(rec.get("text") or "", surname)
         sig["name_per_1k_after_intro"] = round(rate, 2)
         sig["name_hits_after_intro"] = after_intro_hits
+        apply_own_channel_skip(sig, rec, person)
         verdict, reasons = gate(sig, name_hits, company_hits)
         reports.append({
             "leader_slug": slug,

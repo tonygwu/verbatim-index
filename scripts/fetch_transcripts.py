@@ -243,6 +243,9 @@ def fetch_metadata(video_id: str, pacer: "Pacer | None" = None) -> dict:
         return {
             "yt_title": d.get("title"),
             "yt_channel": d.get("channel") or d.get("uploader"),
+            # The canonical id, not the display name: pundits QA proves an
+            # own-channel upload by it (qa_transcripts.apply_own_channel_skip).
+            "yt_channel_id": d.get("channel_id"),
             "yt_duration_sec": d.get("duration"),
             "yt_upload_date": d.get("upload_date"),  # YYYYMMDD, YouTube's own field
             "yt_description": (d.get("description") or "")[:4000],
