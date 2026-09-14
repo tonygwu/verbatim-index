@@ -1248,6 +1248,16 @@ new grades incomparable with the corpus already graded.
   full name or a handle plus a second identity token for any other channel; no surname
   or fuzzy match. Flat listings carry no upload date, so the date window is applied
   after fetch. Proof: `.venv/bin/python scripts/test_discover_pundits.py`.
+- Pundits QA own-channel skip (P6): the fetcher records `yt_channel_id`, and
+  `qa_transcripts.apply_own_channel_skip` skips ONLY the name-density rejection when that id
+  matches a roster own channel. Leaders entries have no `own_channels`, so leaders QA is
+  unchanged. Proof: `.venv/bin/python scripts/test_qa_own_channel.py`.
+- P6 discovery pilot: `scripts/pundits_pilot.py sample | precheck | report`. `precheck` fails
+  only what the record proves (no upload date, outside the window, after an archival
+  subject's last recording, a substitute host in the opening) and writes a checklist that a
+  PERSON must fill for every other recording; `report` stays INCONCLUSIVE until every label
+  exists, then applies the P5 caps and gives yield with exact bounds. Proof:
+  `.venv/bin/python scripts/test_pundits_pilot.py`.
 - P4d Fable tools-off measurement (SPENDS QUOTA with `--run`):
   `scripts/p4d_fable_tools_off.py`. Result in `docs/PUNDITS-P4D-FABLE-TOOLS-OFF.md`:
   12/12 valid, 95% interval [0, 26.5%], so not yet evidence of a low rate; P8a decides.
