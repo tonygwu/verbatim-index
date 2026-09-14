@@ -18,8 +18,9 @@ while [ "$#" -gt 0 ]; do
 done
 PRODUCTION_DATA="$($PY scripts/data_clone_workflow.py publication-source \
   --production-data "${PRODUCTION_DATA:-.}" --data-revision "$DATA_REVISION")" || exit 1
-# --refresh writes only through the owner's own production data symlink.
-if [ "$REFRESH" -eq 1 ] && [ "$(cd data && pwd -P)" != "$PRODUCTION_DATA" ]; then
+# --refresh writes only through the owner's own production data symlink. That is
+# the study's own link: $DATA from scripts/study_env.sh, and `data` for leaders.
+if [ "$REFRESH" -eq 1 ] && [ "$(cd "${DATA:-data}" && pwd -P)" != "$PRODUCTION_DATA" ]; then
   echo "REFUSING: --refresh requires the production owner's data checkout" >&2
   exit 1
 fi

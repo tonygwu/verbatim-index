@@ -1,0 +1,17 @@
+# Third static-asset Worker: Verbatim Pundits. Separate name, separate assets
+# directory, separate hostname. deploy_pundits.sh always passes
+# `-c wrangler.pundits.toml`; a bare `npx wrangler deploy` still reads
+# wrangler.toml and publishes the leaderboard, never this.
+#
+# not_found_handling is "none": the page has no client-side routes, so a wrong
+# URL is a real 404 rather than a 200 carrying the whole board.
+name = "verbatim-pundits"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "./site-pundits"
+not_found_handling = "none"
+
+[[routes]]
+pattern = "verbatim-pundits.tonygwu.com"
+custom_domain = true
