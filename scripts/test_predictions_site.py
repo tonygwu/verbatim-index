@@ -153,8 +153,18 @@ def main() -> int:
         check("SORT: default sort is name ascending and the Person header announces it in static HTML",
               'let sortKey = "name", sortDir = 1;' in html and '<th data-k="name" aria-sort="ascending">' in html)
         keys = re.findall(r'data-k="([a-z_]+)"', html)
+        # Six columns, and only two of them numbers. The five horizon and confidence breakdown
+        # columns moved into the drawer on 2026-09-13: they are three ways of splitting one count
+        # and read as a scoreboard in a table that scores nothing.
         check("SORT: the column keys are exactly the allowed set",
-              keys == ["name", "company", "accepted", "h_explicit", "h_inferable", "h_none", "p_explicit", "p_qual", "transcripts", "earliest", "latest"], str(keys))
+              keys == ["name", "company", "accepted", "transcripts", "earliest", "latest"], str(keys))
+        check("SORT: the dropped breakdown keys are still embedded in DATA and shown in the drawer",
+              all(k in data[0] for k in ("h_explicit", "h_inferable", "h_none", "p_explicit", "p_qual"))
+              and "${person.h_explicit} named in the quote" in html
+              and "${person.p_qual} where the speaker used words of likelihood" in html, str(sorted(data[0])))
+        ncols = len(re.findall(r"<col(?:>| style)", html))
+        check("SORT: the drawer cell spans every column",
+              '<td colspan="6">' in html and ncols == 6, str(ncols))
         check("SORT: DATA is emitted alphabetically by name", [d["name"] for d in data] == ["Ada L", "Alan T"])
 
         ada = pred["ada"]

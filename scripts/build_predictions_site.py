@@ -114,7 +114,7 @@ tbody tr.row:focus-visible{outline:2px solid var(--d1); outline-offset:-2px}
 td{padding:11px 7px; vertical-align:middle}
 td.num{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums}
 td.num.zero{color:var(--faint)}
-.who{width:190px; padding-left:16px}
+.who{width:auto; max-width:420px; padding-left:16px}
 .who .nm{font-weight:600; letter-spacing:-.01em}
 .who .rl{font-size:12px; color:var(--muted); margin-top:1px}
 td.org{color:var(--ink-2); font-size:13.5px}
@@ -230,39 +230,31 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
 <div class="sec">
   <h2>The index</h2>
   <p>
-    Click any row to read every prediction with its verbatim quote and the surrounding transcript.
+    Click any row to read every prediction with its verbatim quote and the surrounding transcript,
+    and to filter by target date, category and how much of the outcome is under the speaker's control.
     Sort by any column; the default is alphabetical, and no column measures foresight.
   </p>
   <div class="legend">
-    <span><b>Accepted</b> means the extractor (__EXTRACTOR__) proposed the claim and an independent
-    verifier (__VERIFIER__) agreed it is a forward-looking, falsifiable statement by this speaker.
-    Candidates the verifier rejected are kept on file and counted, not shown.</span>
+    <span>A <b>prediction</b> is a claim the extractor (__EXTRACTOR__) proposed and an independent
+    verifier (__VERIFIER__) agreed is a forward-looking, falsifiable statement by this speaker.
+    Candidates the verifier rejected are kept on file and counted, not shown. The two numbers are
+    counts of what each person said. Neither is a measure of foresight, and the page carries no
+    column that is: nothing here has been checked against what happened.</span>
   </div>
 </div>
 
 <div class="tablecard">
   <table id="board">
     <colgroup>
-      <col><col style="width:150px">
-      <col style="width:84px"><col style="width:90px"><col style="width:84px"><col style="width:84px">
-      <col style="width:84px"><col style="width:90px"><col style="width:96px">
-      <col style="width:100px"><col style="width:100px">
+      <col><col style="width:250px">
+      <col style="width:140px"><col style="width:140px">
+      <col style="width:140px"><col style="width:140px">
     </colgroup>
     <thead><tr>
       <th data-k="name" aria-sort="ascending">Person<span class="arrow">&#9650;</span></th>
       <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
-      <th data-k="accepted">Accepted<button class="info" type="button" data-info="accepted"
-        aria-expanded="false" aria-label="What does Accepted mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="h_explicit">Explicit date<button class="info" type="button" data-info="h_explicit"
-        aria-expanded="false" aria-label="What does Explicit date mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="h_inferable">Inferable<button class="info" type="button" data-info="h_inferable"
-        aria-expanded="false" aria-label="What does Inferable mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="h_none">No date<button class="info" type="button" data-info="h_none"
-        aria-expanded="false" aria-label="What does No date mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="p_explicit">Stated p<button class="info" type="button" data-info="p_explicit"
-        aria-expanded="false" aria-label="What does Stated p mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="p_qual">Qualitative<button class="info" type="button" data-info="p_qual"
-        aria-expanded="false" aria-label="What does Qualitative mean?">?</button><span class="arrow">&#9650;</span></th>
+      <th data-k="accepted">Predictions<button class="info" type="button" data-info="accepted"
+        aria-expanded="false" aria-label="What does Predictions mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="transcripts">Transcripts<button class="info" type="button" data-info="transcripts"
         aria-expanded="false" aria-label="What does Transcripts mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="earliest">Earliest<button class="info" type="button" data-info="dates"
@@ -303,21 +295,12 @@ const HOR = {explicit:"Explicit date", inferable:"Inferable from context", none:
 const CTRL = {external:"External to the speaker", partial:"Partly under the speaker's control", own:"Under the speaker's own control"};
 
 const INFO = {
-  accepted: `<p><b>Accepted predictions.</b> How many forward-looking claims the pipeline accepted from this
+  accepted: `<p><b>Predictions.</b> How many forward-looking claims the pipeline accepted from this
     person's transcripts: the extractor proposed each one and an independent verifier agreed.</p>
     <p>A count of what was said, <b>not a measure of foresight</b>. Someone with more long-form
-    appearances says more things. Nothing here has been checked against what happened.</p>`,
-  h_explicit: `<p><b>Explicit date.</b> The quote itself names a date, year, quarter or dated event
-    ("by 2030", "next year", "before the election"), so the claim carries a target date.</p>`,
-  h_inferable: `<p><b>Inferable.</b> The quote names no date, but the surrounding transcript fixes one
-    ("once the current fab is done"). The estimate is the model's and is labelled as such.</p>`,
-  h_none: `<p><b>No date.</b> Falsifiable but open-ended: an event the speaker says will happen with no
-    time anchor. Still a prediction; harder to resolve.</p>`,
-  p_explicit: `<p><b>Stated probability.</b> The speaker gave a number, a percentage or odds ("70% chance",
-    "one in three"). Shown as they said it. <b>No probability is ever inferred</b> from words like
-    "very likely"; those count in the next column.</p>`,
-  p_qual: `<p><b>Qualitative confidence.</b> The speaker used words of likelihood or certainty ("almost
-    certainly", "I'd bet"), quoted verbatim on the card. Never converted to a number.</p>`,
+    appearances says more things. Nothing here has been checked against what happened.</p>
+    <p>Open the row to read each one, and to filter by whether it carries a target date and by
+    what the speaker said about likelihood.</p>`,
   transcripts: `<p><b>Transcripts</b> holding at least one accepted prediction. The drawer says how many of
     this person's transcripts extraction ran on, so a low count can be read against its coverage.</p>`,
   dates: `<p><b>Earliest and latest</b> statement dates among this person's accepted predictions. The
@@ -404,6 +387,9 @@ function drawer(slug, person){
     <h3>${esc(person.name)} &mdash; ${recs.length} accepted prediction${recs.length === 1 ? "" : "s"}</h3>
     <div class="sub">from ${person.transcripts} transcript${person.transcripts === 1 ? "" : "s"}${cov};
       ${person.rejected} candidate${person.rejected === 1 ? "" : "s"} rejected by the verifier and not shown.</div>
+    <div class="sub">Target date: ${person.h_explicit} named in the quote, ${person.h_inferable} inferred from
+      the surrounding transcript, ${person.h_none} open-ended. Likelihood: ${person.p_explicit} where the
+      speaker gave a number, ${person.p_qual} where the speaker used words of likelihood.</div>
     <div class="filters">
       <label>Category <select class="pf" data-f="cat">${options(recs, "category", CAT)}</select></label>
       <label>Type <select class="pf" data-f="type">${options(recs, "prediction_type", TYPE)}</select></label>
@@ -431,7 +417,7 @@ function render(){
   tb.innerHTML = rows.map(r => `<tr class="row" tabindex="0" data-slug="${esc(r.slug)}" aria-expanded="false">
     <td class="who"><div class="nm">${esc(r.name)}</div><div class="rl">${esc(r.role || "")}</div></td>
     <td class="org">${esc(r.company || "")}<span class="sector">${esc(r.sector || "")}</span></td>
-    ${["accepted","h_explicit","h_inferable","h_none","p_explicit","p_qual","transcripts"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
+    ${["accepted","transcripts"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
     <td class="date${r.earliest ? "" : " unknown"}">${esc(fmtDate(r.earliest))}</td>
     <td class="date${r.latest ? "" : " unknown"}">${esc(fmtDate(r.latest))}</td>
   </tr>`).join("");
@@ -505,7 +491,7 @@ document.addEventListener("click", e => {
   const person = DATA.find(d => d.slug === slug);
   const row = document.createElement("tr");
   row.className = "audit";
-  row.innerHTML = `<td colspan="11">${drawer(slug, person)}</td>`;
+  row.innerHTML = `<td colspan="6">${drawer(slug, person)}</td>`;
   tr.after(row);
   tr.setAttribute("aria-expanded", "true");
 });
