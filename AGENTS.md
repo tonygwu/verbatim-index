@@ -1265,6 +1265,17 @@ new grades incomparable with the corpus already graded.
   person verified, by the human venue label; quotes hide the judge and its speaker label in a
   separate answer key. Every label field is written empty, and a short format is reported, never
   topped up. Proof: `.venv/bin/python scripts/test_pundits_label_kit.py`.
+- Pundits verification (plan, Verification section): `bash scripts/run_tests.sh` is the
+  fail-loud suite runner (globbed, exits nonzero on any failure).
+  `scripts/test_private_label_leak.py` plants a lean-label canary and proves it is absent
+  from both prompt modes, the blinded text and the page, and that only `schedule.py`,
+  `pundits_roster.py` and the P3 probe name the private lean files; adding a reader fails it.
+  `scripts/test_judge_jail.py` runs a fake judge under the real sandbox wrapper and proves
+  read, list, write and child-shell access to the container are denied (network is not
+  denied, by the P3 decision). Leaders byte identity:
+  `.venv/bin/python scripts/leaders_identity_compare.py --a RUN1 --b RUNN` over two
+  `leaders_baseline.py` runs, tolerating only `normalization.normalized_at_utc`; a raw hash
+  diff overstates change (1,328 false differences on 2026-09-14).
 - P4d Fable tools-off measurement (SPENDS QUOTA with `--run`):
   `scripts/p4d_fable_tools_off.py`. Result in `docs/PUNDITS-P4D-FABLE-TOOLS-OFF.md`:
   12/12 valid, 95% interval [0, 26.5%], so not yet evidence of a low rate; P8a decides.
