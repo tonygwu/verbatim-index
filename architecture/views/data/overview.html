@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How agents publish independent data commits — data examples and schemas</title>
+<style>body{margin:0;background:#f8fafc;color:#172033;font:18px/1.55 system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:32px}h1{font-size:30px}h2{font-size:24px;margin:0}h3{font-size:18px}section{background:white;border:1px solid #cbd5e1;border-radius:10px;margin:24px 0;padding:24px;overflow-wrap:anywhere}.columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f5f9;padding:16px;border-radius:6px;font:16px/1.6 ui-monospace,monospace}li{margin:8px 0}a{color:#1d4ed8}.meta{color:#475569}@media(max-width:720px){.columns{display:block}main{padding:16px}}</style>
+<main><h1>How agents publish independent data commits — data examples and schemas</h1>
+<p>Match the bracketed data IDs to the diagram arrows and stores. These cards explain records, not extra running components. Relationships below describe data, not execution order.</p>
+<section id="baseline"><h2>[baseline] Committed data snapshot</h2>
+<p class="meta">text · existing · verified</p>
+<p>The full commit SHA selects inputs from the private remote. Uncommitted live edits are absent.</p>
+<h3>Where this data travels</h3><ul><li>Private Git remote -&gt; Agent-owned experiment checkout: Clone committed snapshot [clone]</li></ul>
+<div class="columns"><div><h3>Fields and constraints</h3>
+<ul><li>revision: full 40-character data commit SHA</li><li>tree: tracked private files at that commit</li></ul>
+</div><div>
+<h3>Synthetic example</h3><p>Illustrative values; not an observed session.</p><pre>Synthetic input: revision = 1111111111111111111111111111111111111111</pre>
+</div></div>
+<p class="meta">Schema evidence: scripts/data_clone_workflow.py:188-205; scripts/data_clone_workflow.py:238-244</p>
+</section>
+<section id="owned-output"><h2>[owned-output] Owned experiment files</h2>
+<p class="meta">text · existing · verified</p>
+<p>Only explicitly named run directories are copied. Source and destination files must have equal SHA-256 hashes.</p>
+<h3>Where this data travels</h3><ul><li>Shared production checkout -&gt; Agent-owned experiment checkout: Copy explicitly owned outputs with hash checks [preserve]</li></ul>
+<div class="columns"><div><h3>Fields and constraints</h3>
+<ul><li>path: predictions/_experiments/UNIQUE-RUN/relative-file</li><li>bytes: regular file content</li><li>digest: SHA-256 of file content</li></ul>
+</div><div>
+<h3>Synthetic example</h3><p>Illustrative values; not an observed session.</p><pre>Synthetic path: predictions/_experiments/example-run/raw.txt</pre>
+</div></div>
+<p class="meta">Schema evidence: scripts/data_clone_workflow.py:79-128</p>
+</section>
+<section id="branch"><h2>[branch] Experiment branch commit</h2>
+<p class="meta">text · existing · verified</p>
+<p>The owner stages named run files, commits them, and pushes an owned branch to the same private remote.</p>
+<h3>Where this data travels</h3><ul><li>Agent-owned experiment checkout -&gt; Private Git remote: Owner commits and pushes an owned branch [push]</li></ul>
+<div class="columns"><div><h3>Fields and constraints</h3>
+<ul><li>branch: unique codex/ branch</li><li>commit: private Git commit containing owned run files</li></ul>
+</div><div>
+<h3>Synthetic example</h3><p>Illustrative values; not an observed session.</p><pre>Synthetic branch: codex/repo-N-example-run</pre>
+</div></div>
+<p class="meta">Schema evidence: scripts/data_clone_workflow.py:188-192; scripts/test_data_clone_workflow.py:109-115</p>
+</section>
+</main></html>

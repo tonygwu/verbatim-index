@@ -1,0 +1,48 @@
+specification {
+  element deterministic { style { shape rectangle color blue } }
+  element bounded_llm { style { shape rectangle color indigo } }
+  element agent { style { shape rectangle color red } }
+  element human { style { shape person color gray } }
+  element client { style { shape browser color blue } }
+  element external { style { shape rectangle color amber } }
+  element datastore { style { shape storage color green } }
+  element queue { style { shape queue color amber } }
+  element scheduler { style { shape rectangle color amber } }
+  element worker { style { shape rectangle color blue } }
+  relationship sync { line solid }
+  relationship async { line dotted }
+}
+model {
+  live = datastore 'Shared production checkout' 'Holds live data and one Git index managed by the production owner. Unmigrated clones share this directory.' {
+    metadata {
+      lifecycle 'existing'
+      confidence 'verified'
+      source 'AGENTS.md:18-47'
+    }
+  }
+  setup = deterministic 'Prepare one independent checkout' 'Checks ownership and active consumers, clones committed inputs, and switches only the requesting data symlink.' {
+    metadata {
+      lifecycle 'existing'
+      confidence 'verified'
+      source 'scripts/data_clone_workflow.py:180-270'
+    }
+  }
+  private = datastore 'Agent-owned experiment checkout' 'Holds frozen inputs and owned results with a separate working tree, Git index, branch, and object store.' {
+    metadata {
+      lifecycle 'existing'
+      confidence 'verified'
+      source 'scripts/data_clone_workflow.py:238-249'
+      source 'scripts/test_data_clone_workflow.py:92-115'
+    }
+  }
+  live -[sync]-> setup 'Read source identity and selected commit | Committed data snapshot [baseline]'
+  setup -[sync]-> private 'Set experiment role and owner; switch requesting symlink'
+  live -[sync]-> private 'Copy explicitly owned outputs with hash checks | Owned experiment files [owned-output]'
+}
+views {
+  view migration {
+    title 'How one clone changes its data target'
+    include *
+    autoLayout LeftRight
+  }
+}

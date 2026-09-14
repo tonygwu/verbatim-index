@@ -1,0 +1,62 @@
+{
+  "view": "migration",
+  "title": "How one clone changes its data target — data examples and schemas",
+  "cards": [
+    {
+      "record": "entity",
+      "id": "baseline",
+      "name": "Committed data snapshot",
+      "lifecycle": "existing",
+      "confidence": "verified",
+      "description": "The full commit SHA selects inputs from the private remote. Uncommitted live edits are absent.",
+      "format": "text",
+      "fields": [
+        "revision: full 40-character data commit SHA",
+        "tree: tracked private files at that commit"
+      ],
+      "example": "Synthetic input: revision = 1111111111111111111111111111111111111111",
+      "evidence": [
+        {
+          "source": "scripts/data_clone_workflow.py",
+          "lines": "188-205"
+        },
+        {
+          "source": "scripts/data_clone_workflow.py",
+          "lines": "238-244"
+        }
+      ],
+      "uses": [
+        "Shared production checkout -> Prepare one independent checkout: Read source identity and selected commit [source-read]"
+      ]
+    },
+    {
+      "record": "entity",
+      "id": "owned-output",
+      "name": "Owned experiment files",
+      "lifecycle": "existing",
+      "confidence": "verified",
+      "description": "Only explicitly named run directories are copied. Source and destination files must have equal SHA-256 hashes.",
+      "format": "text",
+      "fields": [
+        "path: predictions/_experiments/UNIQUE-RUN/relative-file",
+        "bytes: regular file content",
+        "digest: SHA-256 of file content"
+      ],
+      "example": "Synthetic path: predictions/_experiments/example-run/raw.txt",
+      "evidence": [
+        {
+          "source": "scripts/data_clone_workflow.py",
+          "lines": "79-128"
+        }
+      ],
+      "uses": [
+        "Shared production checkout -> Agent-owned experiment checkout: Copy explicitly owned outputs with hash checks [preserve]"
+      ]
+    }
+  ],
+  "missing_stores": [],
+  "store_names": {
+    "live": "Shared production checkout",
+    "private": "Agent-owned experiment checkout"
+  }
+}

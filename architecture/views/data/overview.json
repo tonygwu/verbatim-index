@@ -1,0 +1,89 @@
+{
+  "view": "overview",
+  "title": "How agents publish independent data commits — data examples and schemas",
+  "cards": [
+    {
+      "record": "entity",
+      "id": "baseline",
+      "name": "Committed data snapshot",
+      "lifecycle": "existing",
+      "confidence": "verified",
+      "description": "The full commit SHA selects inputs from the private remote. Uncommitted live edits are absent.",
+      "format": "text",
+      "fields": [
+        "revision: full 40-character data commit SHA",
+        "tree: tracked private files at that commit"
+      ],
+      "example": "Synthetic input: revision = 1111111111111111111111111111111111111111",
+      "evidence": [
+        {
+          "source": "scripts/data_clone_workflow.py",
+          "lines": "188-205"
+        },
+        {
+          "source": "scripts/data_clone_workflow.py",
+          "lines": "238-244"
+        }
+      ],
+      "uses": [
+        "Private Git remote -> Agent-owned experiment checkout: Clone committed snapshot [clone]"
+      ]
+    },
+    {
+      "record": "entity",
+      "id": "owned-output",
+      "name": "Owned experiment files",
+      "lifecycle": "existing",
+      "confidence": "verified",
+      "description": "Only explicitly named run directories are copied. Source and destination files must have equal SHA-256 hashes.",
+      "format": "text",
+      "fields": [
+        "path: predictions/_experiments/UNIQUE-RUN/relative-file",
+        "bytes: regular file content",
+        "digest: SHA-256 of file content"
+      ],
+      "example": "Synthetic path: predictions/_experiments/example-run/raw.txt",
+      "evidence": [
+        {
+          "source": "scripts/data_clone_workflow.py",
+          "lines": "79-128"
+        }
+      ],
+      "uses": [
+        "Shared production checkout -> Agent-owned experiment checkout: Copy explicitly owned outputs with hash checks [preserve]"
+      ]
+    },
+    {
+      "record": "entity",
+      "id": "branch",
+      "name": "Experiment branch commit",
+      "lifecycle": "existing",
+      "confidence": "verified",
+      "description": "The owner stages named run files, commits them, and pushes an owned branch to the same private remote.",
+      "format": "text",
+      "fields": [
+        "branch: unique codex/ branch",
+        "commit: private Git commit containing owned run files"
+      ],
+      "example": "Synthetic branch: codex/repo-N-example-run",
+      "evidence": [
+        {
+          "source": "scripts/data_clone_workflow.py",
+          "lines": "188-192"
+        },
+        {
+          "source": "scripts/test_data_clone_workflow.py",
+          "lines": "109-115"
+        }
+      ],
+      "uses": [
+        "Agent-owned experiment checkout -> Private Git remote: Owner commits and pushes an owned branch [push]"
+      ]
+    }
+  ],
+  "missing_stores": [],
+  "store_names": {
+    "live": "Shared production checkout",
+    "private": "Agent-owned experiment checkout"
+  }
+}

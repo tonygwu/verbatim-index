@@ -1,0 +1,30 @@
+%%{init: {"flowchart": {"subGraphTitleMargin": {"top": 8, "bottom": 40}}}}%%
+flowchart LR
+  subgraph viewFrame["How agents publish independent data commits"]
+  direction LR
+  viewGuide["What does an independent data checkout change?<br/>The private remote supplies a committed snapshot to each independent checkout. Its owner preserves named outputs and pushes an owned branch. Live production remains a separate checkout. Promotion is a reviewed manual procedure outside these arrows."]
+  style viewGuide fill:#ffffff,stroke:#9ca3af,color:#111827
+  n_live[("Shared production checkout<br/>Saved data | EXISTING | [live]<br/>Holds live data and one Git index managed by the production owner. Unmigrated clones share this directory.")]
+  n_private[("Agent-owned experiment checkout<br/>Saved data | EXISTING | [private]<br/>Holds frozen inputs and owned results with a separate working tree, Git index, branch, and object store.")]
+  n_remote{{"Private Git remote<br/>External software or service | EXISTING<br/>Stores committed snapshots and experiment branches for exchange between clones."}}
+  n_remote -->|"Clone committed snapshot | Committed data snapshot [baseline]"| n_private
+  n_live -->|"Copy explicitly owned outputs with hash checks | Owned experiment files [owned-output]"| n_private
+  n_private -->|"Owner commits and pushes an owned branch | Experiment branch commit [branch]"| n_remote
+  end
+  style viewFrame fill:#ffffff,stroke:#cbd5e1
+  classDef datastore fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#111827
+  classDef external fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#111827
+  class n_live datastore
+  class n_private datastore
+  class n_remote external
+  subgraph legend["Key"]
+    keydatastore[("Saved data")]
+    class keydatastore datastore
+    keyexternal{{"External software or service"}}
+    class keyexternal external
+    keylines["Solid arrow: synchronous call or data transfer. Dotted arrow: asynchronous, scheduled, or agent launch."]
+    keystatus["Status words describe implementation: EXISTING. Color describes role, not status."]
+  end
+  style legend fill:#ffffff,stroke:#cbd5e1
+  style keylines fill:#ffffff,stroke:#9ca3af,color:#111827
+  style keystatus fill:#ffffff,stroke:#9ca3af,color:#111827

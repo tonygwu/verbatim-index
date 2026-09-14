@@ -1,0 +1,27 @@
+{
+  "files": [
+    "sources/overview.mmd",
+    "sources/overview.figjam.mmd",
+    "sources/overview.d2",
+    "sources/likec4/overview/model.c4",
+    "data/overview.json",
+    "data/overview.html",
+    "sources/migration.mmd",
+    "sources/migration.figjam.mmd",
+    "sources/migration.d2",
+    "sources/likec4/migration/model.c4",
+    "data/migration.json",
+    "data/migration.html",
+    "README.md"
+  ],
+  "likec4_executable": null,
+  "renderer_requested": "auto",
+  "renderer_used": "none",
+  "renders": [],
+  "schema": "1.0",
+  "unverified_existing_pngs": [],
+  "views": [
+    "overview",
+    "migration"
+  ]
+}

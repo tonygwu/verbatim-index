@@ -10,6 +10,11 @@ specific to this repo.
 
 ## Two repositories, independent experiment clones
 
+**Every agent can commit and push private data from its own independent checkout.**
+The repo-0 restriction applies to the shared live checkout and production integration.
+It does not reserve all private data commits for repo-0.
+Before writing experiment data from another clone, use the setup procedure below.
+
 `tonygwu/verbatim-index` is public and holds code, specifications, tests, and docs.
 `tonygwu/verbatim-index-data` is private and holds transcripts, grades, logs, and results.
 The shared live checkout remains at `verbatim-index/data`, owned by `repo-0`.
@@ -293,7 +298,7 @@ the mix even.
   withdrawals: 664 recordings screened, 0 flagged, 0 on the board, with 35
   recordings on the softer R3 review list that a human still reads.
 - **Withdrawals go through a manifest and a guarded tool.** A retirement is a
-  rename in `data/`, which only repo-0 writes. `scripts/withdraw_sources.py`
+  rename in the shared production `data/`, which only repo-0 manages. `scripts/withdraw_sources.py`
   takes a manifest such as `docs/withdrawals-2026-09-10.json`, dry-runs by
   default, refuses `--apply` unless `data/.daemon-clone` names the clone it runs
   from, and reports every entry as done, skipped or failed. `retire` renames the
@@ -595,7 +600,7 @@ the measurement is named so a later reader can re-run it rather than trust it.
   that cannot be calibrated is not worth having, so the call is not made.
   A refusal WRITES its grade file and `grade.py` skips any transcript whose dest
   exists, so refusals already on disk never retry until those records are
-  removed. That is a `data/` operation, and therefore repo-0's.
+  removed. Removing those production grade records belongs to repo-0.
   Calibration is still keyed by `(judge, model, mode, dim)`, because a judge
   whose model is BUMPED mid-corpus is the same hazard arriving another way, and
   `diagnostics.judge_models` warns when one judge served more than one model.

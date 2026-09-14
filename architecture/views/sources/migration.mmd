@@ -1,0 +1,30 @@
+%%{init: {"flowchart": {"subGraphTitleMargin": {"top": 8, "bottom": 40}}}}%%
+flowchart LR
+  subgraph viewFrame["How one clone changes its data target"]
+  direction LR
+  viewGuide["How are live files protected during migration?<br/>The requesting agent runs setup. It checks the production source, prepares a separate clone, copies only named owned runs, and checks hashes and consumers before switching its symlink. The remote clone transfer is shown in the overview."]
+  style viewGuide fill:#ffffff,stroke:#9ca3af,color:#111827
+  n_live[("Shared production checkout<br/>Saved data | EXISTING | [live]<br/>Holds live data and one Git index managed by the production owner. Unmigrated clones share this directory.")]
+  n_setup["Prepare one independent checkout<br/>Program step - fixed rules | EXISTING<br/>Checks ownership and active consumers, clones committed inputs, and switches only the requesting data symlink."]
+  n_private[("Agent-owned experiment checkout<br/>Saved data | EXISTING | [private]<br/>Holds frozen inputs and owned results with a separate working tree, Git index, branch, and object store.")]
+  n_live -->|"Read source identity and selected commit | Committed data snapshot [baseline]"| n_setup
+  n_setup -->|"Set experiment role and owner; switch requesting symlink"| n_private
+  n_live -->|"Copy explicitly owned outputs with hash checks | Owned experiment files [owned-output]"| n_private
+  end
+  style viewFrame fill:#ffffff,stroke:#cbd5e1
+  classDef datastore fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#111827
+  classDef deterministic fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#111827
+  class n_live datastore
+  class n_setup deterministic
+  class n_private datastore
+  subgraph legend["Key"]
+    keydatastore[("Saved data")]
+    class keydatastore datastore
+    keydeterministic["Program step - fixed rules"]
+    class keydeterministic deterministic
+    keylines["Solid arrow: synchronous call or data transfer. Dotted arrow: asynchronous, scheduled, or agent launch."]
+    keystatus["Status words describe implementation: EXISTING. Color describes role, not status."]
+  end
+  style legend fill:#ffffff,stroke:#cbd5e1
+  style keylines fill:#ffffff,stroke:#9ca3af,color:#111827
+  style keystatus fill:#ffffff,stroke:#9ca3af,color:#111827

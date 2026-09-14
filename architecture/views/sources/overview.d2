@@ -1,0 +1,33 @@
+direction: right
+label: "How agents publish independent data commits\nWhat does an independent data checkout change?\nThe private remote supplies a committed snapshot to each independent checkout. Its owner preserves named outputs and pushes an owned branch. Live production remains a separate checkout. Promotion is a reviewed manual procedure outside these arrows."
+n_live: "Shared production checkout\nSaved data | EXISTING | [live]\nHolds live data and one Git index managed by the production owner. Unmigrated clones share this directory." {
+  shape: cylinder
+  style.fill: "#dcfce7"
+  style.stroke: "#16a34a"
+}
+n_private: "Agent-owned experiment checkout\nSaved data | EXISTING | [private]\nHolds frozen inputs and owned results with a separate working tree, Git index, branch, and object store." {
+  shape: cylinder
+  style.fill: "#dcfce7"
+  style.stroke: "#16a34a"
+}
+n_remote: "Private Git remote\nExternal software or service | EXISTING\nStores committed snapshots and experiment branches for exchange between clones." {
+  shape: parallelogram
+  style.fill: "#fef3c7"
+  style.stroke: "#d97706"
+}
+n_remote -> n_private: "Clone committed snapshot | Committed data snapshot [baseline]"
+n_live -> n_private: "Copy explicitly owned outputs with hash checks | Owned experiment files [owned-output]"
+n_private -> n_remote: "Owner commits and pushes an owned branch | Experiment branch commit [branch]"
+legend: "Key - colors and shapes identify roles" {
+keydatastore: "Saved data" {
+  shape: cylinder
+  style.fill: "#dcfce7"
+  style.stroke: "#16a34a"
+}
+keyexternal: "External software or service" {
+  shape: parallelogram
+  style.fill: "#fef3c7"
+  style.stroke: "#d97706"
+}
+keylines: "Solid arrow: synchronous call or data transfer. Dashed arrow: asynchronous, scheduled, or agent launch."
+}

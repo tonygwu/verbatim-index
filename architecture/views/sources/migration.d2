@@ -1,0 +1,33 @@
+direction: right
+label: "How one clone changes its data target\nHow are live files protected during migration?\nThe requesting agent runs setup. It checks the production source, prepares a separate clone, copies only named owned runs, and checks hashes and consumers before switching its symlink. The remote clone transfer is shown in the overview."
+n_live: "Shared production checkout\nSaved data | EXISTING | [live]\nHolds live data and one Git index managed by the production owner. Unmigrated clones share this directory." {
+  shape: cylinder
+  style.fill: "#dcfce7"
+  style.stroke: "#16a34a"
+}
+n_setup: "Prepare one independent checkout\nProgram step - fixed rules | EXISTING\nChecks ownership and active consumers, clones committed inputs, and switches only the requesting data symlink." {
+  shape: rectangle
+  style.fill: "#dbeafe"
+  style.stroke: "#2563eb"
+}
+n_private: "Agent-owned experiment checkout\nSaved data | EXISTING | [private]\nHolds frozen inputs and owned results with a separate working tree, Git index, branch, and object store." {
+  shape: cylinder
+  style.fill: "#dcfce7"
+  style.stroke: "#16a34a"
+}
+n_live -> n_setup: "Read source identity and selected commit | Committed data snapshot [baseline]"
+n_setup -> n_private: "Set experiment role and owner; switch requesting symlink"
+n_live -> n_private: "Copy explicitly owned outputs with hash checks | Owned experiment files [owned-output]"
+legend: "Key - colors and shapes identify roles" {
+keydatastore: "Saved data" {
+  shape: cylinder
+  style.fill: "#dcfce7"
+  style.stroke: "#16a34a"
+}
+keydeterministic: "Program step - fixed rules" {
+  shape: rectangle
+  style.fill: "#dbeafe"
+  style.stroke: "#2563eb"
+}
+keylines: "Solid arrow: synchronous call or data transfer. Dashed arrow: asynchronous, scheduled, or agent launch."
+}

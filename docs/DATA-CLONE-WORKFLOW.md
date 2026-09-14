@@ -5,6 +5,33 @@ owner, currently `repo-0`, manages that checkout's Git index, commits, and pushe
 Each experiment clone can own a separate checkout of the same private repository.
 Experiment agents can commit and push their own branches without coordinating a shared Git index.
 
+## Why separate checkouts
+
+Several `data` symlinks can point to one working tree and one `.git` directory.
+In that layout, all agents share the staged files, current branch, and working files.
+One agent's commit can include files that another agent staged.
+A branch switch or rebase also changes the files that every agent reads.
+The repo-0 ownership rule prevents those operations from colliding in the live checkout.
+
+An independent clone gives each agent its own working files, Git index, branch, and object store.
+All clones still use the same private remote repository.
+Each agent can commit and push an owned branch without waiting for repo-0.
+Separate clones do not prevent conflicts between edits to the same record.
+The production owner reviews and incorporates selected results through the integration procedure below.
+
+An experiment checkout is a snapshot of committed inputs.
+It does not receive live uncommitted changes or advance when another clone commits.
+Preserve the input revision for each run. Exchange completed work through Git.
+Use the setup command from each requesting clone after its data consumers finish.
+
+The current workflow supports experiment outputs under `predictions/_experiments/UNIQUE-RUN/`.
+Independent Git ownership does not authorize production ingestion, withdrawals, or changes to frozen inputs.
+These remain separate operations with their own guards.
+
+Read-only inspection on 2026-09-14 UTC found repo-0 through repo-3 sharing the production checkout.
+Repo-4 already used its independent experiment checkout.
+The [ownership review](../architecture/REPORT.md) records the source evidence and verification.
+
 Public code and private records remain in separate repositories.
 Both `/data` and `/.data-clones/` are ignored by the public repository.
 Never force-add either path to a public commit.
