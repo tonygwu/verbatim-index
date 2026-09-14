@@ -109,8 +109,8 @@ MIN_TRANSCRIPTS_TO_RANK = HIGH_CONFIDENCE_TRANSCRIPTS
 MIN_SUBJECT_SHARE = 10
 
 
-def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE
-                      ) -> tuple[list[dict], list[dict]]:
+def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE,
+                      pool_modes: bool = False) -> tuple[list[dict], list[dict]]:
     """Split grades into (kept, dropped) on subject speech share, per TRANSCRIPT.
 
     Dropped when the judges' mean share is under `cutoff`, or when any judge
@@ -141,16 +141,25 @@ def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE
     host, the co-guest or the biographer and said so in its own notes. Under
     this rule 0 of the 10 survive; a median rule keeps 4 of them.
     """
+    # pool_modes (contract v2 studies): the decision is made once per RECORDING
+    # across both modes, from every judge's estimate in either mode, so a
+    # recording is never kept in one mode and dropped in the other. The halo
+    # compares the two modes on matched pairs, and a split recording would
+    # silently lose its pairs. Leaders keeps the per-mode rule it publishes.
+    def tx_key(g: dict) -> tuple:
+        if pool_modes:
+            return (g["leader_slug"], g["source_id"])
+        return (g["leader_slug"], g["source_id"], g["mode"])
+
     by_tx: dict[tuple, list[int]] = defaultdict(list)
     for g in grades:
         v = (g.get("grade") or {}).get("subject_speech_share_pct")
         if isinstance(v, int):
-            by_tx[(g["leader_slug"], g["source_id"], g["mode"])].append(v)
+            by_tx[tx_key(g)].append(v)
     out = {k: (st.mean(v) < cutoff or min(v) == 0) for k, v in by_tx.items() if v}
     kept, dropped = [], []
     for g in grades:
-        key = (g["leader_slug"], g["source_id"], g["mode"])
-        (dropped if out.get(key) else kept).append(g)
+        (dropped if out.get(tx_key(g)) else kept).append(g)
     return kept, dropped
 
 
@@ -221,23 +230,33 @@ def served_model(g: dict) -> str:
             or DEFAULT_JUDGE_MODEL.get(g.get("judge"), g.get("judge") or "unknown"))
 
 
-def calibrate(grades: list[dict]) -> dict:
+def calibrate(grades: list[dict], shared: bool = False) -> dict:
     """Map each judge's score distribution onto the pooled one, per dimension.
 
     Returns {(judge, mode, dim): (mean, sd)} plus the pooled targets, so a raw
     score can be converted with  pooled_mean + (raw - judge_mean) * (pooled_sd / judge_sd).
     A judge with near-zero spread is left untouched, since rescaling it would
     amplify noise.
+
+    shared (contract v2 studies): ONE map per (judge, model, dimension), keyed
+    with the literal "shared" in the mode slot and fitted on blinded run-0
+    grades only, then applied to both modes. The pundits halo is open minus
+    blinded on matched pairs, and fitting each mode separately would put two
+    different scales on the two sides of that subtraction. Repeats (run > 0)
+    are left out so a transcript graded three times does not weigh three times.
     """
     by_jmd: dict[tuple, list[float]] = defaultdict(list)
     by_md: dict[tuple, list[float]] = defaultdict(list)
     for g in grades:
         if g.get("_excluded"):
             continue
+        if shared and (g["mode"] != "blinded" or (g.get("run") or 0) != 0):
+            continue
+        mode = "shared" if shared else g["mode"]
         for dim in DIMS:
             v = g["grade"]["dimensions"][dim]["score"]
-            by_jmd[(g["judge"], served_model(g), g["mode"], dim)].append(v)
-            by_md[(g["mode"], dim)].append(v)
+            by_jmd[(g["judge"], served_model(g), mode, dim)].append(v)
+            by_md[(mode, dim)].append(v)
 
     params = {}
     for key, vals in by_jmd.items():
@@ -317,6 +336,70 @@ def bootstrap_ci(rows: list[dict], weights: dict, dims: list[str],
     lo = draws[int((alpha / 2) * n)]
     hi = draws[min(int((1 - alpha / 2) * n), n - 1)]
     return (round(lo, 1), round(hi, 1))
+
+
+def paired_halo(grades: list[dict], params: dict, n: int = BOOTSTRAP_N,
+                seed: int = BOOTSTRAP_SEED, alpha: float = 0.05) -> dict[str, dict]:
+    """Per person: what disclosing the name changes, measured on matched pairs.
+
+    Contract v2 studies only; leaders keeps open-mean minus blinded-mean. Each
+    run-0 open grade is matched to the run-0 blinded grade of the same
+    transcript, judge and model, and the halo is the mean over those pairs of
+    calibrated open minus calibrated blinded, both converted with the SAME
+    shared calibration. Nothing else differs between the two sides of a pair,
+    so the difference is the disclosure effect and not a mix of transcripts,
+    judges or calibration maps. An open grade with no blinded partner is not
+    used.
+
+    The interval resamples the person's transcripts with replacement, keeping
+    each transcript's pairs together, and is seeded like bootstrap_ci.
+    `by_judge_raw` is the uncalibrated mean difference per judge, the figure a
+    synthetic injected effect must come back as exactly.
+    """
+    def raw_overall(g: dict) -> float:
+        return sum(WEIGHTS[d] * g["grade"]["dimensions"][d]["score"] for d in DIMS)
+
+    def cal_overall(g: dict) -> float:
+        return sum(WEIGHTS[d] * apply_calibration(g["grade"]["dimensions"][d]["score"],
+                                                  (g["judge"], served_model(g), "shared", d), params)
+                   for d in DIMS)
+
+    blinded = {(g["leader_slug"], g["source_id"], g["judge"], served_model(g)): g
+               for g in grades
+               if g["mode"] == "blinded" and (g.get("run") or 0) == 0 and not g.get("_excluded")}
+    pairs: dict[str, list[dict]] = defaultdict(list)
+    for g in grades:
+        if g["mode"] != "open" or (g.get("run") or 0) != 0 or g.get("_excluded"):
+            continue
+        partner = blinded.get((g["leader_slug"], g["source_id"], g["judge"], served_model(g)))
+        if partner is None:
+            continue
+        pairs[g["leader_slug"]].append({"source_id": g["source_id"], "judge": g["judge"],
+                                        "cal": cal_overall(g) - cal_overall(partner),
+                                        "raw": raw_overall(g) - raw_overall(partner)})
+    out: dict[str, dict] = {}
+    for slug, ps in pairs.items():
+        by_tx: dict[str, list[float]] = defaultdict(list)
+        for p in ps:
+            by_tx[p["source_id"]].append(p["cal"])
+        txs = sorted(by_tx)
+        rng = random.Random(seed)
+        draws = []
+        for _ in range(n):
+            picked = [v for _ in txs for v in by_tx[txs[rng.randrange(len(txs))]]]
+            draws.append(sum(picked) / len(picked))
+        draws.sort()
+        judges = sorted({p["judge"] for p in ps})
+        out[slug] = {
+            "overall": round(sum(p["cal"] for p in ps) / len(ps), 4),
+            "ci_low": round(draws[int((alpha / 2) * n)], 2),
+            "ci_high": round(draws[min(int((1 - alpha / 2) * n), n - 1)], 2),
+            "n_pairs": len(ps),
+            "n_transcripts": len(txs),
+            "by_judge_raw": {j: round(st.mean([p["raw"] for p in ps if p["judge"] == j]), 6) for j in judges},
+            "by_judge_calibrated": {j: round(st.mean([p["cal"] for p in ps if p["judge"] == j]), 4) for j in judges},
+        }
+    return out
 
 
 # A venue effect is only estimable if the venue was seen often enough. Below
@@ -654,7 +737,7 @@ def main() -> int:
     refusals = [g for g in grades if g.get("refused")]
     grades = [g for g in grades if not g.get("refused")]
 
-    grades, unscorable = filter_unscorable(grades, MIN_SUBJECT_SHARE)
+    grades, unscorable = filter_unscorable(grades, MIN_SUBJECT_SHARE, pool_modes=is_v2)
     # Every record here has passed schema validation, so it HAS a share. The
     # subscript stays a subscript on purpose: a missing key means a record that
     # is not a grade has reached this far again, and that must stop the run
@@ -727,7 +810,9 @@ def main() -> int:
                   f"{MIN_CALIBRATION_N} grades is not rescaled at all, so its scores enter "
                   f"unadjusted. Check that this is intended.", file=sys.stderr)
 
-    params = calibrate(usable)
+    params = calibrate(usable, shared=is_v2)
+    # Contract v2: the halo is measured on matched pairs under the shared map.
+    paired = paired_halo(usable, params) if is_v2 else {}
 
     # Per (leader, transcript, mode): consensus of the judges that graded it.
     per_transcript: dict[tuple, dict] = defaultdict(lambda: defaultdict(list))
@@ -738,7 +823,8 @@ def main() -> int:
         entry = per_transcript[key]
         for dim in DIMS:
             raw = gr["dimensions"][dim]["score"]
-            cal = apply_calibration(raw, (g["judge"], served_model(g), g["mode"], dim), params)
+            cal = apply_calibration(raw, (g["judge"], served_model(g),
+                                          "shared" if is_v2 else g["mode"], dim), params)
             entry[f"raw_{dim}"].append(raw)
             entry[f"cal_{dim}"].append(cal)
         entry["coverage"].append(cov)
@@ -822,7 +908,9 @@ def main() -> int:
         if b:
             b["ci_low"], b["ci_high"] = bootstrap_ci(blinded, WEIGHTS, DIMS)
         halo = {}
-        if b and o:
+        if is_v2:
+            halo = paired.get(slug, {})
+        elif b and o:
             for dim in DIMS:
                 halo[dim] = round(o[dim] - b[dim], 1)
             halo["overall"] = round(o["overall"] - b["overall"], 1)
