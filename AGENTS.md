@@ -1194,6 +1194,16 @@ new grades incomparable with the corpus already graded.
   `.venv/bin/python scripts/test_study_isolation.py` proves it against two
   temporary checkouts. Not yet split: the shared Gemini user-profile jail, which
   waits for P3, so do not run the Gemini arm for another study before then.
+- Pundits data and ownership (set up 2026-09-14): private repository
+  `tonygwu/verbatim-pundits-data`, checked out in repo-3 at `.data-clones/pundits`
+  behind the `data-pundits` link, registered with
+  `git config verbatim.pundits.productionData`. repo-3 owns pundits production: it
+  alone runs `STUDY=pundits` loops and commits pundits data, and its local
+  `.daemon-clone` there says so. That ownership is separate from leaders, where
+  repo-3 remains an experiment clone. Any clone may change pundits CODE and the
+  pundits dashboard through this public repository as usual; only data writes are
+  owned. The pundits board is a separate site (verbatim-pundits.tonygwu.com) with
+  its own data repository, and it never reads the leaders corpus.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`
