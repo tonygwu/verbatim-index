@@ -1185,6 +1185,15 @@ new grades incomparable with the corpus already graded.
   `.venv/bin/python scripts/leaders_baseline.py --code DIR --snapshot DIR --run-dir NEW --python .venv/bin/python`
   (quota-free; two identical runs differ only in `normalization.normalized_at_utc`).
   The P1 study-isolation checklist is `docs/STUDY-ISOLATION-TRACE.md`.
+- Studies: this engine serves more than one study, named by `profiles/<study>.json`.
+  Run a loop or script for a study with `STUDY=pundits` or `--study pundits`. With
+  neither, the study is `leaders`, which reads the `data` link exactly as before. A
+  study other than leaders reads only through `data-<study>`, whose checkout must
+  carry a `.study` marker naming it and an origin named `verbatim-<study>-data`.
+  Every stage refuses a path from another study (`scripts/study_profile.py`), and
+  `.venv/bin/python scripts/test_study_isolation.py` proves it against two
+  temporary checkouts. Not yet split: the shared Gemini user-profile jail, which
+  waits for P3, so do not run the Gemini arm for another study before then.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`

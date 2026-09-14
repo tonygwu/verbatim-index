@@ -1647,7 +1647,7 @@ def main() -> int:
     ap.add_argument("--transcripts", help="Directory of normalized transcript JSON files.")
     ap.add_argument("--single", help="Grade one transcript file (used for calibration).")
     ap.add_argument("--roster", help="Roster JSON, needed to fill speaker name/role in open mode.")
-    ap.add_argument("--out", default="data/grades")
+    ap.add_argument("--out", default=None, help="Default: <study data>/grades.")
     ap.add_argument("--judges", default="fable,astra")
     ap.add_argument("--modes", default="blinded,open")
     ap.add_argument("--repeats", type=int, default=1)
@@ -1660,7 +1660,7 @@ def main() -> int:
                          "only needs enough transcripts per leader to estimate the reputation halo. "
                          "What it drops is logged, never silent.")
     ap.add_argument("--force", action="store_true")
-    ap.add_argument("--errors", default="data/logs/grade_errors.jsonl")
+    ap.add_argument("--errors", default=None, help="Default: <study data>/logs/grade_errors.jsonl.")
     ap.add_argument("--astra-model", default="gpt-6-astra",
                     help="Primary model for the Astra arm.")
     ap.add_argument("--fable-bin", default="claude",
@@ -1685,7 +1685,16 @@ def main() -> int:
                          "every profile found. Unlike the Fable rotation this cannot be "
                          "ordered by headroom: Antigravity exposes no usage endpoint at "
                          "all, so the rotation is plain round-robin.")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    # First, before the rubric, the account router or any judge: a grade written
+    # into another study's tree would be pooled into that study's score.
+    SP.guard(args.study)
+    link = SP.data_link(args.study)
+    args.out = args.out or f"{link}/grades"
+    args.errors = args.errors or f"{link}/logs/grade_errors.jsonl"
+    SP.guard(args.study, args.transcripts, args.single, args.roster, args.out, args.errors)
 
     rubric = RUBRIC_PATH.read_text()
     schema = SCHEMA_PATH.read_text()
@@ -1780,7 +1789,10 @@ def main() -> int:
         log(f"gemini profiles in rotation (round-robin, no headroom is measurable): "
             f"{gem_profiles}")
 
-    workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "grade-work"
+    # One scratch root per study, so two studies' judge workdirs never share a
+    # directory. Leaders keeps its original name.
+    workroot = Path(os.environ.get("TMPDIR", "/tmp")) / (
+        "grade-work" if args.study == SP.LEGACY_STUDY else f"grade-work-{args.study}")
     workroot.mkdir(parents=True, exist_ok=True)
 
     jobs = []

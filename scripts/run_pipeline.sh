@@ -12,6 +12,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# The legacy one-shot for the leaders study. Its stages carry literal data/
+# paths, so any other study is refused rather than run against leaders data.
+. scripts/study_env.sh || exit 1
+if [ "$STUDY" != "leaders" ]; then
+  echo "REFUSING TO START: run_pipeline.sh serves the leaders study only; run the loops with STUDY=$STUDY." >&2
+  exit 1
+fi
+
 . scripts/daemon_guard.sh
 require_daemon_clone || exit 1
 

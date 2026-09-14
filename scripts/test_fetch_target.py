@@ -31,14 +31,14 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def test_loop_counts_gradeable():
     print("\n[1] the loop measures the target against gradeable transcripts")
-    check("coverage() reads data/transcripts_blind",
-          'blind = Path("data/transcripts_blind")' in LOOP,
+    check("coverage() reads the study's transcripts_blind",
+          'blind = D / "transcripts_blind"' in LOOP and 'D = Path(os.environ["DATA"])' in LOOP,
           "it still counts raw fetches, so QA rejections are invisible to the target")
     check("coverage() still reports the raw count too",
           '"raw_transcripts"' in LOOP,
           "raw vs gradeable is the whole diagnosis; keep both visible")
     check("the fetcher is told the same basis",
-          "--have-dir data/transcripts_blind" in LOOP,
+          "--have-dir $DATA/transcripts_blind" in LOOP,
           "without this the fetcher skips the leaders the loop still wants topped up")
     check("--have-dir exists in fetch_transcripts.py",
           '"--have-dir"' in FETCH)

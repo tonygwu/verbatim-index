@@ -10,6 +10,48 @@ at the end.
 P1 is not done until every row in the first four tables resolves by study, and
 a fixture in `scripts/test_study_isolation.py` exercises it.
 
+## How P1 resolved it
+
+The rule lives in `scripts/study_profile.py`, and its bash form lives in
+`scripts/study_env.sh` plus `scripts/daemon_guard.sh`:
+- A study reaches its data through a link: `data` for leaders, `data-<study>`
+  for any other study. Each study's profile is `profiles/<study>.json`, and the
+  profile loader refuses a profile that breaks the link rule.
+- A checkout names its study in `.study`. A checkout without one is leaders
+  only. Any other study also needs an origin named `verbatim-<study>-data`.
+- Every Python stage in sections 1 and 3 takes `--study`, defaulting to `$STUDY`
+  and then to leaders. It checks every data path it is given against that study
+  before reading anything. `build_site.py --out` is exempt because it is a
+  public build artifact, not data.
+- Every loop in section 2 sources `study_env.sh` and writes only under `$DATA`.
+  `run_pipeline.sh` and `watch_and_run.sh` refuse any study other than leaders.
+  `grade_loop.sh` refuses `PUBLISH_ON_COMPLETE=1` for a study with no deploy
+  script.
+- `verbatim.role` stays one key, because it already lives in each data
+  checkout's own git config. `verbatim.productionData` lives in the public
+  clone, so a non-leaders study uses `verbatim.<study>.productionData`, with no
+  fallback path.
+
+Section 4, item by item:
+1. The dedupe defaults now come from the study.
+2. Run markers default to `$DATA/logs/running`.
+3. The `production_path()` fallback applies to leaders only.
+4. Judge scratch space is split for `grade.py`'s workroot, which is now
+   `grade-work-<study>`. **Deferred:** `GEMINI_SHARED_JAIL` is still one
+   directory. Threading the study into each judge job belongs to P3, which
+   rebuilds that harness. Until then no non-leaders study may run the Gemini arm
+   through a user profile.
+5. `build_site.py` and `coverage_table.py` read the study's link.
+6. `withdraw_sources.py` resolves the marker, the shelves and the grades through
+   the study's link.
+
+Evidence, 2026-09-14:
+- `test_study_isolation.py` went from 21/33 before the wiring to 43/43 after it.
+- The leaders baseline driver was re-run on the new code against the P0
+  snapshot. It matched run 1 on all 1,328 prompts, `results.json`, the audit
+  file, the site, calibration, the QA and normalize logs, the coverage output
+  and the fingerprint. The only difference was `normalization.normalized_at_utc`.
+
 **How a row resolves today:**
 - `literal` means the path is typed into the command line.
 - `default` means an argparse default that a flag can override.

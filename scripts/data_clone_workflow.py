@@ -37,12 +37,31 @@ def role(data: Path) -> str:
     return config(data, ROLE_KEY)
 
 
-def production_path(repo: Path) -> Path:
-    return Path(config(repo, 'verbatim.productionData') or repo.parent / 'data').resolve()
+def production_path(repo: Path, study: str = 'leaders') -> Path:
+    """The registered live checkout for a study.
+
+    Leaders keeps its historical fallback to <repo parent>/data. Any other study
+    has no fallback: its production checkout must be registered under its own
+    config key, or nothing may publish or aggregate it.
+    """
+    import study_profile as SP
+    prof = SP.load(study)
+    configured = config(repo, prof['production_data_key'])
+    if configured:
+        return Path(configured).resolve()
+    if study != SP.LEGACY_STUDY:
+        raise RuntimeError(f"{prof['production_data_key']} is not set in {repo}; register the "
+                           f"{study} production checkout explicitly")
+    return (repo.parent / 'data').resolve()
 
 
-def owner_error(repo: Path) -> str | None:
-    data = (repo / 'data').resolve()
+def owner_error(repo: Path, study: str = 'leaders') -> str | None:
+    import study_profile as SP
+    try:
+        data = (repo / SP.data_link(study)).resolve()
+        SP.check_path(data, study)
+    except RuntimeError as exc:
+        return str(exc)
     if role(data) == 'experiment':
         return 'experiment data cannot run production jobs, even with a copied .daemon-clone marker'
     marker = data / '.daemon-clone'
@@ -54,12 +73,16 @@ def owner_error(repo: Path) -> str | None:
     return None
 
 
-def publication_source(repo: Path, source: Path | None, revision: str | None) -> Path:
+def publication_source(repo: Path, source: Path | None, revision: str | None,
+                       study: str = 'leaders') -> Path:
+    import study_profile as SP
     if source is None or not revision:
         raise RuntimeError('explicit --production-data and --data-revision are required')
     source = source.resolve()
-    if source != production_path(repo) or role(source) == 'experiment':
-        raise RuntimeError(f'production source must be {production_path(repo)}; got {source}')
+    live = production_path(repo, study)
+    if source != live or role(source) == 'experiment':
+        raise RuntimeError(f'production source must be {live}; got {source}')
+    SP.check_path(source, study)
     marker = source / '.daemon-clone'
     if not marker.is_file() or not marker.read_text().strip():
         raise RuntimeError('production source has no .daemon-clone owner')
@@ -271,11 +294,24 @@ def setup(repo: Path, source: Path, revision: str, branch: str,
     return dest
 
 
+SITE_SHELVES = {
+    'leaderboard': ['results.json', 'results_audit.json', 'roster/final.json',
+                    'logs/calibration.json', 'sources/discovered.json', 'grades'],
+    'pundits': ['results.json', 'results_audit.json', 'roster/final.json',
+                'logs/calibration.json', 'sources/discovered.json', 'grades'],
+    'predictions': ['predictions', 'roster/final.json'],
+}
+
+
 def fingerprint(source: Path, site: str) -> str:
-    """Bind one render to the live bytes read, including dirty production files."""
-    shelves = (['results.json', 'results_audit.json', 'roster/final.json',
-                'logs/calibration.json', 'sources/discovered.json', 'grades'] if site == 'leaderboard'
-               else ['predictions', 'roster/final.json'])
+    """Bind one render to the live bytes read, including dirty production files.
+
+    An unknown site is refused. It used to fall through to the predictions
+    shelves, so any new site would have been fingerprinted on the wrong files.
+    """
+    if site not in SITE_SHELVES:
+        raise RuntimeError(f'unknown publication site {site!r}; known: {sorted(SITE_SHELVES)}')
+    shelves = SITE_SHELVES[site]
     hashes = {}
     for shelf in shelves:
         base = source / shelf
@@ -305,11 +341,11 @@ def prediction_inputs_sha256(predictions: Path) -> str:
     return h.hexdigest()
 
 
-def guard_prediction_write(repo: Path, path: Path, root: Path) -> None:
+def guard_prediction_write(repo: Path, path: Path, root: Path, study: str = 'leaders') -> None:
     path, root = path.resolve(), root.resolve()
     if role(root) != 'experiment':
         return
-    live = production_path(repo)
+    live = production_path(repo, study)
     if path == live or live in path.parents:
         raise RuntimeError('experiment clone cannot write the shared production checkout')
     if path == root or root in path.parents:
@@ -318,15 +354,17 @@ def guard_prediction_write(repo: Path, path: Path, root: Path) -> None:
             raise RuntimeError(f'experiment writes require {allowed}/UNIQUE-RUN/')
 
 
-def guard_aggregate(repo: Path, path: Path) -> None:
+def guard_aggregate(repo: Path, path: Path, study: str = 'leaders') -> None:
+    import study_profile as SP
+    SP.check_path(path, study)
     path = path.resolve()
-    live = production_path(repo)
+    own = (repo / SP.data_link(study)).resolve()
+    live = production_path(repo, study)
     if path == live or live in path.parents:
-        why = owner_error(repo)
-        if why or (repo / 'data').resolve() != live:
+        why = owner_error(repo, study)
+        if why or own != live:
             raise RuntimeError(why or 'production aggregation requires the production owner')
-    own = (repo / 'data').resolve()
-    guard_prediction_write(repo, path, own)
+    guard_prediction_write(repo, path, own, study)
 
 
 def new_run(repo: Path, name: str, extractor: str, verifier: str, astra_model: str) -> Path:
@@ -375,7 +413,8 @@ def main() -> int:
     p = sub.add_parser('publication-source')
     p.add_argument('--production-data', type=Path)
     p.add_argument('--data-revision')
-    p.add_argument('--site', choices=['leaderboard', 'predictions'])
+    p.add_argument('--site', choices=sorted(SITE_SHELVES))
+    p.add_argument('--study', default=os.environ.get('STUDY') or 'leaders')
     p.add_argument('--fingerprint', action='store_true')
     args = ap.parse_args()
     try:
@@ -386,7 +425,7 @@ def main() -> int:
         elif args.command == 'consumers':
             print(json.dumps(active_consumers(REPO), indent=2))
         else:
-            source = publication_source(REPO, args.production_data, args.data_revision)
+            source = publication_source(REPO, args.production_data, args.data_revision, args.study)
             print(fingerprint(source, args.site) if args.fingerprint else source)
         return 0
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:

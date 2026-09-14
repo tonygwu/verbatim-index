@@ -505,9 +505,15 @@ def main() -> int:
                     help="Pool grades made under different rubric versions. Off by default, "
                          "because averaging scores from different rubrics is a silent "
                          "correctness failure rather than a loud one.")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study, args.grades, args.roster, args.transcripts, args.out)
     from data_clone_workflow import guard_aggregate
-    guard_aggregate(Path(__file__).resolve().parent.parent, Path(args.out))
+    try:
+        guard_aggregate(Path(__file__).resolve().parent.parent, Path(args.out), args.study)
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSING: {exc}") from None
 
     roster = json.loads(Path(args.roster).read_text())
     by_slug = {r["slug"]: r for r in roster["roster"]}

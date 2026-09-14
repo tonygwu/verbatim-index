@@ -600,7 +600,13 @@ def main() -> int:
                          "gradeable and keep counting, so this is for debugging only.")
     ap.add_argument("--prune-max-fraction", type=float, default=PRUNE_MAX_FRACTION,
                     help="Refuse to prune more than this share of the output directory.")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    # Before anything is read or pruned: a --grades that names another study's
+    # tree would orphan that study's grades in one pass.
+    SP.guard(args.study, args.transcripts, args.out, args.roster, args.repairs,
+             args.aliases, args.qa, args.log, args.grades)
 
     roster = json.loads(Path(args.roster).read_text())
     by_slug = {r["slug"]: r for r in roster["roster"]}

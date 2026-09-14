@@ -481,7 +481,10 @@ def main() -> int:
                          "Deliberately LOW. Recovery here is an IP rotation, not patience, so a "
                          "throttled pass should keep tripping the circuit breaker and ask for a "
                          "new exit rather than grinding quietly at a comfortable pace.")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study, args.manifest, args.out, args.errors, args.have_dir)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

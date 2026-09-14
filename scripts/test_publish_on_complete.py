@@ -74,10 +74,24 @@ def main() -> int:
     deploys = re.findall(r"^\s*(?:if )?bash scripts/deploy\.sh", SRC, re.M)
     check("exactly one deploy invocation in the loop", len(deploys) == 1,
           f"found {len(deploys)}")
-    guard = line_of(r'\[ "\$PUBLISH_ON_COMPLETE" = "1" \]')
+    # The PUBLISH guard is the bare `if [ ... = "1" ]; then` that opens the
+    # deploy block. The start-time refusal for other studies also tests the
+    # variable, joined to a STUDY test with &&, and must not be mistaken for it.
+    guard = line_of(r'^\s*if \[ "\$PUBLISH_ON_COMPLETE" = "1" \]; then\s*$')
     idle_exit = line_of(r'\[ "\$idle" -ge "\$IDLE_EXIT" \]')
     check("the publish sits inside the IDLE_EXIT branch, not the cycle body",
           idle_exit != -1 and guard > idle_exit, f"idle_exit line {idle_exit}, guard line {guard}")
+
+    print("\n[3b] a study with no deploy script is refused at the start, not after grading")
+    refusal = line_of(r'if \[ "\$PUBLISH_ON_COMPLETE" = "1" \] && \[ "\$STUDY" != "leaders" \]')
+    loop_start = line_of(r"^while true; do")
+    check("the loop refuses PUBLISH_ON_COMPLETE for a study other than leaders",
+          refusal != -1, "a pundits loop would reach the leaders deploy script after days of grading")
+    check("and it does so before the first grading cycle",
+          refusal != -1 and loop_start != -1 and refusal < loop_start,
+          f"refusal line {refusal}, loop start line {loop_start}")
+    check("the refusal exits non-zero",
+          re.search(r'"\$STUDY" != "leaders" \]; then\n(?:.*\n){0,2}\s*exit 1', SRC) is not None)
 
     print("\n[4] it never publishes a stale board")
     stale_exit = line_of(r"STOPPING ON A STALE LEADERBOARD")
@@ -103,7 +117,7 @@ def main() -> int:
     check("it says the live site is unchanged",
           re.search(r"LIVE site is unchanged", SRC) is not None)
     check("it prints the last line of the error log",
-          SRC.count("last line of data/logs/grade_loop.err") >= 3)
+          SRC.count("last line of $DATA/logs/grade_loop.err") >= 3)
     fail_exit = line_of(r"retry by hand: bash scripts/deploy\.sh")
     complete = line_of(r"COMPLETE: nothing left to grade")
     check("the failure path exits before the COMPLETE line",

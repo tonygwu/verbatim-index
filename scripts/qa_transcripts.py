@@ -235,7 +235,10 @@ def main() -> int:
     ap.add_argument("--glossaries", default=None,
                     help="Optional JSON mapping leader_slug -> list of proper nouns, to suppress false OOV hits.")
     ap.add_argument("--out", required=True)
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study, args.transcripts, args.roster, args.glossaries, args.out)
 
     dictionary = load_dictionary()
     roster = json.loads(Path(args.roster).read_text())

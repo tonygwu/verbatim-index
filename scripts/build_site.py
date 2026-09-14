@@ -1014,7 +1014,11 @@ def main() -> int:
     ap.add_argument("--calibration", required=True)
     ap.add_argument("--sources", default=None, help="discovered_sources.json, for titles and links")
     ap.add_argument("--out", required=True)
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    # Inputs only. --out is a build artifact in the public clone, not data.
+    SP.guard(args.study, args.results, args.audit, args.roster, args.calibration, args.sources)
 
     results = json.loads(Path(args.results).read_text())
     audit = json.loads(Path(args.audit).read_text())
@@ -1052,7 +1056,8 @@ def main() -> int:
     d = results["diagnostics"]
     head = calib.get("headline") or {}
     total_words = sum(1 for _ in [])  # replaced below if transcripts are available
-    tdir = Path("data/transcripts")
+    tdir = Path(SP.data_link(args.study)) / "transcripts"
+    SP.guard(args.study, tdir)
     words = 0
     if tdir.exists():
         for p in tdir.rglob("*.json"):

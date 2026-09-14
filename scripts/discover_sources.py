@@ -323,7 +323,10 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="Comma-separated slugs, for topping up specific leaders.")
     ap.add_argument("--candidates-per-leader", type=int, default=CANDIDATES_PER_LEADER,
                     help=f"How deep to go in the ranked list (default {CANDIDATES_PER_LEADER}).")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study, args.roster, args.out)
 
     roster = json.loads(Path(args.roster).read_text())["roster"]
     if args.only:

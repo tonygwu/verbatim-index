@@ -13,6 +13,13 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Legacy leaders-only driver with literal data/ paths; any other study is refused.
+. scripts/study_env.sh || exit 1
+if [ "$STUDY" != "leaders" ]; then
+  echo "REFUSING TO START: watch_and_run.sh serves the leaders study only; run the loops with STUDY=$STUDY." >&2
+  exit 1
+fi
+
 PY=.venv/bin/python
 PROBE_VIDEO="${PROBE_VIDEO:-93piVCwqXz8}"
 INTERVAL="${INTERVAL:-1800}"          # 30 minutes between probes

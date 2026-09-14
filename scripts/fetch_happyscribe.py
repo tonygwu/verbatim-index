@@ -360,10 +360,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--discover", action="store_true")
     ap.add_argument("--fetch", action="store_true")
-    ap.add_argument("--roster", default="data/roster/final.json")
-    ap.add_argument("--candidates", default="data/sources/happyscribe_candidates.json")
-    ap.add_argument("--out", default="data/transcripts_hs")
-    ap.add_argument("--errors", default="data/logs/happyscribe_errors.jsonl")
+    # Defaults come from the study; for leaders they are the old data/ paths.
+    ap.add_argument("--roster", default=None, help="Default: <study data>/roster/final.json.")
+    ap.add_argument("--candidates", default=None,
+                    help="Default: <study data>/sources/happyscribe_candidates.json.")
+    ap.add_argument("--out", default=None, help="Default: <study data>/transcripts_hs.")
+    ap.add_argument("--errors", default=None, help="Default: <study data>/logs/happyscribe_errors.jsonl.")
     ap.add_argument("--target-per-leader", type=int, default=5)
     ap.add_argument("--interval", type=float, default=2.0)
     ap.add_argument("--workers", type=int, default=4)
@@ -373,7 +375,16 @@ def main() -> int:
                     help="Print the roster slugs absent from the candidate pool and exit. "
                          "The pool is derived from the roster, so the loop uses this to notice "
                          "a roster change instead of assuming one never happens.")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study)
+    link = SP.data_link(args.study)
+    args.roster = args.roster or f"{link}/roster/final.json"
+    args.candidates = args.candidates or f"{link}/sources/happyscribe_candidates.json"
+    args.out = args.out or f"{link}/transcripts_hs"
+    args.errors = args.errors or f"{link}/logs/happyscribe_errors.jsonl"
+    SP.guard(args.study, args.roster, args.candidates, args.out, args.errors)
 
     session = make_session()
     pacer = Pacer(args.interval)

@@ -20,3 +20,7 @@ site-predictions/index.html
 
 # Independent private clones, including incomplete migration preparations.
 /.data-clones/
+
+# The pundits study's private data link, and its site build artifact.
+/data-pundits
+site-pundits/index.html

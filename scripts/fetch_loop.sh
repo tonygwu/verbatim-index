@@ -12,10 +12,15 @@
 # on its own once every leader has TARGET transcripts.
 #
 #   nohup bash scripts/fetch_loop.sh > data/logs/fetch_loop.log 2>&1 &
+#   STUDY=pundits nohup bash scripts/fetch_loop.sh > data-pundits/logs/fetch_loop.log 2>&1 &
 #
 # Safe to kill and restart at any moment. Completed transcripts are skipped.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+# Which study this loop fetches for, and where its data lives. See
+# scripts/study_env.sh. It also moves the run markers under the study's data.
+. scripts/study_env.sh || exit 1
 
 # Every clone shares one data/ checkout, so a loop started in the wrong clone
 # writes the live corpus rather than a private copy.
@@ -67,28 +72,31 @@ PACE="${PACE:-2}"                     # seconds between caption requests
 # unreachable from here, which cost six hours on cycle 43 (2026-09-10).
 PACE_CEILING="${PACE_CEILING:-15}"    # widening stops here; then trip, do not crawl
 WORKERS="${WORKERS:-6}"
-STATE=data/logs/fetch_loop_state.jsonl
-ROTATE_FLAG=data/logs/NEEDS_IP_ROTATION
+STATE=$DATA/logs/fetch_loop_state.jsonl
+ROTATE_FLAG=$DATA/logs/NEEDS_IP_ROTATION
 
 stamp(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
 say(){ printf '[%s] %s\n' "$(stamp)" "$*"; }
 
 # Coverage straight off the filesystem, so restarting the loop costs nothing.
+# DATA is exported by scripts/study_env.sh; the heredoc is quoted, so it is
+# read from the environment rather than expanded by the shell.
 coverage(){
   $PY - "$TARGET" <<'PYEOF'
-import json, sys
+import json, os, sys
 from pathlib import Path
 target = int(sys.argv[1])
-roster = [r["slug"] for r in json.loads(Path("data/roster/final.json").read_text())["roster"]]
+D = Path(os.environ["DATA"])
+roster = [r["slug"] for r in json.loads((D / "roster/final.json").read_text())["roster"]]
 # TARGET means GRADEABLE transcripts, not raw fetches. Counting data/transcripts
 # reported a leader "at target" while QA had rejected enough of them to leave him
 # far short: Michael Dell, 16 raw, 9 gradeable, target 14, loop exited COMPLETE.
 # QA and normalize run in this same loop right after fetching, so the blinded
 # directory is current by the time this is read.
-blind = Path("data/transcripts_blind")
+blind = D / "transcripts_blind"
 counts = {s: len([f for f in (blind / s).glob("*.json") if not f.name.endswith(".tmp")])
           if (blind / s).is_dir() else 0 for s in roster}
-raw = {s: len(list((Path("data/transcripts") / s).glob("*.json"))) for s in roster}
+raw = {s: len(list((D / "transcripts" / s).glob("*.json"))) for s in roster}
 done = sum(1 for v in counts.values() if v >= target)
 print(json.dumps({
     "leaders": len(roster),
@@ -124,7 +132,7 @@ PYEOF
 sleep_for=$BASE_SLEEP
 cycle=0
 barren=0
-say "fetch loop started. target ${TARGET}/leader, pace ${PACE}s (ceiling ${PACE_CEILING}s), ${WORKERS} workers"
+say "fetch loop started for study ${STUDY} (${DATA}). target ${TARGET}/leader, pace ${PACE}s (ceiling ${PACE_CEILING}s), ${WORKERS} workers"
 
 while true; do
   cycle=$((cycle + 1))
@@ -172,17 +180,17 @@ while true; do
   fi
 
   rm -f "$ROTATE_FLAG"
-  before=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+  before=$(find $DATA/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
   say "  endpoint clear. fetching at ${PACE}s pace, ${WORKERS} workers."
   $PY scripts/fetch_transcripts.py \
-    --manifest data/sources/all.jsonl \
-    --out data/transcripts \
-    --errors "data/logs/fetch_errors_cycle${cycle}.jsonl" \
+    --manifest $DATA/sources/all.jsonl \
+    --out $DATA/transcripts \
+    --errors "$DATA/logs/fetch_errors_cycle${cycle}.jsonl" \
     --workers "$WORKERS" --target-per-leader "$TARGET" --min-interval "$PACE" \
     --max-interval "$PACE_CEILING" \
-    --have-dir data/transcripts_blind \
-    >/dev/null 2>>data/logs/fetch_loop.err
-  after=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+    --have-dir $DATA/transcripts_blind \
+    >/dev/null 2>>$DATA/logs/fetch_loop.err
+  after=$(find $DATA/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
   gained=$(( after - before ))
 
   printf '{"at":"%s","cycle":%s,"event":"pass","gained":%s,"total":%s}\n' \
@@ -195,24 +203,24 @@ while true; do
   # and idempotent, so running them here decouples grade-readiness from the
   # slow grading pass.
   if [ "$gained" -gt 0 ]; then
-    $PY scripts/qa_transcripts.py --transcripts data/transcripts \
-        --roster data/roster/final.json --glossaries data/sources/aliases.json \
-        --out data/logs/transcript_qa.json >/dev/null 2>>data/logs/fetch_loop.err
+    $PY scripts/qa_transcripts.py --transcripts $DATA/transcripts \
+        --roster $DATA/roster/final.json --glossaries $DATA/sources/aliases.json \
+        --out $DATA/logs/transcript_qa.json >/dev/null 2>>$DATA/logs/fetch_loop.err
     # --no-prune, and deliberately no --grades. Withdrawing a transcript is
     # grade_loop.sh's job alone. Both loops normalize the same two directories,
     # and each lists the corpus once at the top, so a second pruner would delete
     # what the first had just written and orphan its grades. One writer per
     # directory, the same rule the clones follow for data/.
     for m in blinded open; do
-      out=data/transcripts_blind; [ "$m" = open ] && out=data/transcripts_open
+      out=$DATA/transcripts_blind; [ "$m" = open ] && out=$DATA/transcripts_open
       $PY scripts/normalize_transcripts.py --mode "$m" \
-          --transcripts data/transcripts --out "$out" \
-          --roster data/roster/final.json --repairs data/sources/repairs.json \
-          --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
+          --transcripts $DATA/transcripts --out "$out" \
+          --roster $DATA/roster/final.json --repairs $DATA/sources/repairs.json \
+          --aliases $DATA/sources/aliases.json --qa $DATA/logs/transcript_qa.json \
           --no-prune \
-          --log "data/logs/normalize_${m}.json" >/dev/null 2>>data/logs/fetch_loop.err
+          --log "$DATA/logs/normalize_${m}.json" >/dev/null 2>>$DATA/logs/fetch_loop.err
     done
-    say "  normalized; $(find data/transcripts_blind -name '*.json' ! -name '*.tmp' | wc -l | tr -d ' ') ready to grade"
+    say "  normalized; $(find $DATA/transcripts_blind -name '*.json' ! -name '*.tmp' | wc -l | tr -d ' ') ready to grade"
   fi
 
   if [ "$gained" -gt 0 ]; then

@@ -314,14 +314,23 @@ def print_report(rows: list[dict], sample: int, seed: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--grades", default=str(REPO / "data" / "grades"))
-    ap.add_argument("--transcripts", default=str(REPO / "data" / "transcripts_open"),
-                    help="Source metadata (title, channel, description). Text is never read.")
-    ap.add_argument("--roster", default=str(REPO / "data" / "roster" / "final.json"))
+    ap.add_argument("--grades", default=None, help="Default: <repo>/<study data>/grades.")
+    ap.add_argument("--transcripts", default=None,
+                    help="Source metadata (title, channel, description). Text is never read. "
+                         "Default: <repo>/<study data>/transcripts_open.")
+    ap.add_argument("--roster", default=None, help="Default: <repo>/<study data>/roster/final.json.")
     ap.add_argument("--out", default=None, help="Write per-recording verdicts as JSON here.")
     ap.add_argument("--sample", type=int, default=40, help="Unflagged recordings to print for a false-negative check.")
     ap.add_argument("--seed", type=int, default=20260910)
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study)
+    data = REPO / SP.data_link(args.study)
+    args.grades = args.grades or str(data / "grades")
+    args.transcripts = args.transcripts or str(data / "transcripts_open")
+    args.roster = args.roster or str(data / "roster" / "final.json")
+    SP.guard(args.study, args.grades, args.transcripts, args.roster, args.out)
 
     roster = json.loads(Path(args.roster).read_text())["roster"]
     grades = load_grades(Path(args.grades))

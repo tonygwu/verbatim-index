@@ -41,12 +41,24 @@ REPO = Path(__file__).resolve().parent.parent
 ACTIONS = ("retire", "regrade")
 
 
-def require_daemon_clone(root: Path) -> str | None:
-    """None if this clone owns data/, else the reason it does not."""
+def study_data(root: Path, study: str) -> Path:
+    """The study's data link under this clone, checked to belong to that study."""
+    import study_profile as SP
+    data = root / SP.data_link(study)
+    SP.check_path(data, study)
+    return data
+
+
+def require_daemon_clone(root: Path, study: str = "leaders") -> str | None:
+    """None if this clone owns the study's data, else the reason it does not."""
     from data_clone_workflow import role
-    if role((root / "data").resolve()) == "experiment":
+    try:
+        data = study_data(root, study)
+    except RuntimeError as exc:
+        return str(exc)
+    if role(data.resolve()) == "experiment":
         return "experiment data cannot perform production withdrawals"
-    marker = root / "data" / ".daemon-clone"
+    marker = data / ".daemon-clone"
     if not marker.exists():
         return f"{marker} is missing; it must name the clone that owns data/"
     owner = marker.read_text().strip()
@@ -56,9 +68,10 @@ def require_daemon_clone(root: Path) -> str | None:
     return None
 
 
-def retire(root: Path, slug: str, sid: str, apply: bool) -> dict:
+def retire(root: Path, slug: str, sid: str, apply: bool, study: str = "leaders") -> dict:
     """Take a source off every shelf it sits on."""
-    shelves = [root / "data" / "transcripts", root / "data" / "transcripts_hs"]
+    data = study_data(root, study)
+    shelves = [data / "transcripts", data / "transcripts_hs"]
     moved, already = [], []
     for shelf in shelves:
         src = shelf / slug / f"{sid}.json"
@@ -76,7 +89,7 @@ def retire(root: Path, slug: str, sid: str, apply: bool) -> dict:
     return {"status": "failed", "detail": "source not found on any shelf"}
 
 
-def normalized_at(root: Path, slug: str, sid: str) -> str | None:
+def normalized_at(root: Path, slug: str, sid: str, study: str = "leaders") -> str | None:
     """When the derived copies of this recording were last written, in UTC.
 
     Read out of the record, never from a file mtime, because the loops touch
@@ -84,8 +97,9 @@ def normalized_at(root: Path, slug: str, sid: str) -> str | None:
     normalize_transcripts.py began stamping this.
     """
     stamps = []
+    data = study_data(root, study)
     for mode in ("transcripts_blind", "transcripts_open"):
-        p = root / "data" / mode / slug / f"{sid}.json"
+        p = data / mode / slug / f"{sid}.json"
         if not p.exists():
             continue
         try:
@@ -96,7 +110,7 @@ def normalized_at(root: Path, slug: str, sid: str) -> str | None:
     return max(live) if live else None
 
 
-def regrade(root: Path, slug: str, sid: str, apply: bool) -> dict:
+def regrade(root: Path, slug: str, sid: str, apply: bool, study: str = "leaders") -> dict:
     """Orphan every grade for one recording so the loop makes fresh ones.
 
     A grade written AFTER the derived text was last normalized already
@@ -117,7 +131,7 @@ def regrade(root: Path, slug: str, sid: str, apply: bool) -> dict:
     cannot be judged this way and proceeds, because refusing on a missing
     field would silently stop withdrawing the older half of the corpus.
     """
-    grades = root / "data" / "grades"
+    grades = study_data(root, study) / "grades"
     hits = [p for p in grades.glob(f"*/{slug}/{sid}__*.json") if "_raw" not in p.parts]
     if not hits:
         already = list(grades.glob(f"*/{slug}/{sid}__*.json.orphaned"))
@@ -126,7 +140,7 @@ def regrade(root: Path, slug: str, sid: str, apply: bool) -> dict:
                     "count": len(already)}
         return {"status": "failed", "detail": "no grades found for this recording"}
 
-    stamp = normalized_at(root, slug, sid)
+    stamp = normalized_at(root, slug, sid, study)
     if stamp:
         graded = []
         for p in hits:
@@ -145,7 +159,11 @@ def regrade(root: Path, slug: str, sid: str, apply: bool) -> dict:
     return {"status": "done", "orphaned": sorted(str(p.relative_to(root)) for p in hits)}
 
 
-def run(root: Path, manifest: list[dict], apply: bool) -> dict:
+def run(root: Path, manifest: list[dict], apply: bool, study: str = "leaders") -> dict:
+    try:
+        study_data(root, study)
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSING: {exc}") from None
     tally = {"attempted": 0, "done": 0, "skipped": 0, "failed": 0, "entries": []}
     for e in manifest:
         for k in ("leader_slug", "source_id", "action"):
@@ -155,7 +173,7 @@ def run(root: Path, manifest: list[dict], apply: bool) -> dict:
             raise SystemExit(f"unknown action {e['action']!r} for {e['leader_slug']}/{e['source_id']}")
         tally["attempted"] += 1
         fn = retire if e["action"] == "retire" else regrade
-        r = fn(root, e["leader_slug"], e["source_id"], apply)
+        r = fn(root, e["leader_slug"], e["source_id"], apply, study)
         tally[r["status"]] += 1
         tally["entries"].append({"leader_slug": e["leader_slug"], "source_id": e["source_id"],
                                  "action": e["action"], **r})
@@ -167,14 +185,17 @@ def main() -> int:
     ap.add_argument("manifest")
     ap.add_argument("--apply", action="store_true", help="Perform the renames. Default is a dry run.")
     ap.add_argument("--root", default=str(REPO), help="Clone root; for tests.")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study)
     root = Path(args.root)
     manifest = json.loads(Path(args.manifest).read_text())
     if args.apply:
-        why = require_daemon_clone(root)
+        why = require_daemon_clone(root, args.study)
         if why:
             raise SystemExit(f"REFUSING TO APPLY: {why}. Only the clone that owns data/ writes it.")
-    tally = run(root, manifest, args.apply)
+    tally = run(root, manifest, args.apply, args.study)
     mode = "APPLIED" if args.apply else "DRY RUN"
     print(f"{mode}: attempted {tally['attempted']}, done {tally['done']}, "
           f"skipped {tally['skipped']}, failed {tally['failed']}")

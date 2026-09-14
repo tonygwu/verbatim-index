@@ -31,8 +31,13 @@ def main() -> int:
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--aliases", required=True)
     ap.add_argument("--repairs", required=True)
-    ap.add_argument("--report", default="data/logs/manifest_report.json")
+    ap.add_argument("--report", default=None, help="Default: <study data>/logs/manifest_report.json.")
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study)
+    args.report = args.report or f"{SP.data_link(args.study)}/logs/manifest_report.json"
+    SP.guard(args.study, args.sources, args.manifest, args.aliases, args.repairs, args.report)
 
     payload = json.loads(Path(args.sources).read_text())
     leaders = payload["leaders"] if isinstance(payload, dict) else payload

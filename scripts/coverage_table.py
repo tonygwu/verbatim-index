@@ -73,13 +73,20 @@ def pct(num: int, den: int) -> float | None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=None)
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    # Every path below is under the study's own data link, read relative to the
+    # working directory as before.
+    SP.guard(args.study)
+    D = Path(SP.data_link(args.study))
+    SP.guard(args.study, D)
 
-    roster = json.loads(Path("data/roster/final.json").read_text())["roster"]
+    roster = json.loads((D / "roster/final.json").read_text())["roster"]
 
     # 1. identified: ranked candidates the discovery step produced
     identified: Counter = Counter()
-    mf = Path("data/sources/all.jsonl")
+    mf = D / "sources/all.jsonl"
     if mf.exists():
         for line in mf.read_text().splitlines():
             if line.strip():
@@ -88,7 +95,7 @@ def main() -> int:
     # made IDENT look like a ceiling it is not, and would eventually show a
     # leader with FETCH above IDENT, which reads as a bug rather than a
     # second source.
-    hsf = Path("data/sources/happyscribe_candidates.json")
+    hsf = D / "sources/happyscribe_candidates.json"
     if hsf.exists():
         hs = json.loads(hsf.read_text())
         if isinstance(hs, dict):
@@ -101,7 +108,7 @@ def main() -> int:
     # source to <id>.json.superseded, so those are appearances we DID obtain
     # and then found to be re-uploads of another appearance.
     retired: Counter = Counter()
-    tdir0 = Path("data/transcripts")
+    tdir0 = D / "transcripts"
     if tdir0.exists():
         for p in tdir0.rglob("*.superseded"):
             retired[p.parent.name] += 1
@@ -109,7 +116,7 @@ def main() -> int:
     fetched: Counter = Counter()
     from_yt: Counter = Counter()
     from_hs: Counter = Counter()
-    tdir = Path("data/transcripts")
+    tdir = D / "transcripts"
     if tdir.exists():
         for p in tdir.rglob("*.json"):
             if p.name.endswith(".tmp"):
@@ -124,7 +131,7 @@ def main() -> int:
     # 3. gated: QA verdict of pass or review; reject does not reach a judge
     gated: Counter = Counter()
     rejected: Counter = Counter()
-    qf = Path("data/logs/transcript_qa.json")
+    qf = D / "logs/transcript_qa.json"
     if qf.exists():
         for r in json.loads(qf.read_text())["reports"]:
             if r["verdict"] == "reject":
@@ -142,7 +149,7 @@ def main() -> int:
     calls: Counter = Counter()
     calls_by_judge: Counter = Counter()
     seen_judges: set[str] = set()
-    gdir = Path("data/grades")
+    gdir = D / "grades"
     if gdir.exists():
         for d in gdir.iterdir():
             if d.is_dir() and d.name != "_raw":
@@ -184,7 +191,7 @@ def main() -> int:
 
     # Scores, where they exist yet
     scores: dict[str, dict] = {}
-    rf = Path("data/results.json")
+    rf = D / "results.json"
     if rf.exists():
         res = json.loads(rf.read_text())
         # "unranked" leaders are scored but under the rank floor; the coverage

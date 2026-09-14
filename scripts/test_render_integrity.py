@@ -299,7 +299,7 @@ def test_render_failure_is_loud() -> None:
           "BUILD_SITE FAILED" in src,
           "results.json current and the page stale is a different state")
     check("the failing stage prints the last line of the error log",
-          "tail -n 1 data/logs/grade_loop.err" in src,
+          "tail -n 1 $DATA/logs/grade_loop.err" in src,
           "the traceback stays in a file nobody reads until something looks wrong")
     check("consecutive render failures are counted",
           "render_fail=0" in src and "render_fail=$((render_fail + 1))" in src)

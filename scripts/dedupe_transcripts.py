@@ -142,8 +142,11 @@ def quality(rec: dict) -> tuple:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--youtube", default="data/transcripts")
-    ap.add_argument("--happyscribe", default="data/transcripts_hs")
+    # Path defaults come from the study, because happyscribe_loop.sh calls this
+    # with no path flags at all. For leaders they are the same data/ paths as
+    # before.
+    ap.add_argument("--youtube", default=None, help="Default: <study data>/transcripts.")
+    ap.add_argument("--happyscribe", default=None, help="Default: <study data>/transcripts_hs.")
     ap.add_argument("--merge", action="store_true",
                     help="Copy non-duplicate Happy Scribe transcripts into the YouTube "
                          "directory, which is the one the rest of the pipeline reads.")
@@ -152,13 +155,22 @@ def main() -> int:
                     help="Deduplicate the merged corpus against ITSELF, regardless of source. "
                          "Catches the same talk re-uploaded to several YouTube channels, which "
                          "the cross-source pass never compares.")
-    ap.add_argument("--grades", default="data/grades",
+    ap.add_argument("--grades", default=None,
                     help="Grades directory to orphan retired transcripts' grades from. "
                          "Must match the corpus in --youtube; the two used to be able to "
-                         "disagree, because this path was hardcoded.")
-    ap.add_argument("--out", default="data/logs/dedupe.json")
+                         "disagree, because this path was hardcoded. Default: <study data>/grades.")
+    ap.add_argument("--out", default=None, help="Default: <study data>/logs/dedupe.json.")
     ap.add_argument("--threshold", type=float, default=DUP_THRESHOLD)
+    import study_profile as SP
+    SP.add_study_arg(ap)
     args = ap.parse_args()
+    SP.guard(args.study)
+    link = SP.data_link(args.study)
+    args.youtube = args.youtube or f"{link}/transcripts"
+    args.happyscribe = args.happyscribe or f"{link}/transcripts_hs"
+    args.grades = args.grades or f"{link}/grades"
+    args.out = args.out or f"{link}/logs/dedupe.json"
+    SP.guard(args.study, args.youtube, args.happyscribe, args.grades, args.out)
     if not (args.merge or args.report):
         args.report = True
 

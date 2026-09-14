@@ -151,9 +151,11 @@ def main():
         (a / 'scripts').mkdir()
         (a / '.venv/bin').mkdir(parents=True)
         (a / '.venv/bin/python').symlink_to(sys.executable)
-        for name in ('data_clone_workflow.py', 'daemon_guard.sh', 'deploy_source.sh',
+        for name in ('data_clone_workflow.py', 'study_profile.py', 'daemon_guard.sh', 'deploy_source.sh',
                      'deploy.sh', 'deploy_predictions.sh'):
             shutil.copy2(REPO / 'scripts' / name, a / 'scripts' / name)
+        # data_clone_workflow resolves the production key through the study profile.
+        shutil.copytree(REPO / 'profiles', a / 'profiles')
         p = run('bash', '-c', '. scripts/daemon_guard.sh; require_daemon_clone', cwd=a, ok=False)
         assert p.returncode and 'experiment' in p.stderr
         for script in ('deploy.sh', 'deploy_predictions.sh'):

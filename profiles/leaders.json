@@ -1,0 +1,10 @@
+{
+  "study_id": "leaders",
+  "description": "Verbatim Index: technology business leaders. The original study; its data checkout carries no .study marker, so a tree without one is treated as this study.",
+  "data_link": "data",
+  "site_dir": "site",
+  "publication_site": "leaderboard",
+  "production_data_key": "verbatim.productionData",
+  "data_remote_name": null,
+  "study_marker_required": false
+}

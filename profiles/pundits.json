@@ -1,0 +1,10 @@
+{
+  "study_id": "pundits",
+  "description": "Verbatim Pundits: political pundits and journalists, scored on intellectual honesty. Its private checkout must carry a .study marker naming this study and an origin named verbatim-pundits-data.",
+  "data_link": "data-pundits",
+  "site_dir": "site-pundits",
+  "publication_site": "pundits",
+  "production_data_key": "verbatim.pundits.productionData",
+  "data_remote_name": "verbatim-pundits-data",
+  "study_marker_required": true
+}

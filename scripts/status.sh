@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # One screen showing where each independent stage stands, and what to run next.
+#
+#   bash scripts/status.sh                 # leaders
+#   STUDY=pundits bash scripts/status.sh   # another study's checkout
 set -uo pipefail
 cd "$(dirname "$0")/.."
+. scripts/study_env.sh || exit 1
 PY=.venv/bin/python
 
 b(){ printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 BRIEF=0
 [ "${1:-}" = "--brief" ] && BRIEF=1
+
+printf '\n  study: %s  (data: %s)\n' "$STUDY" "$DATA"
 
 # The flag file lags reality. It is only written after a failed probe at the
 # TOP of a cycle, so while the loop is mid-pass the flag can read clear for
@@ -31,9 +37,9 @@ else
   printf '\n\033[1;32m  youtube: CLEAR\033[0m  (live probe)\n'
 fi
 
-if [ -f data/logs/NEEDS_IP_ROTATION ]; then
+if [ -f $DATA/logs/NEEDS_IP_ROTATION ]; then
   printf '  (loop also has a stale rotation flag from: '
-  printf '  %s\n' "$(cat data/logs/NEEDS_IP_ROTATION)"
+  printf '  %s\n' "$(cat $DATA/logs/NEEDS_IP_ROTATION)"
   printf '  The fetch loop re-probes every 60s and resumes on its own once the IP changes.\n'
 fi
 
@@ -41,6 +47,8 @@ b "PROCESSES"
 # Three independent daemons, not one. happyscribe_loop was missing entirely,
 # and "grading" checked for the grade.py SUBPROCESS rather than the daemon, so
 # it read "stopped" in the gaps between judge calls while the loop was alive.
+# pgrep cannot tell which study a loop serves; the run markers under this
+# study's data are the authority for fetchers, and are what grade_loop reads.
 for L in fetch_loop happyscribe_loop grade_loop; do
   case "$L" in
     fetch_loop)       desc="youtube captions (needs VPN)" ;;
@@ -48,7 +56,7 @@ for L in fetch_loop happyscribe_loop grade_loop; do
     grade_loop)       desc="grading + render" ;;
   esac
   if pgrep -f "$L.sh" >/dev/null; then
-    printf "  %-18s RUNNING  pid %-7s %s\n" "$L" "$(pgrep -f "$L.sh" | head -1)" "$desc"
+    printf "  %-18s RUNNING  pid %-7s %s (any study)\n" "$L" "$(pgrep -f "$L.sh" | head -1)" "$desc"
   else
     printf "  %-18s stopped           %s\n" "$L" "$desc"
   fi
@@ -58,14 +66,15 @@ printf "  %-18s %s judge call(s) in flight right now\n" "" "$inflight"
 
 b "FETCH"
 $PY - <<'PYEOF'
-import json
+import json, os
 from collections import Counter
 from pathlib import Path
-roster = [r["slug"] for r in json.loads(Path("data/roster/final.json").read_text())["roster"]]
-counts = {s: len(list((Path("data/transcripts") / s).glob("*.json"))) for s in roster}
+D = Path(os.environ["DATA"])
+roster = [r["slug"] for r in json.loads((D / "roster/final.json").read_text())["roster"]]
+counts = {s: len(list((D / "transcripts" / s).glob("*.json"))) for s in roster}
 total = sum(counts.values())
 words = 0
-for p in Path("data/transcripts").rglob("*.json"):
+for p in (D / "transcripts").rglob("*.json"):
     try: words += json.loads(p.read_text()).get("word_count", 0)
     except Exception: pass
 dist = Counter(counts.values())
@@ -81,9 +90,9 @@ PYEOF
 
 # Error taxonomy across every cycle, so a broken component reads as broken
 # rather than as slow.
-if ls data/logs/fetch_errors_cycle*.jsonl >/dev/null 2>&1; then
+if ls $DATA/logs/fetch_errors_cycle*.jsonl >/dev/null 2>&1; then
   printf "  recent errors      "
-  cat data/logs/fetch_errors_cycle*.jsonl 2>/dev/null \
+  cat $DATA/logs/fetch_errors_cycle*.jsonl 2>/dev/null \
     | $PY -c "
 import sys, json
 from collections import Counter
@@ -96,10 +105,10 @@ fi
 
 b "GRADING"
 $PY - <<'PYEOF'
-import json
+import json, os
 from collections import Counter
 from pathlib import Path
-root = Path("data/grades")
+root = Path(os.environ["DATA"]) / "grades"
 if not root.exists():
     print("  no grades yet")
 else:
@@ -135,7 +144,7 @@ PYEOF
 
 b "ANTIGRAVITY (gemini judge)"
 $PY - <<'PYEOF'
-import json, re
+import json, os, re
 from pathlib import Path
 
 # Profiles are a glob, never a hardcoded list of accounts: this machine has
@@ -168,9 +177,10 @@ print("                    rotation is round-robin and a stop shows as auth_or_q
 
 # Backfill progress. An uneven judge mix is what calibration cannot fix, so the
 # arm may only be promoted once this reaches the full corpus.
-corpus = {(p.parent.name, p.stem) for p in Path("data/transcripts_blind").rglob("*.json")}
+D = Path(os.environ["DATA"])
+corpus = {(p.parent.name, p.stem) for p in (D / "transcripts_blind").rglob("*.json")}
 graded = set()
-gd = Path("data/grades/gemini")
+gd = D / "grades" / "gemini"
 if gd.is_dir():
     for p in gd.rglob("*.json"):
         if "_raw" in p.parts: continue
@@ -199,15 +209,18 @@ if [ "$BRIEF" -eq 0 ]; then
 fi
 
 b "NEXT"
-n=$(find data/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+n=$(find $DATA/transcripts -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
 if [ "${n:-0}" -lt 40 ]; then
   echo "  wait for the fetch loop. start it if stopped:"
-  echo "    nohup bash scripts/fetch_loop.sh > data/logs/fetch_loop.log 2>&1 &"
-else
+  echo "    STUDY=$STUDY nohup bash scripts/fetch_loop.sh > $DATA/logs/fetch_loop.log 2>&1 &"
+elif [ "$STUDY" = "leaders" ]; then
   echo "  enough transcripts to grade. these are independent of fetching:"
   echo "    STAGES=\"3 4\" bash scripts/run_pipeline.sh          # qa + blind"
   echo "    STAGES=\"5\"   WORKERS=10 bash scripts/run_pipeline.sh # blinded grading"
   echo "    STAGES=\"6\"   WORKERS=10 bash scripts/run_pipeline.sh # unblinded, halo only"
   echo "    STAGES=\"7 8\" bash scripts/run_pipeline.sh          # aggregate + render"
+else
+  echo "  enough transcripts to grade:"
+  echo "    STUDY=$STUDY nohup bash scripts/grade_loop.sh > $DATA/logs/grade_loop.log 2>&1 &"
 fi
 echo

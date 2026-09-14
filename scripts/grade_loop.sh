@@ -16,8 +16,14 @@
 #   aggregate+render cheap, gives an always-current leaderboard
 #
 #   nohup bash scripts/grade_loop.sh > data/logs/grade_loop.log 2>&1 &
+#   STUDY=pundits nohup bash scripts/grade_loop.sh > data-pundits/logs/grade_loop.log 2>&1 &
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+# Which study this loop grades, and where its data lives. Every path below is
+# under $DATA, so a loop can only ever read and write its own study's checkout.
+# The Python stages inherit the exported STUDY and check every path again.
+. scripts/study_env.sh || exit 1
 
 # Every clone shares one data/ checkout, so a loop started in the wrong clone
 # writes the live corpus rather than a private copy.
@@ -89,16 +95,22 @@ IDLE_EXIT="${IDLE_EXIT:-3}"            # consecutive no-op cycles with fetch gon
 # Reaching this point already proves the board is not stale: render_fail > 0
 # exits 1 above, before the COMPLETE line.
 PUBLISH_ON_COMPLETE="${PUBLISH_ON_COMPLETE:-0}"
+# scripts/deploy.sh publishes the leaders site and nothing else. Refused at the
+# start rather than at the end of a grading run that may take days.
+if [ "$PUBLISH_ON_COMPLETE" = "1" ] && [ "$STUDY" != "leaders" ]; then
+  echo "REFUSING TO START: PUBLISH_ON_COMPLETE=1 publishes through the leaders deploy script, and the '$STUDY' study has no deploy script yet." >&2
+  exit 1
+fi
 
 stamp(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
 say(){ printf '[%s] %s\n' "$(stamp)" "$*"; }
-count_tx(){ find data/transcripts -name '*.json' ! -name '*.tmp' 2>/dev/null | wc -l | tr -d ' '; }
-count_grades(){ find data/grades -name '*.json' ! -name '*.tmp' -not -path '*/_raw/*' 2>/dev/null | wc -l | tr -d ' '; }
+count_tx(){ find $DATA/transcripts -name '*.json' ! -name '*.tmp' 2>/dev/null | wc -l | tr -d ' '; }
+count_grades(){ find $DATA/grades -name '*.json' ! -name '*.tmp' -not -path '*/_raw/*' 2>/dev/null | wc -l | tr -d ' '; }
 
 idle=0
 cycle=0
 render_fail=0   # consecutive cycles whose leaderboard rebuild did not complete
-say "grade loop started. ${WORKERS} workers, blinded judges ${BLIND_JUDGES}, unblinded on ${OPEN_PER_LEADER}/leader"
+say "grade loop started for study ${STUDY} (${DATA}). ${WORKERS} workers, blinded judges ${BLIND_JUDGES}, unblinded on ${OPEN_PER_LEADER}/leader"
 [ -n "$FABLE_ACCOUNTS" ] && say "  Fable pinned to accounts: ${FABLE_ACCOUNTS}"
 
 while true; do
@@ -120,13 +132,13 @@ while true; do
   #    so a re-upload was routinely graded before the next sweep saw it. On
   #    2026-09-07 the corpus held 16 duplicates the sweep would have retired.
   say "  sweeping the corpus for duplicate appearances"
-  if $PY scripts/dedupe_transcripts.py --sweep --grades data/grades \
-       --out data/logs/dedupe_sweep_pass.json \
-       >data/logs/dedupe_sweep.json 2>>data/logs/grade_loop.err; then
-    cat data/logs/dedupe_sweep.json >> data/logs/dedupe_sweep.log
-    say "  $($PY -c "import json; d=json.load(open('data/logs/dedupe_sweep.json')); print(f\"retired {d['sweep_retired']} duplicates, orphaned {d['orphaned_grades_removed']} grades\")" 2>/dev/null || echo 'sweep report unreadable')"
+  if $PY scripts/dedupe_transcripts.py --sweep --grades $DATA/grades \
+       --out $DATA/logs/dedupe_sweep_pass.json \
+       >$DATA/logs/dedupe_sweep.json 2>>$DATA/logs/grade_loop.err; then
+    cat $DATA/logs/dedupe_sweep.json >> $DATA/logs/dedupe_sweep.log
+    say "  $($PY -c "import json; d=json.load(open('$DATA/logs/dedupe_sweep.json')); print(f\"retired {d['sweep_retired']} duplicates, orphaned {d['orphaned_grades_removed']} grades\")" 2>/dev/null || echo 'sweep report unreadable')"
   else
-    say "  SWEEP FAILED, nothing retired this cycle; see data/logs/grade_loop.err"
+    say "  SWEEP FAILED, nothing retired this cycle; see $DATA/logs/grade_loop.err"
   fi
 
   # 2. Quality gates, then blind and un-blind. Both re-run over everything and
@@ -134,20 +146,20 @@ while true; do
   #    --grades lets normalize withdraw the grades of a transcript that has left
   #    the corpus. Without it the appearance keeps scoring, because aggregate.py
   #    reads data/grades and never looks at the blinded directory.
-  $PY scripts/qa_transcripts.py --transcripts data/transcripts \
-      --roster data/roster/final.json --glossaries data/sources/aliases.json \
-      --out data/logs/transcript_qa.json > /dev/null 2>>data/logs/grade_loop.err
+  $PY scripts/qa_transcripts.py --transcripts $DATA/transcripts \
+      --roster $DATA/roster/final.json --glossaries $DATA/sources/aliases.json \
+      --out $DATA/logs/transcript_qa.json > /dev/null 2>>$DATA/logs/grade_loop.err
   norm_ok=1
   for mode in blinded open; do
-    out=data/transcripts_blind; [ "$mode" = open ] && out=data/transcripts_open
+    out=$DATA/transcripts_blind; [ "$mode" = open ] && out=$DATA/transcripts_open
     if ! $PY scripts/normalize_transcripts.py --mode "$mode" \
-        --transcripts data/transcripts --out "$out" \
-        --roster data/roster/final.json --repairs data/sources/repairs.json \
-        --aliases data/sources/aliases.json --qa data/logs/transcript_qa.json \
-        --grades data/grades \
-        --log "data/logs/normalize_${mode}.json" > /dev/null 2>>data/logs/grade_loop.err; then
+        --transcripts $DATA/transcripts --out "$out" \
+        --roster $DATA/roster/final.json --repairs $DATA/sources/repairs.json \
+        --aliases $DATA/sources/aliases.json --qa $DATA/logs/transcript_qa.json \
+        --grades $DATA/grades \
+        --log "$DATA/logs/normalize_${mode}.json" > /dev/null 2>>$DATA/logs/grade_loop.err; then
       norm_ok=0
-      say "  NORMALIZE FAILED for ${mode}; see data/logs/grade_loop.err and data/logs/normalize_${mode}.json"
+      say "  NORMALIZE FAILED for ${mode}; see $DATA/logs/grade_loop.err and $DATA/logs/normalize_${mode}.json"
     fi
   done
   if [ "$norm_ok" -eq 0 ]; then
@@ -157,16 +169,16 @@ while true; do
     say "  skipping this cycle's grading because normalize did not complete"
     sleep "$CYCLE_SLEEP"; continue
   fi
-  ready=$(find data/transcripts_blind -name '*.json' ! -name '*.tmp' 2>/dev/null | wc -l | tr -d ' ')
+  ready=$(find $DATA/transcripts_blind -name '*.json' ! -name '*.tmp' 2>/dev/null | wc -l | tr -d ' ')
   say "  ${ready} transcripts passed QA and are ready to grade"
 
   # 3. Blinded grading. This is the published score, so it covers everything.
   say "  blinded grading pass"
-  $PY scripts/grade.py --transcripts data/transcripts_blind --roster data/roster/final.json \
-      --out data/grades --judges "$BLIND_JUDGES" --modes blinded --repeats 1 \
-      --workers "$WORKERS" --errors data/logs/grade_errors_blind.jsonl --timeout 2400 \
+  $PY scripts/grade.py --transcripts $DATA/transcripts_blind --roster $DATA/roster/final.json \
+      --out $DATA/grades --judges "$BLIND_JUDGES" --modes blinded --repeats 1 \
+      --workers "$WORKERS" --errors $DATA/logs/grade_errors_blind.jsonl --timeout 2400 \
       --fable-accounts "$FABLE_ACCOUNTS" \
-      >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
+      >> $DATA/logs/grade_loop.out 2>>$DATA/logs/grade_loop.err
 
   # 4. Unblinded, on a bounded subset. Only needed to size the reputation halo,
   #    so it must stay small: it competes with the blinded pass for the same
@@ -175,12 +187,12 @@ while true; do
     say "  unblinded grading pass SKIPPED (OPEN_PER_LEADER=0)"
   else
     say "  unblinded grading pass (${OPEN_PER_LEADER}/leader)"
-    $PY scripts/grade.py --transcripts data/transcripts_open --roster data/roster/final.json \
-        --out data/grades --judges fable,astra --modes open --repeats 1 \
+    $PY scripts/grade.py --transcripts $DATA/transcripts_open --roster $DATA/roster/final.json \
+        --out $DATA/grades --judges fable,astra --modes open --repeats 1 \
         --limit-per-leader "$OPEN_PER_LEADER" \
-        --workers "$WORKERS" --errors data/logs/grade_errors_open.jsonl --timeout 2400 \
+        --workers "$WORKERS" --errors $DATA/logs/grade_errors_open.jsonl --timeout 2400 \
         --fable-accounts "$FABLE_ACCOUNTS" \
-        >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err
+        >> $DATA/logs/grade_loop.out 2>>$DATA/logs/grade_loop.err
   fi
 
   # 5. Always leave a current leaderboard behind, even mid-run.
@@ -196,21 +208,21 @@ while true; do
   #    Each stage now names its own failure, the run of failures is counted,
   #    and the loop refuses to call itself complete over a board it could not
   #    rebuild.
-  if ! $PY scripts/aggregate.py --grades data/grades --roster data/roster/final.json \
-        --transcripts data/transcripts_blind --out data/results.json \
-        > /dev/null 2>>data/logs/grade_loop.err; then
+  if ! $PY scripts/aggregate.py --grades $DATA/grades --roster $DATA/roster/final.json \
+        --transcripts $DATA/transcripts_blind --out $DATA/results.json \
+        > /dev/null 2>>$DATA/logs/grade_loop.err; then
     render_fail=$((render_fail + 1))
-    say "  AGGREGATE FAILED (${render_fail} cycle(s) in a row). data/results.json and"
-    say "    site/index.html both still hold the last build that succeeded."
-    say "    last line of data/logs/grade_loop.err: $(tail -n 1 data/logs/grade_loop.err)"
-  elif ! $PY scripts/build_site.py --results data/results.json --audit data/results_audit.json \
-        --roster data/roster/final.json --calibration data/logs/calibration.json \
-        --sources data/sources/discovered.json --out site/index.html \
-        >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err; then
+    say "  AGGREGATE FAILED (${render_fail} cycle(s) in a row). $DATA/results.json and"
+    say "    $SITE_DIR/index.html both still hold the last build that succeeded."
+    say "    last line of $DATA/logs/grade_loop.err: $(tail -n 1 $DATA/logs/grade_loop.err)"
+  elif ! $PY scripts/build_site.py --results $DATA/results.json --audit $DATA/results_audit.json \
+        --roster $DATA/roster/final.json --calibration $DATA/logs/calibration.json \
+        --sources $DATA/sources/discovered.json --out $SITE_DIR/index.html \
+        >> $DATA/logs/grade_loop.out 2>>$DATA/logs/grade_loop.err; then
     render_fail=$((render_fail + 1))
-    say "  BUILD_SITE FAILED (${render_fail} cycle(s) in a row). data/results.json is current,"
-    say "    site/index.html is NOT, so the two now disagree."
-    say "    last line of data/logs/grade_loop.err: $(tail -n 1 data/logs/grade_loop.err)"
+    say "  BUILD_SITE FAILED (${render_fail} cycle(s) in a row). $DATA/results.json is current,"
+    say "    $SITE_DIR/index.html is NOT, so the two now disagree."
+    say "    last line of $DATA/logs/grade_loop.err: $(tail -n 1 $DATA/logs/grade_loop.err)"
   else
     if [ "$render_fail" -gt 0 ]; then
       say "  render RECOVERED after ${render_fail} failed cycle(s)"
@@ -242,32 +254,33 @@ while true; do
         # failed 58 times is what let 2026-09-09 go unnoticed for 13 hours.
         if [ "$render_fail" -gt 0 ]; then
           say "STOPPING ON A STALE LEADERBOARD: nothing left to grade, but the rebuild has"
-          say "  failed ${render_fail} cycle(s) in a row. site/index.html is the last build that"
+          say "  failed ${render_fail} cycle(s) in a row. $SITE_DIR/index.html is the last build that"
           say "  succeeded, NOT these ${g1} grades. Fix the render, then re-run:"
           say "  bash scripts/deploy.sh --refresh"
-          say "  see data/logs/grade_loop.err"
+          say "  see $DATA/logs/grade_loop.err"
           exit 1
         fi
         if [ "$PUBLISH_ON_COMPLETE" = "1" ]; then
           # Plain deploy.sh, NOT --refresh. This cycle already aggregated and
           # rendered, so results.json is current; --refresh would re-aggregate
           # and also carries the daemon-clone precondition, which this does not
-          # need. deploy.sh stays read-only on data/.
+          # need. deploy.sh stays read-only on data/. Only the leaders study
+          # reaches this: any other study was refused at the start.
           say "  PUBLISH_ON_COMPLETE=1: publishing ${g1} grades to the live site"
-          if bash scripts/deploy.sh --production-data data --data-revision "$(git -C data rev-parse HEAD)" >> data/logs/grade_loop.out 2>>data/logs/grade_loop.err; then
+          if bash scripts/deploy.sh --production-data $DATA --data-revision "$(git -C $DATA rev-parse HEAD)" >> $DATA/logs/grade_loop.out 2>>$DATA/logs/grade_loop.err; then
             say "  published. live site now matches this build"
           else
             # Grading succeeded and the board on disk is good; only the push
             # failed. Say which, and exit non-zero so it is not mistaken for a
             # clean finish. Silence here would recreate the bug this replaces.
-            say "PUBLISH FAILED: grading finished and site/index.html is current on disk,"
+            say "PUBLISH FAILED: grading finished and $SITE_DIR/index.html is current on disk,"
             say "  but the deploy did not complete, so the LIVE site is unchanged."
-            say "  last line of data/logs/grade_loop.err: $(tail -n 1 data/logs/grade_loop.err)"
+            say "  last line of $DATA/logs/grade_loop.err: $(tail -n 1 $DATA/logs/grade_loop.err)"
             say '  retry by hand: bash scripts/deploy.sh --production-data data --data-revision "$(git -C data rev-parse HEAD)"'
             exit 1
           fi
         fi
-        say "COMPLETE: nothing left to grade. leaderboard at site/index.html"
+        say "COMPLETE: nothing left to grade. leaderboard at $SITE_DIR/index.html"
         exit 0
       fi
     fi
