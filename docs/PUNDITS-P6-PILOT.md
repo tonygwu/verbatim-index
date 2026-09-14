@@ -115,8 +115,20 @@ listing entries during discovery, then caption and metadata requests. All 16
 unavailable videos are Ana Kasparian's. They are probably members-only TYT uploads,
 which bears on her supply.
 
-Retry: 45 minutes of cool-down, then 2 workers at 8 to 60 seconds between
-requests, written to `logs/pilot/fetch_errors_retry1.jsonl`.
+Retry 1, at 09:41Z after 45 minutes of cool-down, with 2 workers at 8 to 60
+seconds between requests, gained nothing:
+
+```
+attempted 240   newly_fetched 0   cached 22   failed 218
+error_taxonomy: ip_blocked_or_ratelimited 202, video_unavailable 16
+```
+
+The IP is still blocked. `scripts/fetch_loop.sh` records the repo's lesson
+here: the fix is a new IP, not patience, and probing through a block recovers
+windows that reopen within minutes. So a bounded background loop now sends one
+caption `fetch()` probe every 10 minutes. It runs the pilot fetch as soon as a
+probe clears, and it stops at 15:30Z. The operator can end the block at once by
+rotating the VPN to a new exit.
 
 ## Automatic pre-check on the 22 fetched records
 
