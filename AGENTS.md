@@ -1236,6 +1236,13 @@ new grades incomparable with the corpus already graded.
   decision; searched grades are kept and measured, never discarded. Under the sandbox,
   Gemini accepts HOME profiles only. Leaders judge argv is unchanged. Proof:
   `.venv/bin/python scripts/test_pundits_harness.py`.
+- Pundits roster (P6): `data-pundits/roster/final.json` holds only public fields. Lean
+  labels live in `data-pundits/private/lean_labels.json` as `{slug: lean}`, the shape
+  `scripts/schedule.py` reads, and their cited outside sources live in
+  `data-pundits/private/lean_sources.json`. Never copy a lean field into the roster,
+  a prompt or a public commit. Check all three files before any discovery run:
+  `.venv/bin/python scripts/pundits_roster.py --study pundits --roster data-pundits/roster/final.json --lean-labels data-pundits/private/lean_labels.json --lean-sources data-pundits/private/lean_sources.json`.
+  Proof: `.venv/bin/python scripts/test_pundits_roster.py`.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`
