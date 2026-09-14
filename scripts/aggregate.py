@@ -56,6 +56,33 @@ SUB_GROUPS = {
     "d2_insight": ["I1", "I2", "I3", "I4", "I5", "I6", "I7"],
     "d3_technical_depth": ["T1", "T2", "T3", "T4"],
 }
+
+
+def configure_scoring(profile: dict) -> None:
+    """Take the dimensions, labels, weights and sub-criteria from the study's profile.
+
+    The four module names above are the leaders rubric, and every function in
+    this file reads them at call time, so rebinding them here is what makes one
+    aggregation serve both studies. profiles/leaders.json carries exactly these
+    values, pinned by scripts/test_profile_scoring.py, so a leaders run is
+    unchanged. A profile with no scoring block is refused: guessing a rubric's
+    dimensions would score a corpus under the wrong definition.
+    """
+    global DIMS, DIM_LABEL, WEIGHTS, SUB_GROUPS
+    scoring = profile.get("scoring")
+    if not isinstance(scoring, dict) or not scoring.get("dimensions"):
+        raise RuntimeError(f"profile {profile.get('study_id')!r} has no scoring block, so aggregation "
+                           f"cannot know its dimensions")
+    dims = scoring["dimensions"]
+    total = sum(float(d["weight"]) for d in dims)
+    if abs(total - 1.0) > 1e-9:
+        raise RuntimeError(f"profile {profile.get('study_id')!r} scoring weights sum to {total}, not 1")
+    DIMS = [d["key"] for d in dims]
+    DIM_LABEL = {d["key"]: d["label"] for d in dims}
+    WEIGHTS = {d["key"]: d["weight"] for d in dims}
+    SUB_GROUPS = {d["key"]: list(d["subcriteria"]) for d in dims}
+
+
 MIN_TRANSCRIPTS_FOR_CONFIDENCE = 3
 # The upper band. Named rather than typed inline, because the site explains this
 # rule to a reader and the explanation must be generated from the rule itself.
@@ -527,13 +554,30 @@ def main() -> int:
     # corpus holding ONE obsolete contract is refused too; the v1 check further
     # down only notices a MIX. No override: pooling across contracts is the
     # silent failure this exists to prevent.
-    if SP.load(args.study)["contract_version"] == 2:
+    try:
+        configure_scoring(SP.load(args.study))
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSING: {exc}") from None
+    is_v2 = SP.load(args.study)["contract_version"] == 2
+    if is_v2:
         import grading_contract as GC
         try:
             current = GC.contract_v2(SP.load(args.study))
         except RuntimeError as exc:
             raise SystemExit(f"REFUSING: {exc}") from None
         GC.refuse_incompatible(grades, current, set(by_slug))
+        # A contract v2 dimension can be "unsupported": too little evidence to
+        # score, recorded as a null score rather than a guessed number. Such a
+        # grade has no overall, so it cannot enter calibration or a mean; it is
+        # excluded here and counted, never averaged as a zero. Which transcripts
+        # still count as complete is decided per the plan's P5 rules.
+        for g in grades:
+            if g.get("_excluded") or g.get("refused"):
+                continue
+            gd = (g.get("grade") or {}).get("dimensions") or {}
+            if any((gd.get(k) or {}).get("dimension_status") == "unsupported"
+                   or (gd.get(k) or {}).get("score") is None for k in DIMS):
+                g["_excluded"] = "unsupported_dimension"
 
     # Split the shadow arms out FIRST, before filter_unscorable and before
     # calibrate(), so a shadow judge cannot move a published number by any
@@ -873,7 +917,9 @@ def main() -> int:
         "grade_files_read": grade_files_read,
         "grades_loaded": len(grades),
         "grades_used": len(usable),
-        "grades_excluded_validation": len(excluded),
+        "grades_excluded_validation": sum(1 for g in excluded if g["_excluded"] == "validation_errors"),
+        **({"grades_excluded_unsupported_dimension":
+            sum(1 for g in excluded if g["_excluded"] == "unsupported_dimension")} if is_v2 else {}),
         "transcripts_with_blinded_consensus": len(all_b),
         "judge_call_counts": {f"{j}_blinded": len(by_judge[j]) for j in judges_blinded},
         # Collected, reported, and deliberately NOT in any number above.

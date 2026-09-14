@@ -8,5 +8,18 @@
   "data_remote_name": null,
   "study_marker_required": false,
   "contract_version": 1,
-  "skill_dir": ".claude/skills/leader-transcript-grader"
+  "skill_dir": ".claude/skills/leader-transcript-grader",
+  "scoring": {
+    "dimensions": [
+      {"key": "d1_clarity", "label": "Clarity", "weight": 0.20,
+       "subcriteria": ["C1", "C2", "C3", "C4"]},
+      {"key": "d2_insight", "label": "Insight", "weight": 0.45,
+       "subcriteria": ["I1", "I2", "I3", "I4", "I5", "I6", "I7"]},
+      {"key": "d3_technical_depth", "label": "Technical depth", "weight": 0.35,
+       "subcriteria": ["T1", "T2", "T3", "T4"]}
+    ],
+    "min_scored_subcriteria_per_dimension": 1,
+    "min_subject_quotes_per_dimension": 1,
+    "max_quote_words": 25
+  }
 }
