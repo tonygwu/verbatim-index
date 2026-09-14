@@ -1243,6 +1243,14 @@ new grades incomparable with the corpus already graded.
   a prompt or a public commit. Check all three files before any discovery run:
   `.venv/bin/python scripts/pundits_roster.py --study pundits --roster data-pundits/roster/final.json --lean-labels data-pundits/private/lean_labels.json --lean-sources data-pundits/private/lean_sources.json`.
   Proof: `.venv/bin/python scripts/test_pundits_roster.py`.
+- Pundits discovery (P6): `scripts/discover_pundits.py`, never `discover_sources.py`, for
+  the pundits study. It lists each roster own channel by canonical id and requires the
+  full name or a handle plus a second identity token for any other channel; no surname
+  or fuzzy match. Flat listings carry no upload date, so the date window is applied
+  after fetch. Proof: `.venv/bin/python scripts/test_discover_pundits.py`.
+- P4d Fable tools-off measurement (SPENDS QUOTA with `--run`):
+  `scripts/p4d_fable_tools_off.py`. Result in `docs/PUNDITS-P4D-FABLE-TOOLS-OFF.md`:
+  12/12 valid, 95% interval [0, 26.5%], so not yet evidence of a low rate; P8a decides.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`
