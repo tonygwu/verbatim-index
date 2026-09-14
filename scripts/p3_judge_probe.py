@@ -104,42 +104,6 @@ def parse_lines(stdout: str) -> list[dict]:
     return events
 
 
-def fable_transcript_tools(config_dir: str, session_id: str | None) -> list[dict] | None:
-    """Every tool call in this Fable session and how it ended, from Claude Code's own transcript.
-
-    The JSON result is NOT enough evidence. MEASURED 2026-09-14, run
-    20260914T064552Z-7cfdb9: `permission_denials` came back empty while the
-    transcript showed WebSearch, WebFetch and Read each attempted and denied,
-    and a `whoami; hostname` Bash call that ran. The transcript records every
-    tool_use and the is_error flag of its result, so it is the record read.
-    Returns None when the transcript cannot be found; the caller treats that as
-    no evidence, never as a pass.
-    """
-    if not session_id:
-        return None
-    hits = list((Path(config_dir) / "projects").glob(f"*/{session_id}.jsonl"))
-    if not hits:
-        return None
-    uses, calls = {}, []
-    for line in hits[0].open(errors="ignore"):
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        content = (e.get("message") or {}).get("content")
-        if not isinstance(content, list):
-            continue
-        for c in content:
-            if c.get("type") == "tool_use":
-                uses[c.get("id")] = {"tool": c.get("name"), "input": json.dumps(c.get("input"))[:200]}
-            elif c.get("type") == "tool_result":
-                body = c.get("content")
-                body = body if isinstance(body, str) else json.dumps(body)
-                calls.append({**uses.get(c.get("tool_use_id"), {"tool": "?", "input": ""}),
-                              "is_error": bool(c.get("is_error")), "result": body[:200]})
-    return calls
-
-
 def run_fable(prompt: str, jail: Path, profile: str, config_dir: str, timeout: int,
               tools_off: bool = False) -> dict:
     env = dict(os.environ)
@@ -156,7 +120,7 @@ def run_fable(prompt: str, jail: Path, profile: str, config_dir: str, timeout: i
     used = payload.get("modelUsage") or {}
     served = [m for m in used if "fable" in m.lower()]
     stu = (payload.get("usage") or {}).get("server_tool_use") or {}
-    calls = fable_transcript_tools(config_dir, payload.get("session_id"))
+    calls = G.fable_transcript_tool_calls(config_dir, payload.get("session_id"))
     # ToolSearch only loads a tool's schema; it reaches nothing outside the session.
     reached = [c for c in (calls or []) if not c["is_error"] and c["tool"] != "ToolSearch"]
     call_error = "is_error" if payload.get("is_error") else ("transcript_missing" if calls is None else None)

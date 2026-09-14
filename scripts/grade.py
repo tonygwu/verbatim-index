@@ -85,6 +85,9 @@ E_SCHEMA = "schema_validation_failed"
 # Contract v2: a stored grade whose identity no longer matches the job that
 # would reuse it. Reported and left in place, never silently reused.
 E_STALE_CACHE = "cache_identity_mismatch"
+# Contract v2 Fable with tools removed: its session transcript, the only record
+# of tool calls that can be trusted, could not be found for the call.
+E_NO_TRANSCRIPT = "tool_audit_unavailable"
 E_MODEL_MISMATCH = "model_identity_mismatch"
 E_AUTH = "auth_or_quota"
 E_REFUSED = "judge_declined_to_score"
@@ -121,7 +124,7 @@ REFUSAL_TEXT_KEYS = ("reason", "status", "note", "error", "message", "explanatio
 #: first version enumerated a subset inline and silently relabelled the rest.
 ALL_ERROR_TYPES = (E_CLI, E_TIMEOUT, E_EMPTY, E_NOJSON, E_BADJSON, E_SCHEMA,
                    E_MODEL_MISMATCH, E_AUTH, E_REFUSED, E_TOOL_ATTEMPT, E_TRANSIENT,
-                   E_STALE_CACHE)
+                   E_STALE_CACHE, E_NO_TRANSCRIPT)
 
 
 def classify_exception_detail(detail: str) -> str:
@@ -688,6 +691,47 @@ def validate(obj: dict, expect_id: str) -> list[str]:
     return errs
 
 
+def sandbox_profile(root: Path) -> str:
+    """A sandbox-exec profile that denies every read and write under `root`.
+
+    The pundits harness (P3, decided 2026-09-14) runs each judge as the same
+    macOS user inside this profile, with `root` set to the verbatim-index
+    container that holds every clone and every data checkout. MEASURED: a judge
+    that tried to read a planted canary there, by its own file tool or by a
+    shell `cat`, got "Operation not permitted". Provider-side web search is not
+    affected and is accepted; see docs/PUNDITS-P3-PROBES.md.
+    """
+    return (f'(version 1)(allow default)'
+            f'(deny file-read* (subpath "{root}"))'
+            f'(deny file-write* (subpath "{root}"))')
+
+
+def sandbox_wrapper(root: Path | None) -> list[str]:
+    """argv prefix that runs a judge inside sandbox_profile(root); empty when root is None."""
+    return [] if root is None else ["sandbox-exec", "-p", sandbox_profile(Path(root))]
+
+
+def v2_harness(profile: dict, judge: str, sandbox_root: Path) -> dict:
+    """The harness a contract v2 study's profile asks for, for one judge.
+
+    Refuses anything it does not implement rather than running a judge under a
+    weaker harness than the contract describes: the contract hashes these
+    settings, so a silent downgrade would stamp grades with a false contract.
+    """
+    req = (profile.get("judge_requests") or {}).get(judge)
+    if not req:
+        raise RuntimeError(f"profile {profile.get('study_id')!r} has no judge_requests entry for {judge!r}")
+    if req.get("sandbox") != "sandbox_exec_deny_container":
+        raise RuntimeError(f"{judge}: unknown sandbox {req.get('sandbox')!r}; only "
+                           f"'sandbox_exec_deny_container' is implemented")
+    extra = list(req.get("extra_args") or [])
+    if judge != "fable" and extra:
+        raise RuntimeError(f"{judge}: extra_args {extra} are only implemented for the fable judge")
+    return {"wrapper": sandbox_wrapper(sandbox_root), "extra_args": extra,
+            "require_no_tools": req.get("tool_policy") == "no_builtin_tools",
+            "sandbox_root": str(sandbox_root)}
+
+
 def fable_command(prompt: str, binary: str) -> list[str]:
     """The judge invocation, in one place so the tool-block test checks the real thing.
 
@@ -723,8 +767,48 @@ def save_cli_response(path: Path | None, proc) -> None:
                                       "stderr": proc.stderr}, ensure_ascii=False) + "\n")
 
 
+def fable_transcript_tool_calls(config_dir: str, session_id: str | None) -> list[dict] | None:
+    """Every tool call in one Fable session and how it ended, from Claude Code's own transcript.
+
+    The JSON result is NOT evidence of tool use. MEASURED 2026-09-14 (P3 probe
+    run 20260914T064552Z-7cfdb9): `permission_denials` came back empty while the
+    transcript recorded WebSearch, WebFetch and Read each attempted and denied,
+    and a read-only `whoami; hostname` Bash call that ran. Returns None when the
+    transcript cannot be found; callers treat that as missing evidence, never as
+    a clean result.
+    """
+    if not session_id:
+        return None
+    base = Path.home() / ".claude" if config_dir == "__DEFAULT__" else Path(config_dir)
+    hits = list((base / "projects").glob(f"*/{session_id}.jsonl"))
+    if not hits:
+        return None
+    uses, calls = {}, []
+    for line in hits[0].open(errors="ignore"):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        content = (e.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for c in content:
+            if c.get("type") == "tool_use":
+                uses[c.get("id")] = {"tool": c.get("name"), "input": json.dumps(c.get("input"))[:200]}
+            elif c.get("type") == "tool_result":
+                body = c.get("content")
+                body = body if isinstance(body, str) else json.dumps(body)
+                calls.append({**uses.pop(c.get("tool_use_id"), {"tool": "?", "input": ""}),
+                              "is_error": bool(c.get("is_error")), "result": body[:200]})
+    # A tool_use with no result still counts: it was a call.
+    calls += [{**u, "is_error": None, "result": None} for u in uses.values()]
+    return calls
+
+
 def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude",
-               workdir: str | None = None, raw_response_path: Path | None = None) -> tuple[str, dict]:
+               workdir: str | None = None, raw_response_path: Path | None = None,
+               wrapper: list[str] | None = None, extra_args: list[str] | None = None,
+               require_no_tools: bool = False) -> tuple[str, dict]:
     """Run the Claude Fable 5.1 judge. Returns (text, telemetry).
 
     `binary` must be the plain `claude` CLI. The account is chosen here, per
@@ -739,7 +823,8 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
         env.pop("CLAUDE_CONFIG_DIR", None)
     else:
         env["CLAUDE_CONFIG_DIR"] = config_dir
-    cmd = fable_command(prompt, binary)
+    # Leaders passes neither, so its argv is exactly fable_command's.
+    cmd = [*(wrapper or []), *fable_command(prompt, binary), *(extra_args or [])]
     # Run outside the repository. The judge should not be standing in a
     # directory that contains the roster it is being blinded against.
     jail = Path(workdir) if workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "judge-jail"
@@ -771,6 +856,18 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
         "input_tokens": used[judge_models[0]].get("inputTokens"),
         "output_tokens": used[judge_models[0]].get("outputTokens"),
     }
+    if require_no_tools:
+        # Tools were removed, so ANY recorded call, denied or not, means the
+        # harness is not the one the contract describes.
+        calls = fable_transcript_tool_calls(config_dir, payload.get("session_id"))
+        if calls is None:
+            raise RuntimeError(f"{E_NO_TRANSCRIPT}: no session transcript for "
+                               f"{payload.get('session_id')!r} under {config_dir}, so the absence of "
+                               f"tool calls cannot be shown")
+        telemetry["transcript_tool_calls"] = len(calls)
+        if calls:
+            raise RuntimeError(f"{E_TOOL_ATTEMPT}: Fable made {len(calls)} tool call(s) with every "
+                               f"built-in tool removed: {json.dumps(calls[:3])[:400]}")
     return payload.get("result") or "", telemetry
 
 
@@ -792,14 +889,15 @@ def astra_command(prompt: str, model: str, out_file: Path) -> list[str]:
 
 
 def call_astra(prompt: str, timeout: int, workdir: Path,
-               model: str = "gpt-6-astra", raw_response_path: Path | None = None) -> tuple[str, dict]:
+               model: str = "gpt-6-astra", raw_response_path: Path | None = None,
+               wrapper: list[str] | None = None) -> tuple[str, dict]:
     """Run the Astra judge via codex exec. Returns (text, telemetry).
 
     `model` is a parameter because this arm falls back to another model when
     it refuses repeatedly. The served model is recorded in the telemetry, so
     aggregate.py can calibrate each model on its own distribution."""
     out_file = workdir / "astra_last_message.txt"
-    cmd = astra_command(prompt, model, out_file)
+    cmd = [*(wrapper or []), *astra_command(prompt, model, out_file)]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL, cwd=str(workdir))
     save_cli_response(raw_response_path, proc)
@@ -1367,7 +1465,7 @@ def count_gemini_tool_events(events: list[dict]) -> tuple[dict[str, int], list[s
 
 def call_gemini(prompt: str, profile_home: str, timeout: int,
                 workdir: str | None = None, model: str = GEMINI_MODEL,
-                binary: str = "agy") -> tuple[str, dict]:
+                binary: str = "agy", wrapper: list[str] | None = None) -> tuple[str, dict]:
     """Run the Gemini 3.8 Flash judge via the Antigravity CLI. Returns (text, telemetry).
 
     The account is chosen here, per call, by setting HOME, because that is the
@@ -1384,6 +1482,12 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     # serve a different model with no subscription quota behind it.
     env.pop("GEMINI_API_KEY", None)
     env.pop("CLAUDE_CONFIG_DIR", None)
+    if wrapper and is_user_profile(profile_home):
+        # A user profile runs through sudo and a root-owned wrapper. Whether that
+        # works inside sandbox-exec has never been measured, so it is refused
+        # here, before a jail is created, instead of discovered mid-pass.
+        raise RuntimeError(f"{E_CLI}: a sandboxed run cannot use user profile {profile_home!r}; "
+                           f"sudo inside sandbox-exec is unmeasured. Use a HOME profile.")
 
     # Run outside the repository, like the Fable arm: the judge should not stand
     # in a directory holding the roster it is blinded against. Reads outside the
@@ -1393,6 +1497,7 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     print_timeout = max(60, timeout - 60)
     log_path = jail / "agy-cli.log"
     cmd, env = gemini_launch(profile_home, gemini_command(prompt, model, binary, print_timeout, log_path), env)
+    cmd = [*(wrapper or []), *cmd]
 
     # A transient is retried; an exhaustion or a bad model is not.
     #
@@ -1572,6 +1677,17 @@ def _v2_stored(dest: Path, expected: dict, job: dict) -> dict | None:
     return None
 
 
+def _v2_harness_kwargs(job: dict, judge: str) -> dict:
+    """The harness arguments for one judge call. Empty for a leaders (v1) job."""
+    if job.get("contract_version") != 2:
+        return {}
+    h = job["harness"]
+    if judge == "fable":
+        return {"wrapper": h["wrapper"], "extra_args": h["extra_args"],
+                "require_no_tools": h["require_no_tools"]}
+    return {"wrapper": h["wrapper"]}
+
+
 def _v2_record_fields(job: dict, telemetry: dict, expected: dict) -> dict:
     """Identity and model provenance stamped on every contract v2 grade.
 
@@ -1611,7 +1727,8 @@ def grade_one(job: dict) -> dict:
     try:
         if job["judge"] == "fable":
             text, telemetry = call_fable(prompt, job["config_dir"], job["timeout"],
-                                         job["fable_bin"], job["workdir"])
+                                         job["fable_bin"], job["workdir"],
+                                         **_v2_harness_kwargs(job, "fable"))
         elif job["judge"] == "gemini":
             # No refusal-retry wrapper here, deliberately. The retry exists
             # because Astra refuses some politically-charged transcripts
@@ -1626,7 +1743,7 @@ def grade_one(job: dict) -> dict:
             profile = pick_gemini_profile(job["gemini_profile"], job["gemini_profiles"])
             text, telemetry = call_gemini(prompt, profile, job["timeout"],
                                           job["workdir"], job["gemini_model"],
-                                          job["agy_bin"])
+                                          job["agy_bin"], **_v2_harness_kwargs(job, "gemini"))
         else:
             # Astra refuses some politically-charged transcripts, and the refusal
             # is not deterministic: two of three re-run transcripts graded fine
@@ -1635,7 +1752,8 @@ def grade_one(job: dict) -> dict:
             attempts_log: list[dict] = []
 
             def _one(model: str, _p=prompt, _j=job, _log=attempts_log):
-                txt, tel = call_astra(_p, _j["timeout"], Path(_j["workdir"]), model)
+                txt, tel = call_astra(_p, _j["timeout"], Path(_j["workdir"]), model,
+                                      **_v2_harness_kwargs(_j, "astra"))
                 _log.append(tel)
                 try:
                     return extract_json(txt), tel
@@ -1914,12 +2032,26 @@ def main() -> int:
             if want != harness_model.get(j):
                 raise SystemExit(f"REFUSING: study {args.study} requests {want!r} for judge {j!r}, "
                                  f"but this run would send {harness_model.get(j)!r}")
+        # Every judge of a contract v2 study runs inside the sandbox that denies
+        # the verbatim-index container: all clones and all data checkouts.
+        sandbox_root = REPO.parent.resolve()
+        try:
+            harness_by_judge = {j: v2_harness(prof, j, sandbox_root) for j in judges}
+        except RuntimeError as exc:
+            raise SystemExit(f"REFUSING: {exc}") from None
+        if "gemini" in judges and any(is_user_profile(p) for p in gem_profiles):
+            raise SystemExit("REFUSING: a sandboxed Gemini run cannot use a user: profile; pin HOME "
+                             "profiles with --gemini-profiles")
 
     # One scratch root per study, so two studies' judge workdirs never share a
     # directory. Leaders keeps its original name.
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / (
         "grade-work" if args.study == SP.LEGACY_STUDY else f"grade-work-{args.study}")
     workroot.mkdir(parents=True, exist_ok=True)
+    if template is not None and (workroot.resolve() == sandbox_root or sandbox_root in workroot.resolve().parents):
+        # A judge's working directory inside the denied container could not
+        # even be entered, and would mean the jail is not a jail.
+        raise SystemExit(f"REFUSING: judge workroot {workroot} is inside the sandboxed container {sandbox_root}")
 
     jobs = []
     for i, (path, judge, mode, run) in enumerate(
@@ -1960,6 +2092,7 @@ def main() -> int:
                 "requested_model": prof["judge_requests"][judge]["model"],
                 "provenance_id": provenance_id,
                 "obsolete_root": str(Path(args.out) / "_obsolete"),
+                "harness": harness_by_judge[judge],
             })
 
     # Order the queue breadth-first across leaders. A judge that runs out of

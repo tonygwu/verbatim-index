@@ -227,7 +227,9 @@ def test_cache(tmp: Path) -> None:
              "config_dir": "__DEFAULT__", "timeout": 5, "fable_bin": "claude", "workdir": str(tmp / "wd"),
              "dest": str(out / "fable/pundit-p/s1__fable__blinded__r0.json"),
              "raw_dest": str(out / "_raw/fable/pundit-p/s1__fable__blinded__r0.txt"),
-             "obsolete_root": str(out / "_obsolete")}
+             "obsolete_root": str(out / "_obsolete"),
+             # Every contract v2 job carries its judge harness (P3); the stub ignores it.
+             "harness": G.v2_harness(prof, "fable", tmp / "sandboxed-container")}
         j.update(over)
         return j
 

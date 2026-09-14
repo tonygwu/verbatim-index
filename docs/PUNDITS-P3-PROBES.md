@@ -82,12 +82,29 @@ covers the transcripts on this machine only.
 
 Gemini usage cannot be measured. `agy` has no usage endpoint.
 
-## What this decides, and what it leaves open
+## Decision, 2026-09-14
 
-- **Fable is eligible** with `--tools ""` added to its pundits harness, pending
-  the P4 invalid-answer rate. Leaders keeps its flags unchanged until a separate
-  decision.
-- **Astra and Gemini are not eligible** under option A. Two failures cannot be
-  fixed from this machine: web search that runs on the provider's side, and
-  Astra's unverified served model. That goes to the user, as the plan's P3
-  decision item says.
+The user decided to keep all three judges, and to accept that Astra and Gemini
+search the web. Search runs on the provider's side, so nothing on this machine
+can stop it, and blinding is done as well as it can be done. **No grade is
+discarded because a search ran.**
+
+The pundits harness therefore does this:
+- **Sandbox for all three judges.** Every judge runs under the `sandbox-exec`
+  profile, in a jail outside the container, so the repo, the roster and the
+  private lean labels stay unreadable, and Gemini's shell cannot read them
+  either.
+- **Fable without tools.** Fable runs with `--tools ""`, pending the P4
+  invalid-answer rate on grading-size prompts. Leaders keeps its flags
+  unchanged.
+- **Astra's served model is unverified.** It is recorded as unverified and
+  accepted, as on the leaders board.
+- **Search is measured.** Every grade records its search use and queries. The
+  published report gives the search rate by judge, lean, person and mode, and
+  how often a query names the blinded subject. It also runs a left-versus-right
+  equivalence check on that rate. An adverse or inconclusive result is
+  disclosed as a limit and does not block publication. Fable must show zero tool
+  calls; a nonzero count means the harness changed, so it fails loudly.
+
+These policies are now in `profiles/pundits.json` under `judge_requests`, so
+the grading contract describes what actually runs.

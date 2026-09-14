@@ -64,9 +64,18 @@ def test_signatures(g) -> None:
         "call_astra": ["prompt", "timeout", "workdir", "model", "raw_response_path"],
         "call_gemini": ["prompt", "profile_home", "timeout", "workdir", "model", "binary"],
     }
+    # What the driver needs is that these names still lead, in order, and that
+    # anything added after them is optional. An exact-list match failed when the
+    # pundits harness appended keyword arguments with defaults (wrapper,
+    # extra_args, require_no_tools) that extract_predictions.py never passes.
     for fn, params in want.items():
-        got = list(inspect.signature(getattr(g, fn)).parameters)
-        check(f"SIGNATURE: {fn}({', '.join(params)})", got == params, f"got {got}")
+        sig = inspect.signature(getattr(g, fn)).parameters
+        got = list(sig)
+        added = got[len(params):]
+        check(f"SIGNATURE: {fn}({', '.join(params)})", got[:len(params)] == params, f"got {got}")
+        check(f"SIGNATURE: {fn} parameters added after those are all optional",
+              all(sig[p].default is not inspect.Parameter.empty for p in added),
+              f"required additions: {[p for p in added if sig[p].default is inspect.Parameter.empty]}")
     check("SIGNATURE: fable_command hardcodes the Fable model id, so the driver need not pass one",
           '"--model", "claude-fable-5-1"' in inspect.getsource(g.fable_command))
 

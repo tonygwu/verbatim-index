@@ -34,8 +34,20 @@
     "wordlist": null
   },
   "judge_requests": {
-    "fable": {"model": "claude-fable-5-1", "effort": "max", "tool_policy": "deny_all", "sandbox": "separate_user_jail"},
-    "astra": {"model": "gpt-6-astra", "effort": "max", "tool_policy": "deny_all", "sandbox": "separate_user_jail"},
-    "gemini": {"model": "gemini-3.8-flash-high", "effort": "high", "tool_policy": "deny_all", "sandbox": "separate_user_jail"}
+    "fable": {"model": "claude-fable-5-1", "effort": "max",
+              "tool_policy": "no_builtin_tools",
+              "extra_args": ["--tools", ""],
+              "sandbox": "sandbox_exec_deny_container",
+              "served_model_verification": "response_names_model"},
+    "astra": {"model": "gpt-6-astra", "effort": "max",
+              "tool_policy": "provider_web_search_accepted",
+              "extra_args": [],
+              "sandbox": "sandbox_exec_deny_container",
+              "served_model_verification": "unverified_request_echo"},
+    "gemini": {"model": "gemini-3.8-flash-high", "effort": "high",
+               "tool_policy": "provider_web_search_accepted",
+               "extra_args": [],
+               "sandbox": "sandbox_exec_deny_container",
+               "served_model_verification": "response_names_model"}
   }
 }

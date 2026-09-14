@@ -1224,6 +1224,14 @@ new grades incomparable with the corpus already graded.
   `data-pundits/logs/p3_probes/<run>/`. Without `--run` it is a dry run that
   only proves the sandbox denies the canaries:
   `.venv/bin/python scripts/p3_judge_probe.py --fable-config-dir ~/.claude-e --gemini-home ~`.
+- Pundits judge harness (P3, decided 2026-09-14, `docs/PUNDITS-P3-PROBES.md`): every judge
+  of a contract v2 study runs under `sandbox-exec`, which denies reads and writes under
+  the verbatim-index container. Fable also gets `--tools ""`, and its session transcript
+  must show zero tool calls, or the grade fails as `tool_attempt` or
+  `tool_audit_unavailable`. Astra and Gemini keep provider-side web search by the user's
+  decision; searched grades are kept and measured, never discarded. Under the sandbox,
+  Gemini accepts HOME profiles only. Leaders judge argv is unchanged. Proof:
+  `.venv/bin/python scripts/test_pundits_harness.py`.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`
