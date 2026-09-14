@@ -1258,6 +1258,11 @@ new grades incomparable with the corpus already graded.
   PERSON must fill for every other recording; `report` stays INCONCLUSIVE until every label
   exists, then applies the P5 caps and gives yield with exact bounds. Proof:
   `.venv/bin/python scripts/test_pundits_pilot.py`.
+- P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
+  people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a
+  person verified, by the human venue label; quotes hide the judge and its speaker label in a
+  separate answer key. Every label field is written empty, and a short format is reported, never
+  topped up. Proof: `.venv/bin/python scripts/test_pundits_label_kit.py`.
 - P4d Fable tools-off measurement (SPENDS QUOTA with `--run`):
   `scripts/p4d_fable_tools_off.py`. Result in `docs/PUNDITS-P4D-FABLE-TOOLS-OFF.md`:
   12/12 valid, 95% interval [0, 26.5%], so not yet evidence of a low rate; P8a decides.
