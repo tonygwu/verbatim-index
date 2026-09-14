@@ -1017,6 +1017,12 @@ def main() -> int:
     import study_profile as SP
     SP.add_study_arg(ap)
     args = ap.parse_args()
+    # This template is the leaders page and nothing else. Any other study is
+    # rendered from its profile by build_study_site.py, so a leaders byte cannot
+    # move because another study exists. See docs/PUNDITS-PLAN.md, P4.
+    if args.study != SP.LEGACY_STUDY:
+        import build_study_site
+        return build_study_site.main_from_args(args)
     # Inputs only. --out is a build artifact in the public clone, not data.
     SP.guard(args.study, args.results, args.audit, args.roster, args.calibration, args.sources)
 

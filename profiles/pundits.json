@@ -9,6 +9,7 @@
   "study_marker_required": true,
   "contract_version": 2,
   "skill_dir": ".claude/skills/pundit-transcript-grader",
+  "site_copy": "profiles/pundits.site.json",
   "scoring": {
     "dimensions": [
       {"key": "d1_steelmanning", "label": "Steel-manning and charity", "weight": 0.35,
