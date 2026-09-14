@@ -896,8 +896,9 @@ new grades incomparable with the corpus already graded.
   `wrong_person_screen.py` running after every pass either way, because a screen
   that reads the judges' own `identity_guess` catches what a title cannot.
 
-- **The blinder replaces ordinary English words, because an alias list carries
-  bare parts of a company name.** `blind()` applies every entry in
+- **The blinder replaced ordinary English words, because an alias list carried
+  bare parts of a company name. FIXED in code 2026-09-13 (`528509a`), opt-in,
+  and MEASURED not to move the score, so the corpus was NOT re-derived.** `blind()` applies every entry in
   `data/sources/aliases.json` unconditionally, case-insensitively, through the
   NAME path, so the replacement token is `[SUBJECT]` and not `[COMPANY]`. The
   alias lists come from the discovery workflow and hold the parts of a
@@ -944,11 +945,76 @@ new grades incomparable with the corpus already graded.
   because `company="Strategy"` redacted the ordinary word "strategy" three times
   in an 80-word test paragraph. The reason is written into his
   `selection_rationale`. That is a patch on one name, not a fix.
-  Left alone because re-blinding the corpus invalidates every grade already
-  collected. Fix it when the grades are next re-derived, and note that a system
-  dictionary alone is not enough, since it did not contain "games". The alias
-  list is the place to intervene, because the discovery workflow is what put a
-  bare company part in it.
+  RE-MEASURED 2026-09-13 by blinding all 664 transcripts both ways and diffing,
+  which is the only figure that counts what a judge actually gets back:
+
+  ```
+  ordinary words handed back    1,859   135 transcripts   15 leaders
+  [SUBJECT] -> [COMPANY]       13,223   every transcript  50 leaders
+  ```
+
+  The 2,976 figure above is the LOOSE one and should not be quoted. It counts
+  lowercase occurrences of bare company tokens in the unblinded text, which
+  includes every "face" inside "Hugging Face" that the blinder had already
+  replaced as a phrase and that was never standalone prose. It over-counts by
+  about 50%. The relabel count is the larger defect and the one that reaches
+  every leader.
+
+  THE FIX. Two signals decide, because each covers the other's failure.
+  `/usr/share/dict/words` is `web2`: 236k entries, no plurals, and it carries
+  proper nouns, so alone it calls "Elon" and "Musk" English words and misses
+  "games". Corpus spread, the share of a token's lowercase uses falling outside
+  the leader who owns the alias, alone frees "google" at 0.80 because everyone
+  talks about Google. A token is ordinary only if BOTH agree, and an ordinary
+  token is STILL redacted where it is CAPITALISED, which is the same signal
+  `fuzzy_targets()` already relies on. VERIFIED in this corpus: "games" is
+  capitalised 23 times against 377 lowercase, "uber" 491 against 250.
+  The threshold sits in an empty band rather than on a round number: sorted by
+  spread the candidates run 0.76 Face, 0.73 Games, then a gap to 0.61
+  Playground and 0.42 Epic, so the cutoff is 0.70. Below 20 lowercase uses
+  spread is noise and "Prometheus" scored 1.00 on one occurrence, so that floor
+  is explicit. 15 of 28 candidates come out ordinary; Google, Uber, Hugging,
+  Mistral, Palantir, Anduril, DeepMind and Epic stay fully redacted.
+  The decision is FROZEN into `scripts/blind_wordlist.json` with its evidence,
+  because spread is a property of the corpus and the corpus grows. Regenerate it
+  deliberately with `scripts/build_blind_wordlist.py --write`, never at runtime.
+
+  IT IS OPT-IN AND STILL OFF. `blind()` keeps the original behaviour unless a
+  wordlist is passed, because `grade_loop.sh` normalizes every cycle and would
+  otherwise re-blind the corpus under 2,260 existing grades. VERIFIED
+  byte-identical on 60 randomly sampled transcripts: the default path reproduces
+  the substitution map on disk exactly, 60 identical and 0 different. Promotion
+  is passing the list at the call site, deliberately a diff.
+  `discover_sources.aliases_for()` now honours `GENERIC_COMPANY_WORDS`, imported
+  from the blinder rather than restated, so "Cloud" and "Labs" stop entering the
+  list at source. That is the weaker of the two guards: it cannot judge
+  "Machine" or "Games", which need corpus frequency a new leader does not have.
+  Guarded by `scripts/test_blind_common_words.py`, 41 checks, verified failing
+  before the fix and passing after BEHAVIOURALLY rather than by import error:
+  the three worst real cases survive 0 of 4 assertions on the old code and 4 of
+  4 on the new.
+
+  WHY THE CORPUS WAS NOT RE-DERIVED. A controlled A/B on the 18 worst-hit
+  transcripts, both arms graded fresh and concurrently against a frozen
+  snapshot, all three judges, 48 complete pairs
+  (`docs/BLINDING-EXPERIMENT-2026-09-13.md`):
+
+  ```
+  POOLED  mean B-A -0.14  95% CI [-1.15, +0.88]  MDE 1.45  n=48
+  PROSE   -0.35 [-1.40, +0.71]      RELABEL  +0.28 [-1.95, +2.52]
+  ```
+
+  Dose-response settles it: the correlation between words restored and change
+  in grade is -0.151, near zero and pointing the WRONG WAY for a corruption
+  effect. The sd of the paired difference is 3.58, against Fable's own re-run sd
+  of 3.24 on unchanged text, so the experiment is mostly measuring judge noise.
+  That is consistent with the limit below: a judge that has already identified
+  the speaker reads straight through a hole in the prose.
+  The claim is "nothing this board can resolve", not "exactly zero". The 18 are
+  the worst-damaged in the corpus, so the figure bounds the effect from ABOVE.
+  Re-grading would cost about 1,992 calls to move a number by less than its own
+  noise. Third time in this repo that a defect alarming in the text did not
+  reach the score, after the wrong year and the paragraph loops.
 
 - **HappyScribe discovery admits third-person shows that YouTube discovery
   rejects, and the corpus pays for them in judge calls.** `discover()` in
