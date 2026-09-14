@@ -1180,6 +1180,11 @@ new grades incomparable with the corpus already graded.
   records in place and leave both counts unchanged. Only repo-0 can refresh it, because `--refresh`
   carries the daemon-clone precondition.
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
+- Pundits study (verbatim-pundits.tonygwu.com, in progress): the P0 leaders
+  baseline in `docs/PUNDITS-P0-BASELINE.md`, re-run with
+  `.venv/bin/python scripts/leaders_baseline.py --code DIR --snapshot DIR --run-dir NEW --python .venv/bin/python`
+  (quota-free; two identical runs differ only in `normalization.normalized_at_utc`).
+  The P1 study-isolation checklist is `docs/STUDY-ISOLATION-TRACE.md`.
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`
