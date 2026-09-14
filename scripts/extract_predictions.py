@@ -63,6 +63,22 @@ class RouterUnavailable(RuntimeError):
 # Routing: the quota router says which ACCOUNT; the provider names the harness
 # ---------------------------------------------------------------------------
 
+def is_measured_exhaustion(selection: dict) -> bool:
+    """True when the router rejected every candidate on a MEASURED window.
+
+    The router says "every candidate is out of quota" when it could read the
+    windows and they are spent, and "no eligible account could serve this call"
+    when the pool publishes no windows to read. Only the first is worth
+    refusing: the second is Antigravity's permanent condition.
+    """
+    reason = str((selection.get("decision") or {}).get("reason") or "").lower()
+    if "out of quota" in reason:
+        return True
+    excluded = selection.get("excluded") or ()
+    why = [str(e.get("reason") or "").lower() for e in excluded]
+    return bool(why) and all("left in its tightest" in w for w in why)
+
+
 def route_from_selection(selection: dict, accounts: list[tuple], allow_degraded: bool) -> dict:
     """Turn one router decision into a harness and account. Pure, so it is testable.
 
@@ -89,6 +105,18 @@ def route_from_selection(selection: dict, accounts: list[tuple], allow_degraded:
     if degraded and not allow_degraded and decision.get("fits") is not True:
         raise RouterUnavailable(f"{L.E_ROUTER}: pick {acct} is degraded and the router does not call it a fit; "
                                 f"--allow-degraded is off: {json.dumps(degraded)[:300]}")
+    # A pick can also fail to fit with NOTHING in `degraded`, and the two
+    # reasons for that are opposites. MEASURED exhaustion means the router read
+    # every candidate's windows and found them spent; calling anyway returns a
+    # quota error, which on 2026-09-14 cost 31 verification calls in 21 seconds.
+    # UNMEASURABLE means Antigravity, which publishes no usage windows at all
+    # (AGENTS.md), so its picks are always fits=False; refusing those would
+    # silence the Gemini arm that verified most of the corpus. Tell them apart
+    # by the router's own words, and refuse only the first.
+    if not allow_degraded and decision.get("fits") is not True and is_measured_exhaustion(selection):
+        raise RouterUnavailable(f"{L.E_ROUTER}: router says {acct} does not fit and every measured candidate "
+                                f"is out of quota; reason={decision.get('reason')!r}. Re-run when a window resets, "
+                                f"or pass --allow-degraded to spend the call anyway.")
     row = next((a for a in accounts if a[0] == acct), None)
     config_dir = None
     if harness == "fable":
@@ -341,7 +369,7 @@ def extract_one(job: dict) -> dict:
     try:
         obj = parse_model_output(text, job["schema"], tid)
     except RuntimeError as exc:
-        return _extract_failed(meta, meta_path, base, str(exc), t0, args, harness=route["harness"])
+        return _extract_failed(meta, meta_path, base, str(exc), t0, args, route=route)
 
     provenance = L.normalise_provenance(route["harness"], telemetry, account, route["account_id"])
     records, ungrounded, dropped = ground_candidates(rec, job["roster"].get(slug), obj, provenance,
@@ -368,13 +396,24 @@ def extract_one(job: dict) -> dict:
             "ungrounded": len(ungrounded), "elapsed": round(time.time() - t0, 1)}
 
 
-def _extract_failed(meta, meta_path, base, detail, t0, args, harness=None) -> dict:
+def _route_fields(route) -> dict:
+    """The account identity to stamp on a failure, empty when no pick was made."""
+    if not route:
+        return {}
+    return {"harness": route.get("harness"), "account": route.get("account_id"),
+            "config_dir": route.get("config_dir")}
+
+
+def _extract_failed(meta, meta_path, base, detail, t0, args, harness=None, route=None) -> dict:
     etype = L.classify_exception_detail(detail)
-    meta["extract"] = {"status": "failed", "error_type": etype, "detail": detail[:600], "harness": harness,
-                       "run_id": base["run"], "elapsed_sec": round(time.time() - t0, 1)}
+    who = _route_fields(route)
+    meta["extract"] = {"status": "failed", "error_type": etype, "detail": detail[:600],
+                       "harness": who.get("harness", harness) or harness,
+                       "run_id": base["run"], "elapsed_sec": round(time.time() - t0, 1),
+                       **{k: v for k, v in who.items() if k != "harness"}}
     if not args.dry_run:
         write_meta(meta_path, meta)
-    return {**base, "status": "failed", "error_type": etype, "detail": detail[:600]}
+    return {**base, "status": "failed", "error_type": etype, "detail": detail[:600], **who}
 
 
 # ---------------------------------------------------------------------------
@@ -476,15 +515,15 @@ def verify_one(job: dict) -> dict:
             response_path = job["out"] / "_raw" / "responses" / slug / f"{sid}__verify__{job['run_id']}_b{bi}.json"
             text, telemetry, account = call_harness(route, prompt, args.timeout, workdir / f"b{bi}", args, response_path)
         except subprocess.TimeoutExpired:
-            return _verify_failed(meta, meta_path, base, f"{E_TIMEOUT}: no answer within {args.timeout}s", t0, args)
+            return _verify_failed(meta, meta_path, base, f"{E_TIMEOUT}: no answer within {args.timeout}s", t0, args, route)
         except (RuntimeError, OSError) as exc:
-            return _verify_failed(meta, meta_path, base, str(exc), t0, args)
+            return _verify_failed(meta, meta_path, base, str(exc), t0, args, route)
         raw_path = job["out"] / "_raw" / "verify" / route["harness"] / slug / f"{sid}__{route['harness']}__{job['run_id']}_b{bi}.txt"
         L.write_prediction_file(raw_path, text)
         try:
             obj = parse_model_output(text, job["schema"], tid)
         except RuntimeError as exc:
-            return _verify_failed(meta, meta_path, base, str(exc), t0, args)
+            return _verify_failed(meta, meta_path, base, str(exc), t0, args, route)
         want = {r["prediction_id"] for r in batch}
         got = [v["prediction_id"] for v in obj["verdicts"]]
         if set(got) != want or len(got) != len(want):
@@ -512,13 +551,17 @@ def verify_one(job: dict) -> dict:
             "accepted": accepted, "elapsed": round(time.time() - t0, 1)}
 
 
-def _verify_failed(meta, meta_path, base, detail, t0, args) -> dict:
+def _verify_failed(meta, meta_path, base, detail, t0, args, route=None) -> dict:
+    # A failure must name the account that produced it. Without this the run
+    # artifacts cannot say which account a quota stop came from, and the only
+    # way to find out is the router's own pick history in another directory.
     etype = L.classify_exception_detail(detail)
+    who = _route_fields(route)
     meta["verify"] = {"status": "failed", "error_type": etype, "detail": detail[:600],
-                      "run_id": base["run"], "elapsed_sec": round(time.time() - t0, 1)}
+                      "run_id": base["run"], "elapsed_sec": round(time.time() - t0, 1), **who}
     if not args.dry_run:
         write_meta(meta_path, meta)
-    return {**base, "status": "failed", "error_type": etype, "detail": detail[:600]}
+    return {**base, "status": "failed", "error_type": etype, "detail": detail[:600], **who}
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +623,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if Path(args.fable_bin).name == "cl":
         raise SystemExit("refusing --fable-bin cl: it injects --dangerously-skip-permissions (see AGENTS.md)")
+    ok, why = L.router_version_ok()   # a stale router hides accounts and wastes whole passes
+    if not ok:
+        raise SystemExit(f"REFUSING: {why}")
     out = L.guard_data_path(args.out)  # raises before any call if --out is elsewhere under data/
     skill = Path(args.skill_dir)
     release = L.load_policy_release(skill)  # reject an unreviewed contract pair before any routing or call

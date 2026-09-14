@@ -296,6 +296,62 @@ def test_missing(D, L) -> None:
               r["status"] in ("skipped", "excluded") and r["id"] == "ada/s1", json.dumps(r))
 
 
+def test_exhausted(D, L) -> None:
+    """A pick the router itself says does not fit.
+
+    Two different things arrive as fits=False with an EMPTY degraded list, and
+    the driver must treat them differently. Measured exhaustion means every
+    Fable account is spent, and calling anyway burns nothing but returns a
+    quota error; on 2026-09-14 that cost 31 calls in 21 seconds. Unmeasurable
+    means Antigravity, which publishes no usage windows at all, so its picks
+    are permanently fits=False and refusing them would silence the Gemini arm
+    that verified 92% of the corpus.
+    """
+    spent = sel("claude", "claude")
+    spent["decision"].update(fits=False, reason="every candidate is out of quota; earliest reset in 0s")
+    spent["excluded"] = [{"account": "claude_b", "reason": "only 0.0% left in its tightest applicable window"}]
+    try:
+        D.route_from_selection(spent, ACCOUNTS, False)
+        check("EXHAUSTED: a measured out-of-quota pick raises before any call", False, "no exception")
+    except D.RouterUnavailable as exc:
+        check("EXHAUSTED: a measured out-of-quota pick raises before any call",
+              str(exc).startswith(L.E_ROUTER), str(exc)[:120])
+
+    unmeasured = sel("antigravity_gemini", "antigravity")
+    unmeasured["decision"].update(fits=False, reason="no eligible account could serve this call")
+    unmeasured["excluded"] = [{"account": "antigravity_gemini", "reason": "no usage windows in snapshot"}]
+    try:
+        r = D.route_from_selection(unmeasured, ACCOUNTS, False)
+        check("EXHAUSTED: an unmeasurable Antigravity pick still routes to gemini", r["harness"] == "gemini")
+    except D.RouterUnavailable as exc:
+        check("EXHAUSTED: an unmeasurable Antigravity pick still routes to gemini", False, str(exc)[:140])
+
+    ok = sel("claude_b", "claude")
+    ok["decision"].update(fits=True, reason="claude_b wins")
+    check("EXHAUSTED: a fitting pick is untouched",
+          D.route_from_selection(ok, ACCOUNTS, False)["account_id"] == "claude_b")
+
+    # A failure must carry the account that produced it.
+    class _A: dry_run = True
+    meta = {"extract": {}, "verify": {}}
+    route = {"harness": "fable", "account_id": "claude_e", "config_dir": "/Users/x/.claude-e"}
+    row = D._verify_failed(meta, Path("/dev/null"), {"id": "a/b", "run": "r"},
+                           "auth_or_quota: You've hit your weekly limit", 0.0, _A(), route)
+    check("EXHAUSTED: a verify failure names its account", row.get("account") == "claude_e", json.dumps(row)[:160])
+    check("EXHAUSTED: the account is recorded in meta too", meta["verify"].get("account") == "claude_e")
+    row = D._verify_failed(meta, Path("/dev/null"), {"id": "a/b", "run": "r"}, "boom", 0.0, _A())
+    check("EXHAUSTED: a failure before any pick carries no invented account", "account" not in row)
+
+    # The venv must carry a router new enough to see every configured account.
+    ok, detail = L.router_version_ok()
+    check("EXHAUSTED: the installed quota-router meets the floor in requirements.txt", ok, detail)
+
+    forced = sel("claude", "claude")
+    forced["decision"].update(fits=False, reason="every candidate is out of quota")
+    check("EXHAUSTED: --allow-degraded overrides the refusal deliberately",
+          D.route_from_selection(forced, ACCOUNTS, True)["account_id"] == "claude")
+
+
 def main() -> int:
     L = load("predictions_lib")
     D = load("extract_predictions")
@@ -306,6 +362,7 @@ def main() -> int:
     test_summary(D)
     test_dryrun(D, L)
     test_missing(D, L)
+    test_exhausted(D, L)
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + ", ".join(FAIL))

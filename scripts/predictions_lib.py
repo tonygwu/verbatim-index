@@ -77,6 +77,41 @@ ALL_ERROR_TYPES = tuple(_GRADE_ERROR_TYPES) + (
     E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING, E_CACHE_STALE, E_POLICY)
 
 
+
+def router_version_ok(requirements: "Path | None" = None) -> tuple[bool, str]:
+    """Is the installed quota-router new enough to see every configured account?
+
+    A stale venv is silent and expensive. repo-2 ran llm-quota-router 0.1.0
+    against a requirements floor of 0.1.1 on 2026-09-14. Under 0.1.0 the fifth
+    Claude account was visible to `quotapick status` and to load_config() and
+    absent from select_account()'s candidate set, so the driver routed Fable
+    work to four spent accounts and burned 31 calls in 21 seconds. Nothing
+    caught it, and the wrong bug was reported for an hour.
+    """
+    req = Path(requirements) if requirements else REPO / "requirements.txt"
+    want = None
+    for line in req.read_text().splitlines():
+        m = re.search(r"llm-quota-router\s*@.*@v([0-9]+(?:\.[0-9]+)*)", line)
+        if m:
+            want = m.group(1)
+            break
+    if want is None:
+        return False, f"no llm-quota-router version pin found in {req}"
+    try:
+        import quota_router
+        have = getattr(quota_router, "__version__", None)
+    except Exception as exc:  # noqa: BLE001 -- absence is the failure we report
+        return False, f"quota_router is not importable: {exc}"
+    if not have:
+        return False, "the installed quota_router declares no __version__"
+    def parts(v):
+        return tuple(int(x) for x in v.split("."))
+    if parts(have) < parts(want):
+        return False, (f"quota_router {have} is older than the {want} required by {req.name}; "
+                       f"an older router hides configured accounts from select_account(). "
+                       f"Fix: uv pip install --python .venv/bin/python -r requirements.txt")
+    return True, f"quota_router {have} meets the {want} floor"
+
 def transcript_id_from_path(path) -> str:
     """<leader_slug>/<source_id> from the file's own location.
 

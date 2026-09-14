@@ -473,6 +473,9 @@ def stamp_failure(rec: dict) -> dict:
     return rec
 
 
+LIMIT_FAMILY = re.compile(r"you'?\s*(?:ve|have)?\s*\w+ your [a-z ]{0,24}limit\b")
+
+
 def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
     """Work out why the Claude CLI exited non-zero.
 
@@ -502,8 +505,15 @@ def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
         # "session limit" is the 5-hour window, a third wording again: "You've
         # hit your session limit · resets 2:40pm". Captured from claude-e on
         # 2026-09-07, where 75 refusals in one pass were all filed as crashes.
-        # The family is "You've <verb> your <scope> limit", and this matcher
-        # tests whole phrases, so every new <scope> the CLI ships needs adding.
+        # "weekly limit" was the fourth, on 2026-09-14, and cost 31 calls.
+        #
+        # Listing whole phrases means every new <scope> the CLI ships is a
+        # silent miss until someone notices. LIMIT_FAMILY matches the SHAPE
+        # instead, "You've <verb> your <scope> limit", so a fifth scope needs
+        # no edit. The literal list stays for the wordings that do not fit
+        # that shape, such as the cc_cli_limit_message marker.
+        if LIMIT_FAMILY.search(low):
+            return E_AUTH, f"{E_AUTH}: {result[:400]}"
         if any(s in low for s in ("reached your", "usage limit", "rate limit",
                                   "out of credit", "quota", "upgrade to",
                                   "spend limit", "session limit",

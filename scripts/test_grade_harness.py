@@ -92,6 +92,32 @@ SESSION_LIMIT_STDOUT = json.dumps({
     "num_turns": 0,
 })
 
+# The WEEKLY window, a fourth wording, captured 2026-09-14 from the predictions
+# verifier: "You've hit your weekly limit · resets 4pm". 31 calls in one pass
+# were filed as cli_nonzero_exit, so a quota stop read as a crash and the pass
+# looked like it was failing on the model rather than on the window.
+#
+# This is the fourth <scope> to arrive after "usage", "spend" and "session". The
+# matcher now recognises the FAMILY "You've <verb> your <scope> limit", so a
+# fifth scope needs no edit here. INVENTED_LIMIT guards that generalisation.
+WEEKLY_LIMIT_STDOUT = json.dumps({
+    "is_error": True,
+    "stop_reason": "stop_sequence",
+    "terminal_reason": "api_error",
+    "subtype": "success",
+    "result": "You've hit your weekly limit \u00b7 resets 4pm (America/Los_Angeles)",
+    "modelUsage": {},
+    "num_turns": 0,
+})
+
+INVENTED_LIMIT_STDOUT = json.dumps({
+    "is_error": True,
+    "stop_reason": "stop_sequence",
+    "result": "You have exceeded your fortnightly limit \u00b7 resets Tuesday",
+    "modelUsage": {},
+    "num_turns": 0,
+})
+
 TOOL_STDOUT = json.dumps({
     "is_error": False,
     "stop_reason": "tool_use",
@@ -129,6 +155,16 @@ def test_classification(g) -> None:
           et == g.E_AUTH, f"got {et!r}")
     check("session-limit detail keeps the reset time the operator needs",
           "2:40pm" in detail, f"got {detail[:120]!r}")
+
+    et, detail = fn(1, WEEKLY_LIMIT_STDOUT, "")
+    check("weekly limit -> auth_or_quota, not cli_nonzero_exit",
+          et == g.E_AUTH, f"got {et!r}")
+    check("weekly-limit detail keeps the reset time the operator needs",
+          "4pm" in detail, f"got {detail[:120]!r}")
+
+    et, _ = fn(1, INVENTED_LIMIT_STDOUT, "")
+    check("an unseen <scope> in the same family is still a quota stop",
+          et == g.E_AUTH, f"got {et!r}")
 
     et, detail = fn(1, TOOL_STDOUT, "")
     check("tool attempt -> its own error class",
