@@ -149,7 +149,9 @@ def run_one(job: dict) -> dict:
             harness, account = "astra", account_label(env_home or "__DEFAULT__")
         else:
             prompt = R.build_prior_prompt(rec, deadline)
-            leaks = R.prior_prompt_leaks(prompt)
+            # Masked with the record's own quoted text, so only the authored part
+            # of the prompt is screened. See prior_prompt_leaks.
+            leaks = R.prior_prompt_leaks(prompt, R.prompt_facts(rec, deadline))
             if leaks:
                 # The quote and this repo's own claim text are not under our
                 # control, so a leak is refused per record rather than assumed away.
@@ -279,7 +281,8 @@ def main(argv: list[str] | None = None) -> int:
             p = (R.build_resolver_prompt(r, r["_deadline"], args.as_of) if args.stage == "resolve"
                  else R.build_prior_prompt(r, r["_deadline"]))
             print(p)
-            print(f"--- prompt chars: {len(p)}  leak words: {R.prior_prompt_leaks(p)}", file=sys.stderr)
+            print(f"--- prompt chars: {len(p)}  leak words: "
+                  f"{R.prior_prompt_leaks(p, R.prompt_facts(r, r['_deadline']))}", file=sys.stderr)
         return 0
     if not todo:
         log("nothing to do")

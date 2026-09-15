@@ -72,6 +72,24 @@ def main() -> int:
     check("WALL: the leak screen actually fires, so an empty list means something",
           R.prior_prompt_leaks("the claim turned out to be false") == ["turned out"],
           str(R.prior_prompt_leaks("the claim turned out to be false")))
+    # The screen reads only what THIS repo authors. A speaker who says "the outcome"
+    # in 2014 is not telling the assessor how their own prediction ended, and seven
+    # real records in the corpus trip an unmasked screen exactly that way.
+    noisy = rec()
+    noisy["source"] = dict(noisy["source"],
+                          quote="the outcome here actually happened faster than people expected",
+                          context_before="in hindsight it turned out that way ")
+    np_ = R.build_prior_prompt(noisy, d)
+    check("WALL: outcome words inside the SPEAKER'S OWN WORDS do not trip the screen",
+          R.prior_prompt_leaks(np_, R.prompt_facts(noisy, d)) == [],
+          str(R.prior_prompt_leaks(np_, R.prompt_facts(noisy, d))))
+    check("WALL: the same words trip it when they are UNMASKED, so the mask is doing the work",
+          R.prior_prompt_leaks(np_) != [])
+    check("WALL: an authored disclosure still trips the masked screen",
+          R.prior_prompt_leaks(np_ + "\nWHAT ACTUALLY HAPPENED: it did not happen.\n",
+                               R.prompt_facts(noisy, d)) != [],
+          "a real leak must survive the mask")
+
     check("WALL: the prior prompt is not given today's date",
           "2026" not in clean, [l for l in clean.splitlines() if "2026" in l])
     check("WALL: prompt_facts reads no resolution field",

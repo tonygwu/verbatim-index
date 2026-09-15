@@ -137,6 +137,64 @@ def per_leader(rows: list[dict], names: dict[str, str]) -> list[dict]:
     return out
 
 
+# Ten-point bins. Wider bins hide a bias that turns on only at the top of the
+# range, which is exactly where this corpus sits.
+BINS = [(0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.01)]
+
+
+def calibration(rows: list[dict]) -> dict:
+    """Is the prior assessor right on average? A reliability table, computed free.
+
+    THIS IS THE DIAGNOSTIC THAT DECIDES WHETHER THE BOARD MEANS ANYTHING. The
+    score rule has expected value zero at every p ONLY IF p is the real
+    probability. If the assessor runs high, every speaker scores negative and the
+    board measures the assessor rather than the speaker. So the overall mean is
+    reported next to zero, and a table shows where any gap comes from.
+
+    A gap is not automatically the assessor's fault. The resolver counts a thing
+    that happened LATE as not occurring, which is the right rule for a dated
+    claim and does push the hit rate down against a prior that priced the event
+    rather than the deadline.
+    """
+    scored = [r for r in rows if r["scored"]]
+    table = []
+    for lo, hi in BINS:
+        b = [r for r in scored if lo <= r["p"] < hi]
+        if not b:
+            table.append({"bin": f"{lo:.1f}-{min(hi, 1.0):.1f}", "n": 0, "mean_p": None,
+                          "hit_rate": None, "gap": None, "mean_points": None})
+            continue
+        mp = sum(r["p"] for r in b) / len(b)
+        hr = sum(1 for r in b if r["outcome"] == "occurred") / len(b)
+        table.append({"bin": f"{lo:.1f}-{min(hi, 1.0):.1f}", "n": len(b),
+                      "mean_p": round(mp, 4), "hit_rate": round(hr, 4),
+                      "gap": round(hr - mp, 4),
+                      "mean_points": round(sum(r["points"] for r in b) / len(b), 4)})
+    overall_p = sum(r["p"] for r in scored) / len(scored) if scored else None
+    overall_hr = (sum(1 for r in scored if r["outcome"] == "occurred") / len(scored)) if scored else None
+    return {
+        "n": len(scored),
+        "mean_p": round(overall_p, 4) if overall_p is not None else None,
+        "hit_rate": round(overall_hr, 4) if overall_hr is not None else None,
+        "gap": round(overall_hr - overall_p, 4) if scored else None,
+        "bins": table,
+        "reading": _reading(overall_hr - overall_p if scored else 0.0, len(scored)),
+    }
+
+
+def _reading(gap: float, n: int) -> str:
+    # A binomial standard error on the hit rate, so a small corpus does not read
+    # as a bias. 0.5 is the widest sd, which keeps this conservative.
+    se = (0.25 / n) ** 0.5 if n else 1.0
+    if abs(gap) < 1.96 * se:
+        return (f"hit rate and mean p agree within noise (gap {gap:+.3f}, 1.96 se {1.96 * se:.3f}); "
+                f"the board's mean should sit near zero")
+    direction = "LOWER" if gap < 0 else "HIGHER"
+    return (f"the hit rate is {direction} than the priors by {abs(gap):.3f}, beyond noise "
+            f"(1.96 se {1.96 * se:.3f}). Every score carries that gap, so the board measures the "
+            f"assessor as well as the speakers, and the overall mean is NOT a neutral zero")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", type=Path, required=True, help="the experiment run directory")
@@ -198,6 +256,7 @@ def main(argv: list[str] | None = None) -> int:
             "mean_points_all_scored": round(sum(r["points"] for r in scored) / len(scored), 4) if scored else None,
             "leaders_ranked": sum(1 for l in leaders if l["ranked"]),
         },
+        "calibration": calibration(joined),
         "leaders": leaders,
         "predictions": joined,
     }
@@ -214,6 +273,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"criteria repaired: {applied} applied, {unrepairable} unrepairable")
     if nosrc:
         print(f"WARNING: {nosrc} decided outcomes cite no source")
+    cal = doc["calibration"]
+    print(f"\nIS THE PRIOR ASSESSOR CALIBRATED?  n={cal['n']}  mean p {cal['mean_p']}  "
+          f"hit rate {cal['hit_rate']}  gap {cal['gap']:+.3f}" if cal["n"] else "\nno scored predictions")
+    if cal["n"]:
+        print(f"  {cal['reading']}")
+        print(f"  {'p bin':>9} {'n':>4} {'mean p':>7} {'hit':>6} {'gap':>7} {'points':>8}")
+        for b in cal["bins"]:
+            if b["n"]:
+                print(f"  {b['bin']:>9} {b['n']:4} {b['mean_p']:7.2f} {b['hit_rate']:6.2f} "
+                      f"{b['gap']:+7.2f} {b['mean_points']:+8.3f}")
     print(f"\n{'leader':28} {'n':>4} {'mean':>7} {'hit':>6} {'mean p':>7}")
     for l in leaders:
         if l["n_scored"]:

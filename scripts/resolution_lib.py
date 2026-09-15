@@ -317,13 +317,36 @@ _LEAK_WORDS = ("occurred", "not_occurred", "unresolvable", "outcome", "actually 
 _LEAK_RE = re.compile("|".join(re.escape(w) for w in _LEAK_WORDS), re.I)
 
 
-def prior_prompt_leaks(prompt: str) -> list[str]:
+# The fields whose text is QUOTED rather than authored here. A speaker may say
+# "the outcome" or "as it turned out" about something else entirely, and the
+# pipeline's own criterion may contain "occurred" as ordinary English. None of
+# that tells the assessor what happened to THIS prediction.
+VERBATIM_FIELDS = ("quote", "context_before", "context_after", "claim", "criterion",
+                   "title", "venue", "speaker", "role", "company", "target_date_text")
+
+
+def prior_prompt_leaks(prompt: str, facts: dict | None = None) -> list[str]:
     """Words that would tell the prior stage what happened. Empty list means clean.
 
-    The prompt carries a verbatim quote and this repo's own claim text, neither of
-    which is under our control, so this is a screen that must be READ, not a gate
-    that silently passes.
+    Scans only the text THIS FILE writes. Pass `facts` from `prompt_facts` and the
+    quoted material is removed before the scan, because a screen that reads the
+    speaker's own words cannot separate "the outcome was obvious" said in 2014
+    from an instruction telling the assessor how this prediction ended.
+
+    MEASURED 2026-09-15: without the mask, 7 of 225 past-due records trip it, and
+    all 7 are the word appearing inside a quote, a context window or the recorded
+    criterion. Refusing those would have dropped seven real predictions to protect
+    against a leak that was never there.
+
+    The structural guarantee is separate and stronger: `build_prior_prompt` cannot
+    reach a resolution at all, which `test_resolution_lib.py` proves by attaching
+    one. This screen is the second line, over the wording.
     """
+    if facts:
+        for key in VERBATIM_FIELDS:
+            value = facts.get(key)
+            if value:
+                prompt = prompt.replace(str(value), " ")
     return sorted({m.group(0).lower() for m in _LEAK_RE.finditer(prompt)})
 
 
