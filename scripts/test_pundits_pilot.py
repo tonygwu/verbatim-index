@@ -51,8 +51,9 @@ def rec(upload="20240101", text=None):
     return {"yt_upload_date": upload, "text": text if text is not None else "Ben Shapiro here. " + FILLER}
 
 
-def label(present=True, main=True, venue="guest_interview"):
-    return {"subject_present": present, "main_speaker": main, "venue": venue, "checked_by": "tester"}
+def label(present=True, main=True, venue="guest_interview", political=True):
+    return {"subject_present": present, "main_speaker": main, "venue": venue, "political_content": political,
+            "checked_by": "tester"}
 
 
 def main() -> int:
@@ -153,6 +154,20 @@ def main() -> int:
     worst = max(sum(0 <= (d - start).days < 7 for d in picked) for start in picked)
     check("no 7-day span holds more than 2 selected recordings, and the cap still selects some",
           worst <= 2 and len(picked) >= 3, f"{picked}")
+
+    print("\n[TOPIC]")
+    # Operator decision 2026-09-15: a recording with no political content (for
+    # example a gaming stream) is excluded, counted as off_topic, never as wrong-person.
+    human = {f"ben-shapiro/s{i}": label() for i in range(8)}
+    human["ben-shapiro/s0"] = label(political=False)
+    out = P.report(manifest(8), pcs(8), human, roster, 1)
+    p = out["people"]["ben-shapiro"]
+    check("a recording with no political content is off_topic, not verified and not wrong-person",
+          p["outcomes"].get("off_topic") == 1 and p["verified"] == 7 and not out["wrong_person_found"], str(p))
+    human["ben-shapiro/s0"] = {k: v for k, v in label().items() if k != "political_content"}
+    out = P.report(manifest(8), pcs(8), human, roster, 1)
+    check("a label without political_content is invalid, so the gate is INCONCLUSIVE",
+          out["gate"] == "INCONCLUSIVE" and out["invalid_labels"], out["why"])
 
     print("\n[GATE]")
     human = {f"ben-shapiro/s{i}": label() for i in range(3)}

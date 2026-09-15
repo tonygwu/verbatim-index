@@ -55,7 +55,7 @@ VENUES = ("own_show_monologue", "reaction_stream", "debate", "guest_interview", 
           "panel_show", "tv_segment", "speech_or_lecture", "other")
 OWN_SHOW_VENUES = {"own_show_monologue", "reaction_stream"}
 INTERLOCUTOR_VENUES = {"debate", "guest_interview", "hosted_interview", "panel_show", "tv_segment"}
-HUMAN_FIELDS = ("subject_present", "main_speaker", "venue", "checked_by")
+HUMAN_FIELDS = ("subject_present", "main_speaker", "venue", "political_content", "checked_by")
 
 
 # ---- binomial intervals (exact, no scipy) --------------------------------------------------------
@@ -161,8 +161,8 @@ def precheck(rec: dict, person: dict) -> tuple[str, list[str]]:
 def human_errors(label: dict) -> list[str]:
     errs = [f"missing `{f}`" for f in HUMAN_FIELDS if f not in label or label[f] in (None, "")]
     if not errs:
-        if not isinstance(label["subject_present"], bool) or not isinstance(label["main_speaker"], bool):
-            errs.append("subject_present and main_speaker must be true or false")
+        if not all(isinstance(label[f], bool) for f in ("subject_present", "main_speaker", "political_content")):
+            errs.append("subject_present, main_speaker and political_content must be true or false")
         if label["venue"] not in VENUES:
             errs.append(f"venue `{label['venue']}` is not one of {list(VENUES)}")
     return errs
@@ -228,6 +228,11 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
                 continue
             if not label["main_speaker"]:
                 tally["not_main_speaker"] += 1
+                continue
+            if not label["political_content"]:
+                # Operator decision 2026-09-15: no political content (for example a
+                # gaming stream) is excluded, and counted as its own outcome.
+                tally["off_topic"] += 1
                 continue
             tally["verified"] += 1
             strata[row["discovery_stratum"]]["verified"] += 1
