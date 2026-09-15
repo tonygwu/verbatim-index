@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import statistics as st
 import sys
@@ -51,20 +52,32 @@ def main() -> int:
     args = ap.parse_args()
 
     runs = defaultdict(list)
+    # A grade that failed validation never reaches the board: aggregate.py marks
+    # it _excluded. It may not set the published noise figure either, and each
+    # exclusion is counted per judge rather than dropped silently.
+    excluded = defaultdict(list)
     for path in Path(args.grades).rglob("*.json"):
         if "_raw" in path.parts:
             continue
         r = json.loads(path.read_text())
         if "grade" not in r:
             continue
+        if r.get("validation_errors"):
+            excluded[(r["judge"], r["mode"])].append(f"{path.name}: {r['validation_errors']}")
+            continue
         runs[(r["judge"], r["mode"])].append(r)
 
     report = {"per_judge": {}, "cross_judge": {}, "notes": []}
+    for (judge, mode), why in sorted(excluded.items()):
+        report["notes"].append(f"{judge}|{mode}: excluded {len(why)} grade(s) with validation errors: {why}")
+        if (judge, mode) not in runs:
+            report["notes"].append(f"{judge}|{mode}: no valid grades remain, so this judge is absent below")
 
     for (judge, mode), rs in sorted(runs.items()):
         g = [r["grade"] for r in rs]
         entry = {
             "runs": len(rs),
+            "excluded_validation_errors": len(excluded[(judge, mode)]),
             "elapsed_sec": spread([r["elapsed_sec"] for r in rs]),
             "overall": spread([x["overall"] for x in g]),
             "dimensions": {d: spread([x["dimensions"][d]["score"] for x in g]) for d in DIMS},
@@ -94,23 +107,33 @@ def main() -> int:
         report["per_judge"][f"{judge}|{mode}"] = entry
 
     # Cross-judge: how does the gap between judges compare to each judge's own noise?
+    # Every pair is reported. This block once read only the first two names, so a
+    # third judge was dropped without a word; no key here lets one pair stand for
+    # the panel.
     by_mode = defaultdict(dict)
     for (judge, mode), rs in runs.items():
         by_mode[mode][judge] = [r["grade"]["overall"] for r in rs]
-    for mode, jd in by_mode.items():
+    for mode, jd in sorted(by_mode.items()):
         if len(jd) < 2:
+            report["notes"].append(f"cross_judge skipped for mode {mode}: only {sorted(jd)} graded it")
             continue
         names = sorted(jd)
-        a, b = jd[names[0]], jd[names[1]]
-        within = st.mean([st.stdev(a) if len(a) > 1 else 0, st.stdev(b) if len(b) > 1 else 0])
-        between = abs(st.mean(a) - st.mean(b))
+        sd = {n: st.stdev(jd[n]) if len(jd[n]) > 1 else 0 for n in names}
+        pairs = []
+        for a, b in itertools.combinations(names, 2):
+            within = st.mean([sd[a], sd[b]])
+            between = abs(st.mean(jd[a]) - st.mean(jd[b]))
+            pairs.append({
+                "judges": [a, b],
+                "between_judge_gap": round(between, 2),
+                "mean_within_judge_sd": round(within, 2),
+                "gap_in_units_of_noise": round(between / within, 1) if within else None,
+            })
         report["cross_judge"][mode] = {
             "judges": names,
-            f"{names[0]}_mean": round(st.mean(a), 2),
-            f"{names[1]}_mean": round(st.mean(b), 2),
-            "between_judge_gap": round(between, 2),
-            "mean_within_judge_sd": round(within, 2),
-            "gap_in_units_of_noise": round(between / within, 1) if within else None,
+            "judge_means": {n: round(st.mean(jd[n]), 2) for n in names},
+            "mean_within_judge_sd": round(st.mean(sd.values()), 2),
+            "pairs": pairs,
         }
 
     # The number that actually matters downstream.
