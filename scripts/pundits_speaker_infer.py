@@ -42,7 +42,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 from pundits_pilot import VENUES  # noqa: E402
 
 PILOT = "data-pundits/logs/pilot"
-MODEL = "claude-fable-5-1"
+MODELS = {"fable": "claude-fable-5-1", "sonnet": "claude-sonnet-5"}
 CONFIDENCE = ("high", "medium", "low")
 _lock = threading.Lock()
 
@@ -113,14 +113,29 @@ def parse_answer(text: str) -> dict:
         "evidence": [e for e in (a.get("evidence") or []) if isinstance(e, str)][:3]}
 
 
-def call_model(prompt: str, timeout: int = 1800) -> tuple[str, dict]:
-    spec = importlib.util.spec_from_file_location("grade_infer", REPO / "scripts" / "grade.py")
-    G = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(G)
+def draft_command(prompt: str, model_key: str) -> list[str]:
+    """Raw `claude`, tools removed, same isolation flags as the judge argv in grade.fable_command.
+
+    Sonnet exists because drafting all 104 rows on Fable spent account A's 5-hour
+    window on 2026-09-15 (76 of 104 calls failed with budget 0), and Fable is the
+    judge whose quota pilot grading needs.
+    """
+    cmd = ["claude", "-p", prompt, "--model", MODELS[model_key]]
+    if model_key == "fable":
+        cmd += ["--effort", "max"]
+    return cmd + ["--output-format", "json", "--allowedTools", "", "--tools", "", "--permission-prompts", "none",
+                  "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "",
+                  "--max-turns", "6"]
+
+
+def call_model(prompt: str, model_key: str, config_dir: str | None, timeout: int = 1800) -> tuple[str, dict]:
     env = dict(os.environ)
-    env.pop("CLAUDE_CONFIG_DIR", None)  # account A, which had the most Fable headroom on 2026-09-15
+    if config_dir:
+        env["CLAUDE_CONFIG_DIR"] = config_dir
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)  # account A lives outside any config dir; see CLAUDE.md
     with tempfile.TemporaryDirectory(prefix="speaker-infer-") as jail:
-        proc = subprocess.run([*G.fable_command(prompt, "claude"), "--tools", ""], capture_output=True, text=True,
+        proc = subprocess.run(draft_command(prompt, model_key), capture_output=True, text=True,
                               timeout=timeout, env=env, cwd=jail, stdin=subprocess.DEVNULL)
     if proc.returncode != 0:
         raise RuntimeError(f"cli exit {proc.returncode}: {(proc.stderr or proc.stdout)[-300:]}")
@@ -128,10 +143,10 @@ def call_model(prompt: str, timeout: int = 1800) -> tuple[str, dict]:
     if payload.get("is_error"):
         raise RuntimeError(f"cli error: {str(payload.get('result'))[:300]}")
     used = list((payload.get("modelUsage") or {}).keys())
-    if not any("fable" in m.lower() for m in used):
-        raise RuntimeError(f"model mismatch: telemetry names {used}, no Fable model")
+    if not any(model_key in m.lower() for m in used):
+        raise RuntimeError(f"model mismatch: requested {MODELS[model_key]}, telemetry names {used}")
     return payload.get("result") or "", {"telemetry_models": used, "session_id": payload.get("session_id"),
-                                         "duration_ms": payload.get("duration_ms")}
+                                         "duration_ms": payload.get("duration_ms"), "config_dir": config_dir or "default"}
 
 
 def needs_review(draft: dict, human: dict | None) -> list[str]:
@@ -173,14 +188,19 @@ def main() -> int:
     i = sub.add_parser("infer")
     i.add_argument("--workers", type=int, default=4)
     i.add_argument("--rows", default=None, help="Comma-separated checklist row numbers; default all.")
+    i.add_argument("--config-dirs", default="",
+                   help="Comma-separated CLAUDE_CONFIG_DIRs to rotate over; empty means the default account.")
     r = sub.add_parser("review")
     for x in (i, r):
         SP.add_study_arg(x)
+        x.add_argument("--model", choices=sorted(MODELS), default="fable",
+                       help="Drafts from different models are kept in separate files and never mixed.")
     args = ap.parse_args()
     root = REPO / PILOT
     SP.guard(args.study, str(root))
     keys = {int(n): k for n, k in json.loads((root / "checklist_table_keys.json").read_text()).items()}
-    drafts_path = root / "speaker_inference.jsonl"
+    suffix = "" if args.model == "fable" else f"_{args.model}"
+    drafts_path = root / f"speaker_inference{suffix}.jsonl"
     drafts = {}
     if drafts_path.exists():
         for line in drafts_path.read_text().splitlines():
@@ -203,9 +223,11 @@ def main() -> int:
             key = keys[n]
             slug, sid = key.split("/", 1)
             rec = json.loads((REPO / "data-pundits/transcripts" / slug / f"{sid}.json").read_text())
-            entry = {"row": n, "key": key, "model": MODEL}
+            entry = {"row": n, "key": key, "model": MODELS[args.model]}
+            dirs = [d.strip() for d in args.config_dirs.split(",")] if args.config_dirs else [""]
             try:
-                text, tel = call_model(build_prompt(roster[slug], manifest[key], rec))
+                text, tel = call_model(build_prompt(roster[slug], manifest[key], rec), args.model,
+                                       os.path.expanduser(dirs[n % len(dirs)]) or None)
                 entry |= parse_answer(text) | {"telemetry": tel}
                 outcome = "drafted"
             except Exception as exc:  # noqa: BLE001 -- recorded with its type, and counted
@@ -237,7 +259,8 @@ def main() -> int:
               "drafted": sum(1 for k in keys.values() if k in drafts and not drafts[k].get("error")),
               "operator_labelled": sum(1 for k in keys.values() if k in human),
               "to_review": queue}
-    write_atomic(root / "speaker_review_queue.json", json.dumps(report, indent=1, ensure_ascii=False))
+    report["model"] = MODELS[args.model]
+    write_atomic(root / f"speaker_review_queue{suffix}.json", json.dumps(report, indent=1, ensure_ascii=False))
     print(json.dumps({k: v for k, v in report.items() if k != "to_review"} | {"to_review": len(queue)}, indent=1))
     return 0
 

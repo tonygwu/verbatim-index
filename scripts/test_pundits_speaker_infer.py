@@ -58,6 +58,16 @@ def main() -> int:
           not refused(lambda: S.parse_answer(json.dumps(GOOD) + "\n{\"note\": \"extra\"}"))
           and not refused(lambda: S.parse_answer(json.dumps(GOOD) + " Hope that helps {:)}")))
 
+    print("\n[COMMAND]")
+    cmd = S.draft_command("PROMPT", "sonnet")
+    check("the sonnet command requests claude-sonnet-5 and no Fable model",
+          cmd[cmd.index("--model") + 1] == "claude-sonnet-5" and not any("fable" in c for c in cmd), str(cmd))
+    check("tools are removed and permissions denied",
+          cmd[cmd.index("--tools") + 1] == "" and cmd[cmd.index("--permission-prompts") + 1] == "none")
+    check("the binary is raw claude, never cl", cmd[0] == "claude")
+    fcmd = S.draft_command("PROMPT", "fable")
+    check("the fable command keeps max effort", fcmd[fcmd.index("--model") + 1] == "claude-fable-5-1" and "--effort" in fcmd)
+
     print("\n[QUEUE]")
     d = dict(GOOD)
     check("a confident present-and-main draft with no human label is not queued", S.needs_review(d, None) == [])
