@@ -29,6 +29,9 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 | VP-15 | Phase 2 scope: what a score could honestly cover | **succeeded** 2026-09-13, scoping only, no calls spent: 38 of 475 accepted predictions are scorable as foresight, across 21 leaders, and 1 leader reaches a floor of 5; Brier has n=1 and market-relative has n=0. Recommendation is resolution without a ranking. `docs/PREDICTIONS-PHASE2-SCOPE.md` | `.venv/bin/python scripts/phase2_resolvability.py --as-of <YYYY-MM-DD>`; `.venv/bin/python scripts/test_phase2_resolvability.py` |
 | VP-16 | 8 past-due predictions target a date BEFORE their own statement date | **open**, 5 leaders, 2.5% of the 325 dated records; cause is the upload date standing in for the date of speech, so a 2006 talk uploaded in 2013 resolves "this year" to the wrong year. Must be cleared before any resolution pass, and the detector only catches the provably-impossible direction | `.venv/bin/python scripts/phase2_resolvability.py --as-of $(date -u +%F) \| tail -12` |
 | VP-17 | Six-column table is committed but NOT deployed | **open**: the live site at verbatim-predictions.tonygwu.com still shows the eleven-column table. The staleness gate was checked on 2026-09-13 and passes (index 666 files / 1494 records / sha fddfb8e6f55d, disk identical), so the deploy is a one-command job from repo-0 | `bash scripts/deploy_predictions.sh --production-data ../data --data-revision $(git -C data rev-parse HEAD) --dry-run` to re-check the gate, then without `--dry-run` to publish |
+| VP-14 | Corpus published at verbatim-predictions.tonygwu.com | **succeeded** 2026-09-14: 50 people, 475 accepted predictions from 285 transcripts, 666 transcripts scanned, 96% carrying a statement date; home 200, a wrong path 404 | `curl -s -o /dev/null -w '%{http_code}' https://verbatim-predictions.tonygwu.com/` |
+| VP-15 | Three routing and taxonomy defects that cost 31 wasted calls | **succeeded**: a spent router pick now refuses before any call while Antigravity still routes; failures name their account; `classify_cli_failure` matches the limit FAMILY; `router_version_ok()` refuses a stale venv. Root cause was repo-2 running llm-quota-router 0.1.0 against a 0.1.1 floor. All five clones now on 0.1.1 | `.venv/bin/python scripts/test_predictions_driver.py`; `.venv/bin/python scripts/test_grade_harness.py` |
+
 
 ## Decisions waiting
 
@@ -40,6 +43,7 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 
 | ID | Decision | Choice | Date |
 |---|---|---|---|
+| VD-4 | Whether to migrate the corpus to release `predictions-2.0` | **No. Stay on extraction `d795f6f1d88b` / verification `102275d44824`** | 2026-09-14 |
 | VD-1 | Verifier strictness on undated claims | keep strict for V0; revisit with human labels in Phase 2 | 2026-09-11 |
 | VD-3 | Whether the page gets a market-surprise column | **no**, settled by measurement rather than judgement: the corpus market pass returned 0 exact matches of 475 (451 `no_match`, 22 `unavailable`, 2 `failed`) against the 20% threshold this ledger set. Public prediction markets and interview claims are close to disjoint | 2026-09-13 |
 | VD-0a | Where predictions are written | `data/predictions/` from any clone; writer refuses other data paths | 2026-09-10 |
@@ -47,3 +51,38 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 | VD-0c | Where the page lives | `verbatim-predictions.tonygwu.com`, its own Worker | 2026-09-10 |
 | VD-0d | Market evidence in V0 | separate stage after verification, public APIs only, `P_market(t^-)`, exact and proxy kept apart, speaker probability never touched | 2026-09-10 |
 | VD-0e | Roadmap statements | extracted and tagged `subject_control: own`, not gated | 2026-09-10 |
+
+## VD-4, why the corpus did not migrate
+
+A 40-transcript paired sample, seeded, with extraction pinned to Astra and
+verification pinned to Gemini so the models are held fixed and the policy is
+the only variable. Records under
+`data/predictions/_experiments/policy2-sample-20260914T045950Z/`.
+
+`predictions-2.0` accepts 77% more: 118 candidates and 35 accepted became 136
+and 62, so 30% acceptance became 46%. Eleven transcripts gained and none lost,
+so the direction is not re-run noise. Acceptance alone argued for migrating.
+
+Reading the content reversed that. The growth is undated material. Of the 17
+candidates that share an exact `prediction_id` and flipped from rejected to
+accepted, 12 carry no target date. The corpus-wide undated share would rise
+from 11% to 40%. An undated claim can never be resolved, so Phase 2 could
+never score it.
+
+One case is a correctness defect rather than a judgement call. The new policy
+tells the verifier to resolve relative time against the metadata statement
+year, and the statement year is the YouTube UPLOAD date, documented everywhere
+in this repo as an upper bound on the recording date. On a CES keynote from
+2005 uploaded in 2013, "office 12 and many other products will come out" was
+accepted as "Microsoft will release Office 12 by the end of 2013". The OLD
+verifier rejected that same quote for exactly this reason, on `claim_faithful`.
+Five accepted records from that one transcript carry 2013 dates. Across the
+sample, records whose target year equals the upload year with no year in the
+quote went from 9 under the old policy to 17 under the new one.
+
+Revisit when the statement-date basis is handled. repo-4, who owns the
+release, has moved to other work, so this is unowned. Their own report says to
+"use agreed reference cases to resolve the remaining judgment boundaries
+before a broader quality comparison or corpus migration", and no such
+reference cases exist. Neither policy has human labels, so every comparison so
+far is one model judging another.
