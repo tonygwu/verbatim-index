@@ -181,13 +181,32 @@ on disk: ben-shapiro 24, asmongold 24, ana-kasparian 8, hasan-piker 8, matt-wals
          coleman-hughes 7, ezra-klein 6, sam-seder 3, charlie-kirk 2, steven-bonnell 2
 ```
 
-## Automatic pre-check on the 92 fetched records
+Retry 6, 2026-09-15 03:25Z, on an Anchorage VPN exit (209.46.39.46), cap 8.
+No throttling in 6 minutes:
 
 ```
-NEEDS_HUMAN 87   FAIL 5
-  4 uploaded 2017 to 2021-03, outside the window 20210913-20260913
-  1 charlie-kirk upload dated 20260909, after his last recording 20250910
+newly_fetched 20, failed 0; every pilot person now has at least 8
+on disk: ben-shapiro 24, asmongold 24, and 8 each for the other eight   total 112
 ```
+
+## Automatic pre-check on the 112 fetched records
+
+```
+NEEDS_HUMAN 104   FAIL 8
+  4 uploaded 2017 to 2021-03, outside the window 20210913-20260913
+  3 charlie-kirk uploads dated 20250920, 20260101, 20260909, after his last recording 20250910
+  1 sam-seder substitute host
+```
+
+The substitute-host failure was read by hand and is correct. The opening says
+"welcome to the show everybody I'm in for Sam he's taking a personal day with
+his kids today" (`the-majority-report-w-sa-aailrj`, MR LIVE 8/10/22).
+
+Recordings waiting for the human speaker check, per person: asmongold 24,
+ben-shapiro 22, ezra-klein 8, hasan-piker 8, matt-walsh 8, steven-bonnell 8,
+ana-kasparian 7, coleman-hughes 7, sam-seder 7, charlie-kirk 5. Every person
+is above the gate's minimum of 4 before any human rejection. Charlie Kirk is
+the thinnest, because 3 of his 8 are uploads from after his death.
 
 The Kirk failure is the archival rule working: his channel keeps posting after
 his death, and those uploads cannot be him speaking live.
