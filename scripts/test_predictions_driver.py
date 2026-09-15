@@ -50,7 +50,7 @@ def load(name: str):
 
 
 ACCOUNTS = [("claude", "claude", "/Users/x/.claude", True), ("claude_b", "claude", "/Users/x/.claude-b", False),
-            ("codex", "codex", None, False), ("antigravity_gemini", "antigravity", None, False),
+            ("codex", "codex", "/Users/x/.codex", False), ("antigravity_gemini", "antigravity", None, False),
             ("antigravity_claude", "antigravity", None, False)]
 
 
@@ -63,8 +63,14 @@ def test_route(D, L) -> None:
     check("ROUTE: default Claude account -> fable with __DEFAULT__", r["harness"] == "fable" and r["config_dir"] == "__DEFAULT__")
     r = D.route_from_selection(sel("claude_b", "claude"), ACCOUNTS, False)
     check("ROUTE: named Claude account -> its config dir", r["config_dir"] == "/Users/x/.claude-b")
+    # CHANGED 2026-09-15. This used to assert an Astra route carried NO config
+    # dir, which is what let call_astra spawn in the shell's CODEX_HOME while
+    # the record named the router's pick. Harmless only while the pinned router
+    # could see one Codex home; the live router ranks codex_b, so a route with
+    # no home would book one account and spend another.
     r = D.route_from_selection(sel("codex", "codex"), ACCOUNTS, False)
-    check("ROUTE: codex -> astra, no config dir", r["harness"] == "astra" and r["config_dir"] is None)
+    check("ROUTE: codex -> astra, carrying its own config dir",
+          r["harness"] == "astra" and r["config_dir"] == "/Users/x/.codex")
     r = D.route_from_selection(sel("antigravity_gemini", "antigravity"), ACCOUNTS, False)
     check("ROUTE: antigravity -> gemini", r["harness"] == "gemini")
     for name, s in (("no account", sel(None, None)), ("unknown provider", sel("cursor", "cursor")),
