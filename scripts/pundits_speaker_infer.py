@@ -55,8 +55,10 @@ introductions, how people address each other, turn-taking and content.
 1. subject_present: does the SUBJECT take part live anywhere in this recording? A recording ABOUT
    the subject, where others discuss them, is false. A played clip of the subject is NOT
    presence: if the subject is heard only in clips that others play, answer false.
-2. main_speaker: true if the SUBJECT speaks the most words of anyone, or at least about a third of
-   all words. A host who mostly listens to a guest is false.
+2. main_speaker: a host who runs the conversation counts as the main speaker, even when a guest
+   talks more; running it means hosting, asking the questions, or running their own stream.
+   Otherwise true if the SUBJECT speaks the most words among the live voices, or at least about a
+   third of them. Played clips are not live voices.
 3. venue: the format, decided by who asks the questions, not by who owns the channel:
    - guest_interview: one person runs it by asking questions and the SUBJECT is among those
      answering, however many answer together.

@@ -58,6 +58,13 @@ def main() -> int:
           not refused(lambda: S.parse_answer(json.dumps(GOOD) + "\n{\"note\": \"extra\"}"))
           and not refused(lambda: S.parse_answer(json.dumps(GOOD) + " Hope that helps {:)}")))
 
+    print("\n[HOST-RULE]")
+    guide = (REPO / "docs" / "PUNDITS-LABELLING-GUIDE.md").read_text()
+    phrase = "runs the conversation counts as the main speaker"
+    check("the drafting instructions count a host who runs the conversation as main speaker (operator, 2026-09-15)",
+          phrase in S.RULES.replace("\n   ", " "))
+    check("the labelling guide states the same host rule", phrase in guide.replace("\n", " "))
+
     print("\n[COMMAND]")
     cmd = S.draft_command("PROMPT", "sonnet")
     check("the sonnet command requests claude-sonnet-5 and no Fable model",
