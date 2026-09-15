@@ -777,6 +777,19 @@ def call_astra(prompt: str, timeout: int, workdir: Path,
     `model` is a parameter because this arm falls back to another model when
     it refuses repeatedly. The served model is recorded in the telemetry, so
     aggregate.py can calibrate each model on its own distribution."""
+    # Create the jail, exactly as call_fable and call_gemini do for theirs. The
+    # workdir is this call's cwd and its -o target, so a caller that passes a
+    # path which does not exist gets FileNotFoundError out of subprocess.run
+    # rather than a model failure, and the taxonomy files it as cli_nonzero_exit.
+    #
+    # This was latent for the whole corpus. extract_predictions.verify_one
+    # passes a per-batch SUBdirectory (workdir/b0) and creates only the parent,
+    # and in every grade and prediction run to date Astra EXTRACTED while Gemini
+    # or Fable verified (808 and 109 records), so Astra was never handed a
+    # missing directory. It surfaced the first time measured quota routed Fable
+    # to extraction, which forces Astra into verification.
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
     out_file = workdir / "astra_last_message.txt"
     cmd = [
         "codex", "exec",

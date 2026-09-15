@@ -309,12 +309,52 @@ def dedupe_overlapping(cands: list[dict]) -> tuple[list[dict], list[dict]]:
 # Dates and the market cutoff
 # ---------------------------------------------------------------------------
 
-def derive_statement_date(rec: dict) -> tuple[str | None, str]:
-    """(YYYY-MM-DD, basis). yt_upload_date only; declared_year is never consulted.
+# Bases a transcript record may declare for its own statement date. Each says
+# how the date relates to the moment of speech, because that is what a horizon
+# is measured from.
+#   stated_in_page    the source itself states when the words were spoken; exact
+#   publication_date  the date the source was published; an UPPER BOUND on speech
+#   youtube_upload_date  the upload date; an upper bound. Derived, never declared.
+DECLARED_DATE_BASES = {"stated_in_page", "publication_date"}
 
-    A malformed upload date raises: guessing a date would put a wrong 'said on'
-    next to a quote and silently poison every horizon computed from it.
+
+def derive_statement_date(rec: dict) -> tuple[str | None, str]:
+    """(YYYY-MM-DD, basis). declared_year is never consulted.
+
+    A transcript may DECLARE `statement_date` with a `statement_date_basis`, for
+    a source that is not a YouTube recording and has no upload date. Otherwise
+    the date comes from `yt_upload_date` as before, so every existing transcript
+    is unaffected.
+
+    A malformed date raises: guessing one would put a wrong 'said on' next to a
+    quote and silently poison every horizon computed from it. That is not
+    hypothetical here. A `or 2024` default once reached every judge on every
+    grade for four days.
     """
+    declared = rec.get("statement_date")
+    if declared not in (None, ""):
+        basis = rec.get("statement_date_basis")
+        if basis not in DECLARED_DATE_BASES:
+            raise PredictionError(
+                f"statement_date: {rec.get('source_id')} declares statement_date "
+                f"{declared!r} with basis {basis!r}; must be one of "
+                f"{sorted(DECLARED_DATE_BASES)}")
+        if not isinstance(declared, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", declared):
+            raise PredictionError(
+                f"statement_date: declared statement_date {declared!r} is not "
+                f"YYYY-MM-DD in {rec.get('source_id')}")
+        try:
+            datetime.strptime(declared, "%Y-%m-%d")
+        except ValueError as exc:
+            raise PredictionError(
+                f"statement_date: declared statement_date {declared!r} is not a "
+                f"real date in {rec.get('source_id')}: {exc}") from exc
+        if rec.get("yt_upload_date"):
+            raise PredictionError(
+                f"statement_date: {rec.get('source_id')} carries BOTH a declared "
+                f"statement_date and a yt_upload_date; exactly one source of "
+                f"truth, or the basis recorded on the record is not the one used")
+        return declared, basis
     raw = rec.get("yt_upload_date")
     if raw in (None, ""):
         return None, "unknown"
@@ -836,9 +876,33 @@ def serialise_lines(records: list[dict]) -> str:
     return "".join(serialise_line(r) + "\n" for r in ordered)
 
 
+def jsonl_lines(text: str) -> list[str]:
+    """Split a JSONL payload on "\\n" ONLY.
+
+    `str.splitlines()` is wrong for JSONL and was the bug here. It also breaks
+    on VT, FF, FS, GS, RS, NEL, U+2028 and U+2029, and JSON permits every one of
+    those RAW inside a string. So a record containing one was cut in half, and
+    the half parsed as `Unterminated string`, naming a column rather than the
+    character responsible.
+
+    MEASURED: a Stripe annual-letter PDF carried one U+2028 LINE SEPARATOR in an
+    image caption. `json.loads` accepted the whole record happily; `parse_lines`
+    never gave it the whole record. The file was 9564 bytes, 9522 characters,
+    ONE "\\n" byte, and `splitlines()` returned two lines.
+
+    The existing corpus never hit this because YouTube caption text carries none
+    of these code points. Any source that has been through a PDF or a word
+    processor can.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def parse_lines(text: str, where: str = "") -> list[dict]:
     out = []
-    for n, line in enumerate(text.splitlines(), 1):
+    for n, line in enumerate(jsonl_lines(text), 1):
         if not line.strip():
             raise PredictionError(f"{where}:{n}: blank line inside a predictions file")
         try:
