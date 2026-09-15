@@ -33,8 +33,7 @@ completed row into `data-pundits/logs/pilot/human_labels.json`, keyed the same.
 
 | Field | Values | Meaning |
 |---|---|---|
-| `subject_present` | true / false | The roster person speaks in the recording. False means a wrong-person record, and it is counted and reported. |
-| `main_speaker` | true / false | A host who runs the conversation counts as the main speaker, even when a guest talks more: hosting, asking the questions, or running their own stream. Otherwise the person speaks the most words among the live voices, OR at least about a third of them. Played clips are not live voices. Decided with the operator on 2026-09-15. |
+| `subject_present` | true / false | The roster person takes part live, enough that grading this recording says something about them. A played clip of them is not presence. False means a wrong-person or too-little record, and it is counted and reported. There is no separate main-speaker question: the judges estimate the subject's share of the words, and that filter removes recordings with too little of them. Decided with the operator on 2026-09-15. |
 | `venue` | one of the venues below | The format of THIS recording, whoever uploaded it. |
 | `political_content` | true / false | The recording discusses politics, policy, news or public controversy for a real part of its length. A stream that is only gaming, entertainment or chat is false, and it is excluded as off-topic. Decided with the operator on 2026-09-15. |
 | `checked_by` | a person's name or initials | Who listened. |

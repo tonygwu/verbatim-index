@@ -340,8 +340,10 @@ recordings. They are not fact-checks, and not judgements of a person's sincerity
   source, own channel included, needs speaker verification.
   - Test fixtures cover guest-only episodes, clip compilations, substitute hosts and archival
     re-uploads.
-  - Pilot: a human checks EVERY selected pilot recording for the subject's presence and main-speaker
-    role before grading. A known wrong-person record is removed, whatever the precision figure says.
+  - Pilot: a human checks EVERY selected pilot recording for the subject's presence before grading.
+    Presence means enough of the subject to be worth grading. The main-speaker check was dropped with
+    the operator on 2026-09-15, because people, Fable and Sonnet could not apply it consistently; the
+    judges' pooled subject-share filter (P5) removes recordings with too little of the subject. A known wrong-person record is removed, whatever the precision figure says.
 - **Pilot people:** 10, of whom 4 lean left, 4 right and 2 heterodox. They include Destiny, Asmongold,
   one debate-heavy person, one own-show host and Charlie Kirk as the archival case.
 - **Gate P6.**

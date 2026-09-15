@@ -52,8 +52,9 @@ def rec(upload="20240101", text=None):
 
 
 def label(present=True, main=True, venue="guest_interview", political=True):
-    return {"subject_present": present, "main_speaker": main, "venue": venue, "political_content": political,
-            "checked_by": "tester"}
+    # main_speaker is no longer a label (operator, 2026-09-15): presence means "enough
+    # of the subject to be worth grading"; judges' share estimates filter the rest.
+    return {"subject_present": present, "venue": venue, "political_content": political, "checked_by": "tester"}
 
 
 def main() -> int:

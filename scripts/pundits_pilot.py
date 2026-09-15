@@ -55,7 +55,10 @@ VENUES = ("own_show_monologue", "reaction_stream", "debate", "guest_interview", 
           "panel_show", "tv_segment", "speech_or_lecture", "other")
 OWN_SHOW_VENUES = {"own_show_monologue", "reaction_stream"}
 INTERLOCUTOR_VENUES = {"debate", "guest_interview", "hosted_interview", "panel_show", "tv_segment"}
-HUMAN_FIELDS = ("subject_present", "main_speaker", "venue", "political_content", "checked_by")
+# No main_speaker (operator, 2026-09-15): people, Fable and Sonnet could not apply it
+# consistently. subject_present means "enough of the subject to be worth grading",
+# and the judges' pooled subject-share estimate filters recordings with too little.
+HUMAN_FIELDS = ("subject_present", "venue", "political_content", "checked_by")
 
 
 # ---- binomial intervals (exact, no scipy) --------------------------------------------------------
@@ -161,8 +164,8 @@ def precheck(rec: dict, person: dict) -> tuple[str, list[str]]:
 def human_errors(label: dict) -> list[str]:
     errs = [f"missing `{f}`" for f in HUMAN_FIELDS if f not in label or label[f] in (None, "")]
     if not errs:
-        if not all(isinstance(label[f], bool) for f in ("subject_present", "main_speaker", "political_content")):
-            errs.append("subject_present, main_speaker and political_content must be true or false")
+        if not all(isinstance(label[f], bool) for f in ("subject_present", "political_content")):
+            errs.append("subject_present and political_content must be true or false")
         if label["venue"] not in VENUES:
             errs.append(f"venue `{label['venue']}` is not one of {list(VENUES)}")
     return errs
@@ -225,9 +228,6 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
             if not label["subject_present"]:
                 wrong_person.append(key)
                 tally["wrong_person"] += 1
-                continue
-            if not label["main_speaker"]:
-                tally["not_main_speaker"] += 1
                 continue
             if not label["political_content"]:
                 # Operator decision 2026-09-15: no political content (for example a
@@ -314,7 +314,7 @@ def main() -> int:
             if verdict == "NEEDS_HUMAN":
                 checklist[key] = {"url": f"https://www.youtube.com/watch?v={row['video_id']}", "title": row["title"],
                                   "channel": row["venue"], "upload": rec.get("yt_upload_date"), "hints": reasons,
-                                  "subject_present": None, "main_speaker": None, "venue": None, "checked_by": None,
+                                  "subject_present": None, "venue": None, "political_content": None, "checked_by": None,
                                   "notes": ""}
         write_atomic(Path(args.out), json.dumps(results, indent=1))
         write_atomic(Path(args.checklist), json.dumps(checklist, indent=1, ensure_ascii=False))

@@ -63,7 +63,10 @@ def main() -> int:
     phrase = "runs the conversation counts as the main speaker"
     check("the drafting instructions count a host who runs the conversation as main speaker (operator, 2026-09-15)",
           phrase in S.RULES.replace("\n   ", " "))
-    check("the labelling guide states the same host rule", phrase in guide.replace("\n", " "))
+    # The guide no longer asks people about main speaker (operator, 2026-09-15); presence
+    # is the human label, so the guide must define presence as "enough to be worth grading".
+    check("the labelling guide defines presence as enough of the subject to be worth grading",
+          "enough that grading this recording says something about them" in guide.replace("\n", " "))
 
     print("\n[COMMAND]")
     cmd = S.draft_command("PROMPT", "sonnet")
