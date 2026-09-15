@@ -106,6 +106,8 @@ thead th{
   white-space:nowrap; cursor:pointer; user-select:none;
 }
 thead th:hover{color:var(--ink)}
+thead th.nosort{cursor:default}
+thead th.nosort:hover{color:var(--muted)}
 thead th .arrow{opacity:.35; margin-left:3px; font-size:9px}
 thead th[aria-sort] .arrow{opacity:1; color:var(--d2)}
 tbody tr.row{border-bottom:1px solid var(--rule); cursor:pointer}
@@ -114,13 +116,35 @@ tbody tr.row:focus-visible{outline:2px solid var(--d1); outline-offset:-2px}
 td{padding:11px 7px; vertical-align:middle}
 td.num{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums}
 td.num.zero{color:var(--faint)}
-.who{width:auto; max-width:420px; padding-left:16px}
+.who{padding-left:16px}
 .who .nm{font-weight:600; letter-spacing:-.01em}
-.who .rl{font-size:12px; color:var(--muted); margin-top:1px}
+.who .rl{font-size:12px; color:var(--muted); margin-top:1px; overflow-wrap:anywhere}
 td.org{color:var(--ink-2); font-size:13.5px}
 td.org .sector{display:block; font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); margin-top:2px}
 td.date{font-family:"IBM Plex Mono",monospace; font-size:12.5px; text-align:right}
 td.date.unknown{color:var(--faint)}
+
+/* ---------- when-it-was-said sparkline: one square per year, shared scale ---------- */
+td.spark{padding:11px 10px}
+.sq{display:flex; gap:2px; align-items:flex-end}
+.sq i{flex:1 1 0; height:13px; border-radius:1px; background:var(--rule); min-width:5px}
+.sq i.q1{background:var(--d1); opacity:.30}
+.sq i.q2{background:var(--d1); opacity:.55}
+.sq i.q3{background:var(--d2); opacity:.80}
+.sq i.q4{background:var(--d2)}
+thead th.axis{padding-left:10px; padding-right:10px; vertical-align:bottom}
+thead th.axis .lbl{display:block}
+.sq-ax{display:flex; gap:2px; margin-top:6px}
+.sq-ax i{flex:1 1 0; min-width:5px; font-style:normal; font-size:9px; letter-spacing:0;
+  text-align:center; color:var(--faint); text-transform:none}
+.sq-ax i.tick{color:var(--muted)}
+.sq-nd{display:block; font-family:"IBM Plex Mono",monospace; font-size:9px; letter-spacing:.04em; color:var(--faint); margin-top:4px}
+.legend i.k{display:inline-block; width:11px; height:11px; border-radius:1px; vertical-align:-1px; background:var(--rule)}
+.legend i.k.q1{background:var(--d1); opacity:.30}
+.legend i.k.q2{background:var(--d1); opacity:.55}
+.legend i.k.q3{background:var(--d2); opacity:.80}
+.legend i.k.q4{background:var(--d2)}
+td.pend{text-align:center; font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--faint)}
 
 /* ---------- (?) affordance + shared tooltip (mirrors build_site.py) ---------- */
 button.info{
@@ -232,23 +256,24 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
   <p>
     Click any row to read every prediction with its verbatim quote and the surrounding transcript,
     and to filter by target date, category and how much of the outcome is under the speaker's control.
-    Sort by any column; the default is alphabetical, and no column measures foresight.
+    Every column but the last one sorts; the default is alphabetical, and no column measures foresight.
   </p>
   <div class="legend">
     <span>A <b>prediction</b> is a claim the extractor (__EXTRACTOR__) proposed and an independent
     verifier (__VERIFIER__) agreed is a forward-looking, falsifiable statement by this speaker.
     Candidates the verifier rejected are kept on file and counted, not shown. The two numbers are
-    counts of what each person said. Neither is a measure of foresight, and the page carries no
-    column that is: nothing here has been checked against what happened.</span>
+    counts of what each person said. Neither is a measure of foresight.
+    <!-- pending:start --><b>Score is empty on every row</b>, and stays empty until outcomes are
+    resolved<!-- pending:end -->: nothing here has been checked against what happened.</span>
   </div>
 </div>
 
 <div class="tablecard">
   <table id="board">
     <colgroup>
-      <col><col style="width:250px">
-      <col style="width:140px"><col style="width:140px">
-      <col style="width:140px"><col style="width:140px">
+      <col style="width:215px"><col style="width:205px">
+      <col style="width:105px"><col style="width:105px">
+      <col><col style="width:95px">
     </colgroup>
     <thead><tr>
       <th data-k="name" aria-sort="ascending">Person<span class="arrow">&#9650;</span></th>
@@ -257,12 +282,21 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
         aria-expanded="false" aria-label="What does Predictions mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="transcripts">Transcripts<button class="info" type="button" data-info="transcripts"
         aria-expanded="false" aria-label="What does Transcripts mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="earliest">Earliest<button class="info" type="button" data-info="dates"
-        aria-expanded="false" aria-label="What do the dates mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="latest">Latest<span class="arrow">&#9650;</span></th>
+      <th data-k="earliest" class="axis"><span class="lbl">When it was said<button class="info" type="button" data-info="timeline"
+        aria-expanded="false" aria-label="What does the timeline show?">?</button><span class="arrow">&#9650;</span></span><span class="sq-ax" id="ax"></span></th>
+      <!-- pending:start --><th class="nosort">Score<button class="info" type="button" data-info="pend"
+        aria-expanded="false" aria-label="Why is this column empty?">?</button></th><!-- pending:end -->
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
+</div>
+<div class="legend">
+  <span><b>When it was said</b> is one square per year, __Y0__ on the left to __Y1__ on the right, the
+  same years on every row. Shading is how many predictions that person made that year, on a scale
+  shared by all rows: <i class="k q1"></i>&nbsp;1 &nbsp; <i class="k q2"></i>&nbsp;2&ndash;3 &nbsp;
+  <i class="k q3"></i>&nbsp;4&ndash;7 &nbsp; <i class="k q4"></i>&nbsp;8 or more. An empty square is a
+  year with none. Hover a square for the year and the count. The statement date is the recording's
+  publication date, an upper bound on when it was said.</span>
 </div>
 
 <div class="sec"><h2>How this was built</h2></div>
@@ -303,12 +337,45 @@ const INFO = {
     what the speaker said about likelihood.</p>`,
   transcripts: `<p><b>Transcripts</b> holding at least one accepted prediction. The drawer says how many of
     this person's transcripts extraction ran on, so a low count can be read against its coverage.</p>`,
-  dates: `<p><b>Earliest and latest</b> statement dates among this person's accepted predictions. The
-    statement date is the recording's publication date, an upper bound on when it was said, unless
-    the record says otherwise. Unknown dates sort last.</p>`,
+  timeline: `<p><b>When it was said.</b> One square per year, __Y0__ to __Y1__, the same years on every
+    row. The shading is how many of this person's accepted predictions carry a statement date in that
+    year, banded 1, 2&ndash;3, 4&ndash;7, 8 or more on a scale shared by all 50 people. Hover a square
+    for its count.</p>
+    <p>The statement date is the recording's <b>publication</b> date, an upper bound on when the words
+    were said. A talk uploaded years after it was given sits in the upload year, so a square can be
+    later than the event. Predictions from a recording with no date sit in no year and are counted
+    beneath the squares.</p>
+    <p>Sorting this column sorts by the earliest statement date; people with no dated prediction sort
+    last.</p>`,
+  /* pending:start */
+  pend: `<p><b>Score is empty on every row, and that is not a bug.</b> No prediction on this page has
+    been resolved against what happened, so there is nothing to score. The column is here to name the
+    gap rather than hide it.</p>
+    <p>Resolution is separate, later work. When it runs it will fill each prediction's outcome first,
+    and only then can a column like this hold anything.</p>
+    <p>Even then it will not cover everyone. A score may only contain claims about the outside world
+    that have come due, and on this corpus that is a small set: most accepted predictions either carry
+    no target date, are not yet due, or are commitments about the speaker's own company, which measure
+    delivery rather than foresight.</p>`,
+  /* pending:end */
 };
 
 const fmtDate = d => d ? d : "date unknown";
+
+/* One square per statement year, the same span on every row so the columns line up.
+   Bands, not a linear ramp: the corpus median cell is 1 and the max is 17, so a linear
+   scale would render almost every square at the lightest shade. */
+const YEARS = __YEARS__;
+const band = n => n === 0 ? "" : n === 1 ? "q1" : n <= 3 ? "q2" : n <= 7 ? "q3" : "q4";
+function spark(r){
+  const y = r.years || {};
+  const cells = YEARS.map(yr => {
+    const n = y[yr] || 0;
+    return `<i class="${band(n)}" title="${yr}: ${n} prediction${n === 1 ? "" : "s"}"></i>`;
+  }).join("");
+  const nd = r.undated ? `<span class="sq-nd" title="${r.undated} of this person's predictions come from a recording with no publication date, so they sit in no year.">+${r.undated} undated</span>` : "";
+  return `<div class="sq">${cells}</div>${nd}`;
+}
 const pct = p => (p == null) ? null : Math.round(p * 100) + "%";
 const ytLink = (vid, t) => vid && t != null ? `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}&t=${t}s` : null;
 const stale = s => s < 3600 ? Math.round(s / 60) + " min" : s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " days";
@@ -401,11 +468,16 @@ function drawer(slug, person){
   </div>`;
 }
 
+document.getElementById("ax").innerHTML = YEARS.map(y => {
+  const t = Number(y) % 5 === 0;                      // a tick every five years; YEARS holds strings
+  return `<i class="${t ? "tick" : ""}">${t ? `&rsquo;${y.slice(2)}` : ""}</i>`;
+}).join("");
+
 let sortKey = "name", sortDir = 1;
 function render(){
   const rows = DATA.slice().sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
-    if (sortKey === "earliest" || sortKey === "latest"){
+    if (sortKey === "earliest"){
       if (x == null && y == null) return a.name.localeCompare(b.name);
       if (x == null) return 1;               // unknown dates always last
       if (y == null) return -1;
@@ -418,8 +490,8 @@ function render(){
     <td class="who"><div class="nm">${esc(r.name)}</div><div class="rl">${esc(r.role || "")}</div></td>
     <td class="org">${esc(r.company || "")}<span class="sector">${esc(r.sector || "")}</span></td>
     ${["accepted","transcripts"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
-    <td class="date${r.earliest ? "" : " unknown"}">${esc(fmtDate(r.earliest))}</td>
-    <td class="date${r.latest ? "" : " unknown"}">${esc(fmtDate(r.latest))}</td>
+    <td class="spark">${spark(r)}</td>
+    <td class="pend">&mdash;</td>
   </tr>`).join("");
 }
 
@@ -596,17 +668,44 @@ def src_map(records: list[dict]) -> dict:
     return out
 
 
-def person_rows(index: dict, roster: dict) -> list[dict]:
+def statement_years(by_slug: dict[str, list[dict]]) -> tuple[dict[str, dict], list[str]]:
+    """Per leader, how many accepted predictions carry a statement date in each year, plus the undated count.
+
+    The year span is derived from the records, never hardcoded, so a recording older than
+    2009 or a corpus that grows past 2026 widens the axis instead of falling off it. A
+    record with no statement date is COUNTED as undated and never placed in a year.
+    """
+    per: dict[str, dict] = {}
+    seen: set[int] = set()
+    for slug, recs in by_slug.items():
+        years: dict[str, int] = {}
+        undated = 0
+        for r in recs:
+            d = r["source"]["statement_date"]
+            if not d:
+                undated += 1
+                continue
+            y = str(datetime.strptime(d[:10], "%Y-%m-%d").year)   # malformed raises; never sliced and hoped for
+            years[y] = years.get(y, 0) + 1
+            seen.add(int(y))
+        per[slug] = {"years": years, "undated": undated}
+    span = [str(y) for y in range(min(seen), max(seen) + 1)] if seen else []
+    return per, span
+
+
+def person_rows(index: dict, roster: dict, hist: dict[str, dict]) -> list[dict]:
     rows = []
     for l in index["leaders"]:
         entry = roster.get(l["slug"], {})
+        h = hist.get(l["slug"], {"years": {}, "undated": 0})
         rows.append({
+            "years": h["years"], "undated": h["undated"],
             "slug": l["slug"], "name": l["name"], "role": entry.get("role") or l.get("role"), "company": l.get("company") or entry.get("company"),
             "sector": l.get("sector") or entry.get("sector"),
             "accepted": l["accepted"], "rejected": l["rejected_by_verifier"],
             "h_explicit": l["by_horizon"].get("explicit", 0), "h_inferable": l["by_horizon"].get("inferable", 0), "h_none": l["by_horizon"].get("none", 0),
             "p_explicit": l["explicit_probability"], "p_qual": l["qualitative_confidence"],
-            "transcripts": l["transcripts_with_accepted"], "earliest": l["earliest_statement_date"], "latest": l["latest_statement_date"],
+            "transcripts": l["transcripts_with_accepted"], "earliest": l["earliest_statement_date"],
             "tx_attempted": l["transcripts_on_disk"] or None, "tx_succeeded": l["transcripts_extracted"],
             "by_category": l["by_category"], "by_type": l["by_prediction_type"],
         })
@@ -718,7 +817,8 @@ def main(argv: list[str] | None = None) -> int:
     for r in loaded["accepted"]:
         by_slug.setdefault(r["leader_slug"], []).append(r)
     check_index_matches_disk(index, by_slug)
-    rows = person_rows(index, roster)
+    hist, span = statement_years(by_slug)
+    rows = person_rows(index, roster, hist)
     pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
     src = src_map(loaded["accepted"])
@@ -734,6 +834,9 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__DATA__", data_js)
         .replace("__SRC__", src_js)
         .replace("__PRED__", pred_js)
+        .replace("__YEARS__", safe_json(span))
+        .replace("__Y0__", span[0] if span else "n/a")
+        .replace("__Y1__", span[-1] if span else "n/a")
         .replace("__METHOD__", build_method(index, loaded))
         .replace("__GENDATE__", nice_date(index["generated_at_utc"]))
         .replace("__N_PEOPLE__", str(len(rows)))

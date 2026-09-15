@@ -143,7 +143,13 @@ def main() -> int:
         data, src, pred = embedded(html, "DATA"), embedded(html, "SRC"), embedded(html, "PRED")
         check("FIXTURE: DATA, SRC and PRED parse", isinstance(data, list) and isinstance(src, dict) and isinstance(pred, dict))
 
+        # Two fenced regions may name a verdict: the disclaimer, and the empty Score column, whose
+        # whole job is to say that nothing has been checked. Both fences are stripped before the scan
+        # rather than the pattern being weakened, so an evaluative word anywhere else still fails.
+        # The pending fence is written twice because it spans HTML and JS, where <!-- --> is not a comment.
         body = re.sub(r"<!-- disclaimer:start -->.*?<!-- disclaimer:end -->", "", html, flags=re.S)
+        body = re.sub(r"<!-- pending:start -->.*?<!-- pending:end -->", "", body, flags=re.S)
+        body = re.sub(r"/\* pending:start \*/.*?/\* pending:end \*/", "", body, flags=re.S)
         body = re.sub(r"const (DATA|SRC|PRED) = .*?;\n", "", body, flags=re.S)
         hits = sorted(set(m.group(0).lower() for m in re.finditer(
             r"\b(accuracy|accurate|brier|correct|incorrect|resolved|leaderboard|best forecaster|best predictor|score|skill|edge|rank|ranking|outperform)\b", body, re.I)))
@@ -155,14 +161,55 @@ def main() -> int:
         keys = re.findall(r'data-k="([a-z_]+)"', html)
         # Six columns, and only two of them numbers. The five horizon and confidence breakdown
         # columns moved into the drawer on 2026-09-13: they are three ways of splitting one count
-        # and read as a scoreboard in a table that scores nothing.
+        # and read as a scoreboard in a table that scores nothing. Earliest and Latest became one
+        # sparkline on 2026-09-14, and Score joined as a deliberately empty sixth column; it carries
+        # no data-k because there is nothing to sort.
         check("SORT: the column keys are exactly the allowed set",
-              keys == ["name", "company", "accepted", "transcripts", "earliest", "latest"], str(keys))
+              keys == ["name", "company", "accepted", "transcripts", "earliest"], str(keys))
         check("SORT: the dropped breakdown keys are still embedded in DATA and shown in the drawer",
               all(k in data[0] for k in ("h_explicit", "h_inferable", "h_none", "p_explicit", "p_qual"))
               and "${person.h_explicit} named in the quote" in html
               and "${person.p_qual} where the speaker used words of likelihood" in html, str(sorted(data[0])))
         ncols = len(re.findall(r"<col(?:>| style)", html))
+        # The Score column exists and must stay inert. A number appearing here without this test
+        # changing is the failure the column is most likely to have: it is the one column on the
+        # page whose whole meaning is that nothing has been checked yet.
+        check("PENDING: the Score column renders an em dash on every row and cannot be sorted",
+              '<td class="pend">&mdash;</td>' in html and 'class="nosort">Score' in html
+              and not re.search(r'data-k="(score|pend)"', html)
+              and not any(k in data[0] for k in ("score", "pend")), str(sorted(data[0])))
+
+        # The sparkline axis is derived from the records. A hardcoded span silently drops a
+        # recording older than the span, which is the whole failure mode here.
+        m_years = re.search(r"const YEARS = (\[.*?\]);", html)
+        check("SPARK: the page embeds a YEARS axis for the sparkline", m_years is not None)
+        years = json.loads(m_years.group(1)) if m_years else []
+        ada_row = next(d for d in data if d["slug"] == "ada")
+        alan_row = next(d for d in data if d["slug"] == "alan")
+        check("SPARK: the year span comes from the records, and dated and undated records are split",
+              years == ["2025"] and ada_row["years"] == {"2025": 2} and ada_row["undated"] == 0
+              and alan_row["years"] == {} and alan_row["undated"] == 1,
+              f"{years} {ada_row['years']}/{ada_row['undated']} {alan_row['years']}/{alan_row['undated']}")
+        check("SPARK: every leader's squares sum to their dated accepted predictions",
+              all(sum(d["years"].values()) + d["undated"] == d["accepted"] for d in data),
+              str([(d["slug"], d["years"], d["undated"], d["accepted"]) for d in data]))
+
+        # Unit check on a wider corpus than the fixture: a gap year is still a square, the span is
+        # contiguous from the earliest record to the latest, and an undated record enters no year.
+        span_in = {"x": [{"source": {"statement_date": "2011-03-04"}}, {"source": {"statement_date": "2014-07-01"}},
+                         {"source": {"statement_date": "2014-12-31"}}, {"source": {"statement_date": None}}],
+                   "y": [{"source": {"statement_date": "2012-01-01"}}]}
+        per, span = B.statement_years(span_in)
+        check("SPARK: the span is contiguous across a gap year and undated records sit outside it",
+              span == ["2011", "2012", "2013", "2014"] and per["x"]["years"] == {"2011": 1, "2014": 2}
+              and per["x"]["undated"] == 1 and per["y"]["years"] == {"2012": 1}, f"{span} {per}")
+        try:
+            B.statement_years({"z": [{"source": {"statement_date": "not-a-date"}}]})
+            bad = False
+        except ValueError:
+            bad = True
+        check("SPARK: a malformed statement date raises rather than being sliced into a year", bad)
+
         check("SORT: the drawer cell spans every column",
               '<td colspan="6">' in html and ncols == 6, str(ncols))
         check("SORT: DATA is emitted alphabetically by name", [d["name"] for d in data] == ["Ada L", "Alan T"])
