@@ -57,7 +57,7 @@
         "horizon": {"enum": ["explicit", "inferable", "none"]},
         "horizon_years_inferred": {"type": ["number", "null"], "minimum": 0},
         "horizon_evidence": {"type": ["string", "null"]},
-        "resolution_criteria": {"type": "string", "minLength": 1, "description": "What observation, on or by what date, would show the claim wrong."},
+        "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> <outcome>. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
         "specificity": {"enum": ["high", "medium", "low"]},
         "subject_control": {"enum": ["external", "partial", "own"], "description": "own: the outcome is mainly the speaker's or their company's decision (roadmap, guidance). Recorded, not a gate."}
       }

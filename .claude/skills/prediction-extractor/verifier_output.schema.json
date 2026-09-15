@@ -30,7 +30,7 @@
           "claim_faithful": {"type": "boolean"},
           "confidence_type_seen": {"enum": ["explicit_probability", "qualitative", "none"]},
           "qualifies": {"type": "boolean", "description": "attribution == subject and every gate true and claim_faithful."},
-          "resolution_criteria": {"type": "string", "minLength": 1, "description": "In your own words, without reference to the extractor's."},
+          "resolution_criteria": {"type": "string", "minLength": 1, "description": "In your own words, without reference to the extractor's. By <date or dated event>, <observable> <outcome>. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
           "notes": {"type": ["string", "null"]}
         }
       }

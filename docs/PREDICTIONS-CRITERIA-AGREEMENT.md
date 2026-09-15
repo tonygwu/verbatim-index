@@ -164,6 +164,77 @@ artifacts: a count of 12 restated as a list of 12 cities, and a "5 to 10 year"
 horizon read as a threshold. I did not review all 23, so no rate is quoted from
 it, and it should be narrowed before anyone leans on it.
 
+## The contract drift, investigated 2026-09-15
+
+While counting the repair cost I found the corpus holds four contract ids and
+none matches `POLICY_RELEASE.json`. It is fully explained and nothing is wrong.
+
+```
+extraction   d795f6f1d88b (464)   3a54940218c0 (11)      pinned at the time: 99d9132159a2
+verification 102275d44824 (472)   63aa6e366a85 (3)       pinned at the time: 820583f899f6
+```
+
+Three findings, each checked rather than assumed:
+
+**The current files match the pinned release exactly**, so `load_policy_release`
+passes today and no run is failing. The mismatch is between the corpus and the
+files, not between the files and the pin.
+
+**The corpus predates `ELIGIBILITY.md`.** That file was created by `b114b24` on
+2026-09-12 07:38 UTC. The three runs that built the corpus finished before it:
+the pilot at 2026-09-10T09:54Z, the main run at 2026-09-11T02:56Z, and the top-up
+at 2026-09-12T02:50Z. `_contract` now inlines `ELIGIBILITY.md` into the spec
+before hashing and did not then, so recomputing an old revision with today's
+function cannot reproduce an old id. I walked every revision of the five spec
+files and confirmed none yields any of the four.
+
+**The minority ids are the pilot.** All 11 odd extraction records come from run
+`20260910T095427Z-both-517d1275`, the eleven-transcript pilot recorded in
+`docs/PREDICTIONS.md` section 9, and 3 of them also carry the pilot's verifier
+contract. The spec changed between the pilot and the main run, which is ordinary
+iteration.
+
+**The corpus is on the older contract deliberately.** `648a045` records VD-4:
+predictions-2.0 accepts 77% more predictions, and 12 of the 17 candidates that
+flip from rejected to accepted carry no target date, so the undated share would
+rise from 11% to 40%. An undated claim can never be resolved. The corpus stayed
+put on purpose.
+
+Two things worth inheriting. A record carries `contract_id` but NO
+`policy_release` field, so the release a record ran under is not recoverable from
+the record; only the contract id is, and that id is not reproducible once the
+hashing function changes. And the defect fixed below was present in the corpus-era
+specs too: the pre-`b114b24` `EXTRACTION.md` and `VERIFICATION.md` each carried
+one "will / will not" template, so the refactor into `ELIGIBILITY.md` carried it
+forward rather than introducing it.
+
+## The spec is fixed, as release predictions-2.1
+
+`ELIGIBILITY.md` G2 no longer hands either model an undirected template, and it
+now states the polarity convention in its own paragraph:
+
+> *State one direction.* The criterion must assert what happens, not offer a
+> choice. Never write "will / will not" [...]
+>
+> *Write it so that TRUE means the speaker was RIGHT.* The criterion states the
+> SPEAKER'S predicted outcome, never its falsification. [...] If the speaker says
+> "machines will not surpass humans in ten years", the criterion keeps the
+> speaker's negation. Do not flip it.
+
+The three field descriptions now carry that one sentence and point at G2, instead
+of describing the field three ways. `POLICY_RELEASE.json` is bumped to
+**predictions-2.1**, contracts `f2edf433e24e` and `8d9ae41023b1`, because
+`read_spec` inlines `ELIGIBILITY.md` into both prompts and `_contract` hashes it.
+
+**The 475 published records are untouched and still carry both defects.** This
+stops the next run reproducing them; it repairs nothing already on disk. Note the
+VD-4 tension: the corpus is deliberately not on the 2.x line at all, so a future
+production run has to settle that question before this fix reaches any record.
+
+`scripts/test_criterion_spec.py` guards it, verified failing 8 checks against the
+pre-fix specs. Its pattern uses `\s+` throughout, because the old file wrapped the
+template as "will / will\n  not" and a pattern with a literal space walks past it.
+
 ## What this means for the resolution pass
 
 0. **Fix the spec first, or every future run reproduces both defects.** Delete

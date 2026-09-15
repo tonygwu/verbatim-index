@@ -31,7 +31,7 @@
             }
           },
           "gate_notes": {"type": "string", "description": "Why each gate passes, briefly. A human auditor reads this."},
-          "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> will / will not <threshold>."},
+          "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> <outcome>. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
           "category": {"enum": ["ai_capability", "technology_product", "company_business", "market_industry", "macro_economy", "policy_regulation", "science", "society", "other"]},
           "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "comparative", "other"]},
           "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD; the latest date the speaker's words allow."},

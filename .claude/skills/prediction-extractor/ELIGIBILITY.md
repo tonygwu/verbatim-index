@@ -15,14 +15,33 @@ the recording date, not proof of the exact date spoken.
 **G2 `falsifiable`.** The words supply an observable outcome and a success
 condition. There are two permitted forms:
 
-- Dated prediction: write "By <date or dated event>, <observable> will / will
-  not <threshold>." The date can come from an explicit phrase or unambiguous
+- Dated prediction: write "By <date or dated event>, <observable> <verb phrase
+  stating the outcome>." The date can come from an explicit phrase or unambiguous
   surrounding context. A nearby date does not automatically date every claim.
 - Undated milestone: a specified numerical threshold, named deliverable, or
   completed task with an observable success condition can qualify without a
   deadline. Write "At an unspecified date, <observable milestone>." Mark the
   horizon `none`. Such a record has no deadline at which non-occurrence makes
   it false, and cannot yet receive a time-bounded outcome score.
+
+**Two rules about HOW a criterion is written. Both are checked automatically.**
+
+*State one direction.* The criterion must assert what happens, not offer a
+choice. Never write "will / will not", "will or will not", or any other form
+that leaves the direction open. "By 2025-12-25, DGX Spark **will / will not** be
+commercially available" is not a criterion: no observation can settle it, because
+both branches are already in the text. Write the single outcome you would check
+for.
+
+*Write it so that TRUE means the speaker was RIGHT.* The criterion states the
+SPEAKER'S predicted outcome, never its falsification. This matters most when the
+prediction is itself negative. If the speaker says "machines will not surpass
+humans in ten years", the criterion is "By <date>, machines **will not** have
+surpassed humans in all domains where humans are intelligent" — keep the
+speaker's negation. Do not flip it to "machines will surpass humans", which is
+the opposite proposition and would record the speaker as right when they were
+wrong. Sentences beginning "what would show this claim wrong" belong in your
+notes, not in the criterion.
 
 An undated generic announcement ("our new model soon", "we will announce more
 things"), generic capability ("we'll be able to analyze video"), or subjective
