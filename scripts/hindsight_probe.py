@@ -80,6 +80,56 @@ def one(job):
         return {"prediction_id": pid, "ok": False, "detail": str(exc)[:300]}
 
 
+
+def separation(pairs: list[tuple[float, str]]) -> dict:
+    """Does the assessor separate hits from misses by MORE than its own p allows?
+
+    This costs nothing and is the sharper of the two readings here.
+
+    If p is the true probability, the outcome is Bernoulli(p), so the mean p among
+    the predictions that came true is fixed at E[p^2]/E[p], and among those that
+    did not at (E[p] - E[p^2])/(1 - E[p]). A perfectly calibrated assessor ALREADY
+    separates the two groups, by exactly that much and no more. So the baseline is
+    computable rather than assumed, and only the EXCESS needs explaining.
+
+    TWO READINGS OF AN EXCESS, and they are opposite in what they mean:
+
+      HINDSIGHT. The assessor knew the answer and let it into p. Then the
+      disclosed-outcome arm below should move p very little, because the blind
+      answer already contained the outcome.
+
+      UNDER-EXTREMITY. The assessor orders predictions well but squashes its
+      probabilities toward 0.5, which is the most common miscalibration there is.
+      Then it separates more than its stated p implies WITHOUT knowing anything it
+      should not, the reliability table shows low bins overshooting and high bins
+      undershooting, and the disclosed arm still moves p.
+
+    The reliability table in score_predictions.py and the disclosed arm together
+    tell them apart. This function reports the excess and refuses to pick.
+    """
+    ps = [x for x, _ in pairs]
+    n = len(ps)
+    e1 = sum(ps) / n
+    e2 = sum(x * x for x in ps) / n
+    exp_occ = e2 / e1 if e1 else None
+    exp_not = (e1 - e2) / (1 - e1) if e1 < 1 else None
+    occ = [x for x, o in pairs if o == "occurred"]
+    nocc = [x for x, o in pairs if o == "not_occurred"]
+    obs_occ = statistics.mean(occ) if occ else None
+    obs_not = statistics.mean(nocc) if nocc else None
+    out = {"n": n, "mean_p": round(e1, 4),
+           "hit_rate": round(len(occ) / n, 4),
+           "observed_p_given_occurred": round(obs_occ, 4) if obs_occ is not None else None,
+           "observed_p_given_not": round(obs_not, 4) if obs_not is not None else None,
+           "calibrated_p_given_occurred": round(exp_occ, 4) if exp_occ is not None else None,
+           "calibrated_p_given_not": round(exp_not, 4) if exp_not is not None else None}
+    if None not in (obs_occ, obs_not, exp_occ, exp_not):
+        out["observed_separation"] = round(obs_occ - obs_not, 4)
+        out["calibrated_separation"] = round(exp_occ - exp_not, 4)
+        out["excess"] = round((obs_occ - obs_not) - (exp_occ - exp_not), 4)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", type=Path, required=True)
@@ -105,14 +155,25 @@ def main() -> int:
 
     # The free reading first: it costs nothing and is computed over EVERY pair,
     # not just the sampled ones.
+    sep = separation([(pr["p"], rs["outcome"]) for _p, rs, pr in pairs])
     occ = [pr["p"] for _p, rs, pr in pairs if rs["outcome"] == "occurred"]
     nocc = [pr["p"] for _p, rs, pr in pairs if rs["outcome"] == "not_occurred"]
-    print(f"blind priors over all {len(pairs)} resolved pairs:")
-    print(f"  came true      n={len(occ):3}  mean p {statistics.mean(occ):.3f}" if occ else "  came true      n=0")
-    print(f"  did not        n={len(nocc):3}  mean p {statistics.mean(nocc):.3f}" if nocc else "  did not        n=0")
-    gap = (statistics.mean(occ) - statistics.mean(nocc)) if occ and nocc else None
-    if gap is not None:
-        print(f"  separation     {gap:+.3f}   (an upper bound on leakage: real foresight separates these too)")
+    print(f"blind priors over all {sep['n']} resolved pairs   "
+          f"(mean p {sep['mean_p']}, hit rate {sep['hit_rate']})")
+    print(f"  {'':22}{'observed':>10}{'if calibrated':>15}")
+    print(f"  mean p | came true    {sep['observed_p_given_occurred']:>10}"
+          f"{sep['calibrated_p_given_occurred']:>15}")
+    print(f"  mean p | did not      {sep['observed_p_given_not']:>10}"
+          f"{sep['calibrated_p_given_not']:>15}")
+    if "excess" in sep:
+        print(f"  separation            {sep['observed_separation']:>+10.3f}"
+              f"{sep['calibrated_separation']:>+15.3f}")
+        print(f"\n  EXCESS SEPARATION {sep['excess']:+.3f}. A calibrated assessor already separates "
+              f"the two groups by\n  the amount on the right. Excess beyond it is either hindsight, "
+              f"or under-extremity:\n  ordering the predictions well while squashing p toward 0.5. "
+              f"The disclosed arm below\n  tells them apart -- hindsight predicts a SMALL shift, "
+              f"under-extremity a real one.")
+    gap = sep.get("observed_separation")
 
     sample = pairs[:args.n]
     accounts = ["__DEFAULT__" if n.strip() == "default" else str(Path.home() / n.strip())
@@ -162,7 +223,7 @@ def main() -> int:
             "generated_at_utc": utc_now(), "as_of": args.as_of, "n_pairs_available": len(pairs),
             "blind_mean_p_occurred": statistics.mean(occ) if occ else None,
             "blind_mean_p_not_occurred": statistics.mean(nocc) if nocc else None,
-            "blind_separation": gap, "n_disclosed": n, "mean_d_toward": mean_d, "sd": sd, "se": se,
+            "blind_separation": gap, "separation": sep, "n_disclosed": n, "mean_d_toward": mean_d, "sd": sd, "se": se,
             "ci95": [mean_d - 1.96 * se, mean_d + 1.96 * se], "reading": verdict, "cases": cases,
         }, indent=1) + "\n")
         print(f"wrote {args.out}")
