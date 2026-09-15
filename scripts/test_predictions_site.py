@@ -190,6 +190,7 @@ def main() -> int:
         # count it averages, the rank floor, and the refusal to show a number for
         # somebody the aggregation does not cover.
         scores = td / "scores.json"
+        scored_pid = pred[sorted(pred)[0]][0]["prediction_id"]
         scores.write_text(json.dumps({
             "as_of": "2026-09-14",
             "rule": {"clamp": 0.01, "min_scored_to_rank": 5,
@@ -202,6 +203,13 @@ def main() -> int:
                  "ranked": True, "past_due": 7, "eligible": 7, "unresolvable": 1},
                 {"slug": "alan", "name": "Alan T", "n_scored": 2, "mean_points": -0.5,
                  "ranked": False, "past_due": 2, "eligible": 0, "unresolvable": 2}],
+            "predictions": [
+                {"prediction_id": scored_pid, "outcome": "occurred", "scored": True,
+                 "unresolvable_reason": None, "resolution_reasoning": "it shipped",
+                 "sources": [{"where": "https://example.com/a", "what_it_shows": "shipped",
+                              "date": "2026-01-02"}],
+                 "p": 0.25, "reference_class": "things like this", "points": 2.0,
+                 "not_scored_because": None}],
         }))
         out2 = td / "site" / "scored.html"
         p2 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
@@ -254,6 +262,25 @@ def main() -> int:
         p3 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(td / "site" / "x.html"),
                              "--scores", str(stray)], capture_output=True, text=True, cwd=REPO)
+        # The drawer is what makes a published number auditable. A reader who doubts a
+        # score has to be able to see the outcome, the sources it rests on and the p it
+        # was priced at, without leaving the page.
+        pr2 = embedded(h2, "PRED")
+        outs = [r for rs in pr2.values() for r in rs if r.get("outcome")]
+        check("DRAWER: a resolved prediction carries its outcome, evidence, p and points",
+              len(outs) == 1 and outs[0]["outcome"]["verdict"] == "occurred"
+              and outs[0]["outcome"]["sources"][0]["where"].startswith("http")
+              and outs[0]["outcome"]["p"] == 0.25 and outs[0]["outcome"]["points"] == 2.0,
+              str(outs[0]["outcome"] if outs else "no outcome attached"))
+        check("DRAWER: an unresolved prediction carries no outcome key at all, not a null one",
+              sum(1 for rs in pr2.values() for r in rs if "outcome" in r) == 1,
+              "an empty outcome object would render as a verdict")
+        check("DRAWER: the telemetry of the resolving call never reaches the page",
+              not any(k in outs[0]["outcome"] for k in ("telemetry", "run_id", "account", "harness")),
+              str(sorted(outs[0]["outcome"])))
+        check("DRAWER: a markdown source link renders its label, not its brackets",
+              '.replace(/^\[|\]$/g, "")' in h2)
+
         check("SCORE: a score for somebody not on the page fails the render, naming them",
               p3.returncode != 0 and "ghost" in (p3.stdout + p3.stderr),
               (p3.stdout + p3.stderr)[-300:])

@@ -147,6 +147,12 @@ thead th.axis .lbl{display:block}
 .legend i.k.q4{background:var(--d2)}
 td.pend{text-align:center; font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--faint)}
 /* score:start */
+dl.kv dd.yes{color:var(--d2); font-weight:600}
+dl.kv dd.no{color:var(--warn,#b3541e); font-weight:600}
+b.yes{color:var(--d2)}
+b.no{color:var(--warn,#b3541e)}
+ul.ev{margin:2px 0 0; padding-left:16px}
+ul.ev li{margin-bottom:6px}
 td.sc{text-align:right; padding-right:14px; font-family:"IBM Plex Mono",monospace; font-size:14px; font-variant-numeric:tabular-nums}
 td.sc .v{font-weight:600}
 td.sc .pos{color:var(--d2)}
@@ -386,6 +392,51 @@ function scoreCell(r){
     `<span class="v ${sign}">${v}</span><span class="n">n=${r.n_scored}</span></td>`;
 }
 /* score:end */
+/* score:start */
+/* What the two stages decided about ONE prediction, with the evidence attached.
+   This is what makes a published number auditable: a reader who doubts a score can
+   read the claim, the outcome, the sources it rests on, and the probability it was
+   priced at, without leaving the page. */
+const OUTCOME_LABEL = {occurred: "Came true", not_occurred: "Did not come true",
+                       unresolvable: "Could not be resolved"};
+const UNRES_WHY = {
+  no_public_evidence: "nothing public settles it either way",
+  criterion_ambiguous: "the criterion has two readings that disagree",
+  criterion_undirected: "the criterion states no direction to test",
+  threshold_unmeasurable: "the number named is not publicly reported",
+  deadline_incoherent: "the deadline makes no sense against the statement date",
+  after_knowledge_cutoff: "the window closed too recently for a public record",
+};
+function outcomeRows(r){
+  const o = r.outcome;
+  if (!o) return `<dt>Outcome</dt><dd class="pending">Not yet resolved</dd>`;
+  const cls = o.verdict === "occurred" ? "yes" : o.verdict === "not_occurred" ? "no" : "pending";
+  let h = `<dt>Outcome</dt><dd class="${cls}">${esc(OUTCOME_LABEL[o.verdict] || o.verdict)}`;
+  if (o.verdict === "unresolvable" && o.why) h += ` <span class="why">&mdash; ${esc(UNRES_WHY[o.why] || o.why)}</span>`;
+  h += `<div class="why">${esc(o.reasoning)}</div></dd>`;
+  if (o.sources && o.sources.length){
+    h += `<dt>Evidence</dt><dd><ul class="ev">` + o.sources.map(x => {
+      const m = /\((https?:[^)\s]+)\)\s*$/.exec(x.where) || /^(https?:\S+)$/.exec(x.where);
+      const url = m ? m[1] : null;
+      // The model writes its source as markdown, [label](url). Strip the url AND the
+      // brackets, or every link on the page renders as "[AWS Seoul launch announcement]".
+      const label = x.where.replace(/\s*\(https?:[^)\s]+\)\s*$/, "").replace(/^\[|\]$/g, "");
+      const head = url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label || url)}</a>` : esc(x.where);
+      return `<li>${head}${x.date ? ` <span class="why">${esc(x.date)}</span>` : ""}
+        <div class="why">${esc(x.what_it_shows)}</div></li>`;
+    }).join("") + `</ul></dd>`;
+  }
+  if (o.p != null){
+    const pts = o.points == null ? null : (o.points >= 0 ? "+" : "\u2212") + Math.abs(o.points).toFixed(2);
+    h += `<dt>Priced at</dt><dd>${esc(pct(o.p))} likely on the day it was said`
+       + (o.reference_class ? ` <span class="why">&mdash; ${esc(o.reference_class)}</span>` : "")
+       + (pts ? ` &middot; <b class="${o.points >= 0 ? "yes" : "no"}">${pts} points</b>` : "")
+       + (o.not_scored ? ` <span class="why">(not scored: ${esc(o.not_scored.replace(/_/g, " "))})</span>` : "")
+       + `</dd>`;
+  }
+  return h;
+}
+/* score:end */
 const pct = p => (p == null) ? null : Math.round(p * 100) + "%";
 const ytLink = (vid, t) => vid && t != null ? `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}&t=${t}s` : null;
 const stale = s => s < 3600 ? Math.round(s / 60) + " min" : s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " days";
@@ -425,7 +476,7 @@ function predCard(r){
       <dt>Confidence</dt><dd>${conf}</dd>
       <dt>Category</dt><dd>${esc(CAT[r.category] || r.category)} &middot; ${esc(TYPE[r.prediction_type] || r.prediction_type)} &middot; ${esc(CTRL[r.subject_control] || r.subject_control)}</dd>
       <dt>Resolves if</dt><dd>${esc(r.resolution_criteria)}<br><span class="why">Verifier's reading: ${esc(r.verifier_criteria)}</span></dd>
-      <dt>Status</dt><dd class="pending">Pending</dd>
+      ${outcomeRows(r)}
       <dt>Source</dt><dd>${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || r.transcript_id)}</a>` : esc(s.title || r.transcript_id)}${s.venue ? ` &middot; ${esc(s.venue)}` : ""}</dd>
     </dl>
     ${marketLine(r.market)}
@@ -837,6 +888,37 @@ def score_why(sc: "dict | None") -> str:
             f"a number on so few is a placeholder, not a score")
 
 
+def attach_outcomes(pred: dict, scores_doc: dict | None) -> int:
+    """Put each prediction's outcome on the record the page embeds.
+
+    Only the fields a reader needs to check the number: the verdict, the reasoning,
+    the cited sources, the probability it was priced at and the points it earned.
+    The model telemetry, the run ids and the raw prompt hashes stay in the sidecar,
+    the same way the TRIM rule already keeps harness internals off the page.
+    """
+    if not scores_doc:
+        return 0
+    by_id = {r["prediction_id"]: r for r in scores_doc.get("predictions", [])}
+    n = 0
+    for recs in pred.values():
+        for r in recs:
+            row = by_id.get(r["prediction_id"])
+            if not row or not row.get("outcome"):
+                continue
+            r["outcome"] = {
+                "verdict": row["outcome"],
+                "why": row.get("unresolvable_reason"),
+                "reasoning": row.get("resolution_reasoning"),
+                "sources": row.get("sources") or [],
+                "p": row.get("p"),
+                "reference_class": row.get("reference_class"),
+                "points": row.get("points"),
+                "not_scored": None if row.get("scored") else row.get("not_scored_because"),
+            }
+            n += 1
+    return n
+
+
 def check_index_matches_disk(index: dict, by_slug: dict[str, list[dict]]) -> None:
     """A table saying 9 over a drawer showing 12 is the render-integrity failure this repo already paid for once."""
     for l in index["leaders"]:
@@ -961,6 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = person_rows(index, roster, hist, scores)
     pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
+    n_outcomes = attach_outcomes(pred, scores_doc)
     src = src_map(loaded["accepted"])
     c = index["corpus"]
     ex = " / ".join(model_label(m) for m in c["extractor_models"]) or "none yet"
@@ -998,7 +1081,8 @@ def main(argv: list[str] | None = None) -> int:
     if scores_doc:
         sc = scores_doc["corpus"]
         print(f"scores: {sc['scored']} of {sc['past_due']} past due scored, "
-              f"{sc['leaders_ranked']} people ranked, as of {scores_doc['as_of']}")
+              f"{sc['leaders_ranked']} people ranked, {n_outcomes} outcomes attached to drawers, "
+              f"as of {scores_doc['as_of']}")
     else:
         print("scores: none supplied; the Score column renders empty")
     ctx = [len(r["context_before"]) + len(r["context_after"]) for rs in pred.values() for r in rs]
