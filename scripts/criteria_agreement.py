@@ -167,7 +167,8 @@ def compare(e: str, v: str):
 def load(pred_dir: pathlib.Path):
     rows = []
     for f in sorted(pred_dir.glob("*/*.jsonl")):
-        for line in f.read_text().splitlines():
+        # split on the newline byte only; see predictions_lib.parse_lines
+        for line in f.read_text().split("\n"):
             if line.strip():
                 r = json.loads(line)
                 if r.get("accepted"):

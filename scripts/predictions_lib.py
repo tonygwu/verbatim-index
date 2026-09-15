@@ -872,8 +872,19 @@ def serialise_lines(records: list[dict]) -> str:
 
 
 def parse_lines(text: str, where: str = "") -> list[dict]:
+    # Split on the newline BYTE, never str.splitlines(). splitlines() also breaks on
+    # NEL, U+2028, U+2029, VT, FF and the four information separators, and json.loads
+    # accepts every one of those RAW inside a string. A record carrying one is cut in
+    # half and both halves then fail to parse.
+    # FOUND by repo-1 on 2026-09-14 in a Stripe PDF caption carrying U+2028. The
+    # YouTube corpus has none of these characters, so this is invisible today and
+    # fires the moment a web-sourced record lands: VERIFIED against repo-1's
+    # supplemental run, where exactly one of 72 files splits into 2 pieces that both
+    # fail to parse.
     out = []
-    for n, line in enumerate(text.splitlines(), 1):
+    for n, line in enumerate(text.split("\n"), 1):
+        if n == len(text.split("\n")) and line == "":
+            break          # the trailing newline every serialised file ends with
         if not line.strip():
             raise PredictionError(f"{where}:{n}: blank line inside a predictions file")
         try:
