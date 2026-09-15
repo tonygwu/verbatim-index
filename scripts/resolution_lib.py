@@ -227,21 +227,32 @@ not reason backwards from anything you may remember. The question is what a
 well-informed observer, standing on the statement date with only what was public
 THEN, should have believed.
 
+PRICE THE DEADLINE, NOT JUST THE EVENT. This is the single most common way to get
+this wrong. The claim is FALSE if the thing happens LATE. A product that shipped
+eighteen months after the date named here did NOT satisfy this prediction, and your
+p must be the probability that it happened BY the deadline, not the probability
+that it happened at all. Announced hardware, launch dates, standards releases and
+capability thresholds slip constantly, and the slip is usually the whole question.
+If you would say "this will certainly happen eventually, but on that timetable it
+is a coin flip", then p is the coin flip.
+
 HOW TO THINK ABOUT IT
 
 1. Put yourself on the statement date. Everything after it is unknown to you.
 2. Name a reference class and its base rate. "Shipping dates announced at a
    keynote for the following quarter" and "a ten-year forecast about an entire
    industry" have very different hit rates, and the reference class is doing most
-   of the work in your answer.
+   of the work in your answer. Pick a class whose base rate is about hitting the
+   DATE, not about the thing eventually existing.
 3. Adjust for what was public on that date: the state of the technology, whether
    the thing was already announced or already underway, how far off the deadline
    was, and how demanding the threshold is.
 4. Adjust for who is speaking. A chief executive announcing their OWN company's
    roadmap for next year decides it themselves and is usually right, so p is high.
    The same person forecasting a whole market ten years out controls nothing.
+   Being able to decide it is not the same as being able to decide it ON TIME.
 
-CALIBRATION ANCHORS, so your numbers mean the same thing across predictions:
+CALIBRATION ANCHORS, all of them about meeting the DEADLINE:
   0.90-0.95  already announced, already built, deadline near, speaker controls it
   0.70-0.85  on a public roadmap, normal execution risk
   0.45-0.65  a genuine toss-up; informed people disagreed at the time
