@@ -191,6 +191,7 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
         person = roster[slug]
         own_ids = {c["channel_id"] for c in person.get("own_channels") or []}
         tally: Counter = Counter()
+        drafted = 0
         verified = []
         strata: dict[str, Counter] = defaultdict(Counter)
         for row in rows:
@@ -223,12 +224,14 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
                 tally["off_topic"] += 1
                 continue
             tally["verified"] += 1
+            if label.get("drafted_by_model"):
+                drafted += 1
             strata[row["discovery_stratum"]]["verified"] += 1
             verified.append({"key": key, "venue": label["venue"], "channel_id": row["channel_id"], "upload": pc["upload"]})
         chosen = select(verified, seed)
         k, n = tally["verified"], len(rows)
         people[slug] = {
-            "sampled": n, "outcomes": dict(tally), "verified": k,
+            "sampled": n, "outcomes": dict(tally), "verified": k, "verified_model_drafted": drafted,
             "by_discovery_stratum": {s: {"sampled": c["sampled"], "verified": c["verified"],
                                          "yield_ci95": clopper_pearson(c["verified"], c["sampled"])}
                                      for s, c in sorted(strata.items())},
@@ -251,6 +254,7 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
     else:
         verdict, why = "PASS", "every pilot person has enough verified recordings; wrong-person records are excluded"
     return {"gate": verdict, "why": why, "people": people, "wrong_person_found": wrong_person,
+            "model_drafted_verified": sum(p["verified_model_drafted"] for p in people.values()),
             "pending": pending, "invalid_labels": invalid,
             "limits": "no venue, channel, 7-day or count caps (operator, 2026-09-15); every verified recording is "
                       "selected and each person's venue_mix is reported; the P6 gate counts selected recordings"}

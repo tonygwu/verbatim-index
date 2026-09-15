@@ -156,6 +156,17 @@ def main() -> int:
     check("20 recordings uploaded on consecutive days are all selected, with no count cap",
           out["people"]["ben-shapiro"]["selected"] == 20, str(out["people"]["ben-shapiro"]["selected"]))
 
+    print("\n[DISCLOSE]")
+    # Model-drafted labels count toward the gate (operator, 2026-09-15), and the
+    # report says how many verified recordings rest on a model draft.
+    human = {f"ben-shapiro/s{i}": label() for i in range(8)}
+    for i in (0, 1, 2):
+        human[f"ben-shapiro/s{i}"] |= {"drafted_by_model": True, "checked_by": "model:claude-sonnet-5"}
+    out = P.report(manifest(8), pcs(8), human, roster, 1)
+    check("the report counts verified recordings that rest on a model draft, per person and overall",
+          out["people"]["ben-shapiro"].get("verified_model_drafted") == 3 and out.get("model_drafted_verified") == 3,
+          str({k: out.get(k) for k in ("model_drafted_verified",)} | {"person": out["people"]["ben-shapiro"].get("verified_model_drafted")}))
+
     print("\n[TOPIC]")
     # Operator decision 2026-09-15: a recording with no political content (for
     # example a gaming stream) is excluded, counted as off_topic, never as wrong-person.
