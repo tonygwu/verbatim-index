@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
 from site_theme import FONT_LINKS, THEME_CSS  # noqa: E402
 import predictions_lib as L  # noqa: E402
+import score_predictions as SP  # noqa: E402
 
 MODEL_LABELS = {
     "claude-fable-5-1": "Claude Fable 5.1",
@@ -145,6 +146,14 @@ thead th.axis .lbl{display:block}
 .legend i.k.q3{background:var(--d2); opacity:.80}
 .legend i.k.q4{background:var(--d2)}
 td.pend{text-align:center; font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--faint)}
+/* score:start */
+td.sc{text-align:right; padding-right:14px; font-family:"IBM Plex Mono",monospace; font-size:14px; font-variant-numeric:tabular-nums}
+td.sc .v{font-weight:600}
+td.sc .pos{color:var(--d2)}
+td.sc .neg{color:var(--warn,#b3541e)}
+td.sc .n{display:block; font-size:10px; color:var(--faint); letter-spacing:.02em; margin-top:2px}
+td.sc.none{text-align:center; color:var(--faint)}
+/* score:end */
 
 /* ---------- (?) affordance + shared tooltip (mirrors build_site.py) ---------- */
 button.info{
@@ -256,15 +265,14 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
   <p>
     Click any row to read every prediction with its verbatim quote and the surrounding transcript,
     and to filter by target date, category and how much of the outcome is under the speaker's control.
-    Every column but the last one sorts; the default is alphabetical, and no column measures foresight.
+    Every column sorts; the default is alphabetical.
   </p>
   <div class="legend">
     <span>A <b>prediction</b> is a claim the extractor (__EXTRACTOR__) proposed and an independent
     verifier (__VERIFIER__) agreed is a forward-looking, falsifiable statement by this speaker.
     Candidates the verifier rejected are kept on file and counted, not shown. The two numbers are
     counts of what each person said. Neither is a measure of foresight.
-    <!-- pending:start --><b>Score is empty on every row</b>, and stays empty until outcomes are
-    resolved<!-- pending:end -->: nothing here has been checked against what happened.</span>
+    <!-- score:start -->__SCORE_LEGEND__<!-- score:end --></span>
   </div>
 </div>
 
@@ -284,8 +292,7 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
         aria-expanded="false" aria-label="What does Transcripts mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="earliest" class="axis"><span class="lbl">When it was said<button class="info" type="button" data-info="timeline"
         aria-expanded="false" aria-label="What does the timeline show?">?</button><span class="arrow">&#9650;</span></span><span class="sq-ax" id="ax"></span></th>
-      <!-- pending:start --><th class="nosort">Score<button class="info" type="button" data-info="pend"
-        aria-expanded="false" aria-label="Why is this column empty?">?</button></th><!-- pending:end -->
+      <!-- score:start -->__SCORE_HEADER__<!-- score:end -->
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -347,17 +354,9 @@ const INFO = {
     beneath the squares.</p>
     <p>Sorting this column sorts by the earliest statement date; people with no dated prediction sort
     last.</p>`,
-  /* pending:start */
-  pend: `<p><b>Score is empty on every row, and that is not a bug.</b> No prediction on this page has
-    been resolved against what happened, so there is nothing to score. The column is here to name the
-    gap rather than hide it.</p>
-    <p>Resolution is separate, later work. When it runs it will fill each prediction's outcome first,
-    and only then can a column like this hold anything.</p>
-    <p>Even then it will not cover everyone. A score may only contain claims about the outside world
-    that have come due, and on this corpus that is a small set: most accepted predictions either carry
-    no target date, are not yet due, or are commitments about the speaker's own company, which measure
-    delivery rather than foresight.</p>`,
-  /* pending:end */
+  /* score:start */
+  __SCORE_INFO__
+  /* score:end */
 };
 
 const fmtDate = d => d ? d : "date unknown";
@@ -376,6 +375,19 @@ function spark(r){
   const nd = r.undated ? `<span class="sq-nd" title="${r.undated} of this person's predictions come from a recording with no publication date, so they sit in no year.">+${r.undated} undated</span>` : "";
   return `<div class="sq">${cells}</div>${nd}`;
 }
+/* score:start */
+/* One number per person: the MEAN points over their resolved, eligible predictions.
+   Expected points are zero at every p under this rule, so a positive mean is foresight
+   and volume alone earns nothing. A person below the floor keeps their predictions on
+   the page and shows no number, the way the leaderboard's rank floor already works. */
+function scoreCell(r){
+  if (r.score == null) return `<td class="sc none" title="${esc(r.score_why || "not scored")}">&mdash;</td>`;
+  const sign = r.score >= 0 ? "pos" : "neg";
+  const v = (r.score >= 0 ? "+" : "\u2212") + Math.abs(r.score).toFixed(2);
+  return `<td class="sc" title="mean over ${r.n_scored} resolved prediction${r.n_scored === 1 ? "" : "s"}">` +
+    `<span class="v ${sign}">${v}</span><span class="n">n=${r.n_scored}</span></td>`;
+}
+/* score:end */
 const pct = p => (p == null) ? null : Math.round(p * 100) + "%";
 const ytLink = (vid, t) => vid && t != null ? `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}&t=${t}s` : null;
 const stale = s => s < 3600 ? Math.round(s / 60) + " min" : s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " days";
@@ -477,11 +489,15 @@ let sortKey = "name", sortDir = 1;
 function render(){
   const rows = DATA.slice().sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
-    if (sortKey === "earliest"){
+    /* score:start */
+    // Two columns can hold nothing at all, and an absence is not a zero. Rows with
+    // nothing sort last in BOTH directions, so flipping the arrow never promotes one.
+    if (sortKey === "earliest" || sortKey === "score"){
       if (x == null && y == null) return a.name.localeCompare(b.name);
-      if (x == null) return 1;               // unknown dates always last
+      if (x == null) return 1;
       if (y == null) return -1;
     }
+    /* score:end */
     if (typeof x === "string" && typeof y === "string") return sortDir * x.localeCompare(y);
     return sortDir * ((x || 0) - (y || 0)) || a.name.localeCompare(b.name);
   });
@@ -491,7 +507,7 @@ function render(){
     <td class="org">${esc(r.company || "")}<span class="sector">${esc(r.sector || "")}</span></td>
     ${["accepted","transcripts"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
     <td class="spark">${spark(r)}</td>
-    <td class="pend">&mdash;</td>
+    ${scoreCell(r)}
   </tr>`).join("");
 }
 
@@ -545,7 +561,7 @@ document.addEventListener("click", e => {
   const th = e.target.closest("thead th");
   if (th && th.dataset.k){
     const k = th.dataset.k;
-    sortDir = sortKey === k ? -sortDir : (k === "name" || k === "company" || k === "earliest" ? 1 : -1);
+    sortDir = sortKey === k ? -sortDir : (k === "name" || k === "company" || k === "earliest" ? 1 : -1);  // numeric columns open high-first
     sortKey = k;
     document.querySelectorAll("thead th").forEach(x => x.removeAttribute("aria-sort"));
     th.setAttribute("aria-sort", sortDir === 1 ? "ascending" : "descending");
@@ -693,12 +709,21 @@ def statement_years(by_slug: dict[str, list[dict]]) -> tuple[dict[str, dict], li
     return per, span
 
 
-def person_rows(index: dict, roster: dict, hist: dict[str, dict]) -> list[dict]:
+def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict) -> list[dict]:
+    """One table row per person. `scores` is keyed by slug and may be empty, in
+    which case every row shows an em dash and the page says why."""
     rows = []
     for l in index["leaders"]:
         entry = roster.get(l["slug"], {})
         h = hist.get(l["slug"], {"years": {}, "undated": 0})
+        sc = scores.get(l["slug"])
         rows.append({
+            # A person below the floor carries no number and says so on hover. Never
+            # a 0: an absent score and a score of zero mean opposite things here, and
+            # zero is a real and meaningful value under this rule.
+            "score": (sc["mean_points"] if sc and sc["ranked"] else None),
+            "n_scored": (sc["n_scored"] if sc else 0),
+            "score_why": score_why(sc),
             "years": h["years"], "undated": h["undated"],
             "slug": l["slug"], "name": l["name"], "role": entry.get("role") or l.get("role"), "company": l.get("company") or entry.get("company"),
             "sector": l.get("sector") or entry.get("sector"),
@@ -711,6 +736,81 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict]) -> list[dict]:
         })
     rows.sort(key=lambda r: r["name"])
     return rows
+
+
+# Mirrors score_predictions.MIN_SCORED_TO_RANK. Imported rather than typed, so the
+# page and the aggregation can never disagree about who gets a number.
+MIN_SCORED = SP.MIN_SCORED_TO_RANK
+
+SCORE_HEADER_EMPTY = ('<th class="nosort">Score<button class="info" type="button" data-info="score" '
+                      'aria-expanded="false" aria-label="Why is this column empty?">?</button></th>')
+SCORE_HEADER_LIVE = ('<th data-k="score">Score<button class="info" type="button" data-info="score" '
+                     'aria-expanded="false" aria-label="What does Score mean?">?</button>'
+                     '<span class="arrow">&#9650;</span></th>')
+
+SCORE_LEGEND_EMPTY = ("<b>Score is empty on every row</b>, and stays empty until outcomes are "
+                      "resolved: nothing here has been checked against what happened.")
+
+SCORE_INFO_EMPTY = (
+    "score: `<p><b>Score is empty on every row, and that is not a bug.</b> No prediction on this "
+    "page has been resolved against what happened, so there is nothing to score. The column is here "
+    "to name the gap rather than hide it.</p>"
+    "<p>Resolution is separate work. When it runs it will fill each outcome first, and only then "
+    "can a column like this hold anything.</p>`,")
+
+
+def score_legend(c: dict) -> str:
+    """The one-sentence description of the column, built from the run's own numbers."""
+    return (f"<b>Score</b> is the mean points per resolved prediction, over the "
+            f"{c['scored']} of {c['past_due']} past-due predictions that could be resolved against a "
+            f"cited source and were specific enough to test. Getting a likely thing right earns "
+            f"little and getting an unlikely thing right earns a lot, so the expected score of "
+            f"someone with no foresight is zero, whatever they predict. A row shows no number "
+            f"below {MIN_SCORED} resolved predictions.")
+
+
+def score_info(c: dict, rule: dict) -> str:
+    """The "?" panel. Every number in it comes from scores.json, never typed here."""
+    u = c.get("unresolvable_reasons") or {}
+    top = ", ".join(f"{k.replace('_', ' ')} ({v})"
+                    for k, v in sorted(u.items(), key=lambda kv: -kv[1])[:3])
+    unres = c["by_outcome"].get("unresolvable", 0)
+    return (
+        "score: `<p><b>Score is the mean points a person earned per resolved prediction.</b> Zero is "
+        "the score of someone with no foresight at all, not the bottom of a range. A negative number "
+        "means the person did worse than the base rate of the things they were predicting.</p>"
+        "<p>Each prediction is worth <b>&minus;log&#8322;(p)</b> points when it came true, where p is "
+        "how likely it looked on the day it was said. Calling a 50/50 right earns 1 point; calling a "
+        "1-in-20 right earns 4.3. Getting it wrong costs (p/(1&minus;p))&middot;log&#8322;(p), which "
+        "is small for a long shot and large for a near-certainty. The two are chosen so that the "
+        "expected points are exactly zero at every p, which is why predicting lots of safe things "
+        "cannot lift the number and spraying long shots cannot either.</p>"
+        "<p>Two separate passes produce each score, and neither sees the other. One decides what "
+        "happened and must cite a source for it; it can also answer that the claim cannot be "
+        f"resolved, and on this corpus it did so {unres} times"
+        f"{f' (most often {top})' if top else ''}. The other estimates p from the quote, the date and "
+        "the surrounding words, and is never told what happened.</p>"
+        f"<p>{c['scored']} of {c['past_due']} past-due predictions carry a score. A prediction is left "
+        "out when it could not be resolved, when it is too vague to test, or when it was said less "
+        "than six months before its own deadline, which makes it an announcement rather than a "
+        f"forecast. {c['leaders_ranked']} people have the {MIN_SCORED} resolved predictions a number "
+        "needs.</p>"
+        f"<p>The rule is {rule['baseline_only']}, with p held inside [{rule['clamp']}, "
+        f"{1 - rule['clamp']:.2f}] so a stated certainty cannot score infinitely.</p>`,")
+
+
+def score_why(sc: "dict | None") -> str:
+    """What to say on hover when a row carries no number. Never "no data": the
+    reasons differ and the difference is the interesting part."""
+    if sc is None:
+        return "no prediction of this person's has come due and been resolved"
+    if sc["n_scored"] == 0:
+        if sc["eligible"] == 0:
+            return (f"{sc['past_due']} past due, none eligible: a scored prediction must be specific, "
+                    f"reach at least six months out, and have a coherent window")
+        return f"{sc['eligible']} eligible and past due, {sc['unresolvable']} of them could not be resolved"
+    return (f"{sc['n_scored']} scored, below the floor of {MIN_SCORED}; "
+            f"a number on so few is a placeholder, not a score")
 
 
 def check_index_matches_disk(index: dict, by_slug: dict[str, list[dict]]) -> None:
@@ -805,6 +905,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--predictions", default="data/predictions")
     ap.add_argument("--roster", default="data/roster/final.json")
     ap.add_argument("--out", default="site-predictions/index.html")
+    ap.add_argument("--scores", default=None,
+                    help="scores.json from score_predictions.py; without it the Score column "
+                         "renders empty and the page says why, which is the honest default")
     args = ap.parse_args(argv)
 
     index = json.loads(Path(args.index).read_text())
@@ -818,7 +921,20 @@ def main(argv: list[str] | None = None) -> int:
         by_slug.setdefault(r["leader_slug"], []).append(r)
     check_index_matches_disk(index, by_slug)
     hist, span = statement_years(by_slug)
-    rows = person_rows(index, roster, hist)
+    scores_doc = json.loads(Path(args.scores).read_text()) if args.scores else None
+    if scores_doc is not None:
+        for k in ("corpus", "leaders", "rule", "as_of"):
+            if k not in scores_doc:
+                raise SystemExit(f"{args.scores} lacks {k}; re-run score_predictions.py")
+        # A score for somebody not on this page is a mismatched pair of inputs, and it
+        # would show up as a silently missing row rather than an error.
+        known = {l["slug"] for l in index["leaders"]}
+        strays = sorted({l["slug"] for l in scores_doc["leaders"]} - known)
+        if strays:
+            raise SystemExit(f"{args.scores} scores {strays} who are not in index.json; "
+                             f"the two inputs describe different corpora")
+    scores = {l["slug"]: l for l in scores_doc["leaders"]} if scores_doc else {}
+    rows = person_rows(index, roster, hist, scores)
     pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
     src = src_map(loaded["accepted"])
@@ -837,6 +953,10 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__YEARS__", safe_json(span))
         .replace("__Y0__", span[0] if span else "n/a")
         .replace("__Y1__", span[-1] if span else "n/a")
+        .replace("__SCORE_HEADER__", SCORE_HEADER_LIVE if scores_doc else SCORE_HEADER_EMPTY)
+        .replace("__SCORE_LEGEND__", score_legend(scores_doc["corpus"]) if scores_doc else SCORE_LEGEND_EMPTY)
+        .replace("__SCORE_INFO__", score_info(scores_doc["corpus"], scores_doc["rule"]) if scores_doc
+                 else SCORE_INFO_EMPTY)
         .replace("__METHOD__", build_method(index, loaded))
         .replace("__GENDATE__", nice_date(index["generated_at_utc"]))
         .replace("__N_PEOPLE__", str(len(rows)))
@@ -849,6 +969,12 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__RUN_ID__", ", ".join(index["run_ids_seen"][-3:]) or "none")
         .replace("__CONTRACT_ID__", contracts))
     write_atomic(args.out, html_out)
+    if scores_doc:
+        sc = scores_doc["corpus"]
+        print(f"scores: {sc['scored']} of {sc['past_due']} past due scored, "
+              f"{sc['leaders_ranked']} people ranked, as of {scores_doc['as_of']}")
+    else:
+        print("scores: none supplied; the Score column renders empty")
     ctx = [len(r["context_before"]) + len(r["context_after"]) for rs in pred.values() for r in rs]
     print(f"wrote {args.out}  ({len(html_out) // 1024} KB; DATA {len(data_js) // 1024} KB, SRC {len(src_js) // 1024} KB, "
           f"PRED {len(pred_js) // 1024} KB; {len(rows)} people, {c['accepted']} accepted, {loaded['rejected']} rejected not embedded; "

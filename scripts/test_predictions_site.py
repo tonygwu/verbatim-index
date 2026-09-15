@@ -143,13 +143,15 @@ def main() -> int:
         data, src, pred = embedded(html, "DATA"), embedded(html, "SRC"), embedded(html, "PRED")
         check("FIXTURE: DATA, SRC and PRED parse", isinstance(data, list) and isinstance(src, dict) and isinstance(pred, dict))
 
-        # Two fenced regions may name a verdict: the disclaimer, and the empty Score column, whose
-        # whole job is to say that nothing has been checked. Both fences are stripped before the scan
-        # rather than the pattern being weakened, so an evaluative word anywhere else still fails.
-        # The pending fence is written twice because it spans HTML and JS, where <!-- --> is not a comment.
+        # Two fenced regions may name a verdict: the disclaimer, and the Score column, which now
+        # holds a real number and whose copy has to be able to say so. Both fences are stripped
+        # before the scan rather than the pattern being weakened, so an evaluative word ANYWHERE
+        # else still fails. That matters more since the page began scoring, not less: the counts
+        # and the drawer still measure nothing, and must not borrow the scoring column's language.
+        # The score fence is written twice because it spans HTML and JS, where <!-- --> is not a comment.
         body = re.sub(r"<!-- disclaimer:start -->.*?<!-- disclaimer:end -->", "", html, flags=re.S)
-        body = re.sub(r"<!-- pending:start -->.*?<!-- pending:end -->", "", body, flags=re.S)
-        body = re.sub(r"/\* pending:start \*/.*?/\* pending:end \*/", "", body, flags=re.S)
+        body = re.sub(r"<!-- score:start -->.*?<!-- score:end -->", "", body, flags=re.S)
+        body = re.sub(r"/\* score:start \*/.*?/\* score:end \*/", "", body, flags=re.S)
         body = re.sub(r"const (DATA|SRC|PRED) = .*?;\n", "", body, flags=re.S)
         hits = sorted(set(m.group(0).lower() for m in re.finditer(
             r"\b(accuracy|accurate|brier|correct|incorrect|resolved|leaderboard|best forecaster|best predictor|score|skill|edge|rank|ranking|outperform)\b", body, re.I)))
@@ -171,13 +173,77 @@ def main() -> int:
               and "${person.h_explicit} named in the quote" in html
               and "${person.p_qual} where the speaker used words of likelihood" in html, str(sorted(data[0])))
         ncols = len(re.findall(r"<col(?:>| style)", html))
-        # The Score column exists and must stay inert. A number appearing here without this test
-        # changing is the failure the column is most likely to have: it is the one column on the
-        # page whose whole meaning is that nothing has been checked yet.
-        check("PENDING: the Score column renders an em dash on every row and cannot be sorted",
-              '<td class="pend">&mdash;</td>' in html and 'class="nosort">Score' in html
-              and not re.search(r'data-k="(score|pend)"', html)
-              and not any(k in data[0] for k in ("score", "pend")), str(sorted(data[0])))
+        # The Score column has two modes and BOTH are load-bearing. Without a scores file it must
+        # stay inert, because an empty column that looks sortable implies data that is not there.
+        # With one it must carry the number, the count it was averaged over, and a sort key.
+        check("SCORE: with no scores file the column is inert and carries no key or data field",
+              'class="nosort">Score' in html and not re.search(r'data-k="score"', html)
+              and all(d.get("score") is None for d in data)
+              and "Score is empty on every row" in html, str(sorted(data[0])))
+        check("SCORE: an unscored row renders an em dash and says WHY on hover, never a zero",
+              'if (r.score == null) return `<td class="sc none"' in html
+              and all(d["score_why"] for d in data), str([d.get("score_why") for d in data]))
+
+        # ---- the same page, built WITH a scores file -------------------------
+        # The empty column above is the safe default. This is the mode that actually
+        # publishes a judgement, so every claim it makes has to hold: the number, the
+        # count it averages, the rank floor, and the refusal to show a number for
+        # somebody the aggregation does not cover.
+        scores = td / "scores.json"
+        scores.write_text(json.dumps({
+            "as_of": "2026-09-14",
+            "rule": {"clamp": 0.01, "min_scored_to_rank": 5,
+                     "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)"},
+            "corpus": {"past_due": 9, "eligible": 7, "scored": 6, "leaders_ranked": 1,
+                       "by_outcome": {"occurred": 4, "not_occurred": 2, "unresolvable": 3},
+                       "unresolvable_reasons": {"no_public_evidence": 2, "criterion_ambiguous": 1}},
+            "leaders": [
+                {"slug": "ada", "name": "Ada L", "n_scored": 6, "mean_points": 1.2345,
+                 "ranked": True, "past_due": 7, "eligible": 7, "unresolvable": 1},
+                {"slug": "alan", "name": "Alan T", "n_scored": 2, "mean_points": -0.5,
+                 "ranked": False, "past_due": 2, "eligible": 0, "unresolvable": 2}],
+        }))
+        out2 = td / "site" / "scored.html"
+        p2 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(out2), "--scores", str(scores)],
+                            capture_output=True, text=True, cwd=REPO)
+        check("SCORE: the builder accepts a scores file and exits 0",
+              p2.returncode == 0 and out2.exists(), p2.stdout + p2.stderr[-600:])
+        h2 = out2.read_text()
+        d2 = {r["slug"]: r for r in embedded(h2, "DATA")}
+        check("SCORE: a ranked person carries the mean and the count it was averaged over",
+              d2["ada"]["score"] == 1.2345 and d2["ada"]["n_scored"] == 6, str(d2["ada"].get("score")))
+        check("SCORE: a person BELOW the floor carries no number but keeps the count, never a zero",
+              d2["alan"]["score"] is None and d2["alan"]["n_scored"] == 2
+              and "floor" in d2["alan"]["score_why"], str(d2["alan"]))
+        check("SCORE: the column becomes sortable only once there is something to sort",
+              'data-k="score"' in h2 and 'class="nosort">Score' not in h2)
+        check("SCORE: the page reports the corpus figures from the file, not typed numbers",
+              "6 of 9 past-due predictions" in h2 and "3 times" in h2,
+              [l for l in h2.splitlines() if "past-due predictions" in l][:2])
+        check("SCORE: the rank floor named on the page is the aggregation constant",
+              f"below {B.MIN_SCORED} resolved predictions" in h2 and B.MIN_SCORED == 5)
+        check("SCORE: the evaluative vocabulary is still fenced with a live column",
+              not sorted(set(m.group(0).lower() for m in re.finditer(
+                  r"\b(accuracy|brier|leaderboard|outperform|score|rank)\b",
+                  re.sub(r"/\* score:start \*/.*?/\* score:end \*/", "",
+                         re.sub(r"<!-- score:start -->.*?<!-- score:end -->", "",
+                                re.sub(r"<!-- disclaimer:start -->.*?<!-- disclaimer:end -->", "", h2, flags=re.S),
+                                flags=re.S), flags=re.S).split("const DATA")[0], re.I))))
+
+        # A scores file describing somebody the page does not carry means the two inputs
+        # were built from different corpora, which would show up as a missing row.
+        stray = td / "stray.json"
+        doc = json.loads(scores.read_text())
+        doc["leaders"].append({"slug": "ghost", "name": "G", "n_scored": 9, "mean_points": 9.0,
+                               "ranked": True, "past_due": 9, "eligible": 9, "unresolvable": 0})
+        stray.write_text(json.dumps(doc))
+        p3 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(td / "site" / "x.html"),
+                             "--scores", str(stray)], capture_output=True, text=True, cwd=REPO)
+        check("SCORE: a score for somebody not on the page fails the render, naming them",
+              p3.returncode != 0 and "ghost" in (p3.stdout + p3.stderr),
+              (p3.stdout + p3.stderr)[-300:])
 
         # The sparkline axis is derived from the records. A hardcoded span silently drops a
         # recording older than the span, which is the whole failure mode here.

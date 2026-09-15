@@ -20,8 +20,27 @@ PUBLICATION_BEFORE="$(publication_fingerprint)"
 
 [ -f "${PRODUCTION_DATA}/predictions/index.json" ] || { echo "no ${PRODUCTION_DATA}/predictions/index.json; run aggregate_predictions.py first (from repo-0, or --refresh there)" >&2; exit 1; }
 
+# The Score column is data-driven and OPTIONAL. Without a scores file the page
+# renders the column empty and says why, which is the honest default. With one,
+# that file must live under the SAME production checkout as everything else being
+# published: a scores.json from an experiment run would put an unreviewed number
+# on the live site through a path that bypasses every other production guard.
+SCORES_ARG=()
+SCORES="${PRODUCTION_DATA}/predictions/scores.json"
+if [ -f "$SCORES" ]; then
+  SCORES_REAL="$(cd "$(dirname "$SCORES")" && pwd -P)/$(basename "$SCORES")"
+  case "$SCORES_REAL" in
+    "${PRODUCTION_DATA}"/*) SCORES_ARG=(--scores "$SCORES_REAL") ;;
+    *) echo "refusing to publish scores from outside the production checkout: $SCORES_REAL" >&2; exit 1 ;;
+  esac
+  echo "scores: publishing ${SCORES_REAL}"
+else
+  echo "scores: none at ${SCORES}; the Score column will render empty"
+fi
+
 $PY scripts/build_predictions_site.py --index "${PRODUCTION_DATA}/predictions/index.json" --predictions "${PRODUCTION_DATA}/predictions" \
-    --roster "${PRODUCTION_DATA}/roster/final.json" --out site-predictions/index.html
+    --roster "${PRODUCTION_DATA}/roster/final.json" --out site-predictions/index.html \
+    ${SCORES_ARG[@]+"${SCORES_ARG[@]}"}   # empty-array-safe: bash 3.2 calls a bare "${a[@]}" unbound under set -u
 
 # What is about to ship, and whether the index is behind the files on disk.
 $PY - "$PRODUCTION_DATA" <<'EOF'

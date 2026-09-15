@@ -12,7 +12,53 @@ excuse for leaving it unmeasured. Re-derive with:
 
 No model calls were spent and nothing was written to `data/`.
 
-## The answer first
+## CORRECTION, 2026-09-15: the headline below was wrong
+
+**The "26 of 475 records a resolver would act on incorrectly" figure is void, and
+the real number of records that reach a resolver broken is 0.** It is left in
+place below rather than edited away, because a number this file published and
+then withdrew is more useful to a later reader than a clean file.
+
+What was wrong. A resolver reads ONE field, `prediction.resolution_criteria`,
+written by the extractor. The screen below flags a record when EITHER that field
+or the verifier's `verification.verifier_resolution_criteria` carries a defect,
+and I read the resulting count as the number of records a resolver would trip
+over. It is not. Re-measured by splitting the flag by which field carries it:
+
+```
+undirected, by WHICH criterion carries it:
+   18  verifier only
+    0  extractor
+```
+
+**Every one of the 18 undirected criteria is in the verifier's field.** No
+extractor criterion in the corpus is undirected, so none of the 18 reaches a
+resolver at all. The spec defect was real and the repair in `cfec9e6` was right:
+the verifier was being told to write "will / will not" by the same G2 line. It
+simply never reached the field that gets resolved.
+
+The 8 inversions did not survive either. All 39 flagged records (18 undirected
+plus 21 polarity) were sent through a repair stage that reads the QUOTE and
+decides whether the extractor's criterion states the speaker's own claim in one
+direction. All 39 came back `already_correct`, 0 repaired, 0 unrepairable.
+
+That result is only worth something if the stage can fail, so it was given a
+negative control: both defects planted into three real records, six cases, sent
+through the identical prompt. **6 of 6 caught**, every one repaired back to the
+original text, including two cases where the correct repair was to KEEP the
+speaker's negation ("machines will NOT have demonstrated..."). Re-derive with:
+
+```
+.venv/bin/python scripts/repair_criteria.py --out <run>      # 39 flagged, 39 already_correct
+.venv/bin/python scripts/repair_control.py --n 3             # 6 planted, 6 caught
+```
+
+So the corpus needed no criterion repair, and the reason the screen said
+otherwise is that it was measuring the verifier's field and I reported it as the
+resolver's. The rate below, 17.1%, remains correct as a measure of how often the
+two models word a criterion differently. It was never a count of broken records.
+
+## The answer first  (SUPERSEDED by the correction above)
 
 **The headline is not the rate. It is that 26 of 475 records carry a criterion a
 resolver would act on incorrectly, and 18 of those carry one that cannot be
