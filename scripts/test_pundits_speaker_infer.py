@@ -54,6 +54,9 @@ def main() -> int:
                        ("an unknown confidence", {**GOOD, "confidence": "sure"}), ("an empty reason", {**GOOD, "reason": " "})):
         check(f"{label} is refused", refused(lambda b=bad: S.parse_answer(json.dumps(b))))
     check("no JSON is refused", refused(lambda: S.parse_answer("I think she is present.")))
+    check("an answer followed by more text or a second object still parses (seen live on rows 52, 96, 101)",
+          not refused(lambda: S.parse_answer(json.dumps(GOOD) + "\n{\"note\": \"extra\"}"))
+          and not refused(lambda: S.parse_answer(json.dumps(GOOD) + " Hope that helps {:)}")))
 
     print("\n[QUEUE]")
     d = dict(GOOD)

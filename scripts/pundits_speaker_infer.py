@@ -52,8 +52,9 @@ grading anyone. Answer three questions about the named SUBJECT, using the whole 
 The transcript is automatic captions with no speaker labels. Work out who is talking from
 introductions, how people address each other, turn-taking and content.
 
-1. subject_present: does the SUBJECT speak anywhere in this recording? A recording ABOUT the
-   subject, where others discuss them, is false.
+1. subject_present: does the SUBJECT take part live anywhere in this recording? A recording ABOUT
+   the subject, where others discuss them, is false. A played clip of the subject is NOT
+   presence: if the subject is heard only in clips that others play, answer false.
 2. main_speaker: true if the SUBJECT speaks the most words of anyone, or at least about a third of
    all words. A host who mostly listens to a guest is false.
 3. venue: the format, decided by who asks the questions, not by who owns the channel:
@@ -88,10 +89,14 @@ def build_prompt(person: dict, row: dict, rec: dict) -> str:
 
 
 def parse_answer(text: str) -> dict:
-    m = re.search(r"\{.*\}", text or "", re.S)
-    if not m:
+    start = (text or "").find("{")
+    if start < 0:
         raise ValueError("no JSON object in the answer")
-    a = json.loads(m.group(0))
+    # The FIRST object only. A greedy {.*} swallowed text after it and failed on
+    # rows 52, 96 and 101 of the first live batch ("Extra data").
+    a, _end = json.JSONDecoder().raw_decode(text[start:])
+    if not isinstance(a, dict):
+        raise ValueError("the answer's JSON is not an object")
     errs = []
     for f in ("subject_present", "main_speaker"):
         if not isinstance(a.get(f), bool):
