@@ -218,6 +218,19 @@ def main() -> int:
               and "floor" in d2["alan"]["score_why"], str(d2["alan"]))
         check("SCORE: the column becomes sortable only once there is something to sort",
               'data-k="score"' in h2 and 'class="nosort">Score' not in h2)
+        # The masthead must not contradict the table. A page carrying numbers while its
+        # own first sentence says nothing has been checked is worse than either alone.
+        check("SCORE: the masthead stops claiming everything is pending once anything is scored",
+              "Every item pending" not in h2 and "every item\n    is pending" not in h2
+              and "6 of 9 due predictions resolved" in h2, 
+              [l for l in h2.splitlines() if "pending" in l.lower()][:3])
+        check("SCORE: the disclaimer names what the score does NOT cover",
+              "3 could not be resolved or were not specific enough" in h2
+              and "not a measure of how well they said it" in h2,
+              [l for l in h2.splitlines() if "could not be resolved" in l][:2])
+        check("SCORE: with no scores file the page still says everything is pending",
+              "Every item pending" in html and "every item is" in html)
+
         check("SCORE: the page reports the corpus figures from the file, not typed numbers",
               "6 of 9 past-due predictions" in h2 and "3 times" in h2,
               [l for l in h2.splitlines() if "past-due predictions" in l][:2])

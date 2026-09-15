@@ -240,14 +240,12 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
 <div class="wrap">
 
 <header class="mast">
-  <div class="eyebrow">__GENDATE__ &middot; Verbatim quotes, dated &middot; Every item pending &middot; <a href="https://verbatim-index.tonygwu.com">Verbatim Index &rarr;</a></div>
+  <div class="eyebrow">__GENDATE__ &middot; Verbatim quotes, dated &middot; __EYEBROW_STATUS__ &middot; <a href="https://verbatim-index.tonygwu.com">Verbatim Index &rarr;</a></div>
   <h1>Verbatim <em>Predictions</em></h1>
   <p class="thesis">
     Forward-looking claims that __N_PEOPLE__ technology leaders made in public, quoted
     <strong>verbatim</strong> from transcripts of their own recorded speech, with the date they said
-    it and the date it refers to. <!-- disclaimer:start --><strong>This is an index of what was said. It is not a ranking of
-    who predicts well.</strong> Nothing here has been checked against what happened; every item is
-    pending, and the table is alphabetical.<!-- disclaimer:end -->
+    it and the date it refers to. <!-- disclaimer:start -->__DISCLAIMER__<!-- disclaimer:end -->
   </p>
 </header>
 
@@ -748,6 +746,32 @@ SCORE_HEADER_LIVE = ('<th data-k="score">Score<button class="info" type="button"
                      'aria-expanded="false" aria-label="What does Score mean?">?</button>'
                      '<span class="arrow">&#9650;</span></th>')
 
+# The masthead has to change when the column fills. Saying "every item pending"
+# over a table with numbers in it would be the page contradicting itself, and it
+# is the sentence a reader takes on trust before looking at anything else.
+EYEBROW_EMPTY = "Every item pending"
+DISCLAIMER_EMPTY = ("<strong>This is an index of what was said. It is not a ranking of who predicts "
+                    "well.</strong> Nothing here has been checked against what happened; every item "
+                    "is pending, and the table is alphabetical.")
+
+
+def eyebrow_status(c: dict) -> str:
+    return f"{c['scored']} of {c['past_due']} due predictions resolved"
+
+
+def disclaimer(c: dict) -> str:
+    """What the page claims about itself once it carries a number. It says what the
+    score covers and what it leaves out, because the gap is most of the corpus."""
+    return (f"<strong>This is an index of what was said, and a score over the small part of it that "
+            f"has come due.</strong> {c['scored']} of {c['past_due']} past-due predictions were "
+            f"resolved against a cited source and scored; the other "
+            f"{c['past_due'] - c['scored']} could not be resolved or were not specific enough to "
+            f"test, and {c['leaders_ranked']} of the people here "
+            f"{'has' if c['leaders_ranked'] == 1 else 'have'} enough resolved predictions to carry a "
+            f"number at all. Everything else on this page is a count of what someone said, "
+            f"not a measure of how well they said it.")
+
+
 SCORE_LEGEND_EMPTY = ("<b>Score is empty on every row</b>, and stays empty until outcomes are "
                       "resolved: nothing here has been checked against what happened.")
 
@@ -953,6 +977,8 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__YEARS__", safe_json(span))
         .replace("__Y0__", span[0] if span else "n/a")
         .replace("__Y1__", span[-1] if span else "n/a")
+        .replace("__EYEBROW_STATUS__", eyebrow_status(scores_doc["corpus"]) if scores_doc else EYEBROW_EMPTY)
+        .replace("__DISCLAIMER__", disclaimer(scores_doc["corpus"]) if scores_doc else DISCLAIMER_EMPTY)
         .replace("__SCORE_HEADER__", SCORE_HEADER_LIVE if scores_doc else SCORE_HEADER_EMPTY)
         .replace("__SCORE_LEGEND__", score_legend(scores_doc["corpus"]) if scores_doc else SCORE_LEGEND_EMPTY)
         .replace("__SCORE_INFO__", score_info(scores_doc["corpus"], scores_doc["rule"]) if scores_doc
