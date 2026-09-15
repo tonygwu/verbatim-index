@@ -159,11 +159,24 @@ nothing. The next run should pass `--target-per-leader` (the fetcher then walks
 people fewest-first and stops each at the target), for example 8, so each IP's
 captions spread across all ten people before anyone gets more.
 
-## Automatic pre-check on the 58 fetched records
+Retry 4, 2026-09-15 02:51Z, on an Atlanta VPN exit (186.247.181.144) with
+`--target-per-leader 8`. Blocked after about 6 minutes and 13 new captions:
 
 ```
-NEEDS_HUMAN 54   FAIL 4
-  3 uploaded 2017-2019, outside the window 20210913-20260913
+newly_fetched 13 (coleman-hughes 7, ezra-klein 6)   ip_blocked_or_ratelimited 3, then circuit open
+on disk: ben-shapiro 24, asmongold 24, ana-kasparian 8, coleman-hughes 7, ezra-klein 6,
+         charlie-kirk 2, hasan-piker 0, matt-walsh 0, sam-seder 0, steven-bonnell 0
+```
+
+The fetcher's summary reads `attempted 240, succeeded 13, failed 3`, which does
+not add up: in target mode, rows never reached after the circuit opens are
+neither succeeded nor failed. The per-person lines above are the true record.
+
+## Automatic pre-check on the 71 fetched records
+
+```
+NEEDS_HUMAN 66   FAIL 5
+  4 uploaded 2017 to 2021-03, outside the window 20210913-20260913
   1 charlie-kirk upload dated 20260909, after his last recording 20250910
 ```
 
