@@ -39,8 +39,8 @@ def refused(fn) -> bool:
     return False
 
 
-GOOD = {"subject_present": True, "main_speaker": True, "venue": "guest_interview", "confidence": "high",
-        "reason": "The host welcomes her by name.", "evidence": ["welcome Ana"]}
+GOOD = {"subject_present": True, "main_speaker": True, "venue": "guest_interview", "political_content": True,
+        "confidence": "high", "reason": "The host welcomes her by name.", "evidence": ["welcome Ana"]}
 
 
 def main() -> int:
@@ -54,6 +54,21 @@ def main() -> int:
                        ("an unknown confidence", {**GOOD, "confidence": "sure"}), ("an empty reason", {**GOOD, "reason": " "})):
         check(f"{label} is refused", refused(lambda b=bad: S.parse_answer(json.dumps(b))))
     check("no JSON is refused", refused(lambda: S.parse_answer("I think she is present.")))
+    check("an answer without a true/false political_content is refused (operator topic rule, 2026-09-15)",
+          refused(lambda: S.parse_answer(json.dumps({k: v for k, v in GOOD.items() if k != "political_content"}))))
+    check("the drafting instructions ask the political-content question", "political_content" in S.RULES)
+
+    print("\n[MERGE]")
+    human = {"p/a": {"subject_present": False, "venue": "other", "political_content": True, "checked_by": "operator"}}
+    drafts = {"p/a": {**GOOD, "key": "p/a"}, "p/b": {**GOOD, "key": "p/b", "political_content": False},
+              "p/c": {"key": "p/c", "error": "cli exit 1"}}
+    merged, rep = S.merge_drafts(drafts, human, "claude-sonnet-5")
+    check("a human label is never overwritten by a draft", merged["p/a"] == human["p/a"], str(merged.get("p/a")))
+    check("an unlabelled row takes the draft's presence, venue and political content, marked as model-drafted",
+          merged["p/b"]["political_content"] is False and merged["p/b"]["drafted_by_model"] is True
+          and merged["p/b"]["checked_by"] == "model:claude-sonnet-5" and "main_speaker" not in merged["p/b"], str(merged.get("p/b")))
+    check("a draft with an error is not merged and is reported",
+          "p/c" not in merged and rep["skipped_errors"] == ["p/c"] and rep["merged_from_model"] == 1, str(rep))
     check("an answer followed by more text or a second object still parses (seen live on rows 52, 96, 101)",
           not refused(lambda: S.parse_answer(json.dumps(GOOD) + "\n{\"note\": \"extra\"}"))
           and not refused(lambda: S.parse_answer(json.dumps(GOOD) + " Hope that helps {:)}")))

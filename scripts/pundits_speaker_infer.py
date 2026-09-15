@@ -73,11 +73,14 @@ introductions, how people address each other, turn-taking and content.
    - other: none of these (for example gaming), and say what it is in reason.
    If formats mix, pick the one that fills most of the recording. If the subject is absent, use
    the format of the recording anyway.
-4. confidence: high only if the transcript itself makes all three answers clear; otherwise medium
+4. political_content: true if the recording discusses politics, policy, news or public
+   controversy for a real part of its length; false if it is only gaming, entertainment or chat.
+5. confidence: high only if the transcript itself makes all your answers clear; otherwise medium
    or low. Say what made you unsure in reason.
 
 Reply with ONLY one JSON object, no prose, exactly these keys:
 {"subject_present": true|false, "main_speaker": true|false, "venue": "<one venue>",
+ "political_content": true|false,
  "confidence": "high"|"medium"|"low", "reason": "<two sentences>",
  "evidence": ["<short verbatim transcript fragment>", "<another>"]}
 """
@@ -100,7 +103,7 @@ def parse_answer(text: str) -> dict:
     if not isinstance(a, dict):
         raise ValueError("the answer's JSON is not an object")
     errs = []
-    for f in ("subject_present", "main_speaker"):
+    for f in ("subject_present", "main_speaker", "political_content"):
         if not isinstance(a.get(f), bool):
             errs.append(f"{f} is not true/false")
     if a.get("venue") not in VENUES:
@@ -111,7 +114,7 @@ def parse_answer(text: str) -> dict:
         errs.append("reason is empty")
     if errs:
         raise ValueError("; ".join(errs))
-    return {k: a[k] for k in ("subject_present", "main_speaker", "venue", "confidence", "reason")} | {
+    return {k: a[k] for k in ("subject_present", "main_speaker", "venue", "political_content", "confidence", "reason")} | {
         "evidence": [e for e in (a.get("evidence") or []) if isinstance(e, str)][:3]}
 
 
@@ -182,6 +185,30 @@ def calibration(drafts: dict, human: dict) -> dict:
     return out
 
 
+def merge_drafts(drafts: dict, human: dict, model: str) -> tuple[dict, dict]:
+    """Human labels unchanged, plus a model draft for every row nobody labelled.
+
+    A draft enters as a label only for presence, venue and political content (the
+    fields the P6 gate reads), marked drafted_by_model with checked_by naming the
+    model, so the gate report can count and disclose it. A human label always wins.
+    """
+    merged = {k: dict(v) for k, v in human.items()}
+    added, skipped = 0, []
+    for key, d in sorted(drafts.items()):
+        if key in human:
+            continue
+        if d.get("error"):
+            skipped.append(key)
+            continue
+        if not isinstance(d.get("political_content"), bool):
+            raise RuntimeError(f"draft for {key} has no political_content; re-draft it with the current instructions")
+        merged[key] = {"subject_present": d["subject_present"], "venue": d["venue"],
+                       "political_content": d["political_content"], "checked_by": f"model:{model}",
+                       "drafted_by_model": True, "notes": f"model draft, confidence {d['confidence']}: {d['reason']}"}
+        added += 1
+    return merged, {"human_labels": len(human), "merged_from_model": added, "skipped_errors": skipped}
+
+
 def main() -> int:
     import study_profile as SP
     from atomicio import write_atomic
@@ -193,7 +220,8 @@ def main() -> int:
     i.add_argument("--config-dirs", default="",
                    help="Comma-separated CLAUDE_CONFIG_DIRs to rotate over; empty means the default account.")
     r = sub.add_parser("review")
-    for x in (i, r):
+    mg = sub.add_parser("merge", help="Write labels_merged.json: human labels plus model drafts for unlabelled rows.")
+    for x in (i, r, mg):
         SP.add_study_arg(x)
         x.add_argument("--model", choices=sorted(MODELS), default="fable",
                        help="Drafts from different models are kept in separate files and never mixed.")
@@ -245,6 +273,12 @@ def main() -> int:
             list(ex.map(one, todo))
         print(json.dumps({"attempted": len(todo), "outcomes": dict(tally)}, indent=1))
         return 1 if any(k.startswith("error") for k in tally) else 0
+
+    if args.cmd == "merge":
+        merged, rep = merge_drafts(drafts, human, MODELS[args.model])
+        write_atomic(root / "labels_merged.json", json.dumps(merged, indent=1, ensure_ascii=False))
+        print(json.dumps(rep | {"total_labels": len(merged), "rows": len(keys)}, indent=1))
+        return 1 if rep["skipped_errors"] else 0
 
     queue = []
     for n in sorted(keys):
