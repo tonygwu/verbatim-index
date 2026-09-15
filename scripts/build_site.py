@@ -61,6 +61,7 @@ h1 em{font-style:italic; color:var(--d2)}
   max-width:62ch; margin-top:18px; font-size:17px; color:var(--ink-2);
 }
 .thesis strong{color:var(--ink); font-weight:600}
+.eyebrow.src{margin-top:18px; margin-bottom:0}
 
 /* ---------- method strip ---------- */
 .strip{
@@ -358,6 +359,7 @@ footer{
     __N_JUDGES_WORD__ frontier models graded each transcript independently against a 15-criterion
     rubric, and every score below carries the written reasoning behind it.
   </p>
+  <div class="eyebrow src"><a href="https://github.com/tonygwu/verbatim-index">Code, rubric and tests on GitHub &rarr;</a></div>
 </header>
 
 <dl class="strip">

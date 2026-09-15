@@ -7,6 +7,8 @@ a score.
 
 Live leaderboard: **[verbatim-index.tonygwu.com](https://verbatim-index.tonygwu.com)**
 
+[![The Verbatim Index leaderboard: 50 technology leaders ranked on blinded transcripts, with the per-dimension scores and 95% intervals behind each rank](docs/images/leaderboard.png)](https://verbatim-index.tonygwu.com)
+
 A sibling product, **Verbatim Predictions**, turns the same transcripts into an
 auditable index of the falsifiable predictions each leader made, each grounded
 in a verbatim quote at a known timestamp and accepted only when two model
