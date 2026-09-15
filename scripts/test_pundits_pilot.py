@@ -138,23 +138,23 @@ def main() -> int:
     check("subject_present false is counted as wrong-person and not verified",
           out["wrong_person_found"] == ["ben-shapiro/s0"] and out["people"]["ben-shapiro"]["verified"] == 7, str(out["people"]))
 
-    print("\n[CAPS]")
+    print("\n[NO-CAPS]")
+    # Operator decision 2026-09-15 (option b): no venue, channel, 7-day or count caps.
+    # Every verified recording is graded; format is handled by recording the venue,
+    # showing each person's mix, and adjusting only where the data support it.
     human = {f"ben-shapiro/s{i}": label(venue="own_show_monologue") for i in range(10)}
     out = P.report(manifest(10), pcs(10), human, roster, 1)
-    check("at most 4 own-show recordings are selected", out["people"]["ben-shapiro"]["selected"] == 4, str(out["people"]))
+    check("all 10 own-show recordings are selected", out["people"]["ben-shapiro"]["selected"] == 10, str(out["people"]))
+    check("the venue mix is reported per person",
+          out["people"]["ben-shapiro"].get("venue_mix") == {"own_show_monologue": 10}, str(out["people"]))
     ext = "UC" + "e" * 22
     human = {f"ben-shapiro/s{i}": label() for i in range(10)}
     out = P.report(manifest(10, channel=ext), pcs(10), human, roster, 1)
-    check("at most 2 per external channel are selected", out["people"]["ben-shapiro"]["selected"] == 2, str(out["people"]))
-    days = pcs(20, spacing=1)
+    check("all 10 recordings from one outside channel are selected", out["people"]["ben-shapiro"]["selected"] == 10, str(out["people"]))
     human20 = {f"ben-shapiro/s{i}": label() for i in range(20)}
-    out = P.report(manifest(20), days, human20, roster, 1)
-    from datetime import date
-    picked = sorted(date(int(u[:4]), int(u[4:6]), int(u[6:])) for u in
-                    (days[k]["upload"] for k in out["people"]["ben-shapiro"]["selected_keys"]))
-    worst = max(sum(0 <= (d - start).days < 7 for d in picked) for start in picked)
-    check("no 7-day span holds more than 2 selected recordings, and the cap still selects some",
-          worst <= 2 and len(picked) >= 3, f"{picked}")
+    out = P.report(manifest(20), pcs(20, spacing=1), human20, roster, 1)
+    check("20 recordings uploaded on consecutive days are all selected, with no count cap",
+          out["people"]["ben-shapiro"]["selected"] == 20, str(out["people"]["ben-shapiro"]["selected"]))
 
     print("\n[TOPIC]")
     # Operator decision 2026-09-15: a recording with no political content (for

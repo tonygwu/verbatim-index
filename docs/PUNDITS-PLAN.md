@@ -314,12 +314,17 @@ recordings. They are not fact-checks, and not judgements of a person's sincerity
   years before his last recording. The board reports era as a covariate, and a sensitivity analysis
   excludes archival subjects.
 - **Length.** 30-180 minutes. A longer recording is excluded, not trimmed.
-- **Venue mix per person, target 12.**
-  - At most 4 from `own_show_monologue` and `reaction_stream` combined.
-  - At least 4 with an interlocutor: guest interview, debate, panel or TV.
-  - At most 2 per external channel.
-- **Topic.** At most 2 recordings of one person inside any 7-day span.
-- **Selection inside a stratum.** Seeded random, not longest-first.
+- **No venue, channel, topic or count caps (changed with the operator on 2026-09-15, option b).**
+  Every verified recording is graded. The pilot showed the caps did not fit how pundits
+  publish: 5 of 10 pilot people could not reach 4 recordings with an interlocutor, and
+  Asmongold would have kept 4 of 24 recordings. Format is handled instead by:
+  - recording each recording's venue;
+  - showing each person's venue mix on the page;
+  - applying the venue adjustment only under the support rule below;
+  - reporting a leave-one-venue-out sensitivity.
+  If the mix is badly lopsided, the fallback is option c: weight own-show and
+  interlocutor formats equally inside a person's score. That needs its own tests first.
+- **Selection inside a stratum.** Seeded random, not longest-first, where a candidate cap still applies to fetching.
 - **Candidate count.** `ceil(12 / y)`, with a floor of 24, where `y` is the lower 80% bound of the
   retained-to-candidate yield measured in P6.
 

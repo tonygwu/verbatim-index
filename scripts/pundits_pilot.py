@@ -15,14 +15,13 @@ from that yield. Four steps, each a subcommand:
              in the opening. Everything else is NEEDS_HUMAN, because the plan
              requires a person to check every pilot recording. Writes a
              checklist with blank fields for that person to fill.
-  report     joins human labels, applies the P5 selection caps, and returns
+  report     joins human labels, selects every verified recording, and returns
              the P6 gate: PASS, FAIL or INCONCLUSIVE, with per-person yield,
              a 95% interval and the one-sided 80% lower bound the plan uses.
 
-Selection caps (P5): at most 4 own-show monologue or reaction-stream recordings,
-at least 4 with an interlocutor, at most 2 per external channel, at most 2 in
-any 7-day span, seeded random order. Dates come from `yt_upload_date` and are
-never guessed.
+No selection caps (operator, 2026-09-15, option b): every verified recording is
+selected, and each person's venue mix is reported so format can be adjusted or
+disclosed. Dates come from `yt_upload_date` and are never guessed.
 
   pundits_pilot.py sample   --discovered data-pundits/sources/pilot_discovered.json --n 24 --seed 20260914 --manifest data-pundits/sources/pilot_manifest.jsonl
   pundits_pilot.py precheck --manifest ... --transcripts data-pundits/transcripts --roster data-pundits/roster/final.json --out data-pundits/logs/pilot/precheck.json --checklist data-pundits/logs/pilot/human_checklist.json
@@ -46,11 +45,7 @@ WINDOW = ("20210913", "20260913")
 ARCHIVAL_YEARS = 5
 OPENING_FRACTION = 0.15
 TARGET = 12
-MAX_OWN_SHOW = 4
-MIN_INTERLOCUTOR = 4
 MIN_VERIFIED_FOR_GATE = 4
-MAX_PER_EXTERNAL_CHANNEL = 2
-MAX_IN_7_DAYS = 2
 VENUES = ("own_show_monologue", "reaction_stream", "debate", "guest_interview", "hosted_interview",
           "panel_show", "tv_segment", "speech_or_lecture", "other")
 OWN_SHOW_VENUES = {"own_show_monologue", "reaction_stream"}
@@ -171,26 +166,19 @@ def human_errors(label: dict) -> list[str]:
     return errs
 
 
-def select(verified: list[dict], own_ids: set[str], seed: int) -> list[dict]:
-    """Seeded random order, then take recordings while the P5 caps allow, interlocutor venues first."""
+def select(verified: list[dict], seed: int) -> list[dict]:
+    """Every verified recording, in a seeded order.
+
+    The P5 venue, channel, 7-day and count caps were dropped with the operator on
+    2026-09-15 (option b). On the pilot, 5 of 10 people could not reach 4
+    recordings with an interlocutor, and Asmongold would have kept 4 of 24.
+    Format is handled by the reported venue mix and the supported venue
+    adjustment instead; equal format weighting (option c) is the fallback.
+    """
     rng = random.Random(seed)
     pool = sorted(verified, key=lambda r: r["key"])
     rng.shuffle(pool)
-    pool.sort(key=lambda r: 0 if r["venue"] in INTERLOCUTOR_VENUES else 1)
-    chosen: list[dict] = []
-    for r in pool:
-        if len(chosen) >= TARGET:
-            break
-        if r["venue"] in OWN_SHOW_VENUES and sum(c["venue"] in OWN_SHOW_VENUES for c in chosen) >= MAX_OWN_SHOW:
-            continue
-        if r["channel_id"] not in own_ids and sum(c["channel_id"] == r["channel_id"] for c in chosen) >= MAX_PER_EXTERNAL_CHANNEL:
-            continue
-        d = date(int(r["upload"][:4]), int(r["upload"][4:6]), int(r["upload"][6:]))
-        near = [c for c in chosen if abs((date(int(c["upload"][:4]), int(c["upload"][4:6]), int(c["upload"][6:])) - d).days) < 7]
-        if len(near) >= MAX_IN_7_DAYS:
-            continue
-        chosen.append(r)
-    return chosen
+    return pool
 
 
 def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, seed: int) -> dict:
@@ -237,7 +225,7 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
             tally["verified"] += 1
             strata[row["discovery_stratum"]]["verified"] += 1
             verified.append({"key": key, "venue": label["venue"], "channel_id": row["channel_id"], "upload": pc["upload"]})
-        chosen = select(verified, own_ids, seed)
+        chosen = select(verified, seed)
         k, n = tally["verified"], len(rows)
         people[slug] = {
             "sampled": n, "outcomes": dict(tally), "verified": k,
@@ -245,6 +233,7 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
                                          "yield_ci95": clopper_pearson(c["verified"], c["sampled"])}
                                      for s, c in sorted(strata.items())},
             "selected_keys": [c["key"] for c in chosen],
+            "venue_mix": dict(sorted(Counter(c["venue"] for c in chosen).items())),
             "yield": round(k / n, 4) if n else None, "yield_ci95": clopper_pearson(k, n) if n else None,
             "yield_lower80": round(lower_bound(k, n, 0.20), 4) if n else None,
             "selected": len(chosen),
@@ -263,7 +252,8 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
         verdict, why = "PASS", "every pilot person has enough verified recordings; wrong-person records are excluded"
     return {"gate": verdict, "why": why, "people": people, "wrong_person_found": wrong_person,
             "pending": pending, "invalid_labels": invalid,
-            "limits": "interlocutor minimum is reported, not gated, in the pilot; the P6 gate counts selected recordings"}
+            "limits": "no venue, channel, 7-day or count caps (operator, 2026-09-15); every verified recording is "
+                      "selected and each person's venue_mix is reported; the P6 gate counts selected recordings"}
 
 
 def main() -> int:
