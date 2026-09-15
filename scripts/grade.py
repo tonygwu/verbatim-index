@@ -930,16 +930,39 @@ def astra_command(prompt: str, model: str, out_file: Path) -> list[str]:
 
 def call_astra(prompt: str, timeout: int, workdir: Path,
                model: str = "gpt-6-astra", raw_response_path: Path | None = None,
-               wrapper: list[str] | None = None) -> tuple[str, dict]:
+               wrapper: list[str] | None = None,
+               config_dir: str | None = None) -> tuple[str, dict]:
     """Run the Astra judge via codex exec. Returns (text, telemetry).
 
     `model` is a parameter because this arm falls back to another model when
     it refuses repeatedly. The served model is recorded in the telemetry, so
-    aggregate.py can calibrate each model on its own distribution."""
+    aggregate.py can calibrate each model on its own distribution.
+
+    `config_dir` is the Codex home the ROUTER chose, exported as CODEX_HOME so
+    the call lands on the account the record will name. Before it existed,
+    call_astra passed no env: every Astra call ran against whatever CODEX_HOME
+    the parent shell carried, while the route claimed the router's pick. The two
+    agreed only by luck, because llm-quota-router 0.1.1 could not see a second
+    Codex home and so only ever picked `codex`. 0.1.2 ranks `codex_b`, so
+    without this the router would book one account and spend another. None means
+    inherit the caller's environment, which the standalone tests rely on."""
+    # Create the jail, exactly as call_fable and call_gemini do for theirs. The
+    # workdir is this call's cwd and its -o target, so a caller that passes a
+    # path which does not exist gets FileNotFoundError out of subprocess.run
+    # rather than a model failure, filed as cli_nonzero_exit. Latent for the
+    # whole corpus: verify_one passes a per-batch SUBdirectory (workdir/b0) and
+    # creates only the parent, and Astra always EXTRACTED while Gemini or Fable
+    # verified, so it was never handed a missing directory.
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
     out_file = workdir / "astra_last_message.txt"
     cmd = [*(wrapper or []), *astra_command(prompt, model, out_file)]
+    env = None
+    if config_dir is not None:
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(config_dir)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          stdin=subprocess.DEVNULL, cwd=str(workdir))
+                          stdin=subprocess.DEVNULL, cwd=str(workdir), env=env)
     save_cli_response(raw_response_path, proc)
     events = []
     for line in (proc.stdout or "").splitlines():
