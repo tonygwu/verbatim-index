@@ -119,9 +119,22 @@ An unsupported dimension is missing evidence, not a low score.
 
 ## Venue and challenge
 
-Record `venue_type` from the format the transcript shows: `own_show_monologue`,
-`reaction_stream`, `debate`, `guest_interview`, `hosted_interview`, `panel_show`,
-`tv_segment`, `speech_or_lecture`, or `other`.
+Record `venue_type` from the format the transcript shows. Decide by counting the
+other live voices in the conversation, not by who hosts or which channel or
+network airs it. Played clips are not live voices. If a recording mixes formats,
+record the format that fills most of it.
+
+| Venue | Definition |
+|---|---|
+| `own_show_monologue` | The subject speaks to the audience on their own show, with no other live voice. |
+| `reaction_stream` | The subject plays other material and comments on it, with no other live voice. |
+| `debate` | An organised exchange with at least one named opponent, usually with a moderator or turns. |
+| `guest_interview` | Exactly one other live voice: an interviewer who runs the conversation and questions the subject. |
+| `hosted_interview` | The subject runs the conversation and questions exactly one guest. |
+| `panel_show` | Two or more other live voices trade views with the subject, whoever hosts: a split-screen panel, a roundtable, a co-hosted show. |
+| `tv_segment` | An anchor-led broadcast news segment, one-on-one or pre-packaged, that is not a multi-guest panel. |
+| `speech_or_lecture` | A prepared talk to a live audience, with or without questions afterwards. |
+| `other` | None of these. |
 
 Record `venue_challenge` from 1 to 5. It does not change the scores:
 

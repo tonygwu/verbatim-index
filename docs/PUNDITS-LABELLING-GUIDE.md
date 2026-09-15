@@ -46,17 +46,27 @@ what the pre-check noticed, for example that the subject is never named.
 
 ### Venues
 
-| Venue | Use when |
+Decide by counting the other live voices in the conversation, not by who hosts
+or which channel or network airs it. Played clips are not live voices. If a
+recording mixes formats, record the format that fills most of it. The judges'
+rubric carries these exact definitions, so your labels and theirs can be compared.
+
+| Venue | Definition |
 |---|---|
-| `own_show_monologue` | The subject speaks to the audience on their own show, with no guest. |
-| `reaction_stream` | The subject plays other material and comments on it. |
-| `debate` | A structured exchange with a named opponent. |
-| `guest_interview` | The subject is the guest on someone else's show. |
-| `hosted_interview` | The subject hosts and interviews a guest on their own show. |
-| `panel_show` | Three or more regular voices discuss topics, including co-hosted shows. |
-| `tv_segment` | A broadcast news or talk segment. |
-| `speech_or_lecture` | A prepared talk to a live audience, with or without questions. |
-| `other` | None of these; say what it is in `notes`. |
+| `own_show_monologue` | The subject speaks to the audience on their own show, with no other live voice. |
+| `reaction_stream` | The subject plays other material and comments on it, with no other live voice. |
+| `debate` | An organised exchange with at least one named opponent, usually with a moderator or turns. |
+| `guest_interview` | Exactly one other live voice: an interviewer who runs the conversation and questions the subject. |
+| `hosted_interview` | The subject runs the conversation and questions exactly one guest. |
+| `panel_show` | Two or more other live voices trade views with the subject, whoever hosts: a split-screen panel, a roundtable, a co-hosted show. |
+| `tv_segment` | An anchor-led broadcast news segment, one-on-one or pre-packaged, that is not a multi-guest panel. |
+| `speech_or_lecture` | A prepared talk to a live audience, with or without questions afterwards. |
+| `other` | None of these. |
+
+Examples: Ana Kasparian with three other guests on a Piers Morgan split screen,
+or on Bill Maher's Overtime, is `panel_show`. Piers Morgan interviewing her alone
+is `guest_interview`. A regular Young Turks episode she co-hosts with Cenk Uygur
+is `panel_show`. For `other`, say what it is in `notes`, for example "gaming".
 
 ## P7: attribution windows (30 windows, 6 per format)
 
