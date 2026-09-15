@@ -144,11 +144,31 @@ records belong to three of the ten pilot people: asmongold 24, ana-kasparian 8
 and ben-shapiro 6. The other seven have none. Any yield measured now describes
 those three only.
 
-## Automatic pre-check on the 38 fetched records
+Retry 3, 2026-09-15 02:40Z, on a new VPN exit (187.15.80.120) after a probe
+cleared. YouTube blocked the new IP again after about 10 minutes:
 
 ```
-NEEDS_HUMAN 35   FAIL 3 (uploads from 2017 and 2019, outside the window 20210913-20260913)
+attempted 240   newly_fetched 20   cached 38   succeeded 58   failed 182
+error_taxonomy: ip_blocked_or_ratelimited 166, video_unavailable 16
+fetched by person: ben-shapiro 24, asmongold 24, ana-kasparian 8, charlie-kirk 2, the other six 0
 ```
+
+A fresh IP buys roughly 20 captions at 6 to 15 seconds between requests. The
+fetch fills one person at a time, so every block leaves the later people with
+nothing. The next run should pass `--target-per-leader` (the fetcher then walks
+people fewest-first and stops each at the target), for example 8, so each IP's
+captions spread across all ten people before anyone gets more.
+
+## Automatic pre-check on the 58 fetched records
+
+```
+NEEDS_HUMAN 54   FAIL 4
+  3 uploaded 2017-2019, outside the window 20210913-20260913
+  1 charlie-kirk upload dated 20260909, after his last recording 20250910
+```
+
+The Kirk failure is the archival rule working: his channel keeps posting after
+his death, and those uploads cannot be him speaking live.
 
 A FAIL is only what the record proves: no upload date, outside the window, after
 an archival subject's last recording, or a substitute host in the opening. Every
