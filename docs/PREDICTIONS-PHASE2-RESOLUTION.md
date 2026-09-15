@@ -249,22 +249,39 @@ easy claims from hard ones rather than checkable ones from murky ones.
 
 ## Where the board stands
 
-All 225 past-due predictions are resolved and 77 carry a score. The other 148 are
-named rather than dropped: 65 unresolvable, 8 outside the eligibility rule, and
-75 resolved but never priced, because the prior stage ran only over the eligible
-set once Fable quota became the binding constraint. Three people clear the floor
-of five scored predictions.
+All 225 past-due predictions carry both a resolution and a prior, and 113 carry a
+score. The other 112 are named rather than dropped: 65 unresolvable and 47
+outside the eligibility rule. Nothing is excluded for want of a number any more;
+an earlier pass left 75 records resolved but unpriced when Fable quota became the
+binding constraint, and that gap is now closed. Nine people clear the floor of
+five scored predictions.
 
 ```
-Mark Zuckerberg   6   +0.018   hit 0.83   mean p 0.81
-Lisa Su           8   -0.100   hit 0.62   mean p 0.63
-Andy Jassy       17   -0.129   hit 0.59   mean p 0.62
+Jensen Huang       6   +0.190   hit 0.83   mean p 0.72
+Mark Zuckerberg   10   +0.169   hit 0.90   mean p 0.79
+Elon Musk          7   -0.108   hit 0.43   mean p 0.42
+Jeff Bezos         6   -0.146   hit 0.33   mean p 0.34
+Lisa Su           11   -0.161   hit 0.64   mean p 0.69
+Pat Gelsinger      7   -0.164   hit 0.57   mean p 0.63
+Andy Jassy        22   -0.168   hit 0.55   mean p 0.59
+Sundar Pichai      6   -0.185   hit 0.67   mean p 0.75
+Reed Hastings      6   -0.271   hit 0.67   mean p 0.80
 ```
 
-All three sit near zero, which is the rule working rather than failing. These are
-mostly keynote roadmap items with a high p, so keeping one earns little and
-missing one costs a lot. A corporate roadmap is a near-zero-information forecast
-and the rule reaches that with no special case for it.
+The whole board sits inside a band of about half a point, which is the rule
+working rather than failing. Most of these are keynote roadmap items with a high
+p, so keeping one earns little and missing one costs a lot; a corporate roadmap
+is a near-zero-information forecast and the rule reaches that with no special
+case for it.
+
+Two readings worth keeping when the board grows. **Musk and Bezos carry the
+lowest mean p on the board, 0.42 and 0.34, and still land mid-table.** They make
+genuinely uncertain claims, so their misses are cheap and their hits pay; the
+rule is rewarding the risk rather than the hit rate, which is the whole point of
+scoring against p. **Reed Hastings carries the highest mean p, 0.80, and the
+worst score.** He missed things that looked close to certain, which is the most
+expensive way to be wrong here. A reader who sorts this column and expects it to
+track hit rate will be surprised by both rows, and both are correct.
 
 ## The hindsight probe, and the limit it puts on every number here
 
