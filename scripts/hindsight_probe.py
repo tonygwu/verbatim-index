@@ -212,9 +212,27 @@ def main() -> int:
     print(f"  mean {mean_d:+.3f}   sd {sd:.3f}   se {se:.3f}   95% CI [{mean_d - 1.96 * se:+.3f}, {mean_d + 1.96 * se:+.3f}]")
     print(f"  moved toward the outcome in {sum(1 for x in d if x > 0.001)} of {n}, "
           f"away in {sum(1 for x in d if x < -0.001)}, unchanged in {sum(1 for x in d if abs(x) <= 0.001)}")
-    verdict = ("the disclosure moves p substantially, so the blind run was not already using the outcome"
-               if mean_d - 1.96 * se > 0.05 else
-               "AMBIGUOUS: a small shift cannot tell 'already knew' from 'insensitive to being told'")
+    # Three readings, not two. The first version had one threshold at 0.05 and
+    # called everything below it ambiguous, which reported a shift whose interval
+    # cleanly excluded zero as if it said nothing.
+    lo = mean_d - 1.96 * se
+    if lo <= 0:
+        verdict = ("AMBIGUOUS: the interval includes zero, so this cannot tell "
+                   "'already knew the outcome' from 'insensitive to being told'")
+    else:
+        # Disclosure raises p on the hits and lowers it on the misses, so a shift of
+        # d toward the outcome is worth about 2d of SEPARATION. Comparing that with
+        # the excess the blind run already shows says how much of the excess full
+        # hindsight could account for.
+        implied = 2.0 * mean_d
+        verdict = (f"the disclosure moves p by {mean_d:+.3f} and the interval excludes zero, so the "
+                   f"blind run was NOT already using the outcome")
+        if sep.get("excess") is not None:
+            share = sep["excess"] / implied if implied else float("inf")
+            verdict += (f". Full disclosure would add about {implied:.3f} of separation against the "
+                        f"{sep['excess']:+.3f} the blind run already shows, i.e. {share:.0%} of it, "
+                        f"so PARTIAL leakage is not excluded; the monotone reliability table is "
+                        f"independent evidence that under-extremity supplies some of the rest")
     print(f"  reading: {verdict}")
 
     if args.out:

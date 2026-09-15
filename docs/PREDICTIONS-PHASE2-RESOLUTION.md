@@ -143,17 +143,182 @@ to say so. `score_predictions.py` therefore prints a reliability table on every
 run: mean p against hit rate, overall and in five bins, with a binomial interval
 so a small corpus does not read as a bias.
 
-<!-- CALIBRATION TABLE -->
+```
+IS THE PRIOR ASSESSOR CALIBRATED?  n=77  mean p 0.580  hit rate 0.545  gap -0.034
+  hit rate and mean p agree within noise (1.96 se 0.112)
+      p bin    n  mean p    hit     gap   points
+    0.0-0.2    9    0.08   0.00   -0.08   -0.300
+    0.2-0.4   14    0.31   0.00   -0.31   -0.814
+    0.4-0.6   12    0.52   0.33   -0.19   -0.373
+    0.6-0.8   18    0.69   0.83   +0.14   +0.243
+    0.8-1.0   24    0.87   0.96   +0.09   +0.136
+```
+
+**Overall it is calibrated; by bin it is not.** The gap of -0.034 sits well inside
+noise, so the board's mean is not systematically shifted. But the bins are
+monotone: everything below 0.6 overshoots and everything above undershoots. That
+is the signature of **under-extremity**, the most common miscalibration there is:
+the assessor orders predictions well and squashes its probabilities toward 0.5.
+
+The same thing shows up in a second, independent way. `hindsight_probe.py`
+computes the separation the assessor achieves between hits and misses, against
+the separation a PERFECTLY CALIBRATED assessor would achieve on the same p
+distribution, which is fixed at `E[p^2]/E[p]` minus `(E[p]-E[p^2])/(1-E[p])`:
+
+```
+                          observed  if calibrated
+  mean p | came true        0.759         0.674
+  mean p | did not          0.343         0.415
+  separation               +0.416        +0.260      excess +0.156
+```
+
+An excess means the assessor discriminates better than its own stated confidence
+allows. Under-extremity produces exactly that, and so does hindsight, so the
+excess alone does not choose between them.
+
+## Did the deadline correction explain it? No, and that is the substantive finding
+
+The first pass priced the EVENT, not the deadline. MEASURED on the 17 scored
+misses priced between 0.2 and 0.6: **12 of them happened, just late.** Cybertruck
+deliveries, New Shepard's first crewed flight, New Glenn's first launch, Comma's
+Navigate on Openpilot, UALink 1.0, AWS Trainium framework support, SWE-bench at
+90%. The assessor was pricing "will this happen" while the resolver tests "did
+this happen BY the date", so every slipped timeline was charged to the speaker
+twice.
+
+The prompt was corrected to say outright that late is false, and both passes are
+kept (`priors_v1_event` and `priors`). MEASURED over the 99 predictions priced by
+both:
+
+```
+  mean p   priors_v1_event: 0.631
+  mean p   priors:          0.596
+  mean shift -0.035   sd 0.060
+  lowered 68, raised 20, unchanged 11
+  on predictions that occurred      n=42  mean shift -0.027
+  on predictions that not_occurred  n=28  mean shift -0.046
+```
+
+Two things follow, and the second matters more.
+
+**The correction is real but small, and it is not hindsight.** It moved p by 3.5
+points and moved it in the same direction on hits and misses, -0.027 against
+-0.046. Hindsight leaking in would have lowered p on the misses and left the hits
+alone.
+
+**Three and a half points cannot explain a thirty-point gap.** So the mid-band
+shortfall is not the assessor failing to price slippage. These speakers miss
+their own stated deadlines far more often than a well-informed observer standing
+on the statement date would predict. That is a real foresight failure and the
+score is right to charge it.
+
+## What the gate excludes, measured rather than argued
+
+The eligibility rule keeps a prediction only if it is specific, reaches at least
+180 days out, and has a coherent window. That floor is the operator's call. It is
+now testable, because the predictions it EXCLUDES were resolved too:
+
+```
+ELIGIBLE               n=108   42 occurred, 35 not occurred, 31 unresolvable
+                       hit rate among decided 0.55
+EXCLUDED by the gate    n=68   hit rate among decided 0.77
+```
+
+Predictions the floor excludes land 77% of the time; the ones it keeps land 55%.
+They really are announcements rather than forecasts, which is what the floor was
+for.
+
+## Where the board stands
+
+77 of 225 past-due predictions carry a score. The other 148 are named rather than
+dropped: 53 unresolvable, 8 outside the eligibility rule, and the rest still
+unpriced when the run ended. Three people clear the floor of five scored
+predictions.
+
+```
+Mark Zuckerberg   6   +0.018   hit 0.83   mean p 0.81
+Lisa Su           8   -0.100   hit 0.62   mean p 0.63
+Andy Jassy       17   -0.129   hit 0.59   mean p 0.62
+```
+
+All three sit near zero, which is the rule working rather than failing. These are
+mostly keynote roadmap items with a high p, so keeping one earns little and
+missing one costs a lot. A corporate roadmap is a near-zero-information forecast
+and the rule reaches that with no special case for it.
+
+## The hindsight probe, and the limit it puts on every number here
+
+**This is the most important caveat in this file and it is not a clean result.**
+
+The wall is structural and the sandbox is measured: the prior prompt cannot reach
+a resolution, and 0 of 156 prior calls reached the web. Neither removes what the
+model already knows from training, and 220 of the 225 past-due predictions fall
+inside its knowledge cutoff. So the question is whether training knowledge leaks
+into p, and it has to be measured.
+
+Two measurements, one free and one costing 20 calls.
+
+**Free: does the assessor separate hits from misses by more than calibration
+allows?** If p is the true probability the outcome is Bernoulli(p), so the mean p
+among predictions that came true is fixed at `E[p^2]/E[p]` and among those that
+did not at `(E[p]-E[p^2])/(1-E[p])`. Over 85 resolved pairs:
+
+```
+                          observed  if calibrated
+  mean p | came true        0.782         0.715
+  mean p | did not          0.340         0.409
+  separation               +0.442        +0.306     excess +0.136
+```
+
+**Paid: ask the same model again with the outcome disclosed.** n=20:
+
+```
+  d = p(told) - p(blind), signed toward what happened
+  mean +0.092   se 0.030   95% CI [+0.034, +0.151]
+  moved toward the outcome in 15 of 20, away in 1, unchanged in 4
+```
+
+### What that does and does not establish
+
+**It establishes that the blind run was not already saturated with the outcome.**
+Disclosure still moves p by about nine points and the interval excludes zero. A
+model that already knew would have had nothing to update on.
+
+**It does not establish that the blind run was clean.** Disclosure raises p on the
+hits and lowers it on the misses, so a shift of d toward the outcome is worth
+about 2d of separation, here 0.185. The blind run already shows an excess of
+0.136, which is **73% of what full hindsight would produce**. Partial leakage is
+not excluded by these numbers, and 73% is a large fraction.
+
+That 73% is an UPPER bound on the leaked share rather than an estimate, because
+under-extremity produces excess separation on its own and the reliability table
+shows under-extremity plainly: every bin below 0.6 overshoots and every bin above
+undershoots. How much of the 0.136 each mechanism supplies is not resolved here.
+
+### Which way it biases the board
+
+Toward zero, not toward anyone. A p that is too high on a prediction that came
+true shrinks the reward; a p that is too low on one that failed shrinks the
+penalty. Both pull a score toward zero, so residual hindsight makes the board
+UNDERSTATE the differences between people rather than invent them. A near-zero
+score on this board should therefore be read as "no foresight demonstrated here",
+never as "foresight disproved".
 
 ## Open questions
 
-1. **The hindsight probe has not been run yet.** Until it has, the blindness of
-   the published p rests on the structural wall and the zero web searches, which
-   bound the leak from two directions and do not measure it.
-2. **One resolver, no second arm.** Resolutions are single-sourced. An agreement
+1. **Under-extremity is measured and NOT corrected.** Recalibrating p on the same
+   77 predictions that measured the miscalibration would be circular, and the
+   bins hold 9 to 24 records each. It needs either more data or a held-out split.
+   Until then a single person's score carries that compression, while the board's
+   mean does not, because the overall gap is inside noise.
+2. **Apportioning the excess separation needs a held-out design**, not a bigger
+   probe. The clean version asks a model with a knowledge cutoff BEFORE the
+   deadline, so training leakage is impossible by construction, and compares its
+   p with this one. That is the measurement this file cannot substitute for.
+3. **One resolver, no second arm.** Resolutions are single-sourced. An agreement
    rate against a second harness with its own search, such as Gemini, would put a
    number on how often two independent resolvers disagree about the same claim.
-3. **The resolver counts a late delivery as a miss**, which is the right rule for
+4. **The resolver counts a late delivery as a miss**, which is the right rule for
    a dated claim and does push the hit rate down against a prior that priced the
    event rather than the deadline. Whether the assessor should be told to price
    the deadline explicitly is a real design question and is not settled here.
