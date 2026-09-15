@@ -141,10 +141,13 @@ def compare(e: str, v: str):
     flags = []
     de, dv = deadline(e), deadline(v)
     if de is None and dv is None:
-        return []                          # neither names a date: open-ended, and they agree on that
-    if de is None or dv is None:
+        pass          # neither names a date: open-ended, and they AGREE about that. Not a flag,
+                      # but the criteria are still checked below: an undirected or inverted
+                      # criterion is a defect whether or not the prediction carries a deadline.
+                      # Returning early here hid 4 of the 18 undirected criteria.
+    elif de is None or dv is None:
         flags.append("deadline_missing_in_one")
-    elif de[0] != dv[0]:
+    elif de is not None and dv is not None and de[0] != dv[0]:
         flags.append("deadline_year")
     elif de[1] is not None and dv[1] is not None and de[1] != dv[1]:
         flags.append("deadline_month")

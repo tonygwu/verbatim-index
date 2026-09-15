@@ -68,6 +68,19 @@ def main() -> int:
     check("OPEN: two criteria that both decline to name a date agree, and carry no flag",
           C.compare("By an unspecified future date, X will happen.",
                     "By an unspecified future date, X will happen.") == [])
+    # The open-ended case returned early, which skipped every other check and hid 4 of the 18
+    # undirected criteria and 4 polarity flags. An undated prediction can still carry a broken
+    # criterion, so agreeing about the absence of a deadline must not end the comparison.
+    check("OPEN: an undated pair is still checked for direction and polarity, not waved through",
+          "polarity" in C.compare(
+              "By an unspecified future date, Wing's eligible population will reach 40 million Americans.",
+              "By the time Wing operations cease, the number with access will not reach 40 million.")
+          and "undirected_criterion" in C.compare(
+              "By an unspecified date, X will happen.",
+              "By an unspecified date, X will / will not happen."),
+          str([C.compare("By an unspecified future date, Wing's eligible population will reach 40 million Americans.",
+                         "By the time Wing operations cease, the number with access will not reach 40 million."),
+               C.compare("By an unspecified date, X will happen.", "By an unspecified date, X will / will not happen.")]))
 
     # ---- the two real defects ----
     undirected = C.compare(

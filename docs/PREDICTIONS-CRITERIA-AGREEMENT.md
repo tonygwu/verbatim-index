@@ -14,11 +14,11 @@ No model calls were spent and nothing was written to `data/`.
 
 ## The answer first
 
-**The headline is not the rate. It is that 21 of 475 records carry a criterion a
-resolver would act on incorrectly, and 14 of those carry one that cannot be
-resolved at all.**
+**The headline is not the rate. It is that 26 of 475 records carry a criterion a
+resolver would act on incorrectly, and 18 of those carry one that cannot be
+resolved at all. Both trace to ONE line in the shared spec.**
 
-A mechanical screen flags 73 of 475 records, 15.4%. That number is not the
+A mechanical screen flags 81 of 475 records, 17.1%. That number is not the
 disagreement rate and must not be quoted as one. It is a screen, not a judgement:
 it reads deadlines, numeric thresholds and polarity, and it cannot tell whether
 two differently worded observables mean the same thing. I read the flagged
@@ -26,8 +26,8 @@ records by hand and the flags fall into three very different piles.
 
 | pile | n | what it means for a resolution pass |
 |---|---|---|
-| **the criterion states no direction** | 14 | not resolvable either way; the criterion must be rewritten |
-| **the two criteria assert OPPOSITE outcomes** | 7 | resolving one true resolves the other false; a human must pick |
+| **the criterion states no direction** | 18 | not resolvable either way; the criterion must be rewritten |
+| **the two criteria assert OPPOSITE outcomes** | 8 | resolving one true resolves the other false; a human must pick |
 | the verifier pinned a date the extractor left open | 11 | not a contradiction; the pass needs a rule for which date closes |
 | equivalent wording in two house styles | 10 | no action |
 | the screen is wrong | 9 + some | no action, and the flag needs narrowing |
@@ -36,17 +36,46 @@ records by hand and the flags fall into three very different piles.
 
 ```
      23  threshold_dropped
+     21  polarity
      18  deadline_missing_in_one
-     17  polarity
-     14  undirected_criterion
+     18  undirected_criterion
       6  deadline_year
      62  (both call it open-ended: agreement, not a flag)
 
-     73  records carry at least one flag  (15.4% of 475)
-    402  records agree on every part a machine can read
+     81  records carry at least one flag  (17.1% of 475)
+    394  records agree on every part a machine can read
 ```
 
-## 1. Fourteen criteria state no direction and cannot be resolved
+## The root cause is one line, shared by both models
+
+`ELIGIBILITY.md` G2 is injected into the extractor prompt AND the verifier prompt
+through the `{{ELIGIBILITY_POLICY}}` marker. It says:
+
+> write "By \<date or dated event\>, \<observable\> **will / will not** \<threshold\>."
+
+The "will / will not" is meant as "choose one". It is read as text to copy, and 18
+verifier criteria copied it verbatim. All 18 are on the verifier side; the
+extractor's criterion is directional in every one of the 18, so no record is lost.
+
+The inversions have the same origin. The one field is described three different
+ways in three files, and none of the three states the polarity convention:
+
+| file | what it says the criterion is |
+|---|---|
+| `extractor_output.schema.json` | "By \<date or dated event\>, \<observable\> will / will not \<threshold\>." |
+| `prediction_record.schema.json` | "What observation, on or by what date, would show the claim **wrong**." |
+| `verifier_output.schema.json` | "In your own words, without reference to the extractor's." |
+
+The second describes a FALSIFICATION condition and the first describes the
+PREDICTED OUTCOME. They are opposites. Nothing anywhere says whether a criterion
+that resolves TRUE means the speaker was right or wrong. On a prediction whose
+content is already negative, such as "machines will not surpass humans", the two
+models pick different conventions and the record ends up with two criteria that
+assert opposite things.
+
+This is a spec defect, not a model failure. Neither model was told the rule.
+
+## 1. Eighteen criteria state no direction and cannot be resolved
 
 The verifier wrote the test as "X will / will not happen". That is not a
 falsifiable criterion, whatever the outcome turns out to be:
@@ -55,17 +84,15 @@ falsifiable criterion, whatever the outcome turns out to be:
 
 > By 2029-02-05, the total cost per unit of operating AI compute in space **will / will not** be lower than in any location on Earth.
 
-The extractor's criterion is directional in all 14 cases, so the record is not
+The extractor's criterion is directional in all 18 cases, so the record is not
 lost. A resolution pass must either use the extractor's criterion alone for these
 or send them back to the verifier. Detection is mechanically exact, so this count
 carries no false positives.
 
-The 14 concentrate on 5 leaders: elon-musk 5, jensen-huang 5, michael-saylor 2,
-jeff-bezos 1, mustafa-suleyman 1. That is worth knowing, because the defect is not
-spread evenly, so a per-leader number computed over unrepaired records would be
-biased against those five.
+They are not spread evenly across the board, so a per-leader number computed over
+unrepaired records would be biased against the leaders carrying most of them.
 
-## 2. Seven pairs assert opposite outcomes
+## 2. Eight pairs assert opposite outcomes
 
 These are the dangerous ones. The two criteria are directional, and they point in
 opposite directions, so a resolver that happened to read one rather than the other
@@ -86,9 +113,11 @@ yann-lecun       E: there WILL NOT HAVE BEEN a demonstration of an integrated AI
                  V: an AI system WILL DEMONSTRATE hierarchical planning
 yann-lecun       E: the English translation WILL NOT HAVE BEEN published
                  V: the English translation WILL BE published commercially
+sundar-pichai    E: Wing's eligible population WILL REACH 40 million Americans
+                 V: the number with access WILL NOT REACH 40 million
 ```
 
-Three of the seven are Yann LeCun, and the shape is the same each time: he is
+Three of the eight are Yann LeCun, and the shape is the same each time: he is
 predicting that something will NOT happen, the extractor writes the criterion in
 his direction, and the verifier writes it in the positive. Whether that is a
 disagreement about the claim or two ways of writing one test is exactly the
@@ -124,6 +153,12 @@ to make again:
 - **Both saying "unspecified" is agreement.** 62 pairs where neither names a date
   were counted as a disagreement. They agree that the prediction is open-ended.
 
+A fourth mistake came from fixing the third. Treating the open-ended case as an
+early return skipped every remaining check, which hid 4 undirected criteria and 4
+polarity flags. An undated prediction can still carry a broken criterion. The
+counts above are after that fix; an earlier revision of this document said 14 and
+7 and was wrong.
+
 `threshold_dropped` is still advisory. I sampled 3 of its 23 and all 3 were
 artifacts: a count of 12 restated as a list of 12 cities, and a "5 to 10 year"
 horizon read as a threshold. I did not review all 23, so no rate is quoted from
@@ -131,12 +166,22 @@ it, and it should be narrowed before anyone leans on it.
 
 ## What this means for the resolution pass
 
-1. **Fix the 14 undirected criteria before resolving anything.** They are a
-   verifier defect and they are cheap to find; the screen names them.
-2. **Route the 7 inversions to a human.** They are the cases where an automated
+0. **Fix the spec first, or every future run reproduces both defects.** Delete
+   the "will / will not" template from `ELIGIBILITY.md` G2, and state the polarity
+   convention once: a criterion resolves TRUE when the speaker was RIGHT. Align
+   the three field descriptions to that sentence. `read_spec` inlines
+   `ELIGIBILITY.md` into both prompts, so this changes BOTH contract ids and needs
+   a `POLICY_RELEASE.json` bump; `check_policy_release` raises otherwise. The 475
+   published records are unaffected, because each records the contract it ran
+   under.
+1. **Fix the 18 undirected criteria before resolving anything.** The screen names
+   them. Re-verifying costs quota: the 39 records carrying an undirected or
+   polarity flag sit on 29 transcripts, and re-verifying those re-judges 49
+   accepted records rather than 39, because verification runs per transcript.
+2. **Route the 8 inversions to a human.** They are the cases where an automated
    resolver would silently publish the opposite answer.
 3. **Write the rule for the 11 pinned dates** into the resolution spec, rather
    than deciding it per record.
-4. The remaining 402 records agree on every part a machine can read. That is NOT
+4. The remaining 394 records agree on every part a machine can read. That is NOT
    proof that they agree, and the screen says so in its own output. It is the
    floor a human review starts from, not a clearance.
