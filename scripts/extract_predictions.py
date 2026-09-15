@@ -95,6 +95,26 @@ def route_from_selection(selection: dict, accounts: list[tuple], allow_degraded:
         if row is None:
             raise RouterUnavailable(f"{L.E_ROUTER}: account {acct} is not in the router config")
         config_dir = "__DEFAULT__" if row[3] else str(row[2])
+    elif harness == "astra":
+        # Astra needs its home on the route for the same reason fable does. It
+        # did not carry one, so call_astra passed no env and every call landed
+        # on the shell's CODEX_HOME while the record named the router's pick.
+        # Harmless only while the pinned router could see one Codex home; the
+        # live router ranks codex_b, and without this the route would book one
+        # account and spend another.
+        if row is None:
+            raise RouterUnavailable(f"{L.E_ROUTER}: account {acct} is not in the router config")
+        if not row[2]:
+            # NEVER str(None). That yields the literal "None", which would be
+            # exported as CODEX_HOME and send codex to a directory named None,
+            # or silently create one. An account the router offers for Astra
+            # without a home is a config the caller must fix, not a value to
+            # invent.
+            raise RouterUnavailable(
+                f"{L.E_ROUTER}: astra account {acct} has no config_dir in the "
+                f"router config; CODEX_HOME cannot be set and the call would "
+                f"land on whichever home the shell happens to carry")
+        config_dir = str(row[2])
     return {"harness": harness, "account_id": acct, "config_dir": config_dir,
             "degraded": bool(degraded), "degraded_reason": json.dumps(degraded)[:200] if degraded else None,
             "provider": provider}
@@ -150,8 +170,12 @@ def call_harness(route: dict, prompt: str, timeout: int, workdir: Path, args,
         return text, tel, account_label(route["config_dir"])
     if h == "astra":
         text, tel = call_astra(prompt, timeout, workdir, model=args.astra_model,
-                               raw_response_path=raw_response_path)
-        return text, tel, "codex"
+                               raw_response_path=raw_response_path,
+                               config_dir=route["config_dir"])
+        # The account the ROUTER chose, not the literal "codex". With more than
+        # one Codex home reachable, a hardcoded label is a record that names the
+        # wrong account.
+        return text, tel, route["account_id"]
     if h == "gemini":
         text, tel = call_gemini(prompt, route["profile_home"], timeout, workdir=str(workdir),
                                 model=args.gemini_model, binary=args.agy_bin)

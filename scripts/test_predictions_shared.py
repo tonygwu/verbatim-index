@@ -61,7 +61,11 @@ def test_import(g) -> None:
 def test_signatures(g) -> None:
     want = {
         "call_fable": ["prompt", "config_dir", "timeout", "binary", "workdir", "raw_response_path"],
-        "call_astra": ["prompt", "timeout", "workdir", "model", "raw_response_path"],
+        # config_dir added 2026-09-15. call_astra passed no env, so every Astra
+        # call ran in the shell's CODEX_HOME while the record named the router's
+        # pick. See test_astra_codex_home.py.
+        "call_astra": ["prompt", "timeout", "workdir", "model", "raw_response_path",
+                       "config_dir"],
         "call_gemini": ["prompt", "profile_home", "timeout", "workdir", "model", "binary"],
     }
     for fn, params in want.items():

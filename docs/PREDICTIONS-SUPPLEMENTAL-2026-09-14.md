@@ -315,10 +315,53 @@ A paired check would settle the cross-arm question cheaply: re-extract 6 to 8 of
 these same sources with Astra and compare candidate counts on identical text.
 `codex` has about 4% of its window left, which is enough. Not run.
 
-**Provenance note found while chasing the router.** `call_astra` passes no
-`env`, and nothing in `scripts/` ever sets `CODEX_HOME`. Every Astra call in
-this repo therefore runs against whatever `CODEX_HOME` the parent shell had,
-while the record stores the account the ROUTER chose. Today they agree, because
-the router only ever picks `codex` and the default home is `~/.codex`. If
-`codex_b` ever became visible to the router, records would name an account that
-did not serve the call. Not fixed here; flagged for repo-0.
+## Correction, 2026-09-15: the codex_b diagnosis above was wrong
+
+The `llm-quota-router` owner corrected this, and the correction is verified.
+
+**`codex_b` is not invisible because of a router bug. Every verbatim-index venv
+runs a STALE PIN.** `requirements.txt` pins `llm-quota-router@v0.1.1`, and that
+release cannot read a second Codex home and predates the reserve entirely:
+
+```
+venv:  quota_router.__version__ = 0.1.1
+venv:  codex account attrs = ['config_dir', 'tier'];  manual_rate_per_day ABSENT
+live:  chosen: codex_b
+       excluded: codex - "only 0.0% left in its tightest applicable window"
+```
+
+Two claims made above are therefore withdrawn. Calling this "the same bug shape
+as account E" was wrong: that bug is fixed, and this is a pin that has not moved.
+And `remaining: 0.61, fits: true` was the stale library talking. It has no
+`manual_rate_per_day` field to read, so it reports the operator's reserve as
+spendable. The live router holds 58 of those 60 points back for the Codex
+desktop app.
+
+**So Astra on `codex` is not "available", it is spending a reserve.** Each
+extraction costs about one point of the weekly pool. The Astra calls made during
+this run took the spendable margin from 6% to 0.0%. Waiting for Fable, which is
+what this document already recommended, remains the right call and costs nothing.
+
+**`call_astra` is fixed here, and the ORDER matters.** Raising the pin first
+would let the router book `codex_b` while the call still spent `codex`, and
+every record would name an account that did not serve it. That is worse than the
+present state, so the code fix lands first and the pin does NOT move in this
+commit:
+
+- `call_astra` takes `config_dir` and exports it as `CODEX_HOME`.
+- `route_from_selection` populates `config_dir` for astra, as it already did for
+  fable, and REFUSES an astra account that has none. `str(None)` would have
+  exported the literal `"None"`.
+- `call_harness` returns `route["account_id"]` instead of the hardcoded
+  `"codex"`.
+- `scripts/test_astra_codex_home.py`, 13 checks, 8 failing against `origin/main`
+  behaviourally rather than by signature error.
+- Two existing assertions pinned the old behaviour and were updated in place
+  with the reason, not deleted: `ROUTE: codex -> astra, no config dir` in
+  `test_predictions_driver.py` and the `call_astra` signature in
+  `test_predictions_shared.py`.
+
+Still outstanding, and NOT this repo's to do: `llm-quota-router` must bump
+`__version__` and tag `v0.1.2`. Both the venv copy and the live install report
+`0.1.1` today while behaving differently, so no version check can tell them
+apart. Once tagged, raise the pin here and rebuild every clone's venv.
