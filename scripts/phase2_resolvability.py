@@ -45,7 +45,24 @@ import sys
 ROOT = pathlib.Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
                                    capture_output=True, text=True, check=True).stdout.strip())
 
-MIN_LEAD_DAYS = 180     # six months: the operator's call on 2026-09-14
+# SIXTY DAYS: the operator's call on 2026-09-15, replacing the 180 they set on
+# 2026-09-14. The floor exists to keep an announcement from counting as a
+# forecast, and at 180 it was doing that job TWICE. The scoring rule already
+# discounts an easy call through p: MEASURED on this corpus, the 24 scored
+# predictions priced at or above 0.8 hit 96% of the time and earn +0.136 each,
+# which is the rule correctly treating a roadmap item as near-zero information.
+# At 180 days the floor then threw those predictions away on top of that, and it
+# cost almost all of the coverage: 100 of the 117 past-due exclusions were the
+# lead-time clause alone, leaving 3 people with enough scored predictions to rank
+# against 9 at 60 days.
+#
+# Sixty rather than zero, because the discount is not exact. The assessor
+# undershoots at the top of the range, so a high-p prediction earns slightly MORE
+# than zero on average, and admitting every same-quarter press release would pay
+# a small premium for announcing things. The 36 predictions between 60 and 180
+# days hit at 0.75, well short of the 0.82 of the set below the old floor, so
+# they behave more like forecasts than like announcements.
+MIN_LEAD_DAYS = 60
 DAYS = {"year": 365.25, "month": 30.44, "week": 7.0, "day": 1.0}
 
 # A word that stands for a count. These are JUDGEMENT CALLS, printed in the report so a

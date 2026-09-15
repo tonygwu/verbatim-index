@@ -95,7 +95,11 @@ def main() -> int:
                 ("11  deadline on or before", "the 2099 target and the 15-year derivation are not past due"),
                 ("10  deadline not BEFORE the statement date", "bob's 2018-target-from-a-2019-statement drops"),
                 ("9  specificity high", "the medium-specificity record drops"),
-                ("8  lead time >= 180 days", "the 59-day announcement drops")]
+                # The floor moved from 180 to 60 on 2026-09-15. The fixture's 59-day
+                # record is still BELOW it, so the intent of this case survives the
+                # change: an announcement made two months before its own deadline
+                # is not a forecast. Only the label moved.
+                ("8  lead time >= 60 days", "the 59-day announcement drops")]
         for needle, why in want:
             check(f"FUNNEL: {why}", needle in out, out)
 
@@ -141,6 +145,8 @@ def main() -> int:
     P = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(P)
 
+    check("LEAD: the DEFAULT floor is the operator's current call, not a number left in the source",
+          P.MIN_LEAD_DAYS == 60, f"MIN_LEAD_DAYS is {P.MIN_LEAD_DAYS}")
     check("UNIT: every documented target_date form parses to its LAST day",
           P.stated_deadline("2020") == (dt.date(2020, 12, 31), "ok")
           and P.stated_deadline("2020-02") == (dt.date(2020, 2, 29), "ok")   # a leap February

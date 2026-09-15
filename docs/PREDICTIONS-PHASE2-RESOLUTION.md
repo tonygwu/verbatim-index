@@ -220,15 +220,32 @@ The eligibility rule keeps a prediction only if it is specific, reaches at least
 now testable, because the predictions it EXCLUDES were resolved too:
 
 ```
+at the ORIGINAL 180-day floor:
 ELIGIBLE               n=108   hit rate among decided 0.55   unresolvable 29%
 EXCLUDED by the gate   n=117   hit rate among decided 0.82   unresolvable 29%
 ```
 
-Predictions the floor excludes land **82%** of the time; the ones it keeps land
-55%. They really are announcements rather than forecasts, which is what the floor
-was for. Note the unresolvable share is the SAME either side, 29%, so the gate is
-separating easy claims from hard ones rather than resolvable ones from murky
-ones.
+**The floor moved to 60 days on 2026-09-15, and the reason is in those numbers.**
+At 180 it was doing its job twice. The scoring rule already discounts an easy
+call through p, so an announcement earns almost nothing on its own; the floor
+then discarded it as well. MEASURED: 100 of the 117 exclusions were the
+lead-time clause alone, and it cost almost all the coverage. At 180 days three
+people had the five scored predictions a number needs. At 60 days nine do.
+
+What the change actually admitted, measured after the fact:
+
+```
+predictions the new floor ADDED   n=36   hit 0.75   mean p 0.70   mean points +0.056
+predictions already there         n=77   hit 0.55   mean p 0.58   mean points -0.142
+```
+
+The added ones ARE easier, and they do carry a small positive drift, because the
+assessor undershoots at the top of its range. +0.056 a prediction is the price of
+the extra coverage and it is on the record rather than buried. Sixty rather than
+zero keeps out the same-quarter press releases, where that drift is worst.
+
+Note the unresolvable share is the SAME either side, 29%, so the gate separates
+easy claims from hard ones rather than checkable ones from murky ones.
 
 ## Where the board stands
 
