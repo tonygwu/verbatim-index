@@ -229,9 +229,12 @@ def report(manifest: list[dict], prechecks: dict, human: dict, roster: dict, see
             strata[row["discovery_stratum"]]["verified"] += 1
             verified.append({"key": key, "venue": label["venue"], "channel_id": row["channel_id"], "upload": pc["upload"]})
         chosen = select(verified, seed)
-        k, n = tally["verified"], len(rows)
+        # Yield is per ATTEMPT. Rows the fetch never reached (it stops at a per-person
+        # target) are not attempts; dividing by all sampled rows made every live pilot
+        # yield read about a third of its true value (2026-09-15).
+        k, n = tally["verified"], len(rows) - tally["not_fetched"]
         people[slug] = {
-            "sampled": n, "outcomes": dict(tally), "verified": k, "verified_model_drafted": drafted,
+            "sampled": len(rows), "attempted": n, "outcomes": dict(tally), "verified": k, "verified_model_drafted": drafted,
             "by_discovery_stratum": {s: {"sampled": c["sampled"], "verified": c["verified"],
                                          "yield_ci95": clopper_pearson(c["verified"], c["sampled"])}
                                      for s, c in sorted(strata.items())},

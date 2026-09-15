@@ -26,6 +26,7 @@ No network, no quota.
 """
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -155,6 +156,19 @@ def main() -> int:
     out = P.report(manifest(20), pcs(20, spacing=1), human20, roster, 1)
     check("20 recordings uploaded on consecutive days are all selected, with no count cap",
           out["people"]["ben-shapiro"]["selected"] == 20, str(out["people"]["ben-shapiro"]["selected"]))
+
+    print("\n[YIELD]")
+    # Found on the live pilot 2026-09-15: yield was verified / sampled, but the fetch
+    # stopped at 8 per person, so 16 of 24 rows were never attempted and every yield
+    # read about a third of its true value. Unfetched rows are not attempts.
+    human = {f"ben-shapiro/s{i}": label() for i in range(6)}
+    out = P.report(manifest(10), pcs(8), human | {"ben-shapiro/s6": label(present=False),
+                                                  "ben-shapiro/s7": label(present=False)}, roster, 1)
+    p = out["people"]["ben-shapiro"]
+    check("yield divides verified recordings by rows actually fetched, not rows sampled",
+          p.get("attempted") == 8 and p["yield"] == 0.75 and p["outcomes"].get("not_fetched") == 2, str(p))
+    check("the full-run candidate count uses that same denominator",
+          p["candidates_needed_full_run"] == max(24, math.ceil(12 / P.lower_bound(6, 8, 0.20))), str(p))
 
     print("\n[DISCLOSE]")
     # Model-drafted labels count toward the gate (operator, 2026-09-15), and the
