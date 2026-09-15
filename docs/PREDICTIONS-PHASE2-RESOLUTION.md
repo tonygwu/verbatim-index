@@ -79,8 +79,9 @@ for in the prompt:
   the corpus on recall;
 - `unresolvable` must carry a reason, and a decided outcome must not.
 
-MEASURED: 0 decided outcomes carry an empty source list, and every source carries
-a URL.
+MEASURED over all 225 resolutions: 0 decided outcomes carry an empty source list,
+all 351 cited sources carry a URL, and every resolution ran at least one web
+search (mean 5.3, none ran zero).
 
 Declining matters more than it looks. The Aaron Levie record that opened the run
 is the case: "our guidance was nearly a billion in revenue this year", said in
@@ -219,21 +220,23 @@ The eligibility rule keeps a prediction only if it is specific, reaches at least
 now testable, because the predictions it EXCLUDES were resolved too:
 
 ```
-ELIGIBLE               n=108   42 occurred, 35 not occurred, 31 unresolvable
-                       hit rate among decided 0.55
-EXCLUDED by the gate    n=68   hit rate among decided 0.77
+ELIGIBLE               n=108   hit rate among decided 0.55   unresolvable 29%
+EXCLUDED by the gate   n=117   hit rate among decided 0.82   unresolvable 29%
 ```
 
-Predictions the floor excludes land 77% of the time; the ones it keeps land 55%.
-They really are announcements rather than forecasts, which is what the floor was
-for.
+Predictions the floor excludes land **82%** of the time; the ones it keeps land
+55%. They really are announcements rather than forecasts, which is what the floor
+was for. Note the unresolvable share is the SAME either side, 29%, so the gate is
+separating easy claims from hard ones rather than resolvable ones from murky
+ones.
 
 ## Where the board stands
 
-77 of 225 past-due predictions carry a score. The other 148 are named rather than
-dropped: 53 unresolvable, 8 outside the eligibility rule, and the rest still
-unpriced when the run ended. Three people clear the floor of five scored
-predictions.
+All 225 past-due predictions are resolved and 77 carry a score. The other 148 are
+named rather than dropped: 65 unresolvable, 8 outside the eligibility rule, and
+75 resolved but never priced, because the prior stage ran only over the eligible
+set once Fable quota became the binding constraint. Three people clear the floor
+of five scored predictions.
 
 ```
 Mark Zuckerberg   6   +0.018   hit 0.83   mean p 0.81
