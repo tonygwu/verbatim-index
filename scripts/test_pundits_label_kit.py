@@ -52,7 +52,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "transcripts"
         human = {}
-        venues = ["reaction_stream"] * 7 + ["debate"] * 2 + ["guest_interview"] * 3 + ["hosted_interview"] * 3
+        venues = ["reaction"] * 7 + ["debate"] * 2 + ["conversation"] * 6
         for i, v in enumerate(venues):
             (root / "p").mkdir(parents=True, exist_ok=True)
             (root / "p" / f"s{i}.json").write_text(json.dumps({"video_id": f"v{i:010d}", "text": transcript(40)}))
@@ -65,8 +65,8 @@ def main() -> int:
         print("\n[VERIFIED]")
         ver = K.verified(human)
         check("absent subject and unsigned labels are excluded", "p/bad1" not in ver and "p/bad2" not in ver)
-        check("guest and hosted interviews both map to the interview format",
-              Counter(ver.values())["interview"] == 6, str(Counter(ver.values())))
+        check("each of the five venues is its own format (conversation covers every interview and panel)",
+              Counter(ver.values())["conversation"] == 6, str(Counter(ver.values())))
 
         windows, shortfall = K.build_windows(root, human, seed=3)
         print("\n[WINDOW]")
@@ -79,10 +79,10 @@ def main() -> int:
 
         print("\n[SHORTFALL]")
         by = Counter(x["format"] for x in windows)
-        check("formats with enough recordings get 6 windows", by["reaction"] == 6 and by["interview"] == 6, str(by))
+        check("formats with enough recordings get 6 windows", by["reaction"] == 6 and by["conversation"] == 6, str(by))
         check("debate with 2 recordings is short and reported, not topped up",
               by["debate"] == 2 and shortfall.get("debate", {}).get("got") == 2, str(shortfall))
-        check("formats with no recordings are reported", "panel" in shortfall and "monologue" in shortfall, str(shortfall))
+        check("formats with no recordings are reported", "solo" in shortfall and "speech" in shortfall, str(shortfall))
 
         print("\n[EMPTY]")
         check("every label field is empty", all(all(v is None for v in x["labels"].values()) for x in windows))

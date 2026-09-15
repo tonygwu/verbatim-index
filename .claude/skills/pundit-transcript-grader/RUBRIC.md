@@ -119,22 +119,18 @@ An unsupported dimension is missing evidence, not a low score.
 
 ## Venue and challenge
 
-Record `venue_type` from the format the transcript shows. Decide by counting the
-other live voices in the conversation, not by who hosts or which channel or
-network airs it. Played clips are not live voices. If a recording mixes formats,
-record the format that fills most of it.
+Record `venue_type` from the format the transcript shows. Decide by the other live voices in the recording, not by who hosts or which channel or
+network airs it. Played clips are not live voices. If a recording mixes formats, record the
+format that fills most of it. Recordings with no political content are excluded by a separate
+question, so every recording fits one of these five.
 
 | Venue | Definition |
 |---|---|
-| `own_show_monologue` | The subject speaks to the audience on their own show, with no other live voice. |
-| `reaction_stream` | The subject plays other material and comments on it, with no other live voice. |
-| `debate` | An organised exchange with at least one named opponent, usually with a moderator or turns. |
-| `guest_interview` | Exactly one other live voice: an interviewer who runs the conversation and questions the subject. |
-| `hosted_interview` | The subject runs the conversation and questions exactly one guest. |
-| `panel_show` | Two or more other live voices trade views with the subject, whoever hosts: a split-screen panel, a roundtable, a co-hosted show. |
-| `tv_segment` | An anchor-led broadcast news segment, one-on-one or pre-packaged, that is not a multi-guest panel. |
-| `speech_or_lecture` | A prepared talk to a live audience, with or without questions afterwards. |
-| `other` | None of these. |
+| `solo` | The subject talks to the audience with no other live voice, including covering news stories. |
+| `reaction` | The subject plays other material and comments on it, with no other live voice. |
+| `conversation` | One or more other live voices talk with the subject, whoever hosts: interviews either way round, panels, co-hosted shows and TV segments. |
+| `debate` | Organised opposing sides with at least one named opponent, usually with a moderator or turns. |
+| `speech` | A prepared talk to a live audience, with or without questions afterwards. |
 
 Record `venue_challenge` from 1 to 5. It does not change the scores:
 

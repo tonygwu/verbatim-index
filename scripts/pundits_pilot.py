@@ -46,10 +46,14 @@ ARCHIVAL_YEARS = 5
 OPENING_FRACTION = 0.15
 TARGET = 12
 MIN_VERIFIED_FOR_GATE = 4
-VENUES = ("own_show_monologue", "reaction_stream", "debate", "guest_interview", "hosted_interview",
-          "panel_show", "tv_segment", "speech_or_lecture", "other")
-OWN_SHOW_VENUES = {"own_show_monologue", "reaction_stream"}
-INTERLOCUTOR_VENUES = {"debate", "guest_interview", "hosted_interview", "panel_show", "tv_segment"}
+# Five broad venues (operator, 2026-09-15). Nine fine venues could not be applied
+# consistently; the old names convert by VENUE_MIGRATION.
+VENUES = ("solo", "reaction", "conversation", "debate", "speech")
+OWN_SHOW_VENUES = {"solo", "reaction"}
+INTERLOCUTOR_VENUES = {"conversation", "debate"}
+VENUE_MIGRATION = {"own_show_monologue": "solo", "reaction_stream": "reaction", "guest_interview": "conversation",
+                   "hosted_interview": "conversation", "panel_show": "conversation", "tv_segment": "conversation",
+                   "debate": "debate", "speech_or_lecture": "speech"}
 # No main_speaker (operator, 2026-09-15): people, Fable and Sonnet could not apply it
 # consistently. subject_present means "enough of the subject to be worth grading",
 # and the judges' pooled subject-share estimate filters recordings with too little.

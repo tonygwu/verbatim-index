@@ -34,7 +34,7 @@ completed row into `data-pundits/logs/pilot/human_labels.json`, keyed the same.
 | Field | Values | Meaning |
 |---|---|---|
 | `subject_present` | true / false | The roster person takes part live, enough that grading this recording says something about them. A played clip of them is not presence. False means a wrong-person or too-little record, and it is counted and reported. There is no separate main-speaker question: the judges estimate the subject's share of the words, and that filter removes recordings with too little of them. Decided with the operator on 2026-09-15. |
-| `venue` | one of the venues below | The format of THIS recording, whoever uploaded it. |
+| `venue` | one of the five venues below | The format of THIS recording, whoever uploaded it. |
 | `political_content` | true / false | The recording discusses politics, policy, news or public controversy for a real part of its length. A stream that is only gaming, entertainment or chat is false, and it is excluded as off-topic. Decided with the operator on 2026-09-15. |
 | `checked_by` | a person's name or initials | Who listened. |
 | `notes` | free text | Anything unusual: a substitute host for part of the show, a clip compilation, a re-upload of an older recording. |
@@ -46,27 +46,22 @@ what the pre-check noticed, for example that the subject is never named.
 
 ### Venues
 
-Decide by counting the other live voices in the conversation, not by who hosts
-or which channel or network airs it. Played clips are not live voices. If a
-recording mixes formats, record the format that fills most of it. The judges'
-rubric carries these exact definitions, so your labels and theirs can be compared.
+Decide by the other live voices in the recording, not by who hosts or which channel or
+network airs it. Played clips are not live voices. If a recording mixes formats, record the
+format that fills most of it. Recordings with no political content are excluded by a separate
+question, so every recording fits one of these five. The judges' rubric carries these exact definitions, so your labels and theirs can be compared.
 
 | Venue | Definition |
 |---|---|
-| `own_show_monologue` | The subject speaks to the audience on their own show, with no other live voice. |
-| `reaction_stream` | The subject plays other material and comments on it, with no other live voice. |
-| `debate` | An organised exchange with at least one named opponent, usually with a moderator or turns. |
-| `guest_interview` | Exactly one other live voice: an interviewer who runs the conversation and questions the subject. |
-| `hosted_interview` | The subject runs the conversation and questions exactly one guest. |
-| `panel_show` | Two or more other live voices trade views with the subject, whoever hosts: a split-screen panel, a roundtable, a co-hosted show. |
-| `tv_segment` | An anchor-led broadcast news segment, one-on-one or pre-packaged, that is not a multi-guest panel. |
-| `speech_or_lecture` | A prepared talk to a live audience, with or without questions afterwards. |
-| `other` | None of these. |
+| `solo` | The subject talks to the audience with no other live voice, including covering news stories. |
+| `reaction` | The subject plays other material and comments on it, with no other live voice. |
+| `conversation` | One or more other live voices talk with the subject, whoever hosts: interviews either way round, panels, co-hosted shows and TV segments. |
+| `debate` | Organised opposing sides with at least one named opponent, usually with a moderator or turns. |
+| `speech` | A prepared talk to a live audience, with or without questions afterwards. |
 
-Examples: Ana Kasparian with three other guests on a Piers Morgan split screen,
-or on Bill Maher's Overtime, is `panel_show`. Piers Morgan interviewing her alone
-is `guest_interview`. A regular Young Turks episode she co-hosts with Cenk Uygur
-is `panel_show`. For `other`, say what it is in `notes`, for example "gaming".
+Examples: Ana Kasparian on a Piers Morgan split screen, on Bill Maher's Overtime, in a
+one-on-one interview, or co-hosting The Young Turks with Cenk Uygur is `conversation` in
+every case. A monologue followed by a guest interview is whichever part fills more of the video.
 
 ## P7: attribution windows (30 windows, 6 per format)
 

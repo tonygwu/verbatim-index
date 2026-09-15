@@ -64,7 +64,7 @@ def pundit_grade(slug: str, sid: str, judge: str, score: int, unsupported: str |
                           "counterevidence": "none"}
         subs += [{"code": c, "score": 0 if off else 3, "justification": "x"} for c in d["subcriteria"]]
     overall = None if unsupported else float(score)
-    return {"transcript_id": f"{slug}/{sid}", "venue_type": "guest_interview", "venue_challenge": 3,
+    return {"transcript_id": f"{slug}/{sid}", "venue_type": "conversation", "venue_challenge": 3,
             "subject_speech_share_pct": 60, "identity_guess": "unknown", "identity_confident": False,
             "subcriteria": subs, "dimensions": dims, "overall": overall, "coverage": 1.0,
             "confidence": "medium", "salient_claims": [], "red_flags": []}

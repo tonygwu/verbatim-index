@@ -248,8 +248,10 @@ sincere.
 - The schema gains `dimension_status` and an `evidence[].speaker` field. That field takes the values
   `subject`, `interlocutor` or `clip`, and only `subject` quotes count toward the minimum.
 
-**Venue enum:** `own_show_monologue`, `reaction_stream`, `debate`, `guest_interview`,
-`hosted_interview`, `panel_show`, `tv_segment`, `speech_or_lecture`, `other`.
+**Venue enum:** `solo`, `reaction`, `conversation`, `debate`, `speech`. Collapsed from nine fine
+venues with the operator on 2026-09-15, because the operator, Fable and Sonnet could not apply the
+fine ones consistently (Sonnet matched the operator's exact venue 21 of 37 times). Old labels
+convert by `VENUE_MIGRATION` in `scripts/pundits_pilot.py`.
 
 **Public interpretation copy.** "Scores describe argumentative behaviour observed in sampled
 recordings. They are not fact-checks, and not judgements of a person's sincerity or character."
@@ -359,7 +361,7 @@ recordings. They are not fact-checks, and not judgements of a person's sincerity
 
 ### P7. Human labels and probe construction (no quota; human time)
 **Attribution windows.**
-- 30 windows of 10 minutes: 6 each from reaction, debate, panel, interview and monologue.
+- 30 windows of 10 minutes: 6 each from solo, reaction, conversation, debate and speech.
 - Each window is cut as its OWN input, with the same text sent to the judges.
 - Two annotators label word spans as `subject`, `interlocutor` or `clip`, with the audio.
 - If the two annotators' subject shares differ by more than 5 points, a third annotator adjudicates.

@@ -59,18 +59,13 @@ introductions, how people address each other, turn-taking and content.
    talks more; running it means hosting, asking the questions, or running their own stream.
    Otherwise true if the SUBJECT speaks the most words among the live voices, or at least about a
    third of them. Played clips are not live voices.
-3. venue: the format, decided by who asks the questions, not by who owns the channel:
-   - guest_interview: one person runs it by asking questions and the SUBJECT is among those
-     answering, however many answer together.
-   - hosted_interview: the SUBJECT runs it by asking questions of one or more guests.
-   - panel_show: participants trade views with each other rather than all answering one
-     interviewer (split-screen arguments, roundtables, co-hosts discussing the news).
-   - debate: organised opposing sides with a named opponent, usually with a moderator or turns.
-   - own_show_monologue: the SUBJECT talks to the audience alone.
-   - reaction_stream: the SUBJECT plays other material and comments on it.
-   - tv_segment: an anchor-led broadcast news segment that is not a multi-guest panel.
-   - speech_or_lecture: a prepared talk to a live audience.
-   - other: none of these (for example gaming), and say what it is in reason.
+3. venue: the format, decided by the other live voices, not by who hosts or owns the channel:
+   - solo: the SUBJECT talks to the audience with no other live voice, including covering news.
+   - reaction: the SUBJECT plays other material and comments on it, with no other live voice.
+   - conversation: one or more other live voices talk with the SUBJECT, whoever hosts: interviews
+     either way round, panels, co-hosted shows and TV segments.
+   - debate: organised opposing sides with at least one named opponent.
+   - speech: a prepared talk to a live audience.
    If formats mix, pick the one that fills most of the recording. If the subject is absent, use
    the format of the recording anyway.
 4. political_content: true if the recording discusses politics, policy, news or public
@@ -107,7 +102,7 @@ def parse_answer(text: str) -> dict:
         if not isinstance(a.get(f), bool):
             errs.append(f"{f} is not true/false")
     if a.get("venue") not in VENUES:
-        errs.append(f"venue {a.get('venue')!r} is not one of the nine")
+        errs.append(f"venue {a.get('venue')!r} is not one of the five")
     if a.get("confidence") not in CONFIDENCE:
         errs.append(f"confidence {a.get('confidence')!r} is not high/medium/low")
     if not isinstance(a.get("reason"), str) or not a["reason"].strip():

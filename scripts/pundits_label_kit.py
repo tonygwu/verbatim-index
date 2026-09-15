@@ -34,13 +34,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-FORMATS = {
-    "reaction": {"reaction_stream"},
-    "debate": {"debate"},
-    "panel": {"panel_show"},
-    "interview": {"guest_interview", "hosted_interview"},
-    "monologue": {"own_show_monologue"},
-}
+# One format per broad venue (operator, 2026-09-15), in the schema's order.
+FORMATS = {v: {v} for v in ("solo", "reaction", "conversation", "debate", "speech")}
 WINDOWS_PER_FORMAT = 6
 WINDOW_SEC = 600
 QUOTES_PER_FORMAT = 60

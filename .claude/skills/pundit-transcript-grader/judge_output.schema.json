@@ -14,7 +14,7 @@
 
     "venue_type": {
       "type": "string",
-      "enum": ["own_show_monologue", "reaction_stream", "debate", "guest_interview", "hosted_interview", "panel_show", "tv_segment", "speech_or_lecture", "other"],
+      "enum": ["solo", "reaction", "conversation", "debate", "speech"],
       "description": "Format of the recording, inferred from the transcript itself."
     },
     "venue_challenge": {

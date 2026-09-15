@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Judges and human labellers get the SAME venue definitions, decided by who is talking.
 
-Pundits plan, P5 and P7. The rubric named the nine venues without defining them,
-so a guest on a four-person Piers Morgan split screen or on Bill Maher's
-Overtime could be read as `panel_show`, `tv_segment` or `guest_interview`.
-Judge-versus-human agreement on venue would then measure vague wording. The
-rule, agreed with the operator on 2026-09-15: count the other live voices,
-not the host or the platform.
+Pundits plan, P5 and P7. Nine fine venues could not be applied consistently: the
+operator could not tell panel_show from tv_segment, and Sonnet matched the
+operator's exact venue 21 of 37 times. On 2026-09-15 the operator collapsed them
+into five broad venues, decided by the other live voices, not the host or the
+platform.
 
+  FIVE       the schema enum is exactly solo, reaction, conversation, debate, speech
   RUBRIC     RUBRIC.md defines every venue in the schema enum, one table row each
   GUIDE      the labelling guide defines every venue, one table row each
   SAME       each venue's definition text is identical in both files
-  RULE       both files state the other-live-voices rule and resolve the
-             panel-guest case to panel_show
+  RULE       both files state the other-live-voices rule, and conversation is
+             defined whoever hosts
 
 No quota.
 
@@ -57,9 +57,12 @@ def main() -> int:
     print("\n[RULE]")
     for name, text in (("RUBRIC.md", rubric), ("guide", guide)):
         check(f"{name} states the other-live-voices rule", "other live voices" in text.lower())
-        check(f"{name} resolves a guest on a multi-person panel to panel_show",
-              bool(re.search(r"panel_show[^\n]*(whoever hosts|regardless of who hosts)", text)) or
-              "whoever hosts" in r.get("panel_show", "") + g.get("panel_show", ""))
+        defs = definitions(text)
+        check(f"{name} defines conversation as any other live voices, whoever hosts",
+              "whoever hosts" in defs.get("conversation", ""), defs.get("conversation", "missing"))
+    print("\n[FIVE]")
+    check("the schema enum is exactly the five broad venues",
+          enum == ["solo", "reaction", "conversation", "debate", "speech"], str(enum))
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

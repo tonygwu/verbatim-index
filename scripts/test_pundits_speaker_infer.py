@@ -39,7 +39,7 @@ def refused(fn) -> bool:
     return False
 
 
-GOOD = {"subject_present": True, "main_speaker": True, "venue": "guest_interview", "political_content": True,
+GOOD = {"subject_present": True, "main_speaker": True, "venue": "conversation", "political_content": True,
         "confidence": "high", "reason": "The host welcomes her by name.", "evidence": ["welcome Ana"]}
 
 
@@ -49,7 +49,7 @@ def main() -> int:
 
     print("\n[PARSE]")
     check("a well-formed answer parses, even wrapped in prose",
-          S.parse_answer("Here:\n" + json.dumps(GOOD))["venue"] == "guest_interview")
+          S.parse_answer("Here:\n" + json.dumps(GOOD))["venue"] == "conversation")
     for label, bad in (("a non-boolean", {**GOOD, "main_speaker": "yes"}), ("an unknown venue", {**GOOD, "venue": "host_interview"}),
                        ("an unknown confidence", {**GOOD, "confidence": "sure"}), ("an empty reason", {**GOOD, "reason": " "})):
         check(f"{label} is refused", refused(lambda b=bad: S.parse_answer(json.dumps(b))))
@@ -59,7 +59,7 @@ def main() -> int:
     check("the drafting instructions ask the political-content question", "political_content" in S.RULES)
 
     print("\n[MERGE]")
-    human = {"p/a": {"subject_present": False, "venue": "other", "political_content": True, "checked_by": "operator"}}
+    human = {"p/a": {"subject_present": False, "venue": "conversation", "political_content": True, "checked_by": "operator"}}
     drafts = {"p/a": {**GOOD, "key": "p/a"}, "p/b": {**GOOD, "key": "p/b", "political_content": False},
               "p/c": {"key": "p/c", "error": "cli exit 1"}}
     merged, rep = S.merge_drafts(drafts, human, "claude-sonnet-5")
@@ -100,19 +100,19 @@ def main() -> int:
     check("an absent subject is queued", S.needs_review({**d, "subject_present": False, "main_speaker": False}, None) != [])
     check("a non-main speaker is queued", S.needs_review({**d, "main_speaker": False}, None) != [])
     check("no usable answer is queued", S.needs_review({"error": "x"}, None) != [])
-    human = {"subject_present": True, "main_speaker": True, "venue": "panel_show"}
+    human = {"subject_present": True, "main_speaker": True, "venue": "debate"}
     check("a venue disagreement with the operator is queued", any("venue" in w for w in S.needs_review(d, human)))
 
     print("\n[VENUE]")
-    absent = {"subject_present": False, "main_speaker": False, "venue": "other"}
-    draft_absent = {**d, "subject_present": False, "main_speaker": False, "venue": "hosted_interview"}
+    absent = {"subject_present": False, "main_speaker": False, "venue": "solo"}
+    draft_absent = {**d, "subject_present": False, "main_speaker": False, "venue": "conversation"}
     check("a venue disagreement on a row the operator marked absent is ignored",
           not any("venue" in w for w in S.needs_review(draft_absent, absent)))
 
     print("\n[CALIBRATE]")
     drafts = {"a": d, "b": {**d, "venue": "debate"}, "c": draft_absent, "e": {"error": "x"}}
-    humans = {"a": {"subject_present": True, "main_speaker": True, "venue": "guest_interview"},
-              "b": {"subject_present": True, "main_speaker": True, "venue": "guest_interview"},
+    humans = {"a": {"subject_present": True, "main_speaker": True, "venue": "conversation"},
+              "b": {"subject_present": True, "main_speaker": True, "venue": "conversation"},
               "c": absent, "e": absent}
     cal = S.calibration(drafts, humans)
     check("rows with an error are not compared", cal["rows_compared"] == 3, str(cal))

@@ -31,8 +31,9 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 SKILL = REPO / ".claude" / "skills" / "pundit-transcript-grader"
 PASS, FAIL = [], []
-VENUES = ["own_show_monologue", "reaction_stream", "debate", "guest_interview", "hosted_interview",
-          "panel_show", "tv_segment", "speech_or_lecture", "other"]
+# Five broad venues (operator, 2026-09-15): nine fine venues could not be applied
+# consistently by the operator, Fable or Sonnet (Sonnet matched exact venue 21/37).
+VENUES = ["solo", "reaction", "conversation", "debate", "speech"]
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -53,7 +54,7 @@ def canned(prof: dict, tid: str) -> dict:
                           "counterevidence": "Later the subject called a critic's motives cynical without citing anything."}
         subs += [{"code": c, "score": 3, "justification": "observed once"} for c in d["subcriteria"]]
     weights = {d["key"]: d["weight"] for d in prof["scoring"]["dimensions"]}
-    return {"schema_version": "pundits-1.0", "transcript_id": tid, "venue_type": "guest_interview",
+    return {"schema_version": "pundits-1.0", "transcript_id": tid, "venue_type": "conversation",
             "venue_challenge": 3, "venue_challenge_reason": "The host pressed twice on specifics.",
             "subject_speech_share_pct": 55, "attribution_confidence": "medium",
             "attribution_notes": "Turns separated by question marks and names.",

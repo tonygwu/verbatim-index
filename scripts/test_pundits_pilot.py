@@ -52,7 +52,7 @@ def rec(upload="20240101", text=None):
     return {"yt_upload_date": upload, "text": text if text is not None else "Ben Shapiro here. " + FILLER}
 
 
-def label(present=True, main=True, venue="guest_interview", political=True):
+def label(present=True, main=True, venue="conversation", political=True):
     # main_speaker is no longer a label (operator, 2026-09-15): presence means "enough
     # of the subject to be worth grading"; judges' share estimates filter the rest.
     return {"subject_present": present, "venue": venue, "political_content": political, "checked_by": "tester"}
@@ -143,11 +143,14 @@ def main() -> int:
     # Operator decision 2026-09-15 (option b): no venue, channel, 7-day or count caps.
     # Every verified recording is graded; format is handled by recording the venue,
     # showing each person's mix, and adjusting only where the data support it.
-    human = {f"ben-shapiro/s{i}": label(venue="own_show_monologue") for i in range(10)}
+    human = {f"ben-shapiro/s{i}": label(venue="solo") for i in range(10)}
     out = P.report(manifest(10), pcs(10), human, roster, 1)
     check("all 10 own-show recordings are selected", out["people"]["ben-shapiro"]["selected"] == 10, str(out["people"]))
     check("the venue mix is reported per person",
-          out["people"]["ben-shapiro"].get("venue_mix") == {"own_show_monologue": 10}, str(out["people"]))
+          out["people"]["ben-shapiro"].get("venue_mix") == {"solo": 10}, str(out["people"]))
+    check("a label with a retired fine venue is invalid",
+          any("venue" in e for x in P.report(manifest(1), pcs(1), {"ben-shapiro/s0": label(venue="guest_interview")},
+                                               roster, 1)["invalid_labels"] for e in x["errors"]))
     ext = "UC" + "e" * 22
     human = {f"ben-shapiro/s{i}": label() for i in range(10)}
     out = P.report(manifest(10, channel=ext), pcs(10), human, roster, 1)
