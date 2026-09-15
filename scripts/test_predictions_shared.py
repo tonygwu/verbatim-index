@@ -61,7 +61,13 @@ def test_import(g) -> None:
 def test_signatures(g) -> None:
     want = {
         "call_fable": ["prompt", "config_dir", "timeout", "binary", "workdir", "raw_response_path"],
-        "call_astra": ["prompt", "timeout", "workdir", "model", "raw_response_path"],
+        # config_dir added 2026-09-15. call_astra passed no env, so every Astra
+        # call ran in the shell's CODEX_HOME while the record named the router's
+        # pick. See test_astra_codex_home.py.
+        # wrapper added upstream (astra_command refactor); config_dir added
+        # 2026-09-15 so the call lands on the Codex home the router chose.
+        "call_astra": ["prompt", "timeout", "workdir", "model", "raw_response_path",
+                       "wrapper", "config_dir"],
         "call_gemini": ["prompt", "profile_home", "timeout", "workdir", "model", "binary"],
     }
     # What the driver needs is that these names still lead, in order, and that
