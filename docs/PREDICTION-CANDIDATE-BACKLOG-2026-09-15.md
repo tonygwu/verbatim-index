@@ -370,3 +370,57 @@ These are not really in conflict. The larger sample found 3 marginal exceptions
 in a seam that is otherwise qualitative. Both readings say the Cadence seam is
 poor, and it fails the same CFO way Intel does. Do not budget Lip-Bu Tan as a
 recoverable leader on the strength of those 3.
+
+---
+
+# THREE MORE PRESS-ACCURACY CASES, and the Daniel Gross collision cost
+
+Held back from the first commit by mistake. All three come from the AI-company
+screen and each would otherwise be rediscovered at the cost of a fresh sweep.
+
+## Press quotes: two more failure shapes, on top of the four already recorded
+
+**Decrypt SPLICED two spans together.** Its widely reproduced Emad Mostaque
+sentence joins two separate passages with the host interrupting between them.
+The strings "I believe" and "without internet" never occur contiguously in the
+recording. A splice is worse than a paraphrase for this pipeline, because the
+result LOOKS like a verbatim quote and would ground against neither span.
+
+**The Verge PARAPHRASED and attached a product name the speaker never said.**
+Its Mira Murati line "Sora will be publicly available later this year" is not her
+wording. The tape reads "I'm hoping yeah definitely this year but could be a few
+months", which names neither Sora nor availability, and fails G5 for having no
+referent and G3 for "hoping".
+
+**TechCrunch made Nat Friedman WEAKER than the tape**, already recorded in
+docs/PREDICTION-SOURCING-2026-09-15.md and repeated here because it is the
+direction nobody expects. TechCrunch reported he "was aiming for" 100M GitHub
+developers. He said "in fact running our numbers WE PREDICT by 2025 there will be
+over a hundred million developers on github". "Aiming for" is an aspiration and
+fails G1 and G3. "We predict" passes cleanly. The press version would have cost
+the single best-shaped lead found in the entire sweep.
+
+That is now SIX independent press-accuracy failures in one session, in four
+distinct shapes: manufactured commitment, deleted disclaimer, weakened claim, and
+splice. Plus misattribution by transcript aggregators. The operating rule is
+simple and absolute: NEVER ingest from a press quote without pulling the caption.
+
+## Daniel Gross is a wrong-person landmine, with a measured cost
+
+A surname match pulls in AT LEAST 13 DISTINCT OTHER PEOPLE. Measured pollution
+reached 96% on one query. Even a FULL-NAME match returns four videos that name him
+in the title while he never speaks: two are commentary about him, and one has the
+hosts reading his blog aloud.
+
+`bYM_VMs7EO0` (Core Memory), searched as Daniel Gross, is ALEXANDR WANG, who is
+himself on the roster. So this would misattribute between two board members, the
+same shape as Jensen Huang's "billion cameras" line sitting in an Andrew Ng-titled
+video.
+
+Why this is expensive rather than merely annoying: `name_in()` in
+discover_sources.py matches on the SURNAME ALONE, so "Gross" admits all of them,
+and `wrong_person_screen.py` only catches the survivors AFTER the judges have been
+paid to grade them. Do not add Daniel Gross before `name_in()` is tightened.
+His forecasting output is real and lives in WRITING at danielgross.com/agi-trades,
+which this pipeline cannot ingest, so the expected return does not justify the
+identity risk.
