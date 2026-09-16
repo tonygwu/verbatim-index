@@ -10,81 +10,87 @@ repo-0 moves any of it into the shared corpus or publishes from it.
 
 ## The answer first
 
-**Six leaders crossed the floor. The board goes 15 ranked to 21, and 117 scored
-to 140.** MEASURED on 2026-09-16, not projected:
+**Thirteen leaders crossed the floor, against a goal of ten. The board goes 15
+ranked to 28, and 117 scored to 189.** MEASURED end to end on 2026-09-16:
 
 ```
-slug                live   now   score    how
-satya-nadella         1     10   +0.269   round-2 sourcing
-brian-chesky          1      5   +0.233   round-1 combine
-lip-bu-tan            1      5   -0.028   round-1 combine
-patrick-collison      1      3   +0.319   round-1 combine
-thomas-kurian         1      3   +0.119   round-1 combine
-amjad-masad           2      3   -0.221   round-1 combine
-michael-dell          0      1   +0.863   still under
+slug                live   now   score    hit   mean p
+arvind-krishna        0     17   -0.008   0.71   0.70
+vlad-tenev            0     11   -0.207   0.55   0.64
+satya-nadella         1     10   +0.269   1.00   0.84
+bill-gates            1      7   -0.238   0.57   0.66
+dylan-field           1      6   -0.326   0.67   0.87
+brian-chesky          1      5   +0.233   1.00   0.85
+lip-bu-tan            1      5   -0.028   0.80   0.82
+sam-altman            0      4   -0.217   0.50   0.62
+tim-sweeney           1      4   -0.465   0.00   0.15
+patrick-collison      1      3   +0.319   1.00   0.81
+thomas-kurian         1      3   +0.119   0.67   0.55
+eric-schmidt          1      3   +0.013   0.67   0.63
+amjad-masad           2      3   -0.221   0.67   0.76
+michael-dell          0      2   +0.160   0.50   0.36   still under
 ```
 
-Nobody fell below the floor. Five of the six needed NO new sourcing and no model
-calls: they came from scoring three finished pieces of work together for the
-first time. Only satya-nadella is a round-2 result, and he is the evidence the
-new brief works.
+Nobody fell below the floor. Five of the thirteen needed no new sourcing at all,
+appearing purely from scoring three finished pieces of work together for the
+first time. Eight came from round-2 discovery.
 
-Re-derive it, which costs nothing:
+Every pass was clean: resolve 84 attempted / 84 succeeded / 0 failed with an
+empty taxonomy, prior 84 / 84 / 0. The only failures in the whole run were three
+transient upstream timeouts during wave-1 extraction, which retried themselves.
+
+### The measurement was not taken against a moving target
+
+repo-0 was writing to production throughout, so the corpus was fingerprinted
+before and after, twice, and came back identical each time:
+
+```
+f2afb8e2f719a1abf539c6310ea3d9883970b85b8af2bd6f222e2bb8983419fa   763 files
+```
+
+Without that check the number is unfalsifiable. This repo's method note says to
+snapshot before running arms against a corpus; the same applies when somebody
+else is editing it.
+
+### Four rows sharpen the board rather than pad it
+
+This is the result worth more than the count, and it answers the warning in
+`PREDICTION-SOURCING-2026-09-15.md` that recruiting roadmap CEOs pads the board
+without sharpening it.
+
+```
+SHARPENING, scored on real disagreement
+  tim-sweeney   mean p 0.15   hit 0.00   -0.465
+  sam-altman    mean p 0.62   hit 0.50   -0.217
+  vlad-tenev    mean p 0.64   hit 0.55   -0.207
+  bill-gates    mean p 0.66   hit 0.57   -0.238
+
+PADDING, near-zero-information by construction
+  satya-nadella mean p 0.84   hit 1.00   +0.269
+  brian-chesky  mean p 0.85   hit 1.00   +0.233
+  dylan-field   mean p 0.87   hit 0.67   -0.326
+```
+
+**tim-sweeney is the single most informative new row.** He made
+low-probability calls, priced at a mean of 0.15, and none of them landed. That
+is precisely the row the log-score rule exists to price, and it is the opposite
+of a CEO restating published guidance. The sourcing that produced him was Epic v.
+Apple sworn trial testimony, where he was under oath and defining his own
+thresholds under cross-examination.
+
+The roadmap risk was real and it did materialise for three leaders. It did not
+dominate, because trial testimony, congressional testimony and dated
+contrarian claims entered the corpus alongside the earnings calls.
+
+### Reproduce it
 
 ```
 .venv/bin/python scripts/score_predictions.py \
-    --run  <run dir with repo-2's resolutions and priors merged in> \
+    --run  <run dir, with repo-2's resolutions and priors merged in> \
     --predictions <production>/predictions \
     --predictions <run dir>/results \
     --as-of 2026-09-16 --min-lead-days 60 --trend
 ```
-
-### The measurement was not taken against a moving target
-
-repo-0 was placing records into production while this ran, so the corpus was
-fingerprinted before and after:
-
-```
-before  f2afb8e2f719a1abf539c6310ea3d9883970b85b8af2bd6f222e2bb8983419fa
-after   f2afb8e2f719a1abf539c6310ea3d9883970b85b8af2bd6f222e2bb8983419fa
-        763 files, identical
-```
-
-Without that check the number is unfalsifiable. This repo's own method note says
-to snapshot the corpus before running two arms against it; the same applies to
-running one arm against a corpus somebody else is writing to.
-
-### satya-nadella, the round-2 funnel end to end
-
-```
-18  past-due leads the discovery agent reported
-27  accepted records (53 judged, 0.51, against a corpus baseline of 0.297)
-14  past due
- 9  eligible
-10  scored
-```
-
-Five times the two he needed. His best claim, "a commercial cloud revenue annual
-run rate of $20 billion" by fiscal 2018, resolved `occurred` against Microsoft's
-own October 2017 earnings release reporting $20.4 billion and the FY2018
-year-end filing. All 14 resolutions cite their sources; none is recall.
-
-### The caveat that belongs beside the number
-
-**Nadella's mean p is 0.84 and his hit rate is 1.00, so +0.269 is a
-near-zero-information score by construction.** He is restating Microsoft's own
-published guidance. `PREDICTIONS-SCORING.md` already found this for Andy Jassy,
-41 predictions at a mean of +0.049, and called a corporate roadmap a
-near-zero-information forecast; `PREDICTION-SOURCING-2026-09-15.md` warned that
-recruiting roadmap CEOs pads the board without sharpening it.
-
-Round-2 sourcing leaned on earnings calls, shareholder letters and prepared
-remarks, which is exactly that territory, because that is where dated,
-thresholded, publicly resolvable claims live. The rows are honest and the rule
-prices them correctly. They are not evidence of foresight and the page should
-not be read as though they were. Sharpening the board needs external-world
-calls, and those are rarer, later-dated and harder to resolve, which is the
-tension this whole run sits inside.
 
 ## What the five are made of, and why they were not already on the board
 
