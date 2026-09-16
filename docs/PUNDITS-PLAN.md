@@ -288,6 +288,15 @@ recordings. They are not fact-checks, and not judgements of a person's sincerity
 - Losses are reported by person, lean, venue, judge and mode.
 - A person is ranked only with at least `MIN_TRANSCRIPTS_TO_RANK = 5` complete transcripts.
 
+**Astra was dropped on 2026-09-16** under this rule. It declined 42 of 44
+production calls, refused 4 of 4 re-runs on byte-identical prompts, and refused
+all 5 truthful prompt variants, explicitly including the "evidence levels"
+framing (`docs/PUNDITS-P8A-PILOT.md`). The panel is Fable and Gemini. The
+profile's `judge_requests` is deliberately NOT edited, because the contract
+hashes it and editing it would void the grades already collected; Astra is
+dropped by not being called, and the panel is derived from the grades present.
+Publishing two-judge scores still needs the operator's explicit approval.
+
 **If a judge is dropped** (prespecified).
 - The study becomes the remaining judges for every transcript.
 - Calibration is refit from scratch.

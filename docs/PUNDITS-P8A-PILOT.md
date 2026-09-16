@@ -162,6 +162,41 @@ Under the plan's eligibility rule (complete run-0 grades from every published
 judge in both modes) **nothing is eligible**, so no score, calibration, halo or
 gate can be computed from run 1.
 
+## Decision: the panel is Fable and Gemini (operator, 2026-09-16)
+
+The operator chose option (a): drop Astra, run the study on Fable and Gemini.
+
+**Astra is dropped without changing the contract.** `judge_requests` is one of
+the four profile keys the contract hashes (`V2_PROFILE_KEYS` in
+`scripts/grading_contract.py`), so deleting Astra's block would change
+`contract_id` and make every grade already collected incompatible at
+aggregation. The profile is therefore left alone: its Astra block still
+describes how that arm *would* run, and `contract_id` stays
+`3844dd2693acd471`, which is the value stamped on the existing grades
+(verified against a Gemini record on disk).
+
+Astra is dropped where it belongs instead:
+
+- it is not called: runs pass `--judges fable,gemini`, and schedules name only
+  those two;
+- the panel is read from the corpus, not from a typed list. `aggregate.py`
+  derives judges from the grades present (`sorted({g["judge"] for g in usable})`),
+  which is the same rule as the leaders board's "never hand-type the judge list".
+
+The 42 Astra refusal records stay on disk as evidence. They carry no scores, so
+they cannot enter a mean; `load_grades` marks a record with no dimensions as
+excluded.
+
+**Consequences the plan prescribes for a dropped judge**, now in force: the
+study is the remaining judges for every transcript, calibration is refit from
+scratch, and no transcript keeps a partial panel.
+
+**Still outstanding: publishing two-judge scores needs the operator's explicit
+approval.** Choosing the panel is not that approval. The relative bias test
+(G-judge-lean) also weakens with two arms, because each judge's gap is compared
+against exactly one other judge rather than a mean of others; the P10 report
+must say so next to the result.
+
 ## Decisions this forces
 
 Astra cannot be fixed by retrying, so the panel composition is now a decision
