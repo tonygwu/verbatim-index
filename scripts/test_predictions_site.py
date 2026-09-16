@@ -223,7 +223,7 @@ def main() -> int:
         scored_pid = pred[sorted(pred)[0]][0]["prediction_id"]
         scores.write_text(json.dumps({
             "as_of": "2026-09-14",
-            "rule": {"clamp": 0.01, "min_scored_to_rank": 5,
+            "rule": {"clamp": 0.01, "min_scored_to_rank": 5, "min_lead_days": 60,
                      "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)"},
             "corpus": {"past_due": 9, "eligible": 7, "scored": 6, "leaders_ranked": 1,
                        "by_outcome": {"occurred": 4, "not_occurred": 2, "unresolvable": 3},

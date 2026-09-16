@@ -839,7 +839,8 @@ def statement_years(by_slug: dict[str, list[dict]]) -> tuple[dict[str, dict], li
 MIN_PAST_DUE_TO_LIST = 1
 
 
-def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict) -> list[dict]:
+def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
+                min_lead_days: int | None = None) -> list[dict]:
     """One table row per person with something that has come due.
 
     `scores` is keyed by slug and may be empty, in which case every row shows an
@@ -861,7 +862,7 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict) 
             "n_scored": (sc["n_scored"] if sc else 0),
             "score_hits": (sc["scored_occurred"] if sc and sc["ranked"] else None),
             "hit_rate": (sc["hit_rate"] if sc and sc["ranked"] else None),
-            "score_why": score_why(sc),
+            "score_why": score_why(sc, min_lead_days),
             "years": h["years"], "undated": h["undated"], "early": h.get("early", 0),
             "slug": l["slug"], "name": l["name"], "role": entry.get("role") or l.get("role"), "company": l.get("company") or entry.get("company"),
             "sector": l.get("sector") or entry.get("sector"),
@@ -985,22 +986,29 @@ def score_info(c: dict, rule: dict) -> str:
         "the surrounding words, and is never told what happened.</p>"
         f"<p>{c['scored']} of {c['past_due']} past-due predictions carry a score. A prediction is left "
         "out when it could not be resolved, when it is too vague to test, or when it was said less "
-        "than six months before its own deadline, which makes it an announcement rather than a "
+        f"than {rule['min_lead_days']} days before its own deadline, which makes it an announcement rather than a "
         f"forecast. {c['leaders_ranked']} people have the {MIN_SCORED} resolved predictions a number "
         "needs.</p>"
         f"<p>The rule is {rule['baseline_only']}, with p held inside [{rule['clamp']}, "
         f"{1 - rule['clamp']:.2f}] so a stated certainty cannot score infinitely.</p>`,")
 
 
-def score_why(sc: "dict | None") -> str:
+def score_why(sc: "dict | None", min_lead_days: int) -> str:
     """What to say on hover when a row carries no number. Never "no data": the
-    reasons differ and the difference is the interesting part."""
+    reasons differ and the difference is the interesting part.
+
+    min_lead_days comes from scores.json's own `rule`, never from
+    phase2_resolvability.MIN_LEAD_DAYS. That constant is only a default:
+    phase2_resolvability.py exposes --min-lead-days, so a run may not have used
+    it. This text was typed as a fixed figure and went stale the day the operator
+    lowered the floor, while {MIN_SCORED} four characters away stayed correct
+    because it was interpolated."""
     if sc is None:
         return "no prediction of this person's has come due and been resolved"
     if sc["n_scored"] == 0:
         if sc["eligible"] == 0:
             return (f"{sc['past_due']} past due, none eligible: a scored prediction must be specific, "
-                    f"reach at least six months out, and have a coherent window")
+                    f"reach at least {min_lead_days} days out, and have a coherent window")
         return f"{sc['eligible']} eligible and past due, {sc['unresolvable']} of them could not be resolved"
     return (f"{sc['n_scored']} scored, below the floor of {MIN_SCORED}; "
             f"a number on so few is a placeholder, not a score")
@@ -1180,6 +1188,11 @@ def main(argv: list[str] | None = None) -> int:
         for k in ("corpus", "leaders", "rule", "as_of"):
             if k not in scores_doc:
                 raise SystemExit(f"{args.scores} lacks {k}; re-run score_predictions.py")
+        if "min_lead_days" not in scores_doc["rule"]:
+            raise SystemExit(
+                f"REFUSING: {args.scores} records no rule.min_lead_days, so the page cannot state "
+                "the lead-time rule this run used. score_predictions.py writes it; re-run the "
+                "scorer rather than letting the page assert a number nobody measured.")
         # A score for somebody not on this page is a mismatched pair of inputs, and it
         # would show up as a silently missing row rather than an error.
         known = {l["slug"] for l in index["leaders"]}
@@ -1188,7 +1201,8 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{args.scores} scores {strays} who are not in index.json; "
                              f"the two inputs describe different corpora")
     scores = {l["slug"]: l for l in scores_doc["leaders"]} if scores_doc else {}
-    rows = person_rows(index, roster, hist, scores)
+    rows = person_rows(index, roster, hist, scores,
+                       scores_doc["rule"]["min_lead_days"] if scores_doc else None)
     pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
     check_scores_are_renderable(scores_doc, pred)
