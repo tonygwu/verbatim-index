@@ -203,7 +203,13 @@ def load(pred_dir):
     rows = []
     seen: dict[str, str] = {}
     for d in dirs:
-        for f in sorted(d.glob("*/*.jsonl")):
+            # An underscore-prefixed directory is NOT a leader. `_runs/` holds the
+            # error logs every stage writes, which are JSONL and glob identically to
+            # records. They survive today only because an error line carries no
+            # `accepted` key, so the filter below drops it by accident; an error log
+            # that ever gained that field would enter the corpus silently.
+            # deploy_predictions.sh already applies this rule when it counts records.
+        for f in sorted(x for x in d.glob("*/*.jsonl") if not x.parent.name.startswith("_")):
             # split on the newline byte only; see predictions_lib.parse_lines
             for line in f.read_text().split("\n"):
                 if not line.strip():
