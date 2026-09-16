@@ -145,6 +145,47 @@ def main() -> int:
     P = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(P)
 
+    # ---- the open-ended trend window, off unless a cutoff is passed ----------
+    import datetime as _dt
+    def undated(claim, said, quote=""):
+        return {"accepted": True, "leader_slug": "ada",
+                "prediction": {"target_date": None, "target_date_text": None, "specificity": "medium",
+                               "normalized_claim": claim, "resolution_criteria": claim,
+                               "horizon": "none", "horizon_years_inferred": None,
+                               "subject_control": "own", "category": "company_business",
+                               "prediction_type": "trend_direction"},
+                "source": {"statement_date": said, "quote": quote},
+                "confidence": {"probability": None},
+                "consensus": {"status": "no_match", "exact_match": None}}
+
+    CUT = _dt.date(2026, 9, 14)
+    old_trend = undated("margin will only continue to go up", "2022-05-14")
+    young = undated("margin will only continue to go up", "2025-01-01")
+    flat = undated("we will have a partnership with someone", "2019-01-01")
+    nodate = undated("margin will only continue to go up", None)
+
+    rows = [old_trend, young, flat, nodate]
+    P.attach_deadlines(rows, derive=True)
+    check("TREND: with no cutoff nothing gains a deadline, so every old number is reproduced",
+          all(r["_deadline"] is None for r in rows))
+
+    rows = [dict(r) for r in (old_trend, young, flat, nodate)]
+    notes, _, _ = P.attach_deadlines(rows, derive=True, trend_cutoff=CUT)
+    check("TREND: an undated DIRECTIONAL claim old enough to be wrong gets the elapsed window",
+          rows[0]["_deadline"] == CUT and rows[0]["_basis"].startswith("trend"),
+          str((rows[0]["_deadline"], rows[0]["_basis"])))
+    check("TREND: a claim too young to have been wrong is refused",
+          rows[1]["_deadline"] is None, str(rows[1]["_basis"]))
+    check("TREND: a claim with no DIRECTION is refused, a window cannot test it",
+          rows[2]["_deadline"] is None, str(rows[2]["_basis"]))
+    check("TREND: no statement date means no window to measure",
+          rows[3]["_deadline"] is None)
+    check("TREND: the count is reported rather than folded into the stated ones",
+          notes["trend_windows"] == 1, str(notes.get("trend_windows")))
+    check("TREND: the floor is an argument, so a longer one refuses the same claim",
+          P.attach_deadlines([dict(old_trend)], derive=True, trend_cutoff=CUT,
+                             min_trend_years=99)[0]["trend_windows"] == 0)
+
     check("LEAD: the DEFAULT floor is the operator's current call, not a number left in the source",
           P.MIN_LEAD_DAYS == 60, f"MIN_LEAD_DAYS is {P.MIN_LEAD_DAYS}")
     check("UNIT: every documented target_date form parses to its LAST day",

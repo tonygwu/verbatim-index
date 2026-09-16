@@ -127,6 +127,12 @@ def prompt_facts(rec: dict, deadline: "dt.date | None") -> dict:
         # A missing deadline SAYS so. The repair stage runs over records the funnel
         # could not date, and a placeholder date there would be read as a real one.
         "deadline": deadline.isoformat() if deadline else "(no closing date this pipeline could read)",
+        # Says where the deadline came from, because rule 7 turns on it: a TREND
+        # window is this pipeline's evaluation span, not something the speaker said.
+        "deadline_note": (
+            "-- THIS IS A TREND WINDOW, not a date the speaker gave. See rule 7."
+            if str(rec.get("_basis") or "").startswith("trend")
+            else '(from the speaker\'s own wording: "%s")' % (pred.get("target_date_text") or "")),
         "target_date_text": pred.get("target_date_text") or "",
         "category": pred.get("category") or "",
     }
@@ -142,7 +148,7 @@ def _block(f: dict) -> str:
 Speaker:         {f["speaker"]}{f" ({who})" if who else ""}
 Said on:         {f["statement_date"]}
 Where:           {f["title"]}{f" [{f['venue']}]" if f["venue"] else ""}
-Deadline:        {f["deadline"]}   (from the speaker's own wording: "{f["target_date_text"]}")
+Deadline:        {f["deadline"]}   {f["deadline_note"]}
 Category:        {f["category"]}
 
 WHAT WAS SAID, verbatim:
@@ -196,6 +202,27 @@ RULES
 5. "confidence" is about the RESOLUTION, not about the prediction. Use "high" when
    a cited source settles it directly, "medium" when it follows from cited sources
    by a short step, "low" when you are reading between the lines.
+
+6. A COMPANY'S "THIS YEAR" IS ITS FISCAL YEAR. When the speaker runs the company
+   and is talking about its own reported numbers, revenue, margin, guidance,
+   bookings, earnings or cash flow, then "this year" and "next year" mean the
+   FISCAL year they report on, which for many companies does not end in December.
+   The deadline shown below may be a calendar-year approximation of those words.
+   Resolve against the period the SPEAKER meant, and say in your reasoning which
+   period you used and when it ended. Do NOT answer "unresolvable" merely because
+   the fiscal period closes a few weeks after the calendar deadline shown.
+   This applies only to a company's own reported figures. For anything else the
+   deadline stands exactly as given.
+
+7. SOME CLAIMS ARE A DIRECTION OVER A WINDOW, NOT AN EVENT BY A DATE. If the
+   deadline line says THIS IS A TREND WINDOW, the speaker named no closing date,
+   and the question is different: over the time that has elapsed since they
+   spoke, did the direction they claimed actually hold? Judge the overall trend
+   rather than a single moment. "Margin will only continue to go up", said four
+   years ago, is TRUE if margin is meaningfully higher across that span and FALSE
+   if it is flat or lower; one weak quarter does not decide it. Give the value
+   near the statement and the value now, and cite both. Answer "unresolvable" if
+   the quantity is not publicly reported across the window.
 
 Answer with one JSON object and nothing else:
 

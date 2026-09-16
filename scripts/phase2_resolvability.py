@@ -186,6 +186,60 @@ def derived_deadline(rec):
     return add_span(said, count, unit), how
 
 
+# ---------------------------------------------------------------------------
+# Open-ended trend claims
+# ---------------------------------------------------------------------------
+#
+# "today is 20 plus percent operating margin and in the future that will only
+# continue to go up" names no closing date, so it has no deadline and the funnel
+# dropped it. The operator's call on 2026-09-16 is that this is too literal: a
+# directional claim made four years ago HAS a track record, and refusing to look
+# at it is refusing the spirit of what was said.
+#
+# It is still not resolvable as stated, because "will continue" can never be
+# false at a single moment. What makes it testable is fixing the WINDOW: not the
+# speaker's deadline, which they never gave, but the time that has actually
+# elapsed. The question becomes "over the N years since they said it, did the
+# direction hold", which is well posed and can come out either way.
+#
+# TWO GUARDS, because this is the one place the funnel stops requiring a date.
+#   - the claim must be DIRECTIONAL. A vague claim with no direction gains
+#     nothing from a window.
+#   - enough time must have passed. Under MIN_TREND_YEARS a "continue to rise"
+#     claim has not had room to be wrong, and calling it true would reward
+#     recency rather than foresight.
+# The window is reported as basis "trend", never as a stated or derived
+# deadline, so nothing downstream mistakes it for something the speaker said.
+
+MIN_TREND_YEARS = 3.0
+
+TREND_WORDS = re.compile(
+    r"\b(continue|continues|continuing|keep|keeps|remain|remains|stay|stays|"
+    r"grow|grows|growing|rise|rises|rising|increase|increases|increasing|"
+    r"decline|declines|declining|fall|falls|falling|decrease|decreases|"
+    r"double|doubles|triple|triples|shrink|shrinks|expand|expands|"
+    r"more|less|higher|lower|faster|slower|bigger|smaller|up|down)\b", re.I)
+
+
+def trend_text(rec) -> str:
+    p = rec.get("prediction") or {}
+    s = rec.get("source") or {}
+    return f"{p.get('normalized_claim') or ''} {p.get('resolution_criteria') or ''} {s.get('quote') or ''}"
+
+
+def trend_window(rec, cutoff: dt.date, min_years: float = MIN_TREND_YEARS):
+    """(cutoff, note) when an undated directional claim has had time to be wrong."""
+    said = iso((rec.get("source") or {}).get("statement_date"))
+    if not said:
+        return None, "no_statement_date"
+    years = (cutoff - said).days / 365.25
+    if years < min_years:
+        return None, f"only {years:.1f}y elapsed, under {min_years}y"
+    if not TREND_WORDS.search(trend_text(rec)):
+        return None, "no direction to test"
+    return cutoff, f"trend over {years:.1f}y since the statement"
+
+
 def load(pred_dir):
     """Accepted predictions from one corpus directory, or several.
 
@@ -233,11 +287,17 @@ def load(pred_dir):
     return rows
 
 
-def attach_deadlines(rows, derive: bool):
-    """Give every row a deadline, its basis and the reason when it has none. Nothing is dropped here."""
+def attach_deadlines(rows, derive: bool, trend_cutoff: "dt.date | None" = None,
+                     min_trend_years: float = MIN_TREND_YEARS):
+    """Give every row a deadline, its basis and the reason when it has none. Nothing is dropped here.
+
+    `trend_cutoff` opts in to the open-ended trend window above. It is off unless
+    a caller passes a date, so every existing number is reproduced exactly.
+    """
     notes = collections.Counter()
     refusals = collections.Counter()
     expansions = []
+    trends = collections.Counter()
     for r in rows:
         d, note = stated_deadline(r["prediction"].get("target_date"))
         notes[note] += 1
@@ -252,10 +312,26 @@ def attach_deadlines(rows, derive: bool):
             if d2 is not None:
                 r["_deadline"], r["_basis"], r["_why_none"] = d2, f"derived: {how}", None
                 continue
+            if trend_cutoff:
+                d3, why3 = trend_window(r, trend_cutoff, min_trend_years)
+                if d3 is not None:
+                    r["_deadline"], r["_basis"], r["_why_none"] = d3, f"trend: {why3}", None
+                    trends["window applied"] += 1
+                    continue
+                trends[why3.split(",")[0]] += 1
             refusals[how] += 1
             r["_deadline"], r["_basis"], r["_why_none"] = None, None, how
             continue
+        if trend_cutoff and note == "missing":
+            d3, why3 = trend_window(r, trend_cutoff, min_trend_years)
+            if d3 is not None:
+                r["_deadline"], r["_basis"], r["_why_none"] = d3, f"trend: {why3}", None
+                trends["window applied"] += 1
+                continue
+            trends[why3.split(",")[0]] += 1
         r["_deadline"], r["_basis"], r["_why_none"] = None, None, note
+    if trend_cutoff:
+        notes["trend_windows"] = trends["window applied"]
     return notes, refusals, expansions
 
 

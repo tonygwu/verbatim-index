@@ -203,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--index", type=Path, default=Path("data/predictions/index.json"))
     ap.add_argument("--as-of", required=True)
     ap.add_argument("--min-lead-days", type=int, default=P2.MIN_LEAD_DAYS)
+    ap.add_argument("--trend", action="store_true",
+                    help="include undated directional claims judged over the elapsed window")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
     args.predictions = args.predictions or [Path("data/predictions")]
@@ -212,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
-    rows = select(args.predictions, cutoff, args.min_lead_days)
+    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend)
     repairs = R.load_repairs(args.run)
     applied, unrepairable = R.apply_repairs(rows, repairs)
     resolutions = R.load_sidecars(args.run, "resolve")

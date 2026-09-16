@@ -72,7 +72,7 @@ def utc_now() -> str:
 # Selection: exactly the funnel's past-due set, computed by the funnel's own code
 # ---------------------------------------------------------------------------
 
-def select(pred_dir: Path, cutoff: dt.date, min_lead: int) -> list[dict]:
+def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False) -> list[dict]:
     """Past-due accepted predictions, each carrying the funnel's deadline and flags.
 
     The deadline comes from `phase2_resolvability`, never from a second parser
@@ -81,7 +81,8 @@ def select(pred_dir: Path, cutoff: dt.date, min_lead: int) -> list[dict]:
     New Year's Day.
     """
     rows = P2.load(pred_dir)
-    P2.attach_deadlines(rows, derive=True)
+    # The trend window is opt-in and dated by the caller's cutoff, never the clock.
+    P2.attach_deadlines(rows, derive=True, trend_cutoff=(cutoff if trend else None))
     out = []
     for r in rows:
         if not r["_deadline"] or r["_deadline"] > cutoff:
@@ -97,8 +98,13 @@ def select(pred_dir: Path, cutoff: dt.date, min_lead: int) -> list[dict]:
         }
         # The three together are the operator's eligibility rule: a real forecast
         # is specific, reaches at least six months out, and has a coherent window.
-        r["_flags"]["eligible"] = (r["_flags"]["specificity_high"] and r["_flags"]["lead_ok"]
-                                   and not r["_flags"]["deadline_before_statement"])
+        is_trend = str(r.get("_basis") or "").startswith("trend")
+        r["_flags"]["trend"] = is_trend
+        # A trend window IS the elapsed time, so the lead-time floor is already
+        # satisfied by construction and specificity is not what makes it testable.
+        r["_flags"]["eligible"] = (is_trend or
+                                   (r["_flags"]["specificity_high"] and r["_flags"]["lead_ok"]
+                                    and not r["_flags"]["deadline_before_statement"]))
         out.append(r)
     out.sort(key=lambda r: (r["leader_slug"], r["prediction_id"]))
     return out
@@ -211,6 +217,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", type=Path, required=True, help="the experiment run directory")
     ap.add_argument("--as-of", required=True, help="YYYY-MM-DD; what counts as past due, never the clock")
     ap.add_argument("--min-lead-days", type=int, default=P2.MIN_LEAD_DAYS)
+    ap.add_argument("--trend", action="store_true",
+                    help="also score undated DIRECTIONAL claims at least "
+                         "MIN_TREND_YEARS old, over the elapsed window")
     ap.add_argument("--eligible-only", action="store_true",
                     help="only the records that clear specificity, lead time and a coherent window")
     ap.add_argument("--slug", action="append", default=None, help="restrict to these leaders")
@@ -261,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
-    rows = select(args.predictions, cutoff, args.min_lead_days)
+    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend)
     if args.slug:
         rows = [r for r in rows if r["leader_slug"] in set(args.slug)]
     if args.eligible_only:
