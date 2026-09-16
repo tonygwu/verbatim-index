@@ -487,3 +487,37 @@ with foresight.
 - sergey-brin remains at 0 from 4 candidates. His two usable sources are a 1998
   paper and an AGI House Q&A, and nothing in either passes the falsifiable gate.
   The discovery agent predicted 1 to 4 and the honest answer is 0.
+
+## Correction, 2026-09-16: the `--ephemeral` usage-blindness claim was wrong
+
+Commit 5bb9ef5's message claims that Codex usage driven from this repo is
+invisible to the router, because `call_astra` passes `--ephemeral`, an ephemeral
+run writes no session transcript, and Codex quota is read from transcripts. The
+last clause is false, so the conclusion is withdrawn.
+
+MEASURED 2026-09-16 under router v0.1.4:
+
+```
+codex    ... SOURCE live
+codex_b  ... SOURCE live      83%, reflecting this run's 52 extractions
+adapters  [ClaudeOAuthAdapter, ClaudeStatuslineAdapter,
+           CodexAppServerAdapter, CodexSessionsAdapter, CursorAdapter,
+           AntigravityAdapter]
+```
+
+Codex quota is a LIVE rate-limit read from the codex app-server, with session
+transcripts as the FALLBACK. `CodexAppServerAdapter` is listed before
+`CodexSessionsAdapter` for that reason.
+
+The observation behind the wrong claim was real: under v0.1.2 an `--ephemeral`
+call left the reading at "cache 2.7h" and a non-ephemeral one moved it to
+"cache 1s". Both readings came from the transcript fallback, which is what
+"cache" meant. Reading a fallback as the only mechanism is the error. The
+practical warning that followed from it, that the router would keep seeing
+codex_b full while it drained, does not hold: codex_b reads live at 83%, and
+the drain is exactly this run's.
+
+This is the second confident wrong diagnosis in this workstream, after the
+codex_b "router bug" that was a stale pin. Both had the same shape: a plausible
+mechanism asserted from one symptom, couriered without testing the mechanism
+itself. The symptom was reproducible each time; the explanation was not tested.
