@@ -56,6 +56,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Runtime logs belong to production. A frozen experiment clone intentionally
 # has neither live ignored logs nor necessarily today's production ignore rules.
 from data_clone_workflow import production_path
+import predictions_lib as L
 DATA = production_path(REPO)
 BLOATED = "logs/grade_loop.err"
 CACHE = "predictions/_markets"
@@ -134,9 +135,21 @@ def main() -> int:
     # The records, not the cache, are where market provenance lives. If this
     # stops holding, untracking the cache HAS lost evidence.
     import json
+    # jsonl_lines, never str.splitlines(). splitlines() breaks on VT, FF, FS,
+    # GS, RS, NEL, U+2028 and U+2029, and JSON permits every one of those RAW
+    # inside a string, so a record carrying one is cut in half and both halves
+    # fail to parse. predictions_lib.parse_lines was fixed for this on
+    # 2026-09-14 and this reader was missed.
+    #
+    # It stopped being hypothetical the moment the web-sourced records were
+    # placed in the production corpus: exactly one of them,
+    # web-assets-ctfassets-net-cbb20aaa.jsonl, carries a single U+2028 in a
+    # Stripe letter and took this whole suite down with
+    # `Unterminated string starting at: line 1 column 5435`, which names a
+    # column and not the character responsible.
     seen = missing = 0
     for f in sorted((DATA / "predictions").glob("*/*.jsonl")):
-        for line in f.read_text().splitlines():
+        for line in L.jsonl_lines(f.read_text()):
             if not line.strip():
                 continue
             r = json.loads(line)

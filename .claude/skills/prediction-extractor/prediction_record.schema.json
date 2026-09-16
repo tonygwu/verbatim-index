@@ -32,7 +32,7 @@
         "venue": {"type": ["string", "null"]},
         "kind": {"type": ["string", "null"]},
         "statement_date": {"type": ["string", "null"], "description": "YYYY-MM-DD, or null when the record carries no date."},
-        "statement_date_basis": {"enum": ["youtube_upload_date", "unknown"], "description": "youtube_upload_date is an UPPER bound on the recording date. declared_year is never used: it is a hardcoded constant in the corpus."},
+        "statement_date_basis": {"enum": ["youtube_upload_date", "stated_in_page", "publication_date", "unknown"], "description": "How the statement date is known. youtube_upload_date is an UPPER bound on the recording date. stated_in_page and publication_date belong to a source that is not a YouTube recording, such as an earnings-call transcript, a shareholder letter or written testimony: the first is a date the page states about itself, the second is the date it was published. Neither is an upper bound in the YouTube sense, so a horizon computed from them is tighter. unknown is a source that admits no date at all, and such a record carries no horizon. declared_year is never used: it is a hardcoded constant in the corpus."},
         "quote": {"type": "string", "minLength": 1, "description": "The span as the model wrote it."},
         "quote_original": {"type": "string", "minLength": 1, "description": "text[quote_char_start:quote_char_end] from the original transcript. May contain a [hh:mm:ss] mark."},
         "quote_char_start": {"type": "integer", "minimum": 0},
