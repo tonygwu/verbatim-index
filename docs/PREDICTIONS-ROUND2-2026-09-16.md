@@ -144,11 +144,66 @@ by 2026-09-16. It is a lead, not an accepted prediction: the extractor and the
 verifier still have to agree, and the corpus keep rate is about a third.
 
 ```
-leader            sources  past-due quotes  rejected  URLs checked
-satya-nadella          14               18        13            63
-bill-gates              7                8        42            54
-dario-amodei           10                1        17            22
+leader            scored need  srcs  past-due  fetched 
+satya-nadella     1      2     14    18        13      
+vlad-tenev        0      3     13    9         13      
+arvind-krishna    0      3     11    13        11      
+tim-sweeney       1      2     12    6         9       
+demis-hassabis    0      3     10    3         9       
+mustafa-suleyman  1      2     10    3         9       
+bill-gates        1      2     7     8         7       
+sam-altman        0      3     8     8         7       
+eric-schmidt      1      2     10    4         7       
+michael-dell      0      3     8     7         5       
+dylan-field       1      2     13    8         4       
+brian-armstrong   0      3     8     5         0       
+dario-amodei      1      2     10    1         0       
+george-hotz       1      2     8     1         0       
+yann-lecun        1      2     8     1         0       
+TOTAL                          150   95        94      
 ```
+
+All sixteen agents reported. `srcs` is what the agent judged usable, `past-due`
+is verbatim quotes it believes pass all five gates with a deadline already
+passed, and `fetched` is what survived robots, paywalls, the 400-word floor and
+the verbatim cross-check. A past-due quote is a LEAD, not an accepted
+prediction.
+
+**Four leaders are real negatives and were never fetched.** Each returned one
+past-due gate-passing quote against a need of two or three, so even a perfect
+pipeline run leaves them short. dario-amodei hedges his near-dated claims with
+"could" and "may" and dates his firm ones to 2027 and beyond. george-hotz's
+agent crawled all 143 posts of his blog and all 93 of comma.ai's, and across 236
+first-person documents found five sentences pairing a commitment verb with a
+time marker, four landing in 2031 or later. yann-lecun's read about 200,000
+words over 26 transcripts. demis-hassabis has two distinct past-due predictions
+and one of them is six words long, which will not survive the stands-alone gate.
+These are properties of how these people speak, not shortfalls of searching.
+
+**brian-armstrong was lost at FETCH, not at discovery**, and that is a different
+failure worth separating. His agent found 5 past-due quotes, then two things
+killed the sources. Coinbase's quarterly shareholder letters are not signed by
+him at all: grepping all five EX-99.1 filings for "Armstrong", "Brian" and
+"Sincerely" returns zero hits, so the densest lead in his brief fails own-voice.
+His fallback, MarketBeat's speaker-labelled transcripts, serves nav-only bodies
+to a plain fetcher, and 7 of 8 came back under the 400-word floor. Nothing was
+written for him.
+
+**Two veins found here are worth reusing.** Every vlad-tenev quote is a
+Robinhood earnings call on fool.com, whose pages print their own call date,
+which is the direct cure for the `deadline_incoherent` failures his existing
+predictions died of. And michael-dell's material sits in SEC Rule 425 merger
+filings, where Dell filed a 38,000-word analyst-meeting transcript as open
+verbatim text. Both are dated, primary and speaker-labelled by construction.
+arvind-krishna is the same shape: IBM publishes a prepared-remarks PDF per
+quarter, which separates him from CFO Jim Kavanaugh cleanly, and his IBM Quantum
+roadmap commitments name a qubit count and a year that IBM itself then reports
+against.
+
+**The CFO problem was handled at discovery rather than at verification** for
+tenev, krishna and dell, by checking each quote against its nearest preceding
+speaker label. This repo has historically caught that at the verifier, after
+paying for the call.
 
 **dario-amodei is a genuine negative and is dropped from the target list.** Ten
 sources read, twenty-two URLs checked, and exactly one past-due gate-passing
