@@ -109,6 +109,41 @@ MIN_TRANSCRIPTS_TO_RANK = HIGH_CONFIDENCE_TRANSCRIPTS
 MIN_SUBJECT_SHARE = 10
 
 
+def drop_partial_panels(grades: list[dict], panel: set[str]) -> tuple[list[dict], list[dict]]:
+    """Split grades into (kept, dropped): a recording needs every panel judge in BOTH modes.
+
+    Plan P5: "A transcript missing any required cell after the retry cap is
+    excluded from BOTH views for ALL judges", and the loss is reported.
+
+    Nothing enforced that before. FOUND 2026-09-16 on the P8a pilot, where the
+    25-word quote cap killed one cell on each of two recordings:
+    `hasan-piker/hasanabi-esvtvd` open was scored by Gemini alone and
+    `coleman-hughes/coleman-hughes-4u00pa` blinded by Fable alone. Their people's
+    scores then averaged a two-judge mode with a one-judge mode, and the paired
+    halo differenced the two, which is a judge difference wearing a mode's
+    clothes. A partial panel is exactly the hazard calibration cannot repair.
+
+    `panel` is derived from the grades present by the caller, never typed here:
+    a hand-written judge list is the defect this repo has already paid for.
+    """
+    cells: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for g in grades:
+        cells.setdefault((g["leader_slug"], g["source_id"]), set()).add((g["judge"], g["mode"]))
+    required = {(j, m) for j in panel for m in ("blinded", "open")}
+    kept, dropped = [], []
+    for g in grades:
+        have = cells[(g["leader_slug"], g["source_id"])]
+        missing = required - have
+        if missing:
+            g = dict(g)
+            g["_dropped_reason"] = ("incomplete panel: missing "
+                                    + ", ".join(f"{j}/{m}" for j, m in sorted(missing)))
+            dropped.append(g)
+        else:
+            kept.append(g)
+    return kept, dropped
+
+
 def filter_unscorable(grades: list[dict], cutoff: int = MIN_SUBJECT_SHARE,
                       pool_modes: bool = False) -> tuple[list[dict], list[dict]]:
     """Split grades into (kept, dropped) on subject speech share, per TRANSCRIPT.
@@ -737,6 +772,23 @@ def main() -> int:
     refusals = [g for g in grades if g.get("refused")]
     grades = [g for g in grades if not g.get("refused")]
 
+    # A contract v2 study publishes a fixed panel, so a recording missing any
+    # judge in either mode leaves the corpus entirely (plan P5). The panel is
+    # DERIVED from the grades present, never typed: see the leaders board's
+    # "never hand-type the judge list" rule.
+    partial_report: list[dict] = []
+    if is_v2:
+        panel = {g["judge"] for g in grades}
+        grades, partial = drop_partial_panels(grades, panel)
+        partial_report = [{"leader_slug": g["leader_slug"], "source_id": g["source_id"],
+                           "judge": g["judge"], "mode": g["mode"], "reason": g["_dropped_reason"]}
+                          for g in partial]
+        if partial:
+            recordings = sorted({(g["leader_slug"], g["source_id"]) for g in partial})
+            print(f"dropped {len(partial)} grades from {len(recordings)} recordings with an "
+                  f"incomplete panel (panel = {sorted(panel)}): "
+                  + "; ".join(f"{s}/{i}" for s, i in recordings), file=sys.stderr)
+
     grades, unscorable = filter_unscorable(grades, MIN_SUBJECT_SHARE, pool_modes=is_v2)
     # Every record here has passed schema validation, so it HAS a share. The
     # subscript stays a subscript on purpose: a missing key means a record that
@@ -772,7 +824,10 @@ def main() -> int:
     # Every record read is now in exactly one bucket, and the four add up to the
     # files read. If that stops being true a record is being dropped silently,
     # which is how a leader loses evidence without anything saying so.
-    accounted = len(excluded) + len(unscorable) + len(refusals) + len(usable)
+    # partial_report is the fifth bucket, added 2026-09-16 with the panel rule:
+    # a recording missing a panel cell leaves the corpus, and those grades have
+    # to be declared here or this guard reads their absence as a silent loss.
+    accounted = len(excluded) + len(unscorable) + len(refusals) + len(usable) + len(partial_report)
     if accounted != grade_files_read:
         raise SystemExit(
             f"records do not add up: read {grade_files_read}, accounted {accounted} "
@@ -1026,6 +1081,11 @@ def main() -> int:
             sum(1 for t in all_b if t["identity_recognised"]) / len(all_b), 3) if all_b else None,
         "unscorable_subject_absent": len(unscorable),
         "unscorable_detail": unscorable_report,
+        # Plan P5: a recording missing any panel cell leaves both views for all
+        # judges, and the loss is REPORTED rather than silently absorbed.
+        "partial_panel_grades_dropped": len(partial_report),
+        "partial_panel_recordings": sorted({f"{d['leader_slug']}/{d['source_id']}" for d in partial_report}),
+        "partial_panel_detail": partial_report,
         "bootstrap": {
             "resamples": BOOTSTRAP_N, "seed": BOOTSTRAP_SEED, "interval": "95%",
             "unit": "transcript, resampled with replacement",

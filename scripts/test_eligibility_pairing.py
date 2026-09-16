@@ -18,6 +18,7 @@ pool_modes=True every judge's estimate across BOTH modes decides once.
 from __future__ import annotations
 
 import importlib.util
+import json
 import random
 import sys
 from pathlib import Path
@@ -87,6 +88,36 @@ def main() -> int:
     kept_off, _ = A.filter_unscorable(big, 10)
     splits_off = [(p, s) for p in range(6) for s in range(8) if len(modes_kept(kept_off, f"p{p}", f"s{s}")) == 1]
     check("while the per-mode rule does split some, so the test can see a split", len(splits_off) > 0)
+
+    print("\n[PANEL]")
+    # A recording missing a judge in EITHER mode leaves the corpus entirely.
+    # Found live 2026-09-16 on the P8a pilot: two transcript-modes reached the
+    # published means on a single judge, because the quote cap killed one cell
+    # and nothing enforced the panel. hasan-piker/hasanabi-esvtvd open was Gemini
+    # alone and coleman-hughes/coleman-hughes-4u00pa blinded was Fable alone, so
+    # those scores mixed a two-judge mode with a one-judge mode and the halo
+    # differenced the two. Plan P5: a transcript missing any required cell after
+    # the retry cap is excluded from BOTH views for ALL judges, loss reported.
+    A.configure_scoring(json.loads((REPO / "profiles" / "pundits.json").read_text()))
+    if not hasattr(A, "drop_partial_panels"):
+        check("aggregate.py exposes drop_partial_panels", False)
+    else:
+        def pg(sid, judge, mode):
+            return {"leader_slug": "p", "source_id": sid, "judge": judge, "mode": mode, "run": 0,
+                    "telemetry": {"served_model": f"{judge}-model"},
+                    "grade": {"dimensions": {d: {"score": 50} for d in A.DIMS},
+                              "coverage": 1.0, "subject_speech_share_pct": 80}}
+        corpus = [pg("complete", j, m) for m in ("blinded", "open") for j in ("fable", "gemini")]
+        corpus += [pg("partial", j, "blinded") for j in ("fable", "gemini")] + [pg("partial", "fable", "open")]
+        kept, dropped = A.drop_partial_panels(corpus, {"fable", "gemini"})
+        kept_ids = {(x["leader_slug"], x["source_id"]) for x in kept}
+        check("a recording with every panel cell is kept", ("p", "complete") in kept_ids, str(kept_ids))
+        check("a recording missing one cell is dropped from BOTH modes",
+              ("p", "partial") not in kept_ids and len(dropped) == 3, f"kept={kept_ids} dropped={len(dropped)}")
+        check("every grade lands in exactly one bucket", len(kept) + len(dropped) == len(corpus))
+        check("the drop names the missing cell so the loss can be reported",
+              bool(dropped) and any("gemini" in str(d.get("_dropped_reason", "")) for d in dropped),
+              str([d.get("_dropped_reason") for d in dropped][:1]))
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
