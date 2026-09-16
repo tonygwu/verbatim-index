@@ -342,6 +342,34 @@ def apply_per_leader_limit(paths, limit, slug_of):
     return kept
 
 
+def queue_summary(jobs: list[dict]) -> str:
+    """Describe the queue that will actually run, derived from the jobs themselves.
+
+    FOUND 2026-09-16 on the P8a2 top-up run, which printed "128 grading calls
+    queued (114 transcripts x 2 judges x 2 modes x 1 repeats)". The count was
+    right and the factorisation was not, because 114 was the size of the
+    --transcripts directory while a schedule had narrowed the run to 32. A
+    reader who multiplies the factors gets 456 and concludes the queue is wrong.
+
+    The product is printed ONLY when it is really a product. An uneven queue,
+    which is what a schedule with repairs in it produces, reports its parts
+    without a multiplication that would not check out.
+    """
+    n = len(jobs)
+    recs = {(j["rec"]["leader_slug"], j["rec"]["source_id"]) for j in jobs}
+    judges = sorted({j["judge"] for j in jobs})
+    modes = sorted({j["mode"] for j in jobs})
+    runs = sorted({j.get("run", 0) for j in jobs})
+    head = f"{n} grading calls queued"
+    parts = (f"{len(recs)} transcripts", f"{len(judges)} judges",
+             f"{len(modes)} modes", f"{len(runs)} run" + ("s" if len(runs) != 1 else ""))
+    if len(recs) * len(judges) * len(modes) * len(runs) == n:
+        return f"{head} ({' x '.join(parts)})"
+    return (f"{head} over {len(recs)} transcripts, judges {','.join(judges)}, "
+            f"modes {','.join(modes)}, runs {','.join(str(r) for r in runs)}; "
+            f"the queue is uneven, so it is not a product")
+
+
 def order_breadth_first(jobs: list[dict]) -> list[dict]:
     """Round-robin the queue across leaders instead of walking them alphabetically.
 
@@ -2215,8 +2243,7 @@ def main() -> int:
     else:
         jobs = order_breadth_first(jobs)
 
-    log(f"{len(jobs)} grading calls queued "
-        f"({len(paths)} transcripts x {len(judges)} judges x {len(modes)} modes x {args.repeats} repeats)")
+    log(queue_summary(jobs))
     pending_jobs = [j for j in jobs if not Path(j["dest"]).exists()]
     if pending_jobs:
         lead = []

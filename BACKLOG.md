@@ -18,19 +18,25 @@ Newest first.
   the grading contract and changing it makes new grades incomparable with the
   ones already collected.
 
-- **A grade record that failed validation counts as a cache hit.** Filed 2026-09-16.
-  `reuse_or_none()` in `scripts/grade.py` returns `cached` whenever the stored
-  record's identity matches (study, contract, prompt, input, mode, judge, model,
-  run). It never asks whether the stored record is a usable grade, so a record
-  with `validation_errors` is skipped forever on re-runs and the cell can only be
-  repaired with `--force`. Found live: 6 Gemini cells that failed the 25-word
+- **A grade record that failed validation counts as a cache hit. FIXED for
+  pundits (v2) 2026-09-16; LEADERS (v1) still has it.** Filed 2026-09-16.
+  `_v2_stored()` in `scripts/grade.py` returned `cached` whenever the stored
+  record's identity matched (study, contract, prompt, input, mode, judge, model,
+  run). It never asked whether the stored record was a usable grade, so a record
+  with `validation_errors` was skipped forever on re-runs and the cell could only
+  be repaired with `--force`. Found live: 6 Gemini cells that failed the 25-word
   quote cap in P8a were reported `CACHED` when scheduled again, which would have
-  left six permanent holes in a two-judge panel. A failing test is in
-  `scripts/test_pundits_contract.py`
-  (`check_invalid_record_is_not_reused`). The fix is to treat a record with
-  validation errors, or with no scored dimensions, as absent rather than cached,
-  and to say so in the run summary rather than counting it under `cached`.
-  Leaders (v1) uses a plain `dest.exists()` check and has the same hazard.
+  left six permanent holes in a two-judge panel. It now treats a record with
+  validation errors, or with no scored dimensions, as absent, moves it to
+  `_obsolete/` and says so. Guarded by `check_invalid_record_is_not_reused` in
+  `scripts/test_pundits_contract.py`.
+  (An earlier version of this entry named the function `reuse_or_none()`, which
+  has never existed in this repo. I invented it while writing a test and then
+  quoted my own invention back here as if it were the code. Check the name
+  against `grep` before filing, not against memory.)
+  **Still open: leaders (v1) uses a plain `dest.exists()` check and has the same
+  hazard.** Its fix is the same shape but it is not the same code path, and any
+  change there must keep `test_profile_leaders_identity.py` at 0 differences.
 
 - **Blind lowercase uses of handles that are ordinary words.** Filed 2026-09-15.
   `blind_study()` redacts a handle that is an ordinary English word only where it is
@@ -42,12 +48,23 @@ Newest first.
   `scripts/build_blind_wordlist.py` can decide when a lowercase use means the person.
   Needs a failing-then-passing test and a re-blind of any affected transcripts.
 
-- **Grade all 93 verified pilot recordings.** Filed 2026-09-15.
-  The P6 pilot verified 93 recordings across 10 people. P8a grades only 20 of them,
-  2 per person, drawn with a fixed seed, so the harness and first scores can be
-  reviewed before quota goes to the rest. Bring this back once the operator has
-  looked at the first 20 grades. The remaining 73 are listed in
-  `data-pundits/logs/pilot/report.json` under each person's `selected_keys`, minus
-  the ones in the P8a schedule. Grading them adds about 438 judge calls
-  (73 × 3 judges × 2 modes). The larger set also shows whether format moves
-  scores enough to need equal format weighting (option c in `docs/PUNDITS-PLAN.md`).
+- **Grade the rest of the verified pilot recordings.** Filed 2026-09-15,
+  re-counted 2026-09-16.
+  The P6 pilot verified **89** recordings across 10 people, not 93, and the panel
+  is **two** judges, not three, so both figures in the first version of this entry
+  were wrong. Counted from `data-pundits/logs/pilot/report.json`:
+
+  ```
+  ana-kasparian 6   asmongold 13   ben-shapiro 22   charlie-kirk 5   coleman-hughes 7
+  ezra-klein 7   hasan-piker 8   matt-walsh 8   sam-seder 7   steven-bonnell 6
+  ```
+
+  P8a graded 20 and P8a2 tops up to 5 each, which is 50. The remaining **39**
+  cost about **156 calls** (39 × 2 judges × 2 modes). Schedule them with
+  `schedule.py build --target-per-person 12 --graded ... --verified ...`, which
+  counts what is already complete rather than adding a fixed number; 12 is the
+  P5 target. Note the pool is very uneven: Ben Shapiro has 22 verified and
+  Charlie Kirk has 5, so a target of 12 leaves a reported shortfall for most
+  people and the equal-format-weighting question (option c in
+  `docs/PUNDITS-PLAN.md`) has to be settled against that imbalance, not assumed
+  away.
