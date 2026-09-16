@@ -133,11 +133,15 @@ def drop_partial_panels(grades: list[dict], panel: set[str],
     alone under OPEN_PER_LEADER=0. Both modes are required only once the corpus
     actually holds both, which is the pairing the halo needs.
     """
+    # Only run 0 fills a cell. A repeat is a measurement of the judge, so it
+    # must not complete an otherwise partial panel.
     cells: dict[tuple[str, str], set[tuple[str, str]]] = {}
     for g in grades:
-        cells.setdefault((g["leader_slug"], g["source_id"]), set()).add((g["judge"], g["mode"]))
+        cells.setdefault((g["leader_slug"], g["source_id"]), set())
+        if (g.get("run") or 0) == 0:
+            cells[(g["leader_slug"], g["source_id"])].add((g["judge"], g["mode"]))
     if modes is None:
-        modes = {g["mode"] for g in grades}
+        modes = {g["mode"] for g in grades if (g.get("run") or 0) == 0}
     required = {(j, m) for j in panel for m in modes}
     kept, dropped = [], []
     for g in grades:
@@ -443,6 +447,11 @@ def paired_halo(grades: list[dict], params: dict, n: int = BOOTSTRAP_N,
             "by_judge_raw": {j: round(st.mean([p["raw"] for p in ps if p["judge"] == j]), 6) for j in judges},
             "by_judge_calibrated": {j: round(st.mean([p["cal"] for p in ps if p["judge"] == j]), 4) for j in judges},
         }
+        # The interval above resamples TRANSCRIPTS, never judges, so it cannot
+        # see two judges disagreeing in sign. Report that separately and refuse
+        # to call such a halo significant. See halo_judge_agreement().
+        out[slug].update(halo_judge_agreement(out[slug]["by_judge_calibrated"],
+                                              out[slug]["ci_low"], out[slug]["ci_high"]))
     return out
 
 
@@ -480,6 +489,95 @@ def resolve_venue(votes: list[str]) -> tuple[str | None, bool]:
     top = max(sorted(counts), key=lambda v: counts[v])
     agreed = sum(1 for c in counts.values() if c == counts[top]) == 1
     return top, agreed
+
+
+def halo_judge_agreement(by_judge: dict[str, float], ci_low: float | None,
+                         ci_high: float | None) -> dict:
+    """Does a person's halo survive looking at the judges separately?
+
+    FOUND by adversarial audit 2026-09-16. `paired_halo()` resamples transcripts
+    and averages the judges inside each transcript, so judge disagreement can
+    never widen the interval. On the P8a2 board the judges' halos had opposite
+    signs for 8 of 10 people, and the only halo whose interval excluded zero was
+    the worst of them: Asmongold at +2.56 [+1.64, +3.67] with Fable at +6.57 and
+    Gemini at -1.45, a gap of 8.02 in opposite directions.
+
+    With two judges there is no honest bootstrap over the judge axis: the
+    between-judge variance would come from two points. So this does not widen
+    the interval. It refuses to call such a halo significant, and it reports the
+    gap and the sign agreement so a reader sees the disagreement the interval
+    cannot show.
+    """
+    vals = [v for v in by_judge.values() if v is not None]
+    gap = (max(vals) - min(vals)) if len(vals) >= 2 else None
+    if len(vals) < 2:
+        agree = None
+    else:
+        agree = all(v > 0 for v in vals) or all(v < 0 for v in vals)
+    excludes_zero = (ci_low is not None and ci_high is not None
+                     and (ci_low > 0 or ci_high < 0))
+    significant = bool(excludes_zero and agree)
+    if not excludes_zero:
+        note = "the interval spans zero"
+    elif agree is None:
+        note = "only one judge contributed, so there is no cross-judge agreement to check"
+    elif not agree:
+        note = (f"the interval excludes zero but the judges disagree in SIGN "
+                f"({', '.join(f'{j} {v:+.2f}' for j, v in sorted(by_judge.items()))}), "
+                f"so this is one judge's effect rather than a panel finding")
+    else:
+        note = "the interval excludes zero and both judges agree in sign"
+    return {"judge_gap": round(gap, 4) if gap is not None else None,
+            "judges_agree_sign": agree,
+            "panel_significant": significant,
+            "significance_note": note}
+
+
+def venue_support(rows: list[dict], min_n: int = None,
+                  min_people: int = 3, min_mixed_share: float = 0.80
+                  ) -> tuple[bool, list[str]]:
+    """Does the corpus support a venue adjustment at all? Returns (ok, reasons).
+
+    docs/PUNDITS-PLAN.md, "Venue adjustment, only if the data support it": it
+    "needs every venue type to have n >= MIN_VENUE_N and to appear for at least
+    3 people, and 80% of people to have at least 2 venue types. Otherwise the
+    board publishes unadjusted scores and says why."
+
+    That rule lived in the plan and in no code. FOUND by adversarial audit
+    2026-09-16: on the P8a2 board solo (7) and debate (4) were under the
+    minimum and only 70% of people had two formats, so two of the three
+    conditions failed, and the adjustment was applied anyway. The contrast it
+    applied was carried by 15 of 38 rows from four people and was then imposed
+    on three people who had contributed nothing to it.
+
+    `venue_effects` zeroes an individual thin venue. This is the stricter,
+    corpus-level question the plan actually asks, and a failure here turns the
+    whole adjustment off rather than pinning one level.
+    """
+    if min_n is None:
+        min_n = MIN_VENUE_N
+    usable = [r for r in rows if r.get("venue_type") and r.get("venue_agreed", True)]
+    reasons: list[str] = []
+    if not usable:
+        return False, ["no transcript carries an agreed venue type"]
+    counts: dict[str, int] = defaultdict(int)
+    people: dict[str, set] = defaultdict(set)
+    per_person: dict[str, set] = defaultdict(set)
+    for r in usable:
+        counts[r["venue_type"]] += 1
+        people[r["venue_type"]].add(r["leader_slug"])
+        per_person[r["leader_slug"]].add(r["venue_type"])
+    for v in sorted(counts):
+        if counts[v] < min_n:
+            reasons.append(f"venue {v!r} seen {counts[v]} times, under the minimum of {min_n}")
+        if len(people[v]) < min_people:
+            reasons.append(f"venue {v!r} appears for {len(people[v])} people, under the minimum of {min_people}")
+    mixed = [p for p, vs in per_person.items() if len(vs) >= 2]
+    share = len(mixed) / len(per_person)
+    if share < min_mixed_share:
+        reasons.append(f"{share:.0%} of people have two or more venue types, under the required "
+                       f"{min_mixed_share:.0%} ({sorted(set(per_person) - set(mixed))} have one)")
+    return (not reasons), reasons
 
 
 def venue_effects(rows: list[dict], field: str = "cal_overall",
@@ -879,8 +977,18 @@ def main() -> int:
     paired = paired_halo(usable, params) if is_v2 else {}
 
     # Per (leader, transcript, mode): consensus of the judges that graded it.
+    #
+    # RUN 0 ONLY. A repeat is a measurement of the JUDGE, not extra evidence
+    # about the speaker, which is why calibrate() and paired_halo() already
+    # exclude it. This loop did not, so a drift anchor re-graded under plan P5
+    # or P9b would have counted its recording two or three times in that
+    # person's mean. FOUND by adversarial audit 2026-09-16 and reproduced: one
+    # injected run-1 grade moved a person 5.3 points and two ranks.
+    repeat_grades = [g for g in usable if (g.get("run") or 0) != 0]
     per_transcript: dict[tuple, dict] = defaultdict(lambda: defaultdict(list))
     for g in usable:
+        if (g.get("run") or 0) != 0:
+            continue
         key = (g["leader_slug"], g["source_id"], g["mode"])
         gr = g["grade"]
         cov = gr.get("coverage") or 0.0
@@ -923,12 +1031,42 @@ def main() -> int:
     # Blinded only. The open pass is a small control sample and fitting a venue
     # effect on it would be noise.
     blinded_rows = [t for t in transcripts_out if t["mode"] == "blinded"]
-    venue_fit = {d: venue_effects(blinded_rows, field=f"cal_{d}") for d in DIMS}
-    for d in DIMS:
-        apply_venue_adjustment(blinded_rows, venue_fit[d], field=f"cal_{d}")
-    for t in blinded_rows:
-        t["cal_overall_venue_adj"] = round(
-            sum(WEIGHTS[d] * t[f"cal_{d}_venue_adj"] for d in DIMS), 2)
+    open_rows = [t for t in transcripts_out if t["mode"] == "open"]
+    # Contract v2 only. Two audit findings live here, and both are v2 behaviour:
+    # leaders keeps exactly what it had, pinned by the byte-identity test.
+    #
+    # 1. THE SUPPORT RULE IS A GATE, not a paragraph in the plan. If the corpus
+    #    cannot carry a format effect, the board publishes unadjusted scores and
+    #    says why, which is what docs/PUNDITS-PLAN.md prescribes.
+    # 2. THE ADJUSTMENT APPLIES TO BOTH MODES. It is FITTED on blinded rows only,
+    #    because the open pass is a small control sample and fitting on it would
+    #    be noise. Applying the blinded-fitted effect to open rows is what keeps
+    #    the two published columns comparable. It cancels in the halo, because
+    #    both sides of a matched pair carry the same format.
+    venue_ok, venue_reasons = venue_support(blinded_rows) if is_v2 else (True, [])
+    venue_targets = (blinded_rows + open_rows) if is_v2 else blinded_rows
+    if venue_ok:
+        venue_fit = {d: venue_effects(blinded_rows, field=f"cal_{d}") for d in DIMS}
+        for d in DIMS:
+            apply_venue_adjustment(venue_targets, venue_fit[d], field=f"cal_{d}")
+        for t in venue_targets:
+            t["cal_overall_venue_adj"] = round(
+                sum(WEIGHTS[d] * t[f"cal_{d}_venue_adj"] for d in DIMS), 2)
+    else:
+        # Report what it WOULD have done, which is the plan's leave-one-out
+        # sensitivity in the only form this corpus can support: the size of the
+        # correction that is being withheld.
+        would_fit = {d: venue_effects(blinded_rows, field=f"cal_{d}") for d in DIMS}
+        shifts = [sum(WEIGHTS[d] * would_fit[d].get(t.get("venue_type"), 0.0) for d in DIMS)
+                  for t in blinded_rows if t.get("venue_type")]
+        venue_fit = {d: {} for d in DIMS}
+        print(f"venue adjustment NOT applied: " + "; ".join(venue_reasons)
+              + f". Withheld correction would have moved blinded rows by a mean "
+                f"{st.mean([abs(x) for x in shifts]):.2f} points (max "
+                f"{max([abs(x) for x in shifts]):.2f}) if applied."
+              if shifts else f"venue adjustment NOT applied: " + "; ".join(venue_reasons),
+              file=sys.stderr)
+        venue_would_fit = would_fit
     venue_counts: dict[str, int] = defaultdict(int)
     for t in blinded_rows:
         if t.get("venue_type"):
@@ -1105,9 +1243,18 @@ def main() -> int:
         "venue_effects": {d: venue_fit[d] for d in DIMS},
         "venue_counts": dict(venue_counts),
         "venue_min_n": MIN_VENUE_N,
+        "venue_adjustment_applied": bool(venue_ok),
+        "venue_support_reasons": venue_reasons,
+        "venue_withheld_effects": ({d: venue_would_fit[d] for d in DIMS}
+                                   if not venue_ok else None),
         "venue_note": ("Points a FORMAT adds or removes with the speaker held fixed, fitted "
                        "as an additive leader+venue model and subtracted from each dimension. "
-                       "Venues seen fewer than venue_min_n times get exactly zero."),
+                       "Venues seen fewer than venue_min_n times get exactly zero. "
+                       "The adjustment is applied only when the plan's support rule passes; "
+                       "venue_adjustment_applied and venue_support_reasons say whether it did "
+                       "and why, and venue_withheld_effects carries the correction not applied. "
+                       "When applied it is FITTED on blinded rows and APPLIED to both modes, so "
+                       "the blinded and open columns stay comparable and the halo is unchanged."),
         # Which models actually answered for each judge. A judge is an ARM, not a
         # model, so a mid-corpus model bump would otherwise pool two different
         # distributions under one name. Calibration already keys on the model;

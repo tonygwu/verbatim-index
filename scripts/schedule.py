@@ -158,6 +158,12 @@ def scan_panels(grades_dir: Path, judges: list[str]) -> tuple[set[tuple[str, str
         if key[0] is None or key[1] is None:
             continue
         seen.add(key)
+        # A repeat (run > 0) measures the judge, not the speaker, and
+        # aggregate.py excludes it from every published number. Counting it as
+        # a filled cell here would mark a partial recording complete and stop
+        # the scheduler ever repairing it.
+        if (d.get("run") or 0) != 0:
+            continue
         if d.get("validation_errors") or not (d.get("grade") or {}).get("dimensions"):
             continue
         scored[key].add((d.get("judge"), d.get("mode")))
