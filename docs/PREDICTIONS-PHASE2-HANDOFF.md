@@ -106,12 +106,35 @@ The constant carries the reasoning and the measurement. If repo-0 disagrees with
 60, change the constant and re-run `score_predictions.py`; no model calls are
 needed, because every past-due prediction is already resolved and priced.
 
-## What is NOT in this run
+## What is NOT in this run, and must not be added yet
 
 Nothing from repo-1's supplemental web sources
-(`supplemental-sources-2026-09-14`). Run through this funnel at the 60-day floor
-those add 29 accepted predictions, 13 past due, 9 eligible, which would move
-Patrick Collison across the rank floor and nobody else. repo-1 had 46 more
-sources unextracted on quota and is extracting them now, so that number will
-grow. Integrating both runs together is a repo-0 decision and the two are
-independent.
+(`supplemental-sources-2026-09-14`). **repo-1 has asked that their run not be
+integrated yet, and that stands.** It was briefly integrated here on 2026-09-16
+and then withdrawn in full; the data branch carries the removal and the reason.
+
+What the trial measured, for whoever does integrate it later. Their records were
+still being extracted at the time, so these are a snapshot rather than the final
+figures:
+
+```
+              main only    with supplemental
+past due            225                  246
+eligible            152                  163
+scored              113                  121
+ranked                9                    9
+```
+
+Nobody crossed the floor. Patrick Collison went 1 -> 4 and Brian Chesky 1 -> 4,
+both one short. My projection beforehand said Collison would reach 5, and it was
+wrong because it applied the corpus-wide 74% resolve rate to a handful of
+records. Their run was still producing when it was measured, so a later
+integration will find more than this.
+
+Scoring the two corpora together needs the RENDER GUARD that trial produced. The
+page embeds only the corpus named by `--predictions`, so scoring two and
+rendering one averages a person's number over predictions their own drawer
+cannot show. `check_scores_are_renderable` refuses that and names the people. It
+found 8 such predictions across 4 people, invisible only because all four sat
+below the rank floor. Integrate both corpora into the page's inputs, not just
+into the scorer.
