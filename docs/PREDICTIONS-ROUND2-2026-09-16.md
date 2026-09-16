@@ -136,6 +136,50 @@ every record with the literal `supplemental-sources-2026-09-14`, which would
 have made every round-2 record claim it came from round 1. Guarded by
 `scripts/test_gate_evidence_shapes.py`, 20 checks, verified failing first.
 
+## Discovery results, as they land
+
+Counted from `<run>/findings/<slug>.json`. A PAST-DUE QUOTE is a verbatim
+sentence the agent believes passes all five gates AND whose deadline had passed
+by 2026-09-16. It is a lead, not an accepted prediction: the extractor and the
+verifier still have to agree, and the corpus keep rate is about a third.
+
+```
+leader            sources  past-due quotes  rejected  URLs checked
+satya-nadella          14               18        13            63
+bill-gates              7                8        42            54
+dario-amodei           10                1        17            22
+```
+
+**dario-amodei is a genuine negative and is dropped from the target list.** Ten
+sources read, twenty-two URLs checked, and exactly one past-due gate-passing
+quote. The cause is specific and is not a shortage of material: his near-dated
+claims hedge, with "could", "may" and "a substantial risk", so they fail the
+COMMITTED gate even though their deadlines have passed, while the claims he
+states firmly point at 2027 and beyond and so fail past-due. Both of the leads
+this run briefed him with failed on inspection. The interpretability target is
+2027, and the biological-weapons uplift claim is a risk statement inside a
+conditional. He cannot reach three from this sweep and no amount of further
+searching changes the shape of how he speaks.
+
+**Two date defects worth inheriting**, both caught by discovery agents rather
+than downstream.
+
+`gatesfoundation.org` serves JSON-LD `datePublished` of `2012-11-13` for the
+2012 annual letter and `2013-11-13` for the 2013 one. The identical 11-13 on
+both is a content-management migration stamp, not a writing date; each letter's
+own text places it in January. The agent took the LATER reading, which is the
+conservative one for lead time, recorded the caveat in the source, and checked
+that no gate outcome depends on the choice because every deadline involved is
+2015-12-31. That matters here more than elsewhere: four of Bill Gates's existing
+past-due predictions are already lost to `deadline_incoherent`, which is this
+same failure arriving through a YouTube upload date.
+
+Microsoft's annual-report letters carry NO date the page will admit to, so six
+of Nadella's sources are written with basis `unknown`. A dateless record cannot
+carry a horizon, so those predictions cannot become eligible. This is the
+fetcher refusing to invent a date, which is correct, and the cost is visible
+rather than hidden.
+
 ## Quota note worth inheriting
 
 A first launch of 16 discovery agents died within seconds, all 16, on an HTTP
