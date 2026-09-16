@@ -22,4 +22,4 @@ urllib3==2.7.0
 # exhausted while the new one had a full window. 0a74583 derives the fleet from
 # the config instead. v0.1.1 is also the first release whose dist reports its
 # own version, so `pip show` can tell the fixed build from the broken one.
-llm-quota-router @ git+https://github.com/tonygwu/llm-quota-router@v0.1.4
+llm-quota-router @ git+https://github.com/tonygwu/llm-quota-router@v0.1.5
