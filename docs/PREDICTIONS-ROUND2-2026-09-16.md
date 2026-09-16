@@ -309,6 +309,39 @@ exact-match grounding check is what makes this survivable, because a quote must
 appear verbatim on its own fetched page. **A fuzzy match here would let this
 class through**, which is the reason `locate_quote` has no fuzzy fallback.
 
+## `pgrep -f` bit again, in a new place
+
+The repo already forbids `pgrep -f` for detecting a running fetcher, after it
+failed twice on 2026-09-11. It bit this run too, in monitoring rather than in
+the pipeline, and it is worth recording because the symptom is different.
+
+Every "wait until extraction finishes" loop here was written as:
+
+```
+until [ "$(pgrep -f extract_predictions.py | wc -l)" = "0" ]; do sleep 300; done
+```
+
+`pgrep -f` matches any process whose FULL COMMAND LINE contains the pattern, and
+the agent session issuing these shell commands contains it too. So the check
+reported 8 to 10 "extractor processes" when there were only ever one or two, and
+it could never reach zero, because one of the things it was counting was the
+thing doing the counting. Eight such loops were armed before this was noticed.
+None would ever have fired.
+
+```
+pgrep -f extract_predictions.py          15252 26345 37206 37840 41444 ... (10)
+ps -Ao pid,args | awk '/[P]ython.*extract_predictions\.py/'    15252  (1)
+```
+
+That is the house's own six-spinning-poll-loops failure arriving through a
+monitor rather than through a daemon. Two lessons, and the second is the one
+worth keeping. Match the INTERPRETER and the script, not a bare filename, and
+bracket the first character so the pattern cannot match itself. And a liveness
+check that can never return zero is indistinguishable from a job that never
+finishes, so prefer a check you have seen return BOTH answers.
+
+The eight loops were stopped rather than left running.
+
 ## Quota note worth inheriting
 
 A first launch of 16 discovery agents died within seconds, all 16, on an HTTP
