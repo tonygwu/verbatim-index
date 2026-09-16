@@ -438,8 +438,26 @@ def main() -> int:
 
     bs = (REPO / "scripts" / "build_site.py").read_text()
     mast = bs[bs.index('<header class="mast">'):bs.index("</header>")]
-    check("XLINK: the index page links to the predictions page in its masthead", 'href="https://verbatim-predictions.tonygwu.com"' in mast)
-    check("XLINK: the predictions page links back to the index", 'href="https://verbatim-index.tonygwu.com"' in html)
+    # The link OUT of the index page is off, by one named switch, so that the
+    # finished board can be posted publicly without sending a reader to a board
+    # whose Score column is still empty for most of the roster. Both halves are
+    # pinned: the anchor must not be hard-coded into the masthead any more, and
+    # the text that comes back when the switch is flipped must still be a real
+    # link, or "turn it back on" would restore an empty string.
+    import build_site as BS
+    check("XLINK: the masthead carries no hard-coded predictions anchor, only the token",
+          "__XLINK__" in mast and "verbatim-predictions.tonygwu.com" not in mast, mast[-200:])
+    check("XLINK: the switch is OFF, so a rendered masthead carries no link out",
+          BS.SHOW_PREDICTIONS_LINK is False
+          and "verbatim-predictions.tonygwu.com" not in mast.replace(
+              "__XLINK__", BS.PREDICTIONS_LINK if BS.SHOW_PREDICTIONS_LINK else ""),
+          f"SHOW_PREDICTIONS_LINK={BS.SHOW_PREDICTIONS_LINK}")
+    check("XLINK: flipping the switch back restores a real anchor, not an empty string",
+          'href="https://verbatim-predictions.tonygwu.com"' in BS.PREDICTIONS_LINK,
+          BS.PREDICTIONS_LINK)
+    # The link back the OTHER way stays. It sends a reader from the unfinished
+    # board to the finished one, which is the direction that helps.
+    check("XLINK: the predictions page still links back to the index", 'href="https://verbatim-index.tonygwu.com"' in html)
     check("THEME: both templates substitute __THEME__ and __FONTS__ from site_theme",
           "__THEME__" in bs and "__THEME__" in B.TEMPLATE and "from site_theme import FONT_LINKS, THEME_CSS" in bs
           and "--d1:#2E6FC9" in html and ':root[data-theme="dark"]' in html)

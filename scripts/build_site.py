@@ -349,7 +349,7 @@ footer{
 <div class="wrap">
 
 <header class="mast">
-  <div class="eyebrow">__RUNDATE__ &middot; Blinded transcripts &middot; __N_JUDGES_WORD__ independent judges &middot; <a href="https://verbatim-predictions.tonygwu.com">Verbatim Predictions &rarr;</a></div>
+  <div class="eyebrow">__RUNDATE__ &middot; Blinded transcripts &middot; __N_JUDGES_WORD__ independent judges__XLINK__</div>
   <h1>Verbatim <em>Index</em></h1>
   <p class="thesis">
     __N_LEADERS__ technology leaders, ranked on the thinking their public speech actually demonstrates.
@@ -767,6 +767,18 @@ render();
 # typed into five separate sentences. It went stale the moment a third judge was
 # promoted: the page said two judges while three were setting the score. The
 # count is now read from the grades that actually reached the published number.
+# The cross-link from this page to Verbatim Predictions, OFF for now.
+# Turned off 2026-09-16 at the operator's request: this board is about to be
+# posted publicly, and the predictions board has a Score column that is still
+# empty for most of the roster, so a link out of the finished page lands a
+# reader on an unfinished one. It is a switch rather than a deletion because
+# the intent is to put it back, and a deleted line is harder to find than a
+# False. The back-link on the predictions page is deliberately UNCHANGED:
+# that direction sends a reader from the unfinished board to the finished one.
+SHOW_PREDICTIONS_LINK = False
+PREDICTIONS_LINK = (' &middot; <a href="https://verbatim-predictions.tonygwu.com">'
+                    'Verbatim Predictions &rarr;</a>')
+
 JUDGE_LABELS = {
     "fable": "Claude Fable 5.1",
     "astra": "OpenAI GPT-6 Astra",
@@ -1083,6 +1095,7 @@ def main() -> int:
         .replace("__RUNDATE__", datetime.now(timezone.utc).strftime("%d %B %Y"))
         .replace("__N_LEADERS__", str(len(rows)))
         .replace("__N_JUDGES_WORD__", judge_count_word(results))
+        .replace("__XLINK__", PREDICTIONS_LINK if SHOW_PREDICTIONS_LINK else "")
         .replace("__CONF_HIGH_MINUS_1__", str(HIGH_CONFIDENCE_TRANSCRIPTS - 1))
         .replace("__CONF_HIGH__", str(HIGH_CONFIDENCE_TRANSCRIPTS))
         .replace("__RANK_FLOOR__", str(MIN_TRANSCRIPTS_TO_RANK))
