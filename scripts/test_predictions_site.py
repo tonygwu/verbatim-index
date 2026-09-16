@@ -161,13 +161,18 @@ def main() -> int:
         check("SORT: default sort is name ascending and the Person header announces it in static HTML",
               'let sortKey = "name", sortDir = 1;' in html and '<th data-k="name" aria-sort="ascending">' in html)
         keys = re.findall(r'data-k="([a-z_]+)"', html)
-        # Six columns, and only two of them numbers. The five horizon and confidence breakdown
-        # columns moved into the drawer on 2026-09-13: they are three ways of splitting one count
-        # and read as a scoreboard in a table that scores nothing. Earliest and Latest became one
-        # sparkline on 2026-09-14, and Score joined as a deliberately empty sixth column; it carries
-        # no data-k because there is nothing to sort.
+        # FIVE columns. The five horizon and confidence breakdown columns moved into the
+        # drawer on 2026-09-13: they are three ways of splitting one count and read as a
+        # scoreboard in a table that scores nothing. Earliest and Latest became one
+        # sparkline on 2026-09-14. Score arrived empty and now carries a number.
+        # Transcripts was removed on 2026-09-16: it counts recordings, which is a
+        # property of what was COLLECTED rather than of the person, and it was actively
+        # misleading beside a Score column, because a high transcript count says nothing
+        # about whether anything of theirs has come due.
         check("SORT: the column keys are exactly the allowed set",
-              keys == ["name", "company", "accepted", "transcripts", "earliest"], str(keys))
+              # No scores file in this build, so Score is the nosort variant and
+              # carries no data-k. The live-scores build below asserts it gains one.
+              keys == ["name", "company", "accepted", "earliest"], str(keys))
         check("SORT: the dropped breakdown keys are still embedded in DATA and shown in the drawer",
               all(k in data[0] for k in ("h_explicit", "h_inferable", "h_none", "p_explicit", "p_qual"))
               and "${person.h_explicit} named in the quote" in html
@@ -228,6 +233,26 @@ def main() -> int:
               'data-k="score"' in h2 and 'class="nosort">Score' not in h2)
         # The masthead must not contradict the table. A page carrying numbers while its
         # own first sentence says nothing has been checked is worse than either alone.
+        # A row for somebody with nothing that has come due says nothing on a board
+        # that reports resolved foresight. alan has past_due 2 in the fixture and
+        # stays; a person absent from the scores file has nothing due and goes.
+        names2 = {r["name"] for r in embedded(h2, "DATA")}
+        check("LIST: a person with no past-due prediction is not listed at all",
+              "Ada L" in names2 and "Alan T" in names2 and len(names2) == 2, str(names2))
+        thin = td / "thin.json"
+        tdoc = json.loads(scores.read_text())
+        tdoc["leaders"] = [dict(l, past_due=0) if l["slug"] == "alan" else l
+                           for l in tdoc["leaders"]]
+        thin.write_text(json.dumps(tdoc))
+        p5 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(td / "site" / "t.html"),
+                             "--scores", str(thin)], capture_output=True, text=True, cwd=REPO)
+        n5 = {r["name"] for r in embedded((td / "site" / "t.html").read_text(), "DATA")}
+        check("LIST: dropping a person's past-due count to 0 removes their row",
+              p5.returncode == 0 and n5 == {"Ada L"}, f"{p5.returncode} {n5}")
+        check("LIST: with NO scores file nobody is hidden, because nothing says who is due",
+              len({r["name"] for r in data}) == 2, str({r["name"] for r in data}))
+
         check("SCORE: the masthead stops claiming everything is pending once anything is scored",
               "Every item pending" not in h2 and "every item\n    is pending" not in h2
               and "6 of 9 due predictions resolved" in h2, 
@@ -337,7 +362,7 @@ def main() -> int:
         check("SPARK: a malformed statement date raises rather than being sliced into a year", bad)
 
         check("SORT: the drawer cell spans every column",
-              '<td colspan="6">' in html and ncols == 6, str(ncols))
+              '<td colspan="5">' in html and ncols == 5, str(ncols))
         check("SORT: DATA is emitted alphabetically by name", [d["name"] for d in data] == ["Ada L", "Alan T"])
 
         ada = pred["ada"]

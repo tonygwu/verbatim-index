@@ -284,7 +284,7 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
   <table id="board">
     <colgroup>
       <col style="width:215px"><col style="width:205px">
-      <col style="width:105px"><col style="width:105px">
+      <col style="width:105px">
       <col><col style="width:95px">
     </colgroup>
     <thead><tr>
@@ -292,8 +292,6 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
       <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
       <th data-k="accepted">Predictions<button class="info" type="button" data-info="accepted"
         aria-expanded="false" aria-label="What does Predictions mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="transcripts">Transcripts<button class="info" type="button" data-info="transcripts"
-        aria-expanded="false" aria-label="What does Transcripts mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="earliest" class="axis"><span class="lbl">When it was said<button class="info" type="button" data-info="timeline"
         aria-expanded="false" aria-label="What does the timeline show?">?</button><span class="arrow">&#9650;</span></span><span class="sq-ax" id="ax"></span></th>
       <!-- score:start -->__SCORE_HEADER__<!-- score:end -->
@@ -346,8 +344,6 @@ const INFO = {
     appearances says more things. Nothing here has been checked against what happened.</p>
     <p>Open the row to read each one, and to filter by whether it carries a target date and by
     what the speaker said about likelihood.</p>`,
-  transcripts: `<p><b>Transcripts</b> holding at least one accepted prediction. The drawer says how many of
-    this person's transcripts extraction ran on, so a low count can be read against its coverage.</p>`,
   timeline: `<p><b>When it was said.</b> One square per year, __Y0__ to __Y1__, the same years on every
     row. The shading is how many of this person's accepted predictions carry a statement date in that
     year, banded 1, 2&ndash;3, 4&ndash;7, 8 or more on a scale shared by all 50 people. Hover a square
@@ -554,7 +550,7 @@ function render(){
   tb.innerHTML = rows.map(r => `<tr class="row" tabindex="0" data-slug="${esc(r.slug)}" aria-expanded="false">
     <td class="who"><div class="nm">${esc(r.name)}</div><div class="rl">${esc(r.role || "")}</div></td>
     <td class="org">${esc(r.company || "")}<span class="sector">${esc(r.sector || "")}</span></td>
-    ${["accepted","transcripts"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
+    ${["accepted"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
     <td class="spark">${spark(r)}</td>
     ${scoreCell(r)}
   </tr>`).join("");
@@ -628,7 +624,7 @@ document.addEventListener("click", e => {
   const person = DATA.find(d => d.slug === slug);
   const row = document.createElement("tr");
   row.className = "audit";
-  row.innerHTML = `<td colspan="6">${drawer(slug, person)}</td>`;
+  row.innerHTML = `<td colspan="5">${drawer(slug, person)}</td>`;
   tr.after(row);
   tr.setAttribute("aria-expanded", "true");
 });
@@ -758,14 +754,29 @@ def statement_years(by_slug: dict[str, list[dict]]) -> tuple[dict[str, dict], li
     return per, span
 
 
+# A person appears only if at least one of their predictions has come due. The
+# board reports resolved foresight, and a row for somebody with nothing to resolve
+# says nothing: five of the fifty have no accepted prediction and no transcript at
+# all, and five more have predictions whose deadlines are still in the future.
+# Their records stay in the corpus and in the drawers of the aggregate counts;
+# they simply do not get a line on a leaderboard. Set to 0 to show everyone.
+MIN_PAST_DUE_TO_LIST = 1
+
+
 def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict) -> list[dict]:
-    """One table row per person. `scores` is keyed by slug and may be empty, in
-    which case every row shows an em dash and the page says why."""
+    """One table row per person with something that has come due.
+
+    `scores` is keyed by slug and may be empty, in which case every row shows an
+    em dash and the page says why. When it is empty nobody is hidden either,
+    because without it there is no evidence about who has come due.
+    """
     rows = []
     for l in index["leaders"]:
         entry = roster.get(l["slug"], {})
         h = hist.get(l["slug"], {"years": {}, "undated": 0})
         sc = scores.get(l["slug"])
+        if scores and (sc or {}).get("past_due", 0) < MIN_PAST_DUE_TO_LIST:
+            continue
         rows.append({
             # A person below the floor carries no number and says so on hover. Never
             # a 0: an absent score and a score of zero mean opposite things here, and
