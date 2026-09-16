@@ -110,6 +110,106 @@ def build_schedule(items: list[tuple[str, str]], leans: dict[str, str], judges: 
     return entries
 
 
+def verified_keys(report_path: Path) -> set[tuple[str, str]]:
+    """The (slug, source_id) pairs a PERSON verified, read from the P6 pilot report.
+
+    This exists because the transcripts directory is not the eligible set.
+    MEASURED 2026-09-16: `data-pundits/transcripts_blind` holds 114 recordings
+    and the pilot verified 89, so scheduling the directory would send 25
+    unchecked recordings to the judges. The leaders board paid 44 wrong-person
+    recordings to learn that an unverified speaker reaches the published score,
+    and `report.json` is the only record of who actually looked.
+
+    An empty verified set raises rather than returning an empty allow-list. A
+    filter that silently permits nothing looks identical to a filter that is
+    switched off until you read the call count.
+    """
+    data = json.loads(Path(report_path).read_text())
+    people = data.get("people") or {}
+    keys = {tuple(k.split("/", 1)) for p in people.values() for k in p.get("selected_keys", [])}
+    keys = {k for k in keys if len(k) == 2}
+    if not keys:
+        raise RuntimeError(f"{report_path} names no verified recording; refusing to treat that as "
+                           f"an empty allow-list")
+    return keys
+
+
+def scan_panels(grades_dir: Path, judges: list[str]) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """Read a grades tree and split its recordings into (complete, partial).
+
+    COMPLETE means every (judge, mode) cell of the panel holds a record that is
+    really a grade: no validation errors, and at least one scored dimension.
+    PARTIAL means at least one cell is a grade and at least one is not.
+
+    A record that failed validation counts as ABSENT here, never as a cell. It
+    is not a grade, and `aggregate.drop_partial_panels` will throw the whole
+    recording away over it, so a scheduler that read it as present would leave
+    the hole open for ever. That is the same rule `grade.py` now applies to its
+    cache.
+    """
+    required = {(j, m) for j in judges for m in MODES}
+    scored: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
+    seen: set[tuple[str, str]] = set()
+    for p in sorted(Path(grades_dir).rglob("*.json")):
+        if "_obsolete" in p.parts or "_provenance" in p.parts or p.name.endswith(".tmp"):
+            continue
+        d = json.loads(p.read_text())
+        key = (d.get("leader_slug"), d.get("source_id"))
+        if key[0] is None or key[1] is None:
+            continue
+        seen.add(key)
+        if d.get("validation_errors") or not (d.get("grade") or {}).get("dimensions"):
+            continue
+        scored[key].add((d.get("judge"), d.get("mode")))
+    complete = {k for k in seen if required <= scored.get(k, set())}
+    partial = {k for k in seen if k not in complete and scored.get(k)}
+    return complete, partial
+
+
+def select_topup(items: list[tuple[str, str]], complete: set[tuple[str, str]],
+                 partial: set[tuple[str, str]], target: int,
+                 seed: int) -> tuple[list[tuple[str, str]], dict[str, int]]:
+    """Pick enough recordings to bring each person UP TO `target` complete ones.
+
+    Returns (picked, shortfall). `shortfall` names every person who cannot reach
+    the target from the material available, with how many they are short. It is
+    reported rather than absorbed: a person silently left under
+    MIN_TRANSCRIPTS_TO_RANK is a person missing from the board for a reason
+    nobody wrote down.
+
+    "Grade N more each" and "bring each person to N" are different instructions
+    and the pilot proved it. The first batch graded 2 per person against a rank
+    floor of 5, so a second batch of 2 would have reached 4 and ranked nobody.
+
+    A partial recording is scheduled BEFORE any new one, because its other cells
+    are already scored and reuse their cache, so repairing it costs one call
+    where a new recording costs four.
+    """
+    if target < 1:
+        raise ValueError("target must be at least 1")
+    rng = random.Random(seed)
+    by_person: dict[str, list[str]] = defaultdict(list)
+    for slug, sid in sorted(set(items)):
+        by_person[slug].append(sid)
+
+    picked: list[tuple[str, str]] = []
+    shortfall: dict[str, int] = {}
+    for slug in sorted(by_person):
+        have = sum(1 for sid in by_person[slug] if (slug, sid) in complete)
+        need = target - have
+        if need <= 0:
+            continue
+        repairs = [sid for sid in by_person[slug] if (slug, sid) in partial]
+        fresh = [sid for sid in by_person[slug]
+                 if (slug, sid) not in complete and (slug, sid) not in partial]
+        rng.shuffle(fresh)
+        take = (sorted(repairs) + fresh)[:need]
+        picked.extend((slug, sid) for sid in take)
+        if len(take) < need:
+            shortfall[slug] = need - len(take)
+    return picked, shortfall
+
+
 def write_manifest(path: Path, entries: list[dict]) -> None:
     from atomicio import write_atomic
     write_atomic(Path(path), "".join(json.dumps(e, sort_keys=True) + "\n" for e in entries))
@@ -149,12 +249,45 @@ def main() -> int:
     b.add_argument("--anchors", default="", help="Comma-separated slug/source_id transcripts to re-grade per group.")
     b.add_argument("--anchor-every", type=int, default=None)
     b.add_argument("--out", required=True)
+    b.add_argument("--graded", default=None,
+                   help="Existing grades tree. With --target-per-person, recordings whose panel is "
+                        "already complete are skipped and partial ones are repaired first.")
+    b.add_argument("--target-per-person", type=int, default=None,
+                   help="Schedule up to this many COMPLETE recordings per person, counting what "
+                        "--graded already holds. This is a target, not a quantity to add.")
+    b.add_argument("--verified", default=None,
+                   help="P6 pilot report.json. Only recordings a person verified are scheduled; "
+                        "the transcripts directory also holds unverified ones.")
     SP.add_study_arg(b)
     args = ap.parse_args()
-    SP.guard(args.study, args.transcripts, args.lean_labels, args.out)
+    paths = [args.transcripts, args.lean_labels, args.out]
+    paths += [p for p in (args.graded, args.verified) if p]
+    SP.guard(args.study, *paths)
+    if (args.target_per_person is None) != (args.graded is None):
+        raise SystemExit("REFUSING: --target-per-person and --graded are used together; a target "
+                         "without the existing grades would recount from zero and re-grade the corpus")
     items = [(p.parent.name, p.stem) for p in sorted(Path(args.transcripts).rglob("*.json"))
              if not p.name.endswith(".tmp")]
     leans = json.loads(Path(args.lean_labels).read_text())
+    if args.verified:
+        allowed = verified_keys(Path(args.verified))
+        dropped = [i for i in items if i not in allowed]
+        items = [i for i in items if i in allowed]
+        print(f"verified filter: {len(items)} of {len(items) + len(dropped)} transcripts on disk "
+              f"were verified by a person; {len(dropped)} unverified are not scheduled", file=sys.stderr)
+        if not items:
+            raise SystemExit("REFUSING: no transcript on disk is in the verified set")
+    if args.target_per_person is not None:
+        judges = [j.strip() for j in args.judges.split(",") if j.strip()]
+        complete, partial = scan_panels(Path(args.graded), judges)
+        items, shortfall = select_topup(items, complete, partial, args.target_per_person, args.seed)
+        print(f"top-up to {args.target_per_person} per person: {len(complete)} recordings already "
+              f"complete, {len(partial)} partial to repair, {len(items)} scheduled", file=sys.stderr)
+        if shortfall:
+            print("SHORT of material, these people stay below the target: "
+                  + ", ".join(f"{s} by {n}" for s, n in sorted(shortfall.items())), file=sys.stderr)
+        if not items:
+            raise SystemExit("REFUSING: every person is already at the target; nothing to schedule")
     anchors = [tuple(a.split("/", 1)) for a in args.anchors.split(",") if a.strip()]
     try:
         entries = build_schedule(items, leans, [j.strip() for j in args.judges.split(",") if j.strip()],
