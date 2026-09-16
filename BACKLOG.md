@@ -5,18 +5,42 @@ Newest first.
 
 ## Verbatim Pundits
 
-- **The 25-word quote cap costs about 9% of judge calls.** Filed 2026-09-16.
-  In P8a, 7 of 80 panel cells failed validation, and every one failed on the same
-  rule: `d1_steelmanning` or `d3_good_faith` quote exceeds 25 words. It hits both
-  arms (6 Gemini, 1 Fable), so it is the rubric's ask rather than one judge's
-  habit, and `AGENTS.md` records the same failure mode on the leaders board
-  ("Astra failed schema validation three times here, so the quote-cap overrun is
-  not unique to the new arm"). Each failure costs a full re-grade of a 20k-word
-  transcript. Options, none yet measured: raise the cap; keep the cap but have
-  the judge truncate its own quote to the cap; or accept the re-grade cost and
-  budget for it. Measure before changing anything, because the cap is part of
-  the grading contract and changing it makes new grades incomparable with the
-  ones already collected.
+- **The 25-word quote cap is uneven, and moving it costs a full re-grade.**
+  Filed 2026-09-16, MEASURED 2026-09-16 after an adversarial audit.
+  Measure it any time with:
+
+  ```
+  .venv/bin/python scripts/filter_incidence.py --logs data-pundits/logs/p8a2 \
+      data-pundits/logs/p8a --obsolete data-pundits/grades/_obsolete \
+      --match "exceeds 25 words" --attempted 50
+  ```
+
+  Across all eight grading rounds it rejected **24** grades:
+
+  ```
+  by judge   fable 5 (5.0%)   gemini 19 (19.0%)     ratio 3.8x, flagged SKEWED
+  by cell    gemini/blinded 12, gemini/open 7, fable/open 4, fable/blinded 1
+  by person  hasan-piker 5, steven-bonnell 5, ana-kasparian 3, asmongold 3,
+             coleman-hughes 3, ezra-klein 2, matt-walsh 2, ben-shapiro 1,
+             charlie-kirk 0, sam-seder 0
+  ```
+
+  So it is not the uniform ~8% tax the first version of this entry implied. It
+  is a filter on ONE judge's formatting habit, and every rejection is re-graded
+  until it passes, which selects which of that judge's samples reaches the
+  corpus. The audit measured the selection at +1.07 points (se 0.77, n=24),
+  which is not distinguishable from zero at this size.
+
+  **Changing the cap re-grades everything.** The number lives in RUBRIC.md and
+  judge_output.schema.json, both hashed into `contract_id`. VERIFIED by
+  simulation: raising it to 40 words moves the contract from
+  `3844dd2693acd471` to `7aa8f163de1f0b2e`, which makes every grade already
+  collected incompatible at aggregation. Decide before the full P9 run, while
+  the re-grade cost is 200 cells rather than a thousand. Three options, none
+  measured yet: raise the cap; keep the cap but relax the HANDLING so an
+  overrun is recorded rather than rejecting the whole grade, which does NOT
+  change `contract_id` because the check lives in `grade.py`; or accept the
+  re-grade cost and budget for it.
 
 - **A grade record that failed validation counts as a cache hit. FIXED for
   pundits (v2) 2026-09-16; LEADERS (v1) still has it.** Filed 2026-09-16.

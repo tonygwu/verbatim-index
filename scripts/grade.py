@@ -342,6 +342,54 @@ def apply_per_leader_limit(paths, limit, slug_of):
     return kept
 
 
+# Plan P8: "Retry cap per judge: 15% of that judge's nominal calls in each
+# component. Reaching the cap stops the run with an error taxonomy, rather than
+# retrying further." FOUND by adversarial audit 2026-09-16 to be implemented
+# nowhere. grade.py has no internal retry loop, so the cap acts on the failure
+# rate of the run in flight, which is the thing that actually burns quota.
+RETRY_CAP_SHARE = 0.15
+
+
+class FailureBudget:
+    """Stop dispatching for a judge that is failing past its share of the run.
+
+    MEASURED on the P8a2 top-up, against 64 scheduled calls per judge: fable
+    failed 25 times (39%), 22 of them `auth_or_quota` after its session window
+    closed, and gemini 18 times (28%). Every fable call after that window closed
+    spent quota to learn the same thing again. A budget stops that judge and
+    lets the other one finish, rather than failing the whole run or grinding on.
+
+    The budget is spent by FAILURES only. A success costs nothing, so a long
+    healthy run never trips it. The floor of 1 keeps a very short run from
+    tripping on its first failure, which would make a 3-call repair impossible.
+    """
+
+    def __init__(self, scheduled: dict[str, int], share: float = RETRY_CAP_SHARE):
+        self.share = share
+        self.caps = {j: max(1, int(n * share)) for j, n in scheduled.items()}
+        self.failures: dict[str, int] = {j: 0 for j in scheduled}
+
+    def cap(self, judge: str) -> int:
+        return self.caps.get(judge, 0)
+
+    def record(self, judge: str, failed: bool) -> None:
+        if failed and judge in self.failures:
+            self.failures[judge] += 1
+
+    def exhausted(self, judge: str) -> bool:
+        if judge not in self.caps:
+            return False
+        return self.failures[judge] > self.caps[judge]
+
+    def reason(self, judge: str) -> str:
+        return (f"judge {judge!r} failed {self.failures.get(judge, 0)} times against a cap of "
+                f"{self.cap(judge)} ({self.share:.0%} of its {self.caps.get(judge, 0) and ''}"
+                f"scheduled calls); remaining {judge} jobs were not dispatched")
+
+    def stopped(self) -> list[str]:
+        return sorted(j for j in self.caps if self.exhausted(j))
+
+
 def queue_summary(jobs: list[dict]) -> str:
     """Describe the queue that will actually run, derived from the jobs themselves.
 
@@ -2257,8 +2305,30 @@ def main() -> int:
 
     results = []
     done = 0
+    # Plan P8's retry cap, acting on the failure rate of the run in flight. A
+    # task submitted early but STARTED late sees the updated budget, because the
+    # pool runs it when a worker frees up, so one check at the top of the call
+    # is enough to stop a judge mid-run without cancelling the others.
+    scheduled_per_judge: dict[str, int] = {}
+    for j in jobs:
+        scheduled_per_judge[j["judge"]] = scheduled_per_judge.get(j["judge"], 0) + 1
+    budget = FailureBudget(scheduled_per_judge)
+    log("retry cap: " + ", ".join(f"{j} stops after {budget.cap(j)} failures of "
+                                  f"{scheduled_per_judge[j]} scheduled"
+                                  for j in sorted(scheduled_per_judge)))
+    FAILING = ("failed", "invalid", "refused", "stale_cache")
+
+    def run_one(job: dict) -> dict:
+        if budget.exhausted(job["judge"]):
+            return {"status": "skipped", "id": job["rec"]["transcript_id"], "judge": job["judge"],
+                    "mode": job["mode"], "run": job["run"], "error_type": "retry_budget_exhausted",
+                    "detail": budget.reason(job["judge"])}
+        r = grade_one(job)
+        budget.record(job["judge"], failed=r["status"] in FAILING)
+        return r
+
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = [ex.submit(grade_one, j) for j in jobs]
+        futs = [ex.submit(run_one, j) for j in jobs]
         for fut in cf.as_completed(futs):
             r = fut.result()
             results.append(r)
@@ -2266,23 +2336,28 @@ def main() -> int:
             tag = r["status"].upper()
             extra = f" overall={r['overall']}" if r["status"] == "ok" else f" {r.get('error_type','')}"
             log(f"[{done}/{len(jobs)}] {tag} {r['judge']}/{r['mode']}/r{r['run']} {r['id']}{extra}")
+    if budget.stopped():
+        log("RETRY CAP REACHED: " + "; ".join(budget.reason(j) for j in budget.stopped()))
 
     ok = [r for r in results if r["status"] == "ok"]
     cached = [r for r in results if r["status"] == "cached"]
     invalid = [r for r in results if r["status"] == "invalid"]
     refused = [r for r in results if r["status"] == "refused"]
     failed = [r for r in results if r["status"] == "failed"]
+    # Never dispatched, because their judge had spent its failure budget. Counted
+    # and named rather than quietly missing from the tally.
+    skipped = [r for r in results if r["status"] == "skipped"]
     # Contract v2 only: a stored grade whose identity no longer matches its job.
     # Left in place, named, and counted as a failure of the run.
     stale = [r for r in results if r["status"] == "stale_cache"]
 
     Path(args.errors).parent.mkdir(parents=True, exist_ok=True)
     with open(args.errors, "w") as fh:
-        for r in failed + invalid + refused + stale:
+        for r in failed + invalid + refused + stale + skipped:
             fh.write(json.dumps(stamp_failure(r)) + "\n")
 
     tax: dict[str, int] = {}
-    for r in failed + invalid + refused + stale:
+    for r in failed + invalid + refused + stale + skipped:
         tax[r.get("error_type", "unknown")] = tax.get(r.get("error_type", "unknown"), 0) + 1
 
     gemini_ids = gemini_identity_report(results) if "gemini" in judges else None
@@ -2300,6 +2375,8 @@ def main() -> int:
         "invalid_schema": len(invalid),
         "judge_refusals": len(refused),
         "failed": len(failed),
+        "skipped_over_retry_cap": len(skipped),
+        "retry_cap_stopped_judges": budget.stopped(),
         "error_taxonomy": tax,
         "median_elapsed_sec": sorted(r["elapsed"] for r in ok)[len(ok) // 2] if ok else None,
         "gemini_identities": gemini_ids,
