@@ -109,8 +109,9 @@ MIN_TRANSCRIPTS_TO_RANK = HIGH_CONFIDENCE_TRANSCRIPTS
 MIN_SUBJECT_SHARE = 10
 
 
-def drop_partial_panels(grades: list[dict], panel: set[str]) -> tuple[list[dict], list[dict]]:
-    """Split grades into (kept, dropped): a recording needs every panel judge in BOTH modes.
+def drop_partial_panels(grades: list[dict], panel: set[str],
+                        modes: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+    """Split grades into (kept, dropped): a recording needs every panel judge in every mode run.
 
     Plan P5: "A transcript missing any required cell after the retry cap is
     excluded from BOTH views for ALL judges", and the loss is reported.
@@ -125,11 +126,19 @@ def drop_partial_panels(grades: list[dict], panel: set[str]) -> tuple[list[dict]
 
     `panel` is derived from the grades present by the caller, never typed here:
     a hand-written judge list is the defect this repo has already paid for.
+    `modes` is derived the same way, and for the same reason. A first version
+    of this function typed ("blinded", "open") into the required set, so a
+    corpus graded blinded-only lost EVERY grade to a missing open cell that was
+    never scheduled. That is not hypothetical: leaders runs the blinded pass
+    alone under OPEN_PER_LEADER=0. Both modes are required only once the corpus
+    actually holds both, which is the pairing the halo needs.
     """
     cells: dict[tuple[str, str], set[tuple[str, str]]] = {}
     for g in grades:
         cells.setdefault((g["leader_slug"], g["source_id"]), set()).add((g["judge"], g["mode"]))
-    required = {(j, m) for j in panel for m in ("blinded", "open")}
+    if modes is None:
+        modes = {g["mode"] for g in grades}
+    required = {(j, m) for j in panel for m in modes}
     kept, dropped = [], []
     for g in grades:
         have = cells[(g["leader_slug"], g["source_id"])]

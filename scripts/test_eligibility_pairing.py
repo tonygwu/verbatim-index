@@ -119,6 +119,25 @@ def main() -> int:
               bool(dropped) and any("gemini" in str(d.get("_dropped_reason", "")) for d in dropped),
               str([d.get("_dropped_reason") for d in dropped][:1]))
 
+        # The MODES are derived from the corpus too, exactly as the panel is.
+        # A first version typed ("blinded", "open") into the required set, so a
+        # blinded-only corpus lost every grade: each recording was reported as
+        # missing an open cell that was never scheduled. That is the repo's
+        # hand-typed-judge-list defect arriving in the other dimension, and it
+        # is not hypothetical - leaders runs the blinded pass alone under
+        # OPEN_PER_LEADER=0, and test_profile_scoring.py's fixture corpus is
+        # blinded-only. Found 2026-09-16, one commit after the panel rule.
+        blind_only = [pg("b1", j, "blinded") for j in ("fable", "gemini")]
+        kept, dropped = A.drop_partial_panels(blind_only, {"fable", "gemini"})
+        check("a blinded-only corpus keeps every grade, because open was never scheduled",
+              len(kept) == 2 and dropped == [], f"kept={len(kept)} dropped={[d.get('_dropped_reason') for d in dropped]}")
+        # And a corpus that HAS both modes still drops a recording missing one.
+        mixed = blind_only + [pg("b2", j, m) for m in ("blinded", "open") for j in ("fable", "gemini")]
+        kept, dropped = A.drop_partial_panels(mixed, {"fable", "gemini"})
+        check("once any recording has an open cell, a blinded-only recording is dropped",
+              {(x["source_id"]) for x in kept} == {"b2"} and len(dropped) == 2,
+              f"kept={sorted({x['source_id'] for x in kept})} dropped={len(dropped)}")
+
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + "; ".join(FAIL))

@@ -1,22 +1,22 @@
 {
-  "study_id": "pundits",
-  "title": "Verbatim Pundits",
-  "tagline": "How intellectually honest political commentators are in what they actually say on the record.",
-  "interpretation": "Scores describe argumentative behaviour observed in sampled recordings. They are not fact-checks, and they are not judgements of a person's sincerity or character.",
-  "blinding_note": "In the blinded score the judges read the transcript with the speaker's name and show removed. That does not make the speaker anonymous: a well-known commentator is often recognisable from their positions, and two of the three judges can search the web, which is measured and disclosed rather than blocked. The open score gives the judges the name; the difference between the two is shown as the halo.",
-  "dimensions": {
-    "d1_steelmanning": {
-      "question": "Does the speaker represent the other side fairly, at its strongest?",
-      "explainer": "Credit for stating an opposing view accurately when that view appears in the recording, for answering its strongest form rather than a weaker one, and for naming where the real disagreement lies. The speaker loses credit for claiming bad motives without evidence given in the recording."
-    },
-    "d2_epistemic_rigor": {
-      "question": "Does the speaker's confidence match the support they give?",
-      "explainer": "Credit for backing load-bearing claims with stated evidence, a source or a mechanism, for separating fact from interpretation and speculation, for handling numbers consistently, and for saying what would change their mind. This checks the reasoning shown, not whether the claims are true."
-    },
-    "d3_good_faith": {
-      "question": "Does the speaker argue in good faith and hold one standard?",
-      "explainer": "Credit for applying the same standard to cases set side by side, for conceding a good point, for answering the question actually asked, for avoiding insults and insinuation, and for departing from their own side with reasons when the recording shows what that side is."
-    }
+ "study_id": "pundits",
+ "title": "Verbatim Pundits",
+ "tagline": "How intellectually honest political commentators are in what they actually say on the record.",
+ "interpretation": "Scores describe argumentative behaviour observed in sampled recordings. They are not fact-checks, and they are not judgements of a person's sincerity or character.",
+ "blinding_note": "In the blinded score the judges read the transcript with the speaker's name and show removed. That does not make the speaker anonymous: a well-known commentator is often recognisable from their positions, and one of the two judges can search the web, which is measured and disclosed rather than blocked. The open score gives the judges the name; the difference between the two is shown as the halo.",
+ "dimensions": {
+  "d1_steelmanning": {
+   "question": "Does the speaker represent the other side fairly, at its strongest?",
+   "explainer": "Credit for stating an opposing view accurately when that view appears in the recording, for answering its strongest form rather than a weaker one, and for naming where the real disagreement lies. The speaker loses credit for claiming bad motives without evidence given in the recording."
   },
-  "method": "Each recording is transcribed, the speaker's name and show are removed for the blinded score, and three AI judges score it against a fixed rubric: Claude Fable, GPT Astra and Gemini Flash. Each judge's scale is calibrated onto a shared one, a person's score is the mean over their recordings, and the interval is a bootstrap over those recordings. A dimension a recording gives no real chance to show is marked not observed and does not count."
+  "d2_epistemic_rigor": {
+   "question": "Does the speaker's confidence match the support they give?",
+   "explainer": "Credit for backing load-bearing claims with stated evidence, a source or a mechanism, for separating fact from interpretation and speculation, for handling numbers consistently, and for saying what would change their mind. This checks the reasoning shown, not whether the claims are true."
+  },
+  "d3_good_faith": {
+   "question": "Does the speaker argue in good faith and hold one standard?",
+   "explainer": "Credit for applying the same standard to cases set side by side, for conceding a good point, for answering the question actually asked, for avoiding insults and insinuation, and for departing from their own side with reasons when the recording shows what that side is."
+  }
+ },
+ "method": "Each recording is transcribed, the speaker's name and show are removed for the blinded score, and two AI judges score it against a fixed rubric: Claude Fable and Gemini Flash. Each judge's scale is calibrated onto a shared one, a person's score is the mean over their recordings, and the interval is a bootstrap over those recordings. A dimension a recording gives no real chance to show is marked not observed and does not count."
 }
