@@ -147,16 +147,20 @@ thead th.axis .lbl{display:block}
 .legend i.k.q4{background:var(--d2)}
 td.pend{text-align:center; font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--faint)}
 /* score:start */
-dl.kv dd.yes{color:var(--d2); font-weight:600}
-dl.kv dd.no{color:var(--warn,#b3541e); font-weight:600}
-b.yes{color:var(--d2)}
-b.no{color:var(--warn,#b3541e)}
+/* Green for a positive score, red for a negative one. NOT --d1/--d2, which are
+   the sparkline's own blue and rust: reusing those made +0.19 and -0.11 render
+   in the same colour, so the sign was invisible. --d3 and --bad are defined in
+   both the light and dark palettes, so this stays theme-aware. */
+dl.kv dd.yes{color:var(--d3); font-weight:600}
+dl.kv dd.no{color:var(--bad); font-weight:600}
+b.yes{color:var(--d3)}
+b.no{color:var(--bad)}
 ul.ev{margin:2px 0 0; padding-left:16px}
 ul.ev li{margin-bottom:6px}
 td.sc{text-align:right; padding-right:14px; font-family:"IBM Plex Mono",monospace; font-size:14px; font-variant-numeric:tabular-nums}
 td.sc .v{font-weight:600}
-td.sc .pos{color:var(--d2)}
-td.sc .neg{color:var(--warn,#b3541e)}
+td.sc .pos{color:var(--d3)}
+td.sc .neg{color:var(--bad)}
 td.sc .n{display:block; font-size:10px; color:var(--faint); letter-spacing:.02em; margin-top:2px}
 td.sc.none{text-align:center; color:var(--faint)}
 /* score:end */
