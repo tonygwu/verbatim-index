@@ -521,3 +521,51 @@ This is the second confident wrong diagnosis in this workstream, after the
 codex_b "router bug" that was a stale pin. Both had the same shape: a plausible
 mechanism asserted from one symptom, couriered without testing the mechanism
 itself. The symptom was reproducible each time; the explanation was not tested.
+
+## Correction, 2026-09-16: the contract table, and the size of the verifier effect
+
+repo-0 corrected two claims above. Both reproduced independently here before
+being accepted.
+
+**predictions-2.1 never produced a record.** The section above frames the hazard
+as "my 2.0 records against a 2.1 corpus". That is wrong. 2.1 was a PIN, not a
+state of the data. Measured over all 1,494 records on main:
+
+```
+policy_release on records   None          1494
+extraction contract_id      d795f6f1d88b  1470
+                            3a54940218c0    22
+                            8aeda1ba6395     2
+f2edf433e24e present        False
+```
+
+So the corpus predates the policy-release mechanism entirely, and the real
+comparison is 2.0 against a PRE-RELEASE corpus spanning three contracts. The
+hazard is real and differently shaped than described. main has since moved to
+predictions-2.2 (extraction bf5f8441c54f, verification be28981b6b8b) after an
+operator decision to read "on track to" and "on track for" as committed under
+gate G3.
+
+**The 45% figure is direction-only, and so is repo-0's 54%.** This document says
+Gemini rejects roughly twice what Fable rejects, on the brian-chesky control:
+fable 17/24 against gemini 6/19. That is one leader. repo-0's corpus-wide figure
+is fable 79/145 = 0.545 against gemini 396/1333 = 0.297, which is 54% rather
+than 45%, and is confounded because the quota router chooses the harness, so it
+mixes verifier strictness with transcript difficulty. Their within-leader paired
+test does not settle it either: only 4 leaders have at least 3 candidates under
+both, giving mean(gemini - fable) = -0.146, sd 0.281, n = 4.
+
+DIRECTION HOLDS: Gemini is the stricter verifier, and the corpus bar is the
+Gemini bar, because 1,333 of 1,478 verifications on main are Gemini. MAGNITUDE
+IS UNPROVEN. Neither 45% nor 54% should be quoted as a rate, and no plan should
+depend on one. The operational conclusion is unchanged and is the only thing
+that needed a number at all: pin `--verifier gemini` for any new ingestion, and
+do not integrate Fable-verified records beside a Gemini-verified board.
+
+**An upside of the G3 change, measured on these sources.** "on track to|for"
+appears 19 times across the 89 supplemental sources: earnings_call 13, letter 4,
+keynote 1, interview 1; lip-bu-tan 8, jack-dorsey 4, patrick-collison 3,
+amjad-masad 2, brian-chesky 2. It concentrates exactly where the yield already
+was, and on the leader who is both the biggest gainer and the most
+bias-exposed. That is an upper bound on new candidates and not a yield estimate,
+because the other four gates still apply.
