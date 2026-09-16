@@ -108,14 +108,20 @@ def main() -> int:
     check("COUNTS: the unresolvable and the ineligible are reported beside the number",
           ada["past_due"] == 7 and ada["unresolvable"] == 1 and ada["eligible"] == 6
           and ada["resolved"] == 5, str({k: ada[k] for k in ("past_due", "eligible", "resolved", "unresolvable")}))
-    check("FLOOR: four scored is below the floor of five, so the person is not ranked",
-          S.MIN_SCORED_TO_RANK == 5 and ada["ranked"] is False and ada["mean_points"] is not None,
-          "the number is kept in the file and withheld from the page")
+    # The floor is a constant the operator moves; it went 5 -> 3 on 2026-09-16.
+    # These read it rather than hard-coding a number, so the case survives a move.
+    below = [rec(f"b{i}") for i in range(S.MIN_SCORED_TO_RANK - 1)]
+    bj, _ = S.join(below, {f"b{i}": res(f"b{i}", "occurred") for i in range(len(below))},
+                   {f"b{i}": pri(f"b{i}", 0.5) for i in range(len(below))})
+    b = S.per_leader(bj, {"ada": "Ada L"})[0]
+    check("FLOOR: one short of the floor is not ranked, and KEEPS its number in the file",
+          b["ranked"] is False and b["mean_points"] is not None,
+          f"floor {S.MIN_SCORED_TO_RANK}, n {b['n_scored']}")
 
-    many = [rec(f"x{i}") for i in range(5)]
-    lj, _ = S.join(many, {f"x{i}": res(f"x{i}", "occurred") for i in range(5)},
-                   {f"x{i}": pri(f"x{i}", 0.5) for i in range(5)})
-    check("FLOOR: five scored clears it",
+    many = [rec(f"x{i}") for i in range(S.MIN_SCORED_TO_RANK)]
+    lj, _ = S.join(many, {f"x{i}": res(f"x{i}", "occurred") for i in range(len(many))},
+                   {f"x{i}": pri(f"x{i}", 0.5) for i in range(len(many))})
+    check("FLOOR: exactly the floor clears it",
           S.per_leader(lj, {"ada": "Ada L"})[0]["ranked"] is True)
     check("RATE: hit rate and mean p are reported so a mean can be read against them",
           S.per_leader(lj, {})[0]["hit_rate"] == 1.0 and S.per_leader(lj, {})[0]["mean_p"] == 0.5)

@@ -41,9 +41,16 @@ import prediction_score as PS  # noqa: E402
 import resolution_lib as R  # noqa: E402
 from resolve_predictions import select  # noqa: E402
 
-# Five, the same floor and for the same reason as MIN_TRANSCRIPTS_TO_RANK: below
-# it a number is a placeholder, and the board should not carry one as a score.
-MIN_SCORED_TO_RANK = 5
+# THREE, the operator's call on 2026-09-16. It was five, chosen to match
+# MIN_TRANSCRIPTS_TO_RANK on the leaderboard, which was a default rather than a
+# measured choice. Three puts fifteen rows on the board instead of nine and lets
+# Levie, Collison, Masad, Dell and Kurian show the numbers they have earned.
+#
+# The cost is honest and worth stating: a mean over three predictions is noisy.
+# Levie's -0.255 rests almost entirely on one 2013 miss worth -1.054, and a
+# single further resolution could move him either side of zero. The page reports
+# n beside every score so a reader can weigh that.
+MIN_SCORED_TO_RANK = 3
 
 
 def speaker_q(rec: dict) -> float | None:

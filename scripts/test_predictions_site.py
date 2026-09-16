@@ -268,7 +268,9 @@ def main() -> int:
               "6 of 9 past-due predictions" in h2 and "3 times" in h2,
               [l for l in h2.splitlines() if "past-due predictions" in l][:2])
         check("SCORE: the rank floor named on the page is the aggregation constant",
-              f"below {B.MIN_SCORED} resolved predictions" in h2 and B.MIN_SCORED == 5)
+              # Pinned to the constant, not to a literal: the operator moved it
+              # from 5 to 3 on 2026-09-16 and the page must follow automatically.
+              f"below {B.MIN_SCORED} resolved predictions" in h2 and B.MIN_SCORED == 3)
         check("SCORE: the evaluative vocabulary is still fenced with a live column",
               not sorted(set(m.group(0).lower() for m in re.finditer(
                   r"\b(accuracy|brier|leaderboard|outperform|score|rank)\b",

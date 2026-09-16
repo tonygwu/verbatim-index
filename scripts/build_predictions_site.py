@@ -22,6 +22,7 @@ index.json, never from a literal in this file.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import statistics
 import sys
@@ -128,15 +129,18 @@ td.date.unknown{color:var(--faint)}
 /* ---------- when-it-was-said sparkline: one square per year, shared scale ---------- */
 td.spark{padding:11px 10px}
 .sq{display:flex; gap:2px; align-items:flex-end}
-.sq i{flex:1 1 0; height:13px; border-radius:1px; background:var(--rule); min-width:5px}
+.sq i{flex:1 1 0; height:13px; border-radius:1px; background:var(--rule); min-width:3px; max-width:14px}
 .sq i.q1{background:var(--d1); opacity:.30}
 .sq i.q2{background:var(--d1); opacity:.55}
 .sq i.q3{background:var(--d2); opacity:.80}
 .sq i.q4{background:var(--d2)}
-thead th.axis{padding-left:10px; padding-right:10px; vertical-align:bottom}
+/* The sparkline header carries its own year axis underneath, which used to push
+   the label up while every other header sat lower. Aligning to the TOP puts all
+   the labels on one line and lets the axis hang below. */
+thead th.axis{padding-left:10px; padding-right:10px; vertical-align:top}
 thead th.axis .lbl{display:block}
 .sq-ax{display:flex; gap:2px; margin-top:6px}
-.sq-ax i{flex:1 1 0; min-width:5px; font-style:normal; font-size:9px; letter-spacing:0;
+.sq-ax i{flex:1 1 0; min-width:3px; max-width:14px; font-style:normal; font-size:9px; letter-spacing:0;
   text-align:center; color:var(--faint); text-transform:none}
 .sq-ax i.tick{color:var(--muted)}
 .sq-nd{display:block; font-family:"IBM Plex Mono",monospace; font-size:9px; letter-spacing:.04em; color:var(--faint); margin-top:4px}
@@ -151,8 +155,12 @@ td.pend{text-align:center; font-family:"IBM Plex Mono",monospace; font-size:13px
    the sparkline's own blue and rust: reusing those made +0.19 and -0.11 render
    in the same colour, so the sign was invisible. --d3 and --bad are defined in
    both the light and dark palettes, so this stays theme-aware. */
-dl.kv dd.yes{color:var(--d3); font-weight:600}
-dl.kv dd.no{color:var(--bad); font-weight:600}
+/* Colour the verdict WORD, never the paragraph under it. Colouring the whole
+   <dd> made the resolver's reasoning render bold and coloured too, which is a
+   lot of shouting for what is a supporting sentence. */
+dl.kv dd .verdict{font-weight:600}
+dl.kv dd .verdict.yes{color:var(--d3)}
+dl.kv dd .verdict.no{color:var(--bad)}
 b.yes{color:var(--d3)}
 b.no{color:var(--bad)}
 ul.ev{margin:2px 0 0; padding-left:16px}
@@ -289,7 +297,7 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
     <colgroup>
       <col style="width:215px"><col style="width:205px">
       <col style="width:105px">
-      <col><col style="width:95px">
+      <col style="width:300px"><col style="width:95px">
     </colgroup>
     <thead><tr>
       <th data-k="name" aria-sort="ascending">Person<span class="arrow">&#9650;</span></th>
@@ -376,7 +384,10 @@ function spark(r){
     const n = y[yr] || 0;
     return `<i class="${band(n)}" title="${yr}: ${n} prediction${n === 1 ? "" : "s"}"></i>`;
   }).join("");
-  const nd = r.undated ? `<span class="sq-nd" title="${r.undated} of this person's predictions come from a recording with no publication date, so they sit in no year.">+${r.undated} undated</span>` : "";
+  const bits = [];
+  if (r.early) bits.push(`<span title="${r.early} prediction${r.early === 1 ? "" : "s"} from before the axis starts; too few predictions that early to give those years a column.">+${r.early} earlier</span>`);
+  if (r.undated) bits.push(`<span title="${r.undated} of this person's predictions come from a recording with no publication date, so they sit in no year.">+${r.undated} undated</span>`);
+  const nd = bits.length ? `<span class="sq-nd">${bits.join(" &middot; ")}</span>` : "";
   return `<div class="sq">${cells}</div>${nd}`;
 }
 /* score:start */
@@ -411,7 +422,7 @@ function outcomeRows(r){
   const o = r.outcome;
   if (!o) return `<dt>Outcome</dt><dd class="pending">Not yet resolved</dd>`;
   const cls = o.verdict === "occurred" ? "yes" : o.verdict === "not_occurred" ? "no" : "pending";
-  let h = `<dt>Outcome</dt><dd class="${cls}">${esc(OUTCOME_LABEL[o.verdict] || o.verdict)}`;
+  let h = `<dt>Outcome</dt><dd><span class="verdict ${cls}">${esc(OUTCOME_LABEL[o.verdict] || o.verdict)}</span>`;
   if (o.verdict === "unresolvable" && o.why) h += ` <span class="why">&mdash; ${esc(UNRES_WHY[o.why] || o.why)}</span>`;
   h += `<div class="why">${esc(o.reasoning)}</div></dd>`;
   if (o.sources && o.sources.length){
@@ -754,7 +765,32 @@ def statement_years(by_slug: dict[str, list[dict]]) -> tuple[dict[str, dict], li
             years[y] = years.get(y, 0) + 1
             seen.add(int(y))
         per[slug] = {"years": years, "undated": undated}
-    span = [str(y) for y in range(min(seen), max(seen) + 1)] if seen else []
+    if not seen:
+        return per, []
+
+    # TRIM A DEAD LEFT EDGE. The span used to run from the single earliest
+    # statement in the corpus, and on this data that is one 2009 prediction with
+    # nothing at all in 2010 or 2011: three columns carrying one prediction
+    # between them, on every one of forty rows.
+    #
+    # The axis therefore starts at the first year that clears MIN_YEAR_COUNT, and
+    # anything earlier is COUNTED rather than dropped, reported per person beside
+    # the squares the way undated predictions already are. Trimming the right edge
+    # is deliberately not done: the newest years are the point of the chart.
+    total = collections.Counter()
+    for v in per.values():
+        total.update({int(y): n for y, n in v["years"].items()})
+    start = min(seen)
+    for y in sorted(total):
+        if total[y] >= MIN_YEAR_COUNT:
+            start = y
+            break
+    span = [str(y) for y in range(start, max(seen) + 1)]
+
+    for v in per.values():
+        early = sum(n for y, n in v["years"].items() if int(y) < start)
+        v["early"] = early
+        v["years"] = {y: n for y, n in v["years"].items() if int(y) >= start}
     return per, span
 
 
@@ -788,7 +824,7 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict) 
             "score": (sc["mean_points"] if sc and sc["ranked"] else None),
             "n_scored": (sc["n_scored"] if sc else 0),
             "score_why": score_why(sc),
-            "years": h["years"], "undated": h["undated"],
+            "years": h["years"], "undated": h["undated"], "early": h.get("early", 0),
             "slug": l["slug"], "name": l["name"], "role": entry.get("role") or l.get("role"), "company": l.get("company") or entry.get("company"),
             "sector": l.get("sector") or entry.get("sector"),
             "accepted": l["accepted"], "rejected": l["rejected_by_verifier"],
@@ -805,6 +841,10 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict) 
 # Mirrors score_predictions.MIN_SCORED_TO_RANK. Imported rather than typed, so the
 # page and the aggregation can never disagree about who gets a number.
 MIN_SCORED = SP.MIN_SCORED_TO_RANK
+
+# A year needs this many predictions across the WHOLE corpus before the timeline
+# gives it a column. Below it the column is visual noise on every row.
+MIN_YEAR_COUNT = 3
 
 SCORE_HEADER_EMPTY = ('<th class="nosort">Score<button class="info" type="button" data-info="score" '
                       'aria-expanded="false" aria-label="Why is this column empty?">?</button></th>')
