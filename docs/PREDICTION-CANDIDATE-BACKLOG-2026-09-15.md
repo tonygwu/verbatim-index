@@ -317,3 +317,56 @@ which re-rolls every candidate in them. The 14 files behind the 16 re-cuts hold
 30 ALREADY-ACCEPTED records, 27 of them past-due and currently scoreable. The
 extractor is a sampling model, so re-extraction risks 27 live rows to chase
 about 11 worth having. Do it into a separate --out and compare before adopting.
+
+---
+
+# CROSS-CLONE CORRECTIONS, 2026-09-16 (repo-1 <-> repo-0)
+
+## The G3 "on track to" upside is 5 to 12, not 19
+repo-1 counted 19 "on track to|for" hits across its 89 supplemental sources and
+then attributed each one to a SPEAKER rather than assuming. On the two
+earnings-call leaders only 5 of 12 are the subject's own voice:
+
+  lip-bu-tan   subject 4 | other 4   David Zinsner (CFO) x3, John Pitzer x1
+  jack-dorsey  subject 1 | other 3   Amrita Ahuja (CFO) x2, Operator x1
+
+The remaining 7 of 19 are collison 3, masad 2, chesky 2, in letters and
+interviews where attribution is cleaner, and are NOT speaker-checked.
+Treat the upside as 5 to 12 subject-voiced candidates, and still an upper bound
+because the other four gates apply.
+
+This is the CFO problem confirmed on two more leaders by an independent clone,
+after repo-0 measured it on five Block calls (CFO 22 dated-numeric forward
+sentences against Jack Dorsey 1). It is now the most replicated finding in this
+whole workstream.
+
+Tan's 4 survivors are first-person Intel prepared remarks ("we remain on track
+for 14A risk production ... in the second half of"), so they are his voice, but
+they are Intel GUIDANCE and carry subject_control own. That is a delivery rate,
+not foresight.
+
+## *** A REGEX THAT MATCHES NOTHING LOOKS LIKE A CLEAN NEGATIVE ***
+repo-1's first attribution pass used a generic "Name -- Title" speaker regex.
+It matched NOTHING in those files and returned a clean-looking "0 of 8 are the
+subject". That result was an artifact of a pattern that never fired, not a
+finding, and it was thrown away.
+
+This is the same defect class CLAUDE.md already records for fetcher detection:
+"source inspection cannot tell a working pattern from one that never matches".
+It has now bitten in a third place. Any screen that can return a tidy zero must
+assert its pattern fires at all before its zero is believed.
+
+## Lip-Bu Tan / Cadence: two clones disagree, and both readings are poor
+repo-0's sweep read SEVEN Cadence calls plus four conference recordings and
+returned 3 past-due leads, ALL medium confidence with live gate risks: the CEO
+succession date reads as a scheduled corporate action (G1), and the TAM figure
+is a company-defined estimate (G2). Its own note was that "most of his
+forward-looking sentences are of the shape 'stay tuned'".
+
+repo-1's discovery agent read THREE Cadence calls and reported the hypothesis
+FAILED: CFO John Wall gave all guidance and Tan's turns were qualitative.
+
+These are not really in conflict. The larger sample found 3 marginal exceptions
+in a seam that is otherwise qualitative. Both readings say the Cadence seam is
+poor, and it fails the same CFO way Intel does. Do not budget Lip-Bu Tan as a
+recoverable leader on the strength of those 3.
