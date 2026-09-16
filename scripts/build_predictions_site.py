@@ -134,12 +134,19 @@ td.spark{padding:11px 10px}
 .sq i.q2{background:var(--d1); opacity:.55}
 .sq i.q3{background:var(--d2); opacity:.80}
 .sq i.q4{background:var(--d2)}
-/* The sparkline header carries its own year axis underneath, which used to push
-   the label up while every other header sat lower. Aligning to the TOP puts all
-   the labels on one line and lets the axis hang below. */
-thead th.axis{padding-left:10px; padding-right:10px; vertical-align:top}
-thead th.axis .lbl{display:block}
-.sq-ax{display:flex; gap:2px; margin-top:6px}
+/* The year axis used to live INSIDE the "When it was said" header cell, which
+   made that cell taller than its neighbours and pushed its label up off their
+   line. It is now its own row: a white gutter between the header rule and the
+   first person, so all five header labels share one baseline.
+   The header row is given an explicit height so the gutter can stick to a known
+   offset rather than to a guess. */
+thead tr:first-child th{height:38px; box-sizing:border-box}
+tr.axisrow td{
+  position:sticky; top:38px; z-index:2; background:var(--surface);
+  padding:6px 10px 8px; border-bottom:1px solid var(--rule);
+}
+tr.axisrow td:first-child{padding-left:16px}
+.sq-ax{display:flex; gap:2px}
 .sq-ax i{flex:1 1 0; min-width:3px; max-width:14px; font-style:normal; font-size:9px; letter-spacing:0;
   text-align:center; color:var(--faint); text-transform:none}
 .sq-ax i.tick{color:var(--muted)}
@@ -304,10 +311,12 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
       <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
       <th data-k="accepted">Predictions<button class="info" type="button" data-info="accepted"
         aria-expanded="false" aria-label="What does Predictions mean?">?</button><span class="arrow">&#9650;</span></th>
-      <th data-k="earliest" class="axis"><span class="lbl">When it was said<button class="info" type="button" data-info="timeline"
-        aria-expanded="false" aria-label="What does the timeline show?">?</button><span class="arrow">&#9650;</span></span><span class="sq-ax" id="ax"></span></th>
+      <th data-k="earliest">When it was said<button class="info" type="button" data-info="timeline"
+        aria-expanded="false" aria-label="What does the timeline show?">?</button><span class="arrow">&#9650;</span></th>
       <!-- score:start -->__SCORE_HEADER__<!-- score:end -->
-    </tr></thead>
+    </tr>
+    <tr class="axisrow"><td></td><td></td><td></td><td><span class="sq-ax" id="ax"></span></td><td></td></tr>
+    </thead>
     <tbody id="tb"></tbody>
   </table>
 </div>
