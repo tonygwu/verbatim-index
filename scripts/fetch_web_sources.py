@@ -217,7 +217,49 @@ class Fetcher:
         return self.session.get(url, timeout=self.timeout)
 
 
-def ground_evidence(text: str, quotes: list[str]) -> dict:
+class EvidenceShapeError(ValueError):
+    """A gate_evidence entry this code cannot read. Refused, never skipped."""
+
+
+def evidence_quotes(items) -> list[str]:
+    """The quote text out of each gate_evidence entry, in either shape.
+
+    Round 1 asked each discovery agent for a bare verbatim sentence, so an entry
+    was a string. Round 2 asks for the DEADLINE and the RESOLUTION ROUTE beside
+    it, because a quote that passes the five gates is still worth nothing to the
+    board if its deadline has not passed, so an entry is an object carrying a
+    `quote` key. Both shapes are read here and everything else is REFUSED by
+    name.
+
+    Refusing rather than skipping is the whole point. The grounding rate below
+    is the integrity check on the discovery pass, and a silently skipped entry
+    lowers it. That would read as "the agent paraphrased the page" when the
+    truth is "this code could not parse the entry", which is the accept-and-guess
+    that turns a loud failure into a quiet wrong answer.
+    """
+    out: list[str] = []
+    for item in items or []:
+        if isinstance(item, str):
+            quote = item
+        elif isinstance(item, dict):
+            if "quote" not in item:
+                raise EvidenceShapeError(
+                    f"gate_evidence object has no 'quote' key: {item!r}")
+            quote = item["quote"]
+            if not isinstance(quote, str):
+                raise EvidenceShapeError(
+                    f"gate_evidence 'quote' is {type(quote).__name__}, not str: {item!r}")
+        else:
+            raise EvidenceShapeError(
+                f"gate_evidence entry is {type(item).__name__}, "
+                f"expected str or an object with a 'quote' key: {item!r}")
+        if not quote.strip():
+            raise EvidenceShapeError(f"gate_evidence 'quote' is blank: {item!r}")
+        out.append(quote)
+    return out
+
+
+def ground_evidence(text: str, quotes) -> dict:
     """How many of the agent's own evidence quotes are really in the page.
 
     This costs no quota and is the integrity check on the discovery pass. Two
@@ -225,9 +267,11 @@ def ground_evidence(text: str, quotes: list[str]) -> dict:
     and one caught it attributing a sentence to a speaker that was not on the
     page at all. A quote that does not ground here would also not ground during
     extraction, so a low rate means the source was judged on text nobody read.
+
+    Takes either gate_evidence shape; see evidence_quotes.
     """
     found, missing = 0, []
-    for q in quotes or []:
+    for q in evidence_quotes(quotes):
         if "start" in L.locate_quote(text, q):
             found += 1
         else:
@@ -236,7 +280,7 @@ def ground_evidence(text: str, quotes: list[str]) -> dict:
 
 
 def record_for(src: dict, slug: str, text: str, raw: str,
-               resp: requests.Response) -> dict:
+               resp: requests.Response, run: str) -> dict:
     """A transcript record. Field names match what the pipeline already reads.
 
     `statement_date` and `statement_date_basis` are DECLARED here rather than
@@ -268,7 +312,12 @@ def record_for(src: dict, slug: str, text: str, raw: str,
         "raw_sha256": hashlib.sha256(resp.content).hexdigest(),
         "text_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "discovery": {
-            "run": "supplemental-sources-2026-09-14",
+            # The run NAME, taken from the run directory on the command line.
+            # It was a hardcoded literal until 2026-09-16, so every record any
+            # later sweep fetched would have claimed to come from the first one.
+            # A provenance field that names the wrong run is worse than an
+            # absent one, because nothing downstream can tell it is wrong.
+            "run": run,
             "density_claimed": src.get("density"),
             "identity_note": src.get("identity_note"),
             "gate_evidence": src.get("gate_evidence", []),
@@ -401,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
                 counts["too_short"] += 1
                 print(f"  TOO SHORT   {slug:18} {n_words} words (min {MIN_WORDS})  {url}")
                 continue
-            rec = record_for(src, slug, text, how, resp)
+            rec = record_for(src, slug, text, how, resp, run=run.name)
             try:
                 date, basis = L.derive_statement_date(rec)
             except L.PredictionError as exc:
