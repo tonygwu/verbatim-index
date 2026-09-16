@@ -5,6 +5,19 @@ Newest first.
 
 ## Verbatim Pundits
 
+- **The 25-word quote cap costs about 9% of judge calls.** Filed 2026-09-16.
+  In P8a, 7 of 80 panel cells failed validation, and every one failed on the same
+  rule: `d1_steelmanning` or `d3_good_faith` quote exceeds 25 words. It hits both
+  arms (6 Gemini, 1 Fable), so it is the rubric's ask rather than one judge's
+  habit, and `AGENTS.md` records the same failure mode on the leaders board
+  ("Astra failed schema validation three times here, so the quote-cap overrun is
+  not unique to the new arm"). Each failure costs a full re-grade of a 20k-word
+  transcript. Options, none yet measured: raise the cap; keep the cap but have
+  the judge truncate its own quote to the cap; or accept the re-grade cost and
+  budget for it. Measure before changing anything, because the cap is part of
+  the grading contract and changing it makes new grades incomparable with the
+  ones already collected.
+
 - **A grade record that failed validation counts as a cache hit.** Filed 2026-09-16.
   `reuse_or_none()` in `scripts/grade.py` returns `cached` whenever the stored
   record's identity matches (study, contract, prompt, input, mode, judge, model,
