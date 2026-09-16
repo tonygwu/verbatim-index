@@ -317,6 +317,43 @@ exact-match grounding check is what makes this survivable, because a quote must
 appear verbatim on its own fetched page. **A fuzzy match here would let this
 class through**, which is the reason `locate_quote` has no fuzzy fallback.
 
+## The round-2 brief roughly doubles the verifier keep rate
+
+MEASURED on wave 1, which is the first pass whose sources were chosen under the
+round-2 brief rather than the round-1 one.
+
+```
+                                accepted   judged   rate
+satya-nadella, wave 1                 27       53   0.51
+corpus baseline (gemini verifier)    396     1333   0.297
+```
+
+The verifier is doing its job rather than waving records through, which had to
+be checked before the rate meant anything. Its gate verdicts across those 53
+records are properly mixed:
+
+```
+falsifiable=False  25     committed=False  13
+forward_looking=False 12  stands_alone=False 7   own_voice=False 4
+```
+
+So the improvement is in the SOURCES, not in a slack verifier. That is what the
+brief change was for: round 1 asked for quotes passing five gates, round 2 asked
+for quotes that also carry a passed deadline, 60 days of lead, a nameable
+threshold and a named public route to the answer. Selecting sources on the
+downstream conditions, rather than only on the gates, is what moved the rate.
+
+CAVEAT, and it matters for anyone quoting this. This is ONE leader on ONE pass,
+and Nadella is unusually favourable: his material is Microsoft earnings calls and
+shareholder letters, where he is the one giving dated numeric guidance. The
+number to trust is the one measured across all the round-2 leaders at the end of
+the run, not this one.
+
+A second, independent gain sits under the same brief: the funnel from an
+ACCEPTED record to an ELIGIBLE one. 14 of Nadella's 27 accepted records are past
+due and 9 of those are eligible, because the sources were picked for already
+having a passed deadline rather than for being interesting.
+
 ## `pgrep -f` bit again, in a new place
 
 The repo already forbids `pgrep -f` for detecting a running fetcher, after it
