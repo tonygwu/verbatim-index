@@ -35,6 +35,61 @@ working tree, not taken from a review agent. Two agent claims were wrong on
 checking and are corrected here: the extraction-cache count (0 of 671, not 11 of
 693) and the tip of `origin/main` (`2f02346`, not `01ba57c`).
 
+## REVISION 2026-09-16 (later the same day): what changed after approval
+
+Thirteen commits landed after this plan was approved, none of them from this
+workstream. Of the ten files the plan cites, **only `build_site.py` moved**:
+
+```
+roster_n = len(roster["roster"])      :803  ->  :815
+tdir = ... / "transcripts"            :1067 ->  :1079
+```
+
+Everything else still holds, re-verified. The P0 bugs are all still live:
+`dedupe_transcripts.py:334` is still `rglob(f"{r['retired']}__*.json")`, and
+`name_in("Hollywood stars", Cathie Wood)` is still True.
+
+**`data/transcripts_web/` now EXISTS and is proven.** The plan invented it as the
+root the grader never reads. It was created on 2026-09-16 for a different stream
+(repo-1's supplemental predictions corpus) and now holds real transcripts. So P4
+inherits a directory that already works rather than one this plan has to argue
+for. The rule stands unchanged: web transcripts never enter `data/transcripts/`.
+
+**Six operational findings from placing that corpus, which P4 inherits.** Each
+cost a debugging cycle; none is in the original plan.
+
+1. **Place run manifests WITH records, or provenance fails wholesale.**
+   `validate_predictions.known_contract_ids` is "current skill contracts plus
+   every id a run manifest recorded". Records were placed without their
+   `_runs/*.json` and 432 provenance failures followed. Copying 12 manifests
+   cleared them. This is the designed mechanism, not a workaround.
+2. **A passing validator does not mean a stage ran.** All 93 web records passed
+   the `consensus` invariant while carrying `consensus.status = "not_searched"`.
+   The invariant checks the field's SHAPE. Read the status, not the verdict.
+3. **Skip `_`-prefixed directories when counting anything.** A count that did not
+   read `_runs/*_errors.jsonl` as 54 id-less records, which is commit `3578d3f`'s
+   defect arriving a second time.
+4. **The record schema is NOT hashed into any contract id.** Contracts hash
+   `extractor_output.schema.json` and `verifier_output.schema.json`;
+   `prediction_record.schema.json` is the validator's and is hashed into nothing.
+   An earlier revision of this plan said otherwise and made a one-line fix look
+   like a release action.
+5. **`candidates_written: null` is backfillable from the line count**, because
+   the validator's own rule is that the two match.
+6. **Fingerprint production before and after any measurement**
+   (`prediction_inputs_sha256`), because other clones write to it concurrently.
+   A number measured across someone else's write is not reproducible.
+
+**Two standing items now bear on P4.** `VD-4a` is the operator's standing
+direction to bias toward admitting predictions, so a marginal admit/withhold call
+goes to admit and gets recorded. `VP-20` has the index page's link to the
+predictions board switched off (`SHOW_PREDICTIONS_LINK = False`,
+`build_site.py:778`) until that board is fuller; restoring it is one word and
+should be coordinated with, not separate from, the P4 deploy.
+
+**`market_consensus` has never run on any web-sourced record.** It is a
+prerequisite for a clean corpus and it is public-API only, no model calls.
+
 ## Citations verified at `b8a8a73`
 
 The plan was drafted against a tree 8 commits behind. **repo-0 has since been
@@ -160,7 +215,7 @@ so the render is safe either way, but the contradiction must not be silent.
 |---|---|---|
 | grade | above `fable_accounts()` (`:2092`) | `quota_router` reads the Keychain and spawns `codex app-server`; the transcript list is already loaded at `:2063`, `--single` handled at `:2061`. **Re-assert a non-empty list after the gate**: the existing check at `:2064` runs before it, so a membership file excluding everything exits 0 having graded nothing. Log the dropped count as a taxonomy entry |
 | aggregate | at `usable = grades` (`:831`) | **required.** `grade_files_read` is taken at `:740` and `deploy.sh:51` refuses unless it equals the on-disk count, so filtering earlier blocks publication for ever. `:831` is upstream of `calibrate` (`:877`), `transcripts_out` (`:900`), `venue_effects` (`:926`) and the bootstrap |
-| site | `build_site.py:803`, word count | **read `leader_slug` and decide membership OUTSIDE the `try`** at `:1070-1074`, which is a bare `except Exception: pass`; a raise inside it silently drops the transcript from `__N_WORDS__`. Narrow the except to `JSONDecodeError` and `OSError` |
+| site | `build_site.py:815`, word count (`:1079`) | **read `leader_slug` and decide membership OUTSIDE the `try`** at `:1070-1074`, which is a bare `except Exception: pass`; a raise inside it silently drops the transcript from `__N_WORDS__`. Narrow the except to `JSONDecodeError` and `OSError` |
 
 Add an `off_board` bucket to the accounting sum at `:838` and to `diagnostics`,
 **and add it to the failure message at `:843`, which already omits
