@@ -295,7 +295,16 @@ framing (`docs/PUNDITS-P8A-PILOT.md`). The panel is Fable and Gemini. The
 profile's `judge_requests` is deliberately NOT edited, because the contract
 hashes it and editing it would void the grades already collected; Astra is
 dropped by not being called, and the panel is derived from the grades present.
-Publishing two-judge scores still needs the operator's explicit approval.
+
+**The operator explicitly approved publishing two-judge scores on 2026-09-16.**
+That satisfies the judge-drop rule's approval requirement and nothing else. The
+P11 publication gate is separate and still stands: a deploy needs the operator's
+approval in the conversation where it happens. Two consequences must be carried
+into the published material rather than left implicit:
+- the board is scored by Fable and Gemini, and the page says so;
+- G-judge-lean is weaker with two arms, because each judge's left-minus-right gap
+  is compared against exactly one other judge instead of a mean of others. The
+  P10 report states that next to the result.
 
 **If a judge is dropped** (prespecified).
 - The study becomes the remaining judges for every transcript.

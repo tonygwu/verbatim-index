@@ -1279,6 +1279,16 @@ new grades incomparable with the corpus already graded.
 - P4d Fable tools-off measurement (SPENDS QUOTA with `--run`):
   `scripts/p4d_fable_tools_off.py`. Result in `docs/PUNDITS-P4D-FABLE-TOOLS-OFF.md`:
   12/12 valid, 95% interval [0, 26.5%], so not yet evidence of a low rate; P8a decides.
+- Pundits panel is TWO judges, Fable and Gemini (decided 2026-09-16,
+  `docs/PUNDITS-P8A-PILOT.md`). Astra declined 42 of 44 production calls, 4 of 4 re-runs on
+  byte-identical prompts, and all 5 truthful prompt variants, explicitly refusing the
+  "evidence levels" framing. Do NOT delete Astra from `profiles/pundits.json`:
+  `judge_requests` is hashed into `contract_id` (`V2_PROFILE_KEYS`), so editing it would make
+  every grade already collected incompatible. Astra is dropped by not being called
+  (`--judges fable,gemini`), and `aggregate.py` derives the panel from the grades present.
+  The operator explicitly approved publishing two-judge scores; the P11 deploy approval is
+  separate and still required. Reproduce the prompt experiment with
+  `.venv/bin/python scripts/astra_prompt_probe.py --out DIR` (SPENDS CODEX QUOTA).
 - Prediction policy releases: `.claude/skills/prediction-extractor/POLICY_RELEASE.json`
   pins the compatible extraction and verification contracts. Both load
   `ELIGIBILITY.md`. Run `.venv/bin/python scripts/test_predictions_policy.py`

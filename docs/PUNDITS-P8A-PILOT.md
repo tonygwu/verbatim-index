@@ -191,11 +191,13 @@ excluded.
 study is the remaining judges for every transcript, calibration is refit from
 scratch, and no transcript keeps a partial panel.
 
-**Still outstanding: publishing two-judge scores needs the operator's explicit
-approval.** Choosing the panel is not that approval. The relative bias test
-(G-judge-lean) also weakens with two arms, because each judge's gap is compared
-against exactly one other judge rather than a mean of others; the P10 report
-must say so next to the result.
+**Publishing two-judge scores was explicitly approved by the operator on
+2026-09-16.** That approval covers the panel only. The P11 publication gate is
+unchanged: deploying to verbatim-pundits.tonygwu.com still needs the operator's
+approval at the time it happens. The relative bias test (G-judge-lean) weakens
+with two arms, because each judge's gap is compared against exactly one other
+judge rather than a mean of others; the P10 report says so next to the result,
+and the page names the two judges.
 
 ## Decisions this forces
 
