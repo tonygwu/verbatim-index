@@ -325,9 +325,24 @@ five leaders over the floor), and repo-1's round-2 sourcing, which is live.
 
 Web-sourced records need their transcripts on disk, because
 `validate_predictions.py:227` reconstructs `<root>/<slug>/<sid>.json` and fails
-`transcript_exists` without it. Those transcripts exist today only inside the
-experiment run, at
-`_experiments/supplemental-sources-2026-09-14/transcripts/<slug>/web-*.json`.
+`transcript_exists` without it. Those transcripts exist today only inside repo-1's
+experiment runs, and there are **two** of them, not one. Both need placing and
+they are different sets (counted on disk 2026-09-16):
+
+```
+round 1  _experiments/supplemental-sources-2026-09-14/transcripts/<slug>/web-*.json
+         14 slugs, 89 transcripts. The set behind the five banked crossings.
+         All 14 slugs are on the production roster, so this stream creates no
+         off-roster predictions rows.
+round 2  _experiments/supplemental-round2-2026-09-16/transcripts/<slug>/web-*.json
+         in progress; 3 slugs, 21 transcripts so far.
+```
+
+Both are on branch `codex/repo-1-data-2026-09-14` in repo-1's private clone.
+repo-1 places neither; repo-0 does, after repo-1 pushes and reports the SHA.
+
+Transcript ids are `web-<host>-<8 hex of sha256 of the URL>`, which is why they
+cannot collide with the YouTube or Happy Scribe shelf.
 
 **They must NOT be placed in `data/transcripts/`.** If they are,
 `normalize_transcripts.py` derives them, `grade.py` grades them, `calibrate()`
