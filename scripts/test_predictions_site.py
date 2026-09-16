@@ -181,6 +181,28 @@ def main() -> int:
               and "${person.h_explicit} named in the quote" in html
               and "${person.p_qual} where the speaker used words of likelihood" in html, str(sorted(data[0])))
         ncols = len(re.findall(r"<col(?:>| style)", html))
+        # ---- the year axis ---------------------------------------------------
+        # The axis is its own row under the header, so every header label shares one
+        # baseline. Three things about it are load-bearing and none is visible in a
+        # diff of the JS alone.
+        axisrow = re.search(r'<tr class="axisrow">(.*?)</tr>', html, re.S)
+        check("AXIS: the gutter row carries one cell per column, or it shears the table",
+              bool(axisrow) and len(re.findall(r"<td", axisrow.group(1))) == ncols,
+              f"{len(re.findall(r'<td', axisrow.group(1))) if axisrow else None} cells vs {ncols} columns")
+        # EVERY square names its own year. Three labels floating over fifteen squares
+        # made a reader count columns to place a shaded one, and a later edit that
+        # puts the label back behind the five-year test would undo that silently.
+        check("AXIS: every year is labelled, not only the five-year marks",
+              ">&rsquo;${y.slice(2)}</i>" in html,
+              [l for l in html.splitlines() if "y.slice(2)" in l])
+        check("AXIS: the five-year marks stay emphasised, so the run of years has anchors",
+              ".sq-ax i.tick{color:var(--ink-2); font-weight:600}" in html)
+        # The axis HUGS the strip. A rule under it turns it back into a band of its
+        # own, which is what it looked like before and what the operator rejected.
+        gutter = re.search(r"tr\.axisrow td\{(.*?)\}", html, re.S)
+        check("AXIS: the gutter has no rule under it, so it reads as the top of the timeline",
+              bool(gutter) and "border-bottom" not in gutter.group(1),
+              gutter.group(1) if gutter else "no tr.axisrow td rule")
         # The Score column has two modes and BOTH are load-bearing. Without a scores file it must
         # stay inert, because an empty column that looks sortable implies data that is not there.
         # With one it must carry the number, the count it was averaged over, and a sort key.

@@ -136,20 +136,24 @@ td.spark{padding:11px 10px}
 .sq i.q4{background:var(--d2)}
 /* The year axis used to live INSIDE the "When it was said" header cell, which
    made that cell taller than its neighbours and pushed its label up off their
-   line. It is now its own row: a white gutter between the header rule and the
-   first person, so all five header labels share one baseline.
-   The header row is given an explicit height so the gutter can stick to a known
+   line. It is now its own row, so all six header labels share one baseline.
+   It HUGS the timeline rather than sitting in a band of its own: no rule under
+   it and almost no padding, because a white band with a rule reads as a third
+   region of the table, and the years belong to the squares under them.
+   The header row is given an explicit height so the axis can stick to a known
    offset rather than to a guess. */
 thead tr:first-child th{height:38px; box-sizing:border-box}
 tr.axisrow td{
   position:sticky; top:38px; z-index:2; background:var(--surface);
-  padding:6px 10px 8px; border-bottom:1px solid var(--rule);
+  padding:2px 10px 0;
 }
 tr.axisrow td:first-child{padding-left:16px}
 .sq-ax{display:flex; gap:2px}
 .sq-ax i{flex:1 1 0; min-width:3px; max-width:14px; font-style:normal; font-size:9px; letter-spacing:0;
   text-align:center; color:var(--faint); text-transform:none}
-.sq-ax i.tick{color:var(--muted)}
+/* Every five-year mark is darker and heavier, so the axis still has anchors to
+   count from once every year carries a label. */
+.sq-ax i.tick{color:var(--ink-2); font-weight:600}
 .sq-nd{display:block; font-family:"IBM Plex Mono",monospace; font-size:9px; letter-spacing:.04em; color:var(--faint); margin-top:4px}
 .legend i.k{display:inline-block; width:11px; height:11px; border-radius:1px; vertical-align:-1px; background:var(--rule)}
 .legend i.k.q1{background:var(--d1); opacity:.30}
@@ -568,9 +572,13 @@ function drawer(slug, person){
   </div>`;
 }
 
+/* Every year gets its label, not just the five-year marks. Three labels floating
+   over fifteen squares made a reader count columns to place a shaded one; a label
+   on each square answers that directly. The five-year marks stay emphasised so
+   the run of years still has anchors. */
 document.getElementById("ax").innerHTML = YEARS.map(y => {
   const t = Number(y) % 5 === 0;                      // a tick every five years; YEARS holds strings
-  return `<i class="${t ? "tick" : ""}">${t ? `&rsquo;${y.slice(2)}` : ""}</i>`;
+  return `<i class="${t ? "tick" : ""}">&rsquo;${y.slice(2)}</i>`;
 }).join("");
 
 let sortKey = "name", sortDir = 1;
