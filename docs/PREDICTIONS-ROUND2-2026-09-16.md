@@ -254,8 +254,16 @@ RUN=data/predictions/_experiments/supplemental-round2-2026-09-16
 
 # 2. resolve the past-due ones. Astra, because it has live web search and a
 #    resolution must cite a source rather than recall one.
+#    --codex-homes IS NOT OPTIONAL. It defaults to empty, which means the
+#    AMBIENT CODEX_HOME, which is ~/.codex, which is the account sitting at 0%.
+#    Omitting it spent 15 calls in about 3 seconds each on auth_or_quota before
+#    the pass was stopped. The startup line tells you which you got:
+#    `accounts=['ambient']` is wrong, `accounts=['.codex-b']` is right. Read it
+#    before walking away, because the failure is fast, loud in the log and
+#    completely silent if nobody looks.
 .venv/bin/python scripts/resolve_predictions.py --stage resolve \
-    --predictions $RUN/results --out $RUN --as-of 2026-09-16 --workers 4
+    --predictions $RUN/results --out $RUN --as-of 2026-09-16 --workers 4 \
+    --codex-homes "$HOME/.codex-b"
 
 # 3. price them. Fable, because it is MEASURED to have no working tools, so the
 #    assessor cannot look up what happened and stop being a prior.
