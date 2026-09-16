@@ -214,3 +214,106 @@ the bet may exist in his own voice. NOT FOUND (search budget exhausted).
 ## Jesse Powell — mined 7 more segments (~12,000 words), NET NEW past-due leads: 0.
 The March 2021 Bloomberg segment was his single cleanest outing, not representative.
 Agent explicitly corrected its own "under-explored" framing. Stays at 3.
+
+---
+
+# ADVERSARIAL AUDIT of the "10 unfixable" claim, 2026-09-15
+
+The operator asked for this re-check. **The claim was wrong on 6 of 10.**
+
+ORIGINAL CLAIM: "10 of the 26 carry claim_faithful=False, where the extracting
+model invented a date that appears nowhere. Not fixable by re-cutting."
+
+HOW THE ERROR HAPPENED: two George Hotz records genuinely had an invented date.
+That was generalised to all ten without reading the other eight.
+
+The ten are THREE failure classes, not one:
+
+| class | n | fix |
+|---|---|---|
+| date genuinely unreachable | 4 | none; the original claim holds |
+| imported ENTITY, date is sound | 4 | drop the entity |
+| date sits in the 400-word window | 2 | none needed |
+
+VERIFIED BY THE MAIN SESSION, not taken on the auditor's word:
+- pat-gelsinger 2023-09-22: transcript yt_upload_date 20230921 is a THURSDAY,
+  so "tomorrow" resolves to 2023-09-22. Matches the stored target exactly.
+- pat-gelsinger 2018-05-02: yt_upload_date 20180501 is a TUESDAY, so
+  "Wednesday morning" resolves to 2018-05-02. Matches exactly.
+  ELIGIBILITY.md forbids rejecting these: "do not reject a correctly resolved
+  relative date for following the supplied metadata."
+- The date phrase is IN THE QUOTE for 5 of 10: jack-dorsey ("November 1st - 3rd"),
+  mustafa-suleyman ("this next six months"), elon-musk ("sometime this year"),
+  and both pat-gelsinger records.
+- Four verifier notes cite an imported ENTITY, never a date: 'Inflection AI'
+  (5,382 words outside the window), 'Lavender' (4,288 outside),
+  'Dell Technologies World' (2,124 outside), and lisa-su's date imported from a
+  separate statement.
+- All four proposed replacement spans are contiguous in their transcripts.
+
+THE INTERESTING CLASS: for george-hotz and lisa-su the verifier demanded the date
+be INSIDE the quote. G2 does not say that. It says the date "can come from an
+explicit phrase or unambiguous surrounding context". The verifier cited a rule
+the policy does not contain. That is a verifier-calibration finding, not a
+record-level one, and it may affect far more than these two.
+
+ZUCKERBERG, mechanism corrected: he DOES say "it's coming this fall". It sits 502
+words before the predicted event. A 60-word span cannot hold both. The original
+conclusion was right by 59 words, for the wrong reason.
+
+# THE 16 "CHEAPEST ROWS" ARE MOSTLY TRIVIA
+
+Reading what they actually claim: DeepRacer race qualification rules (Jassy x2),
+"a booth will be set up outside and to the right" (Brin), "Lip-Bu Tan will
+receive an honorary PhD", "Miguel will give a talk later today" (Field), "the
+Blitzscaling class will meet Marissa Mayer" (Hastings), "Shane Legg will present
+research tomorrow" (Hassabis).
+
+These are conference logistics. Under the log scoring rule their baseline
+probability is near 1.0, so each scores about zero. They are the Andy Jassy
+roadmap problem in a smaller form.
+
+ROUGHLY 5 OF THE 16 ARE REAL PREDICTIONS:
+  michael-saylor  200M+ people own Bitcoin by end 2021   <- best of the set,
+                    external control, high specificity, genuinely uncertain
+  jeff-bezos      Amazon ends 2001 with ~$900M cash
+  marc-benioff    Salesforce hits 30% margin by end FY25
+  arvind-krishna  IBM reaches 65% of its zero-carbon goal by 2025
+  tobi-lutke      Meta AR glasses on sale the week after
+
+# MECHANICAL SPAN WIDENING WAS TRIED AND IS NOT GOOD ENOUGH
+A widener that extends left to a sentence boundary within 60 words was dry-run
+over all 16. All 16 GROUND correctly against their transcripts. But grounding is
+not passing G5. The widened spans mostly grab unrelated filler. It fixes
+marc-benioff and jeff-bezos, where the missing date phrase sits immediately
+before the quote, and does nothing useful for the rest.
+
+# *** WHY NONE OF THIS CAN BE APPLIED INCREMENTALLY ***
+MEASURED 2026-09-16 with a dry run, not asserted:
+
+  $ extract_predictions.py --stage verify --dry-run --single <a target transcript>
+  "error_type": "policy_release_mismatch"
+  "detail": "extraction is incompatible with this policy release or source input.
+             Use a separate --out or explicitly re-extract with --force."
+
+`verify_one` recomputes the extraction prompt and refuses unless the stored
+extract contract, policy release, input hash and prompt hash ALL match. Stored
+contracts are d795f6f1d88b (655 transcripts), 3a54940218c0 (10), 8aeda1ba6395
+(1), None (5). Expected is bf5f8441c54f. Nothing matches.
+
+So a record cannot be re-verified in place, and a hand-edited quote would break
+the input and prompt hashes anyway. There is NO path to hand-cut a span and
+re-verify it. That is deliberate: the pipeline will not let an agent manufacture
+agreement between two models that never happened.
+
+This was ALREADY TRUE before the 2.2 bump. The pin was predictions-2.1
+(f2edf433e24e) and the corpus was written under d795f6f1d88b, so the 13
+transcripts with verify not_run or failed were already blocked. The 2.2 bump
+moved the pin from one incompatible value to another. It did not newly break
+anything.
+
+THE ONLY LEGITIMATE PATH is to re-extract the affected transcripts under 2.2,
+which re-rolls every candidate in them. The 14 files behind the 16 re-cuts hold
+30 ALREADY-ACCEPTED records, 27 of them past-due and currently scoreable. The
+extractor is a sampling model, so re-extraction risks 27 live rows to chase
+about 11 worth having. Do it into a separate --out and compare before adopting.
