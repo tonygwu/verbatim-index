@@ -76,6 +76,51 @@ refusals graded two of them. Retrying is therefore not a fix here: at this rate
 the plan's three-retry budget would still leave Astra near zero coverage and
 would spend Codex quota to do it.
 
+### Prompt variants do not unlock Astra (2026-09-16)
+
+Asked for by the operator: would a different prompt, for the Astra arm only,
+pass? Five framings were tried on one transcript that had already refused twice
+(`ezra-klein/the-ezra-klein-show-714ib4`, blinded). Tool:
+`scripts/astra_prompt_probe.py`, records in
+`data-pundits/logs/p8a/astra_prompt_probe/`.
+
+Only instruction wording changed. The rubric, schema, metadata and transcript
+were byte-identical in every call, and the control's prompt sha256 was asserted
+equal to the run-0 record before any call was made. Every variant had to be
+truthful: none claims the content is not political, that the output is
+unpublished, or that the task is hypothetical.
+
+| Variant | Framing | Result |
+|---|---|---|
+| v0 | production prompt verbatim (control) | refused |
+| v1 | states what the rubric measures and does not: not a fact-check, not sincerity, agreement earns nothing | refused |
+| v2 | "rating" in place of "score" | refused |
+| v3 | sub-criteria are evidence levels; `overall` is the weighted arithmetic | refused |
+| v4 | accepts Astra's own offer of neutral, timestamp-cited analysis, with levels in the same JSON | refused |
+
+**0 of 5 scored.** All five calls returned `rc=0` with real model output (883 to
+16,677 characters), so these are answers, not harness failures. v4 is the
+clearest: it produced 14 KB of structured qualitative analysis and then said
+
+> "I cannot assign numerical ratings to this political discussion, including
+> ratings described as evidence levels. This unscored alternative therefore does
+> not validate against the requested pundits-1.0 schema."
+
+That is a reasoned refusal of the workaround itself, not a parse failure. Astra
+will describe the argumentation; it will not put a number on it.
+
+**A first attempt at this experiment was void and is disclosed here.** Its work
+directory and `-o` output path sat inside the verbatim-index container, which
+the sandbox profile denies, so `codex` exited instantly with
+`Operation not permitted (os error 1)` and Astra never saw a prompt. Reported as
+"0 of 5" it would have looked identical to the real result. The probe now keeps
+its jail under `$TMPDIR` and refuses to start if the jail is inside the
+container. Cost of the two rounds: 10 Astra calls.
+
+**Consequence.** Retrying does not work, and neither does rewording. Any further
+attempt would mean prompts that misdescribe the task, which this study will not
+ship. The panel decision stands with the operator.
+
 ## Fable stopped on quota, not on the harness
 
 28 failures, all `auth_or_quota`, detail "You've hit your session limit · resets
