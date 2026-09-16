@@ -10,33 +10,81 @@ repo-0 moves any of it into the shared corpus or publishes from it.
 
 ## The answer first
 
-**Five of the ten need no new sourcing and no new model calls. They are already
-paid for and sitting on disk.** They appear as soon as the existing supplemental
-corpus is scored beside the main one:
+**Six leaders crossed the floor. The board goes 15 ranked to 21, and 117 scored
+to 140.** MEASURED on 2026-09-16, not projected:
 
 ```
-slug                live   with supplemental   change
-amjad-masad          2            3             +1   CROSSES
-brian-chesky         1            5             +4   CROSSES
-lip-bu-tan           1            5             +4   CROSSES
-patrick-collison     1            3             +2   CROSSES
-thomas-kurian        1            3             +2   CROSSES
-michael-dell         0            1             +1   (still under)
+slug                live   now   score    how
+satya-nadella         1     10   +0.269   round-2 sourcing
+brian-chesky          1      5   +0.233   round-1 combine
+lip-bu-tan            1      5   -0.028   round-1 combine
+patrick-collison      1      3   +0.319   round-1 combine
+thomas-kurian         1      3   +0.119   round-1 combine
+amjad-masad           2      3   -0.221   round-1 combine
+michael-dell          0      1   +0.863   still under
 ```
 
-Board total goes from 15 ranked to 20. Nobody falls below the floor.
+Nobody fell below the floor. Five of the six needed NO new sourcing and no model
+calls: they came from scoring three finished pieces of work together for the
+first time. Only satya-nadella is a round-2 result, and he is the evidence the
+new brief works.
 
 Re-derive it, which costs nothing:
 
 ```
 .venv/bin/python scripts/score_predictions.py \
-    --run  <repo-2 phase2-scoring-20260915> \
-    --predictions data/predictions \
-    --predictions <that run>/corpus-supplemental-gemini \
+    --run  <run dir with repo-2's resolutions and priors merged in> \
+    --predictions <production>/predictions \
+    --predictions <run dir>/results \
     --as-of 2026-09-16 --min-lead-days 60 --trend
 ```
 
-The remaining five have to come from new sourcing, and that sweep is running.
+### The measurement was not taken against a moving target
+
+repo-0 was placing records into production while this ran, so the corpus was
+fingerprinted before and after:
+
+```
+before  f2afb8e2f719a1abf539c6310ea3d9883970b85b8af2bd6f222e2bb8983419fa
+after   f2afb8e2f719a1abf539c6310ea3d9883970b85b8af2bd6f222e2bb8983419fa
+        763 files, identical
+```
+
+Without that check the number is unfalsifiable. This repo's own method note says
+to snapshot the corpus before running two arms against it; the same applies to
+running one arm against a corpus somebody else is writing to.
+
+### satya-nadella, the round-2 funnel end to end
+
+```
+18  past-due leads the discovery agent reported
+27  accepted records (53 judged, 0.51, against a corpus baseline of 0.297)
+14  past due
+ 9  eligible
+10  scored
+```
+
+Five times the two he needed. His best claim, "a commercial cloud revenue annual
+run rate of $20 billion" by fiscal 2018, resolved `occurred` against Microsoft's
+own October 2017 earnings release reporting $20.4 billion and the FY2018
+year-end filing. All 14 resolutions cite their sources; none is recall.
+
+### The caveat that belongs beside the number
+
+**Nadella's mean p is 0.84 and his hit rate is 1.00, so +0.269 is a
+near-zero-information score by construction.** He is restating Microsoft's own
+published guidance. `PREDICTIONS-SCORING.md` already found this for Andy Jassy,
+41 predictions at a mean of +0.049, and called a corporate roadmap a
+near-zero-information forecast; `PREDICTION-SOURCING-2026-09-15.md` warned that
+recruiting roadmap CEOs pads the board without sharpening it.
+
+Round-2 sourcing leaned on earnings calls, shareholder letters and prepared
+remarks, which is exactly that territory, because that is where dated,
+thresholded, publicly resolvable claims live. The rows are honest and the rule
+prices them correctly. They are not evidence of foresight and the page should
+not be read as though they were. Sharpening the board needs external-world
+calls, and those are rarer, later-dated and harder to resolve, which is the
+tension this whole run sits inside.
 
 ## What the five are made of, and why they were not already on the board
 
