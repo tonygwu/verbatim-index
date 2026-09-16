@@ -313,6 +313,53 @@ predictions-only people will not have.** Operator decision below.
 
 Boundaries verified: P2 before P3 and P3 before P4 are both safe.
 
+### P4 REVISED 2026-09-16: it is now three streams, not one
+
+The operator approved supplemental records entering the **rendered** corpus, so
+P4 stopped being "add the seven" and became "integrate three independent streams
+and re-derive". The streams are the seven new people, repo-1's round-1
+supplemental corpus (`corpus-supplemental-gemini`, 17 slugs, which alone carries
+five leaders over the floor), and repo-1's round-2 sourcing, which is live.
+
+**THE ONE RULE THAT PROTECTS THE LEADERBOARD, and it is new.**
+
+Web-sourced records need their transcripts on disk, because
+`validate_predictions.py:227` reconstructs `<root>/<slug>/<sid>.json` and fails
+`transcript_exists` without it. Those transcripts exist today only inside the
+experiment run, at
+`_experiments/supplemental-sources-2026-09-14/transcripts/<slug>/web-*.json`.
+
+**They must NOT be placed in `data/transcripts/`.** If they are,
+`normalize_transcripts.py` derives them, `grade.py` grades them, `calibrate()`
+pools them, and all 50 `verbatim-index` scores move. That is the exact mechanism
+this whole plan exists to prevent, arriving from a direction the first nine
+review passes never considered, and it would look like tidiness to whoever did
+it. They go in a root the grader never reads: `data/transcripts_web/<slug>/`,
+with `validate_predictions.py --transcripts` pointed at it.
+
+`validate_predictions.py` takes ONE `--transcripts` root and there will be two
+corpora, so either run it twice or add multi-root support;
+`phase2_resolvability.load` already has that shape.
+
+**Sequence, serialised, repo-0 only.** records land -> `aggregate_predictions.py`
+refresh -> `score_predictions.py` **with `--trend`** -> build -> deploy.
+`--trend` is not optional: the published board uses it, and omitting it scores
+114 instead of 117 and drops Aaron Levie and Dara Khosrowshahi off the board,
+which reads as the supplemental corpus deleting two unrelated leaders' scores.
+That false signal is repo-1's measurement, not a hypothetical.
+
+**Why the records are safe to merge.** `prediction_id` is derived from the
+transcript id plus the normalised quote, and the web corpus has entirely distinct
+transcript ids, so the merge is additive with no double-counting. Round-2 records
+carry release `predictions-2.2` (`extract bf5f8441c54f`, `verify be28981b6b8b`),
+which is what main pins, so they do not reintroduce a contract mix. repo-1 pinned
+`--verifier gemini`, the stricter bar: Fable accepts 0.545 against Gemini's 0.297.
+
+**This resolves open question 2.** The three-way choice disappears, because the
+corpus grows regardless and the scores must be re-derived. Re-deriving also
+disposes of the `scores.json` provenance problem, since a fresh run replaces
+bytes that currently exist only as an uncommitted change in repo-2's clone.
+
 ## Tests
 
 `test_aliases_subset`, `test_hs_discover_merge`, `test_dedupe_slug_scope`,
