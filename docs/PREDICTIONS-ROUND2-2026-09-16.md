@@ -235,6 +235,80 @@ carry a horizon, so those predictions cannot become eligible. This is the
 fetcher refusing to invent a date, which is correct, and the cost is visible
 rather than hidden.
 
+## How to finish this run
+
+Written down because the run outlives a session and the next person should not
+have to reconstruct the argument list. Every command is resumable. `--as-of` is
+always passed explicitly, never taken from the clock.
+
+```
+RUN=data/predictions/_experiments/supplemental-round2-2026-09-16
+
+# 1. extract and verify. Re-running RESUMES: only status=="ok" is cached, so the
+#    transient timeouts retry by themselves. Do NOT pass --force; round 1
+#    recorded that forcing a resume marked completed extractions as failed while
+#    their records survived on disk, leaving the meta disagreeing with the data.
+.venv/bin/python scripts/extract_predictions.py --stage both \
+    --transcripts $RUN/transcripts --out $RUN/results \
+    --extractor astra --verifier gemini --allow-degraded --workers 4
+
+# 2. resolve the past-due ones. Astra, because it has live web search and a
+#    resolution must cite a source rather than recall one.
+.venv/bin/python scripts/resolve_predictions.py --stage resolve \
+    --predictions $RUN/results --out $RUN --as-of 2026-09-16 --workers 4
+
+# 3. price them. Fable, because it is MEASURED to have no working tools, so the
+#    assessor cannot look up what happened and stop being a prior.
+.venv/bin/python scripts/resolve_predictions.py --stage prior \
+    --predictions $RUN/results --out $RUN --as-of 2026-09-16 --workers 4
+
+# 4. score. --trend is NOT optional; see the trap recorded above.
+.venv/bin/python scripts/score_predictions.py --run $RUN \
+    --predictions data/predictions \
+    --predictions $RUN/results \
+    --as-of 2026-09-16 --min-lead-days 60 --trend
+```
+
+Both harnesses were verified by TELEMETRY rather than liveness before the pass
+was committed to them, because round 1 lost all 38 of its Gemini verifications
+when the Antigravity accounts silently left the router config:
+
+```
+astra   real call on codex_b; raw response carries the answer
+gemini  served_model == requested_model == gemini-3.8-flash-high,
+        profile gptwufamily@gmail.com, zero tool calls
+```
+
+A trivial probe to Astra is REFUSED by the pipeline's own guard with
+`model_identity_mismatch: no reasoning tokens reported`. That is the guard
+working. The name reads as "another model answered" and it means "your prompt
+was too easy to reason about"; it is already recorded at
+`docs/BLINDING-EXPERIMENT-2026-09-13.md:124`.
+
+## Cross-leader contamination, checked rather than assumed
+
+Two discovery agents independently reported that a sibling agent overwrote a
+shared scratch file, and in one case two of Mustafa Suleyman's quotes reached
+Dylan Field's working draft. Both caught it, moved to private subdirectories and
+re-verified every quote they report. This is the wrong-person failure this repo
+has already paid 44 recordings for, arriving from a new direction: not a wrong
+video, but one person's words under another's name because two processes shared
+a filename.
+
+Verified over the whole run rather than taken on the agents' word:
+
+```
+quotes claimed by more than one leader        0
+source URLs claimed by more than one leader   0
+fetched evidence quotes                      76 claimed, 73 ground byte-exact
+                                              in their own source text
+```
+
+The three that miss are recorded as `missing` and never become evidence. The
+exact-match grounding check is what makes this survivable, because a quote must
+appear verbatim on its own fetched page. **A fuzzy match here would let this
+class through**, which is the reason `locate_quote` has no fuzzy fallback.
+
 ## Quota note worth inheriting
 
 A first launch of 16 discovery agents died within seconds, all 16, on an HTTP
