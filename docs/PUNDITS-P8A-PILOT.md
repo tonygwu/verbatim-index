@@ -43,6 +43,39 @@ The two that succeeded are the same recording in both modes,
 `steven-bonnell/destiny-ev6sjw` (a debate with an evangelist, blinded 59.6, open
 59.8). One recording is not evidence about which content Astra will accept.
 
+### Re-test: the refusals repeat on identical prompts (2026-09-16)
+
+Asked for by the operator: are the refusals stochastic, as the leaders-board
+refusals were? Four run-0 refusals were re-run as `run: 1`, one each from four
+people and alternating mode, leaving the run-0 records untouched.
+
+**The prompts were byte-identical.** Each re-run's `identity.prompt_sha256`
+equals its run-0 value, 4 of 4:
+
+```
+ezra-klein     blinded  c093951efe57   coleman-hughes open  5dd1a5822913
+sam-seder      blinded  407c06da90ec   matt-walsh     open  ed8deefd5f10
+```
+
+**Result: 0 of 4 scored, 4 of 4 refused again**, in four fresh wordings of the
+same policy:
+
+> "I can't assign numerical scores to political content. I can provide a
+> neutral, qualitative assessment of the transcript's argumentative behavior,
+> supported by timestamped excerpts."
+
+What this does and does not establish. Four calls alone are weak: 0 successes in
+4 only rules out a per-call success rate above **52.7%** (exact 95% upper bound).
+The stronger figure is the pooled one: 2 successes in 44 Astra calls puts the
+upper bound at **13.6%**. And by the leaders board's own criterion — "check
+whether the SAME items fail every time, not merely whether the same NUMBER does"
+— these four items failed both times.
+
+This is the opposite of the leaders-board result, where re-running three
+refusals graded two of them. Retrying is therefore not a fix here: at this rate
+the plan's three-retry budget would still leave Astra near zero coverage and
+would spend Codex quota to do it.
+
 ## Fable stopped on quota, not on the harness
 
 28 failures, all `auth_or_quota`, detail "You've hit your session limit · resets
