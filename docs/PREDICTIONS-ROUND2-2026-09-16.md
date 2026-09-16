@@ -408,6 +408,37 @@ ACCEPTED record to an ELIGIBLE one. 14 of Nadella's 27 accepted records are past
 due and 9 of those are eligible, because the sources were picked for already
 having a passed deadline rather than for being interesting.
 
+## A KeyError was the corpus saying "this is not a record"
+
+While counting how many scored predictions sit outside the rendered corpus, a
+glob of `data/predictions/*/*.jsonl` raised `KeyError: 'prediction_id'`. The
+reflex was to make the counter defensive with `.get("prediction_id")` and
+report "54 records carry no prediction_id" as a finding for repo-0. Both halves
+were wrong, and repo-0 measured it:
+
+```
+skipping _-prefixed directories   1710 records,  0 without an id
+inside _-prefixed directories       54 records, 54 without an id
+                                  the files are *_errors.jsonl run logs
+```
+
+They are not records. `aggregate_predictions.py`, `prediction_inputs_sha256`,
+`build_predictions_site.load_records` and `market_consensus.py` all skip
+`_`-prefixed directories for exactly this reason, and this repo already carries
+commit `3578d3f`, "Stop reading error logs as prediction records". So this is the
+SECOND time the same mistake has been made here.
+
+The lesson is about the reflex rather than the glob. **A KeyError on a field
+every real record carries is the data telling you the thing is not that kind of
+thing.** Catching it converts a loud, correct signal into a silent wrong count,
+and then into a false bug report for somebody else. The repo's own rule against
+permissive parsers says the same in different words; this is what it looks like
+when the permissive parser is three characters long and written in the moment.
+
+What should have happened: ask why a record had no id, find that its directory
+starts with `_`, and discover that four production consumers already agree it
+should be skipped.
+
 ## `pgrep -f` bit again, in a new place
 
 The repo already forbids `pgrep -f` for detecting a running fetcher, after it
