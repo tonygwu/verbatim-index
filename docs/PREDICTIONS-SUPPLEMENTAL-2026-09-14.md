@@ -365,3 +365,125 @@ Still outstanding, and NOT this repo's to do: `llm-quota-router` must bump
 `__version__` and tag `v0.1.2`. Both the venv copy and the live install report
 `0.1.1` today while behaving differently, so no version check can tell them
 apart. Once tagged, raise the pin here and rebuild every clone's venv.
+
+## Final results, 2026-09-15
+
+The "## Results" section above is superseded. It recorded six leaders, which is
+where the Fable quota wall stopped the first pass. The remaining 52 sources were
+extracted on Astra via `codex_b`, reachable for the first time after the
+CODEX_HOME fix and the v0.1.2 pin.
+
+```
+leader              was  new  now  cand  keep  crossed the floor of 5?
+lip-bu-tan            2   36   38    39   92%  YES
+thomas-kurian         1   29   30    34   85%  YES
+brian-chesky          4   23   27    50   46%  YES
+patrick-collison      2   14   16    19   74%  YES
+jack-dorsey           0   13   13    18   72%  YES
+amjad-masad           4    4    8    14   29%  YES
+tobi-lutke            0    7    7     9   78%  YES
+arthur-mensch         4    3    7    11   27%  YES
+michael-dell          3    2    5     3   67%  YES
+fei-fei-li            0    2    2     4   50%  still under
+ilya-sutskever        0    2    2     3   67%  still under
+alex-karp             1    1    2     8   12%  still under
+sergey-brin           0    0    0     4    0%  still under
+```
+
+216 candidates, 136 accepted. NINE of thirteen crossed the rank floor; four did
+not. Extraction never failed: 52 of 52 on codex_b, 133 candidates, 0 ungrounded,
+for about 3 points of that account's weekly window.
+
+Yield by source kind, over all 89 sources:
+
+```
+letter                 4.27 accepted per 10k words
+essay                  3.05
+earnings_call          2.95
+article_with_quotes    2.83
+keynote_transcript     1.47
+interview_transcript   1.24
+testimony              0.79
+ALL                    1.98
+existing YouTube corpus 0.54
+```
+
+Letters still lead, but the earlier claim that the gain sits almost entirely in
+letters does NOT survive the full sample. Earnings calls came in at 2.95 once
+Lip-Bu Tan's and Thomas Kurian's were included, against 0.70 on the partial
+data. The earlier reading was six leaders, and two of them were the wrong
+leaders to generalise from: Karp and Chesky speak little on their own calls.
+Where the subject IS the one giving guidance, an earnings call is a dense
+source.
+
+## The number that needs a caveat: the verifier decides the keep rate
+
+Accepted counts in the table above are NOT on one scale, and the difference is
+larger than most of the per-leader differences.
+
+```
+extract -> verify    cand   acc   keep   leaders
+astra -> fable        133   107    80%   8
+fable -> astra         19    14    74%   1
+fable -> gemini        52    15    29%   5
+```
+
+Leader composition is confounded with arm there, so it is not evidence on its
+own. brian-chesky is the within-leader control, and he is the only leader with
+meaningful n under both:
+
+```
+brian-chesky   verifier fable    17/24 = 71% keep
+               verifier gemini    6/19 = 32% keep
+```
+
+Same leader, same sources, one variable. Gemini rejects roughly twice what Fable
+rejects. That is consistent with the direction recorded in
+PREDICTIONS-AGREEMENT-2026-09-12.md, which measured 45.83% for astra->fable on
+24 hand-reviewed pairs and had no Gemini verdicts at all.
+
+WHY IT MATTERS: the baseline corpus is Gemini-verified on 1,333 of 1,494
+records. Nine of the thirteen leaders above were verified by Fable, so their
+counts sit on a more permissive scale than the board they would join. A leader
+at 38 here is not the same 38 as a leader already on the board.
+
+Gemini verification was NOT a choice. The antigravity accounts disappeared from
+the router config between the two passes:
+
+```
+before: [claude, claude_b, claude_c, claude_d, codex, antigravity_gemini, antigravity_claude, claude_e, codex_b]
+after:  [claude, claude_b, claude_c, claude_d, codex, cursor, claude_e, codex_b]
+```
+
+All 38 Gemini verifications failed as `pinned harness gemini has no eligible
+account after exclusions`, so the pass was re-run on Fable. Reported to the
+router owner.
+
+BEFORE ANY OF THESE RECORDS JOIN THE BOARD, re-verify the Fable-verified ones on
+Gemini and use those verdicts. The extractions are done and cost nothing to
+re-verify; only the second stage needs to run again.
+
+## What this is worth to Phase 2
+
+```
+own-control (a delivery rate, not foresight)  107 of 136
+carrying a valid target date                   87
+past due                                       53
+past due AND not own-control (scorable)        11
+```
+
+Eleven scorable-as-foresight predictions, against the 38 the whole corpus
+carried before. A large proportional addition to the scarcest category, and it
+does not change the Phase 2 conclusion: 107 of 136 are a CEO promising what
+their own company will do, which is a delivery rate and must not share a column
+with foresight.
+
+## Still open
+
+- 14 transcripts failed verification as `cache_stale`. All 14 had returned
+  `nothing_to_verify` under Gemini, so they carry no candidates and no
+  predictions are lost. The guard is correct: a cached verdict produced under a
+  different verifier request must not be reused silently.
+- sergey-brin remains at 0 from 4 candidates. His two usable sources are a 1998
+  paper and an AGI House Q&A, and nothing in either passes the falsifiable gate.
+  The discovery agent predicted 1 to 4 and the honest answer is 0.
