@@ -172,6 +172,10 @@ b.yes{color:var(--d3)}
 b.no{color:var(--bad)}
 ul.ev{margin:2px 0 0; padding-left:16px}
 ul.ev li{margin-bottom:6px}
+td.hit{text-align:right; padding-right:10px; font-family:"IBM Plex Mono",monospace;
+  font-size:13px; font-variant-numeric:tabular-nums; color:var(--muted)}
+td.hit .sl{color:var(--faint); padding:0 1px}
+td.hit.none{text-align:center; color:var(--faint)}
 td.sc{text-align:right; padding-right:14px; font-family:"IBM Plex Mono",monospace; font-size:14px; font-variant-numeric:tabular-nums}
 td.sc .v{font-weight:600}
 td.sc .pos{color:var(--d3)}
@@ -304,7 +308,7 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
     <colgroup>
       <col style="width:215px"><col style="width:205px">
       <col style="width:105px">
-      <col style="width:300px"><col style="width:95px">
+      <col style="width:300px"><col style="width:85px"><col style="width:95px">
     </colgroup>
     <thead><tr>
       <th data-k="name" aria-sort="ascending">Person<span class="arrow">&#9650;</span></th>
@@ -313,9 +317,9 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
         aria-expanded="false" aria-label="What does Predictions mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="earliest">When it was said<button class="info" type="button" data-info="timeline"
         aria-expanded="false" aria-label="What does the timeline show?">?</button><span class="arrow">&#9650;</span></th>
-      <!-- score:start -->__SCORE_HEADER__<!-- score:end -->
+      <!-- score:start -->__CAME_TRUE_HEADER____SCORE_HEADER__<!-- score:end -->
     </tr>
-    <tr class="axisrow"><td></td><td></td><td></td><td><span class="sq-ax" id="ax"></span></td><td></td></tr>
+    <tr class="axisrow"><td></td><td></td><td></td><td><span class="sq-ax" id="ax"></span></td><td></td><td></td></tr>
     </thead>
     <tbody id="tb"></tbody>
   </table>
@@ -376,6 +380,7 @@ const INFO = {
     <p>Sorting this column sorts by the earliest statement date; people with no dated prediction sort
     last.</p>`,
   /* score:start */
+  __CAME_TRUE_INFO__
   __SCORE_INFO__
   /* score:end */
 };
@@ -404,12 +409,26 @@ function spark(r){
    Expected points are zero at every p under this rule, so a positive mean is foresight
    and volume alone earns nothing. A person below the floor keeps their predictions on
    the page and shows no number, the way the leaderboard's rank floor already works. */
+/* How many of the scored predictions came true, as a plain fraction. It sits
+   next to Score deliberately: the two disagree often, and that disagreement is
+   the whole point of the rule. Somebody can be 3/3 and score +0.34 because the
+   three were near-certainties, while 1/4 scores -0.06 because the three misses
+   were long shots nobody expected to land. A reader who sees only the mean will
+   assume it tracks the hit rate; the fraction shows that it does not. */
+function hitCell(r){
+  if (r.score_hits == null) return `<td class="hit none">&mdash;</td>`;
+  return `<td class="hit" title="${r.score_hits} of ${r.n_scored} scored predictions came true">` +
+    `${r.score_hits}<span class="sl">/</span>${r.n_scored}</td>`;
+}
+
 function scoreCell(r){
   if (r.score == null) return `<td class="sc none" title="${esc(r.score_why || "not scored")}">&mdash;</td>`;
   const sign = r.score >= 0 ? "pos" : "neg";
   const v = (r.score >= 0 ? "+" : "\u2212") + Math.abs(r.score).toFixed(2);
+  // No n= here any more: the Came true column prints the same count as its
+  // denominator, and two copies of one number is noise.
   return `<td class="sc" title="mean over ${r.n_scored} resolved prediction${r.n_scored === 1 ? "" : "s"}">` +
-    `<span class="v ${sign}">${v}</span><span class="n">n=${r.n_scored}</span></td>`;
+    `<span class="v ${sign}">${v}</span></td>`;
 }
 /* score:end */
 /* score:start */
@@ -561,7 +580,7 @@ function render(){
     /* score:start */
     // Two columns can hold nothing at all, and an absence is not a zero. Rows with
     // nothing sort last in BOTH directions, so flipping the arrow never promotes one.
-    if (sortKey === "earliest" || sortKey === "score"){
+    if (sortKey === "earliest" || sortKey === "score" || sortKey === "hit_rate"){
       if (x == null && y == null) return a.name.localeCompare(b.name);
       if (x == null) return 1;
       if (y == null) return -1;
@@ -576,7 +595,7 @@ function render(){
     <td class="org">${esc(r.company || "")}<span class="sector">${esc(r.sector || "")}</span></td>
     ${["accepted"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
     <td class="spark">${spark(r)}</td>
-    ${scoreCell(r)}
+    ${hitCell(r)}${scoreCell(r)}
   </tr>`).join("");
 }
 
@@ -648,7 +667,7 @@ document.addEventListener("click", e => {
   const person = DATA.find(d => d.slug === slug);
   const row = document.createElement("tr");
   row.className = "audit";
-  row.innerHTML = `<td colspan="5">${drawer(slug, person)}</td>`;
+  row.innerHTML = `<td colspan="6">${drawer(slug, person)}</td>`;
   tr.after(row);
   tr.setAttribute("aria-expanded", "true");
 });
@@ -832,6 +851,8 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict) 
             # zero is a real and meaningful value under this rule.
             "score": (sc["mean_points"] if sc and sc["ranked"] else None),
             "n_scored": (sc["n_scored"] if sc else 0),
+            "score_hits": (sc["scored_occurred"] if sc and sc["ranked"] else None),
+            "hit_rate": (sc["hit_rate"] if sc and sc["ranked"] else None),
             "score_why": score_why(sc),
             "years": h["years"], "undated": h["undated"], "early": h.get("early", 0),
             "slug": l["slug"], "name": l["name"], "role": entry.get("role") or l.get("role"), "company": l.get("company") or entry.get("company"),
@@ -854,6 +875,12 @@ MIN_SCORED = SP.MIN_SCORED_TO_RANK
 # A year needs this many predictions across the WHOLE corpus before the timeline
 # gives it a column. Below it the column is visual noise on every row.
 MIN_YEAR_COUNT = 3
+
+CAME_TRUE_HEADER_EMPTY = '<th class="nosort">Came true</th>'
+CAME_TRUE_HEADER_LIVE = ('<th data-k="hit_rate">Came true<button class="info" type="button" '
+                         'data-info="cametrue" aria-expanded="false" '
+                         'aria-label="What does Came true mean?">?</button>'
+                         '<span class="arrow">&#9650;</span></th>')
 
 SCORE_HEADER_EMPTY = ('<th class="nosort">Score<button class="info" type="button" data-info="score" '
                       'aria-expanded="false" aria-label="Why is this column empty?">?</button></th>')
@@ -889,6 +916,25 @@ def disclaimer(c: dict) -> str:
 
 SCORE_LEGEND_EMPTY = ("<b>Score is empty on every row</b>, and stays empty until outcomes are "
                       "resolved: nothing here has been checked against what happened.")
+
+CAME_TRUE_INFO_EMPTY = (
+    "cametrue: `<p><b>Came true</b> is empty until outcomes are resolved.</p>`,")
+
+
+def came_true_info(c: dict) -> str:
+    return (
+        "cametrue: `<p><b>How many of a person's scored predictions came true</b>, "
+        "out of how many were scored. A plain count, not a rate.</p>"
+        "<p>It sits next to Score because the two often disagree, and the disagreement "
+        "is the point. Somebody can be right about everything and still score close to "
+        "zero, if the things they called were near-certainties. Somebody can be wrong "
+        "more often than not and score better, if what they missed were long shots "
+        "nobody expected. The fraction is the raw record; Score is what the record was "
+        "worth against how likely each call looked at the time.</p>"
+        "<p>Only scored predictions are counted. The ones that could not be resolved, "
+        "or that were too vague or too close to their own deadline to test, are in "
+        "neither number.</p>`,")
+
 
 SCORE_INFO_EMPTY = (
     "score: `<p><b>Score is empty on every row, and that is not a bug.</b> No prediction on this "
@@ -1157,6 +1203,9 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__Y1__", span[-1] if span else "n/a")
         .replace("__EYEBROW_STATUS__", eyebrow_status(scores_doc["corpus"]) if scores_doc else EYEBROW_EMPTY)
         .replace("__DISCLAIMER__", disclaimer(scores_doc["corpus"]) if scores_doc else DISCLAIMER_EMPTY)
+        .replace("__CAME_TRUE_HEADER__", CAME_TRUE_HEADER_LIVE if scores_doc else CAME_TRUE_HEADER_EMPTY)
+        .replace("__CAME_TRUE_INFO__", came_true_info(scores_doc["corpus"]) if scores_doc
+                 else CAME_TRUE_INFO_EMPTY)
         .replace("__SCORE_HEADER__", SCORE_HEADER_LIVE if scores_doc else SCORE_HEADER_EMPTY)
         .replace("__SCORE_LEGEND__", score_legend(scores_doc["corpus"]) if scores_doc else SCORE_LEGEND_EMPTY)
         .replace("__SCORE_INFO__", score_info(scores_doc["corpus"], scores_doc["rule"]) if scores_doc

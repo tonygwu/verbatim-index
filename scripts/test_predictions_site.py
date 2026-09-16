@@ -173,6 +173,9 @@ def main() -> int:
               # No scores file in this build, so Score is the nosort variant and
               # carries no data-k. The live-scores build below asserts it gains one.
               keys == ["name", "company", "accepted", "earliest"], str(keys))
+        # With a scores file the two judgement columns gain sort keys; without one
+        # they are inert, because an empty column that looks sortable implies data.
+
         check("SORT: the dropped breakdown keys are still embedded in DATA and shown in the drawer",
               all(k in data[0] for k in ("h_explicit", "h_inferable", "h_none", "p_explicit", "p_qual"))
               and "${person.h_explicit} named in the quote" in html
@@ -205,9 +208,11 @@ def main() -> int:
                        "unresolvable_reasons": {"no_public_evidence": 2, "criterion_ambiguous": 1}},
             "leaders": [
                 {"slug": "ada", "name": "Ada L", "n_scored": 6, "mean_points": 1.2345,
-                 "ranked": True, "past_due": 7, "eligible": 7, "unresolvable": 1},
+                 "ranked": True, "past_due": 7, "eligible": 7, "unresolvable": 1,
+                 "scored_occurred": 4, "hit_rate": 0.6667},
                 {"slug": "alan", "name": "Alan T", "n_scored": 2, "mean_points": -0.5,
-                 "ranked": False, "past_due": 2, "eligible": 0, "unresolvable": 2}],
+                 "ranked": False, "past_due": 2, "eligible": 0, "unresolvable": 2,
+                 "scored_occurred": 1, "hit_rate": 0.5}],
             "predictions": [
                 {"prediction_id": scored_pid, "outcome": "occurred", "scored": True,
                  "unresolvable_reason": None, "resolution_reasoning": "it shipped",
@@ -229,6 +234,14 @@ def main() -> int:
         check("SCORE: a person BELOW the floor carries no number but keeps the count, never a zero",
               d2["alan"]["score"] is None and d2["alan"]["n_scored"] == 2
               and "floor" in d2["alan"]["score_why"], str(d2["alan"]))
+        check("HITS: a ranked person shows the count that came true over the count scored",
+              d2["ada"]["score_hits"] == 4 and d2["ada"]["n_scored"] == 6,
+              str((d2["ada"].get("score_hits"), d2["ada"].get("n_scored"))))
+        check("HITS: an unranked person carries no fraction, the same rule as Score",
+              d2["alan"]["score_hits"] is None, str(d2["alan"].get("score_hits")))
+        check("HITS: the numerator is STORED, never recovered from hit_rate times n",
+              "scored_occurred" in json.loads(scores.read_text())["leaders"][0])
+
         check("SCORE: the column becomes sortable only once there is something to sort",
               'data-k="score"' in h2 and 'class="nosort">Score' not in h2)
         # The masthead must not contradict the table. A page carrying numbers while its
@@ -364,7 +377,8 @@ def main() -> int:
         check("SPARK: a malformed statement date raises rather than being sliced into a year", bad)
 
         check("SORT: the drawer cell spans every column",
-              '<td colspan="5">' in html and ncols == 5, str(ncols))
+              # Six columns since Came true arrived on 2026-09-16.
+              '<td colspan="6">' in html and ncols == 6, str(ncols))
         check("SORT: DATA is emitted alphabetically by name", [d["name"] for d in data] == ["Ada L", "Alan T"])
 
         ada = pred["ada"]

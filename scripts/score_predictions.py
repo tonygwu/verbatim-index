@@ -133,6 +133,9 @@ def per_leader(rows: list[dict], names: dict[str, str]) -> list[dict]:
             "occurred": outcomes.get("occurred", 0),
             "not_occurred": outcomes.get("not_occurred", 0),
             "n_scored": len(scored),
+            # The numerator the page prints. Stored rather than recovered from
+            # hit_rate * n_scored, which is a float rounded back into a count.
+            "scored_occurred": sum(1 for r in scored if r["outcome"] == "occurred"),
             "mean_points": round(sum(pts) / len(pts), 4) if pts else None,
             "sum_points": round(sum(pts), 4) if pts else None,
             "hit_rate": round(sum(1 for r in scored if r["outcome"] == "occurred") / len(scored), 4) if scored else None,
