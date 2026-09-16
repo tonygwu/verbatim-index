@@ -73,9 +73,20 @@ fail. Do not reject a numerical or capability milestone merely because you
 consider its eventual achievement likely. Explain the missing test instead.
 
 **G3 `committed`.** The speaker asserts an expectation: "will", "is going to",
-"I expect", "I think X will", "I believe", "probably", "likely", "I'd bet".
-"Might", "could", "may", "maybe", "possibly", a question, a joke, or an
+"I expect", "I think X will", "I believe", "probably", "likely", "I'd bet",
+"on track to", "on track for". "Might", "could", "may", "maybe", "possibly",
+"we want to", "I'd like to see", "hopeful", a question, a joke, or an
 if-then scenario without commitment fails.
+
+"On track to" and "on track for" pass only when they carry a dated outcome.
+"We are on track to ship X in the second half" is an assertion about a future
+state and passes. A bare "we are on track" states a present condition with no
+outcome, and it fails G1 as well as G2.
+
+Do not read an aspiration as a commitment because it sounds confident. "On
+track" asserts a present expectation about a future state. "We want to" asserts
+only a preference, so "we want to land it on the moon before 2022" fails. That
+distinction is the whole of this gate.
 
 **G4 `own_voice`.** The subject states the prediction in their own words.
 An answer can qualify. Merely agreeing with the interviewer's prediction,
