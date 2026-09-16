@@ -206,7 +206,8 @@ def run_one(job: dict) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stage", choices=["resolve", "prior"], required=True)
-    ap.add_argument("--predictions", type=Path, default=Path("data/predictions"))
+    ap.add_argument("--predictions", type=Path, action="append", default=None,
+                    help="a corpus directory; repeat it to score several corpora together")
     ap.add_argument("--out", type=Path, required=True, help="the experiment run directory")
     ap.add_argument("--as-of", required=True, help="YYYY-MM-DD; what counts as past due, never the clock")
     ap.add_argument("--min-lead-days", type=int, default=P2.MIN_LEAD_DAYS)
@@ -252,6 +253,7 @@ def accounts_for(args) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.predictions = args.predictions or [Path("data/predictions")]
     if Path(args.fable_bin).name == "cl":
         raise SystemExit("refusing --fable-bin cl: it injects --dangerously-skip-permissions (see CLAUDE.md)")
     try:

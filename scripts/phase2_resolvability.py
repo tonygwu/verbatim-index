@@ -186,18 +186,44 @@ def derived_deadline(rec):
     return add_span(said, count, unit), how
 
 
-def load(pred_dir: pathlib.Path):
+def load(pred_dir):
+    """Accepted predictions from one corpus directory, or several.
+
+    Several, because the corpus is no longer one source. repo-1's supplemental
+    run extracts predictions from shareholder letters, earnings calls and other
+    web pages, and those records are the same shape but live in their own tree.
+    A record carries its corpus in `_corpus`, so a later reader can tell where a
+    scored prediction came from without re-deriving it.
+
+    A prediction_id appearing in TWO corpora is a duplicate and raises. The id
+    hashes the transcript and the quote, so a genuine collision means the same
+    words were extracted twice, which would double-count that person.
+    """
+    dirs = [pathlib.Path(pred_dir)] if isinstance(pred_dir, (str, pathlib.Path)) else [pathlib.Path(d) for d in pred_dir]
     rows = []
-    for f in sorted(pred_dir.glob("*/*.jsonl")):
-        # split on the newline byte only; see predictions_lib.parse_lines
-        for line in f.read_text().split("\n"):
-            if not line.strip():
-                continue
-            r = json.loads(line)
-            if r.get("accepted"):
+    seen: dict[str, str] = {}
+    for d in dirs:
+        for f in sorted(d.glob("*/*.jsonl")):
+            # split on the newline byte only; see predictions_lib.parse_lines
+            for line in f.read_text().split("\n"):
+                if not line.strip():
+                    continue
+                r = json.loads(line)
+                if not r.get("accepted"):
+                    continue
+                # Only a REAL id can be a duplicate. A record without one cannot be
+                # deduped at all, and treating a missing key as a collision would
+                # reject every such corpus on its second record.
+                pid = r.get("prediction_id")
+                if pid and pid in seen:
+                    raise SystemExit(f"prediction_id {pid} appears in both {seen[pid]} and {d}; "
+                                     f"the same quote would be scored twice")
+                if pid:
+                    seen[pid] = str(d)
+                r["_corpus"] = d.name
                 rows.append(r)
     if not rows:
-        raise SystemExit(f"no accepted predictions under {pred_dir}")
+        raise SystemExit(f"no accepted predictions under {[str(d) for d in dirs]}")
     return rows
 
 

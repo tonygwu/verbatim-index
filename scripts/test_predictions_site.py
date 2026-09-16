@@ -252,6 +252,26 @@ def main() -> int:
                                 re.sub(r"<!-- disclaimer:start -->.*?<!-- disclaimer:end -->", "", h2, flags=re.S),
                                 flags=re.S), flags=re.S).split("const DATA")[0], re.I))))
 
+        # A scores file may cover MORE predictions than the page embeds, which is what
+        # happens when several corpora are scored together and only one is rendered.
+        # Then a person's number is averaged over predictions their own drawer cannot
+        # show, and nothing on the page says so.
+        wide = td / "wide.json"
+        wdoc = json.loads(scores.read_text())
+        wdoc["predictions"] = wdoc["predictions"] + [
+            {"prediction_id": "not-on-this-page", "leader_slug": "ada", "outcome": "occurred",
+             "scored": True, "unresolvable_reason": None, "resolution_reasoning": "x",
+             "sources": [], "p": 0.5, "reference_class": "c", "points": 1.0,
+             "not_scored_because": None}]
+        wide.write_text(json.dumps(wdoc))
+        p4 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(td / "site" / "w.html"),
+                             "--scores", str(wide)], capture_output=True, text=True, cwd=REPO)
+        check("SCORE: a scored prediction the page cannot show fails the render, naming the person",
+              p4.returncode != 0 and "ada" in (p4.stdout + p4.stderr)
+              and "drawer cannot show" in (p4.stdout + p4.stderr),
+              (p4.stdout + p4.stderr)[-300:])
+
         # A scores file describing somebody the page does not carry means the two inputs
         # were built from different corpora, which would show up as a missing row.
         stray = td / "stray.json"

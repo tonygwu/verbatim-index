@@ -919,6 +919,36 @@ def attach_outcomes(pred: dict, scores_doc: dict | None) -> int:
     return n
 
 
+def check_scores_are_renderable(scores_doc: dict, pred: dict) -> None:
+    """Every SCORED prediction must be one the page can actually show.
+
+    `scores.json` can be computed over several corpora, and the page embeds only
+    the records under `--predictions`. Score a corpus the page does not carry and
+    a person's number is averaged over predictions their own drawer cannot show.
+    That is the render-integrity failure this file already guards against for
+    counts, in check_index_matches_disk, arriving through the scoring column.
+
+    MEASURED 2026-09-16: scoring the main corpus together with repo-1's
+    supplemental web sources put Patrick Collison at 4 scored predictions while
+    his drawer held 2. It was invisible only because 4 is below the rank floor,
+    so no number was shown. Brian Chesky sat at 4 as well.
+    """
+    if not scores_doc:
+        return
+    have = {r["prediction_id"] for recs in pred.values() for r in recs}
+    missing: dict[str, int] = {}
+    for row in scores_doc.get("predictions", []):
+        if row.get("scored") and row["prediction_id"] not in have:
+            missing[row["leader_slug"]] = missing.get(row["leader_slug"], 0) + 1
+    if missing:
+        worst = ", ".join(f"{k} ({v})" for k, v in sorted(missing.items(), key=lambda kv: -kv[1])[:5])
+        raise SystemExit(
+            f"{sum(missing.values())} scored predictions are not among the records this page "
+            f"embeds, so those people's scores would be averaged over predictions their drawer "
+            f"cannot show: {worst}. Either pass every corpus the scores cover through "
+            f"--predictions, or score only the corpus being rendered.")
+
+
 def check_index_matches_disk(index: dict, by_slug: dict[str, list[dict]]) -> None:
     """A table saying 9 over a drawer showing 12 is the render-integrity failure this repo already paid for once."""
     for l in index["leaders"]:
@@ -1043,6 +1073,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = person_rows(index, roster, hist, scores)
     pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
+    check_scores_are_renderable(scores_doc, pred)
     n_outcomes = attach_outcomes(pred, scores_doc)
     src = src_map(loaded["accepted"])
     c = index["corpus"]
