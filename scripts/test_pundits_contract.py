@@ -247,6 +247,25 @@ def test_cache(tmp: Path) -> None:
     r = G.grade_one(job())
     check("an identical job reuses it without calling the judge", r.get("status") == "cached" and len(calls) == n, str(r))
 
+    # A stored record that FAILED validation must not count as a cache hit.
+    # Found live 2026-09-16: 6 Gemini cells whose run-0 records broke the 25-word
+    # quote cap came back `CACHED` when scheduled again, because the cache asks
+    # only whether the IDENTITY matches. Identity says "this is the same
+    # question"; it says nothing about whether the answer is usable. Left alone,
+    # those cells can never be repaired without --force and a two-judge panel
+    # quietly keeps a hole in it.
+    invalid = json.loads(dest.read_text())
+    invalid["validation_errors"] = ["d1_steelmanning quote exceeds 25 words"]
+    dest.write_text(json.dumps(invalid))
+    n = len(calls)
+    r = G.grade_one(job())
+    check("a stored grade that failed validation is not reused as a cache hit",
+          r.get("status") != "cached" and len(calls) > n, str(r))
+    G.grade_one(job())  # restore a valid record for the checks below
+    n = len(calls)
+    r = G.grade_one(job())
+    check("a valid stored grade is still reused", r.get("status") == "cached" and len(calls) == n, str(r))
+
     before = dest.read_bytes()
     for field, over in (("input_sha256", {"input_sha256": "0" * 64}),
                         ("mode", {"mode": "open"}),

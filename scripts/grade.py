@@ -1723,13 +1723,36 @@ def _v2_stored(dest: Path, expected: dict, job: dict) -> dict | None:
     rec = job["rec"]
     base = {"id": f"{rec['leader_slug']}/{rec['source_id']}", "judge": job["judge"],
             "mode": job["mode"], "run": job["run"]}
+    stored: dict = {}
     try:
-        why = GC.identity_mismatch(json.loads(dest.read_text()), expected)
+        stored = json.loads(dest.read_text())
+        why = GC.identity_mismatch(stored, expected)
     except (OSError, ValueError) as exc:
         why = f"identity: the stored record is unreadable ({exc})"
+    # Identity answers "is this the same question?", never "is the stored answer
+    # usable?". A record that failed validation matches on every identity field,
+    # so it was returned as a cache hit and its cell could never be repaired
+    # without --force. MEASURED 2026-09-16: 6 Gemini cells that broke the 25-word
+    # quote cap came back CACHED when scheduled again, which would have left six
+    # permanent holes in a two-judge panel. An unusable record is treated as
+    # absent: moved aside so the evidence survives, then graded again.
+    unusable = None
+    if why is None and stored:
+        if stored.get("validation_errors"):
+            unusable = f"the stored record failed validation: {stored['validation_errors']}"
+        elif not (stored.get("grade") or {}).get("dimensions"):
+            unusable = "the stored record carries no scored dimensions (a refusal or an empty answer)"
     if not job["force"]:
-        if why is None:
+        if why is None and unusable is None:
             return {"status": "cached", **base}
+        if unusable is not None:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            aside = Path(job["obsolete_root"]) / job["judge"] / rec["leader_slug"] / f"{dest.stem}.{stamp}.json"
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(dest, aside)
+            log(f"    regrading {base['id']} {job['judge']}/{job['mode']}: {unusable}; "
+                f"previous record moved to {aside}")
+            return None
         return {"status": "stale_cache", **base, "error_type": E_STALE_CACHE,
                 "detail": f"{dest}: {why}. Not reused and not overwritten; --force moves it aside "
                           f"and grades again."}

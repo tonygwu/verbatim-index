@@ -5,6 +5,20 @@ Newest first.
 
 ## Verbatim Pundits
 
+- **A grade record that failed validation counts as a cache hit.** Filed 2026-09-16.
+  `reuse_or_none()` in `scripts/grade.py` returns `cached` whenever the stored
+  record's identity matches (study, contract, prompt, input, mode, judge, model,
+  run). It never asks whether the stored record is a usable grade, so a record
+  with `validation_errors` is skipped forever on re-runs and the cell can only be
+  repaired with `--force`. Found live: 6 Gemini cells that failed the 25-word
+  quote cap in P8a were reported `CACHED` when scheduled again, which would have
+  left six permanent holes in a two-judge panel. A failing test is in
+  `scripts/test_pundits_contract.py`
+  (`check_invalid_record_is_not_reused`). The fix is to treat a record with
+  validation errors, or with no scored dimensions, as absent rather than cached,
+  and to say so in the run summary rather than counting it under `cached`.
+  Leaders (v1) uses a plain `dest.exists()` check and has the same hazard.
+
 - **Blind lowercase uses of handles that are ordinary words.** Filed 2026-09-15.
   `blind_study()` redacts a handle that is an ordinary English word only where it is
   capitalised, so "Destiny" goes and "destiny" stays. Captions write names in
