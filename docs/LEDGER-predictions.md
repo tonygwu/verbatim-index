@@ -47,6 +47,7 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 | ID | Decision | Choice | Date |
 |---|---|---|---|
 | VD-4 | Whether to migrate the corpus to release `predictions-2.0` | **No. Stay on extraction `d795f6f1d88b` / verification `102275d44824`** | 2026-09-14 |
+| VD-4a | How to weigh admitting predictions under a non-current contract | **Bias toward admitting. THE OPERATOR'S DIRECTION, 2026-09-16**, given in these words: do the thing that biases towards bringing in more predictions, because predictions are barren on verbatim-predictions right now. VD-4 is narrowed to what it actually measured, which is re-extracting the existing corpus; it does not govern admitting a new batch. See the section below | 2026-09-16 |
 | VD-1 | Verifier strictness on undated claims | keep strict for V0; revisit with human labels in Phase 2 | 2026-09-11 |
 | VD-3 | Whether the page gets a market-surprise column | **no**, settled by measurement rather than judgement: the corpus market pass returned 0 exact matches of 475 (451 `no_match`, 22 `unavailable`, 2 `failed`) against the 20% threshold this ledger set. Public prediction markets and interview claims are close to disjoint | 2026-09-13 |
 | VD-0a | Where predictions are written | `data/predictions/` from any clone; writer refuses other data paths | 2026-09-10 |
@@ -54,6 +55,33 @@ Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<a
 | VD-0c | Where the page lives | `verbatim-predictions.tonygwu.com`, its own Worker | 2026-09-10 |
 | VD-0d | Market evidence in V0 | separate stage after verification, public APIs only, `P_market(t^-)`, exact and proxy kept apart, speaker probability never touched | 2026-09-10 |
 | VD-0e | Roadmap statements | extracted and tagged `subject_control: own`, not gated | 2026-09-10 |
+
+## VD-4a, the operator's standing direction on admitting predictions
+
+**Decided by the operator on 2026-09-16, in these words:** do the thing that
+biases towards bringing in more predictions into the system, since predictions
+are barren on verbatim-predictions right now.
+
+This is a STANDING direction, not a one-off approval. Where a choice is between
+admitting predictions and withholding them, and the risk is a matter of degree
+rather than a known defect, admit them and record what was admitted.
+
+**What it does not license.** It is a bias, not a suspension of the gates. A
+record with a manufactured date is still wrong, and VD-4's actual finding stands
+on its own terms: `predictions-2.0` resolves relative time against the metadata
+statement year, which for a YouTube source is the UPLOAD date, and that
+fabricates deadlines. Anything carrying that defect stays out regardless of this
+direction.
+
+**How VD-4 was misread, recorded so the next reader does not repeat it.** VD-4
+asks whether to MIGRATE the existing corpus to 2.0. It was nearly quoted at the
+operator as a prior ruling forbidding a new batch extracted under 2.0, which is
+a different question it never asked. It also carries no operator attribution,
+while this ledger marks operator decisions explicitly where they exist, as VP-18
+and VP-20 both do. An agent's recorded measurement is evidence; it is not a
+policy the operator has to be argued out of. This repo has already paid for that
+confusion once, in the investor rule that kept seven people off this board for
+four months.
 
 ## VD-4, why the corpus did not migrate
 
