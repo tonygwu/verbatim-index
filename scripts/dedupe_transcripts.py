@@ -329,14 +329,30 @@ def main() -> int:
                     kept.append((rec, s_))
         # A retired transcript may already have grades. Those must go too, or the
         # leader keeps scoring on an appearance that is no longer in the corpus.
+        # SCOPED TO THE SLUG. A source id is unique within a leader and NOT
+        # across leaders: the live corpus carries `crowdstrike-tatbja` under
+        # both greg-brockman and lip-bu-tan, with 7 grade files between them.
+        # An unscoped glob orphaned all 7 when either leader retired it, and
+        # --sweep runs every grade_loop cycle with no dry run, so it did that
+        # unattended. The grades tree is <judge>/<slug>/<id>__..., so the slug
+        # is the file's parent; comparing the parent rather than building a
+        # path keeps this correct if the tree gains or loses a level.
         orphans = []
+        skipped_other_slug = 0
         for r in retired:
             for gp in Path(args.grades).rglob(f"{r['retired']}__*.json"):
+                if gp.parent.name != r["leader_slug"]:
+                    skipped_other_slug += 1
+                    continue
                 gp.rename(str(gp) + ".orphaned")
                 orphans.append(str(gp))
         print(json.dumps({
             "sweep_retired": len(retired),
             "orphaned_grades_removed": len(orphans),
+            # Never a bare count: a skip here means two leaders share a source
+            # id, which is the collision this scoping exists for. Silence is
+            # how the unscoped version destroyed grades without anyone noticing.
+            "orphans_skipped_other_slug": skipped_other_slug,
             "detail": retired,
         }, indent=2))
         return 0
