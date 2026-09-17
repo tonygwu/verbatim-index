@@ -35,6 +35,7 @@ import os
 import re
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 WORD = re.compile(r"[a-z']+")
@@ -374,6 +375,23 @@ def main() -> int:
             dest.parent.mkdir(parents=True, exist_ok=True)
             payload = {k: v for k, v in rec.items() if k != "_path"}
             payload["dedupe"] = {k: d[k] for k in ("verdict", "containment", "matches") if k in d}
+            # WHEN IT REACHED THE SHELF, which is not when it was fetched. A
+            # Happy Scribe record is fetched into transcripts_hs and merged here
+            # on a later cycle, and fetched_at_utc comes across unchanged.
+            # MEASURED 2026-09-16: 5 records are pending merge, the oldest
+            # fetched ten days ago.
+            #
+            # The QA race rule reads this. That rule refuses normalize when a
+            # transcript the QA report does not cover arrived BEFORE the report
+            # was generated, because that means the report is stale rather than
+            # merely racing. With only fetched_at_utc to read, a legitimate merge
+            # of an old fetch is indistinguishable from the stale case and the
+            # cycle is refused for no reason.
+            #
+            # UTC from the clock, never the filesystem: mtime records when a file
+            # was touched and three loops touch these constantly.
+            payload["shelf_arrived_at_utc"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
             tmp = dest.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1))
             os.replace(tmp, dest)
