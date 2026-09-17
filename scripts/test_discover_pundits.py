@@ -91,7 +91,8 @@ def main() -> int:
                    cand("B0000000001", "Steven Bonnell | Lex Fridman Podcast #1", "Lex Fridman", minutes=150),
                    cand("B0000000002", "Bonnell on Israel", minutes=60),
                    cand("B0000000003", "Steven Bonnell | Lex Fridman Podcast #1", "Lex Clips", minutes=150)]
-    r = D.discover(PERSON, lister=lambda ch, depth: own_rows, searcher=lambda q: search_rows)
+    r = D.discover(PERSON, lister=lambda ch, depth, sleep=None: own_rows,
+                     searcher=lambda q, sleep=None: search_rows)
     check("a video seen in the listing and in search is attempted once", r["attempted"] == 6, str(r["attempted"]))
     check("attempted = accepted + rejected", r["attempted"] == len(r["sources"]) + len(r["rejected"]),
           f"{r['attempted']} vs {len(r['sources'])}+{len(r['rejected'])}")

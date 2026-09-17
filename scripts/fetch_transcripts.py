@@ -55,6 +55,43 @@ _print_lock = threading.Lock()
 # the hour. The rate that triggers a CAPTION block specifically is not documented
 # anywhere; do not invent one.
 DEFAULT_INTERVAL = 6.0
+# One request every 3.6 seconds is the documented guest ceiling above, expressed
+# per request. It is what effective_rate() compares a configuration against.
+DOCUMENTED_GUEST_SECONDS_PER_REQUEST = 3.6
+
+
+def effective_rate(interval: float, workers: int) -> dict:
+    """The rate a configuration ACTUALLY produces, which is not the interval.
+
+    Each worker waits on the shared pacer, so N workers issue N requests per
+    interval. A 2-second interval on 6 workers is one request every 0.33
+    seconds, which is ten times the documented guest ceiling. That combination
+    is what blocked this IP during the P6 pilot, and both numbers looked
+    reasonable on their own.
+    """
+    workers = max(1, int(workers))
+    spr = float(interval) / workers
+    return {"interval": float(interval), "workers": workers,
+            "seconds_per_request": spr,
+            "requests_per_hour": 3600.0 / spr if spr > 0 else float("inf"),
+            "over_documented_ceiling": spr < DOCUMENTED_GUEST_SECONDS_PER_REQUEST}
+
+
+def pacing_warning(interval: float, workers: int) -> "str | None":
+    """A warning naming the numbers, or None when the configuration is safe.
+
+    Names the effective rate and the figure it is compared against, because
+    "too fast" is not something a reader can act on or check.
+    """
+    r = effective_rate(interval, workers)
+    if not r["over_documented_ceiling"]:
+        return None
+    return (f"PACING: {r['interval']:.1f}s across {r['workers']} workers is one request every "
+            f"{r['seconds_per_request']:.2f}s ({r['requests_per_hour']:.0f}/hour). The yt-dlp wiki "
+            f"documents a guest session at one request every {DOCUMENTED_GUEST_SECONDS_PER_REQUEST}s "
+            f"(~1000/hour). This configuration is "
+            f"{DOCUMENTED_GUEST_SECONDS_PER_REQUEST / r['seconds_per_request']:.1f}x over that "
+            f"ceiling. The P6 pilot ran at 0.33s and took six retry passes to clear the block.")
 
 
 class Pacer:
@@ -476,7 +513,7 @@ def main() -> int:
                     help="Seconds any single caption request may wait before it is abandoned. "
                          "The library sets none, so without this a stalled socket blocks a "
                          "worker until the kernel gives up.")
-    ap.add_argument("--min-interval", type=float, default=2.0,
+    ap.add_argument("--min-interval", type=float, default=DEFAULT_INTERVAL,
                     help="Minimum seconds between caption requests across ALL workers, jittered. "
                          "The yt-dlp wiki suggests 5 to 10 seconds as the remedy for HTTP 429.")
     ap.add_argument("--max-interval", type=float, default=15.0,
@@ -513,6 +550,12 @@ def main() -> int:
 
     log(f"manifest: {len(sources)} unique sources ({dupes} duplicate video_id rows dropped)")
 
+    rate = effective_rate(args.min_interval, args.workers)
+    log(f"pacing: {rate['interval']:.1f}s across {rate['workers']} workers = one request every "
+        f"{rate['seconds_per_request']:.2f}s ({rate['requests_per_hour']:.0f}/hour)")
+    warning = pacing_warning(args.min_interval, args.workers)
+    if warning:
+        log(warning)
     pacer = Pacer(args.min_interval, max_interval=args.max_interval)
     breaker = Breaker()
     results: list[dict] = []

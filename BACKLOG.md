@@ -3,6 +3,28 @@
 Work deliberately deferred, with the reason and the condition that brings it back.
 Newest first.
 
+## Shared fetcher
+
+- **`fetch_loop.sh` (leaders) runs 10.8x over the documented request ceiling.**
+  Filed 2026-09-17. `PACE="${PACE:-2}"` and `WORKERS="${WORKERS:-6}"` give one
+  caption request every 0.33s. The yt-dlp wiki documents a guest session at one
+  every 3.6s. `fetch_transcripts.py` now prints its effective rate at startup and
+  warns with the numbers, so the next leaders run says so out loud:
+
+  ```
+  PACING: 2.0s across 6 workers is one request every 0.33s (10800/hour).
+  ... This configuration is 10.8x over that ceiling. The P6 pilot ran at 0.33s
+  and took six retry passes to clear the block.
+  ```
+
+  NOT changed here, because the loop passes `--min-interval` explicitly and its
+  operational tuning belongs to repo-0. The fetcher's own default is fixed
+  (2.0 -> `DEFAULT_INTERVAL` = 6.0). Both leaders sources are currently
+  exhausted, so nothing is fetching and this is not urgent; fix it before the
+  next discovery run. Evidence that it bites: the pundits P6 pilot at these
+  settings produced 202 IP blocks in 218 first-pass errors and needed six retry
+  passes.
+
 ## Verbatim Pundits
 
 - **The 25-word quote cap is uneven. RESOLVED 2026-09-16 by moving the PENALTY,
