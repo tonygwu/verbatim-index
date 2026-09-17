@@ -146,16 +146,38 @@ while true; do
   #    --grades lets normalize withdraw the grades of a transcript that has left
   #    the corpus. Without it the appearance keeps scoring, because aggregate.py
   #    reads data/grades and never looks at the blinded directory.
+  # A file is NAMED only when it exists. normalize_transcripts.py refuses a
+  # named-but-absent --repairs/--aliases/--qa, because silently reading nothing
+  # is how a missing glossary or a missing QA report used to pass every
+  # transcript as though it had been examined. But a study can legitimately have
+  # no repairs and no aliases: MEASURED 2026-09-16, pundits has neither, so
+  # naming them unconditionally would refuse every pundits cycle.
+  #
+  # The skip is SAID rather than silent. On leaders both files exist, so either
+  # line appearing in this log is the alarm that one has gone missing -- which
+  # matters, because aliases.json is also the QA glossary and losing it moves
+  # oov_rate, flips reject verdicts and orphans grades.
+  norm_opt=""; gloss_opt=""
+  for nf in repairs aliases; do
+    if [ -f "$DATA/sources/${nf}.json" ]; then
+      norm_opt="$norm_opt --${nf} $DATA/sources/${nf}.json"
+    else
+      say "  NOTE: no $DATA/sources/${nf}.json; normalizing without it"
+    fi
+  done
+  if [ -f "$DATA/sources/aliases.json" ]; then
+    gloss_opt="--glossaries $DATA/sources/aliases.json"
+  fi
   $PY scripts/qa_transcripts.py --transcripts $DATA/transcripts \
-      --roster $DATA/roster/final.json --glossaries $DATA/sources/aliases.json \
+      --roster $DATA/roster/final.json $gloss_opt \
       --out $DATA/logs/transcript_qa.json > /dev/null 2>>$DATA/logs/grade_loop.err
   norm_ok=1
   for mode in blinded open; do
     out=$DATA/transcripts_blind; [ "$mode" = open ] && out=$DATA/transcripts_open
     if ! $PY scripts/normalize_transcripts.py --mode "$mode" \
         --transcripts $DATA/transcripts --out "$out" \
-        --roster $DATA/roster/final.json --repairs $DATA/sources/repairs.json \
-        --aliases $DATA/sources/aliases.json --qa $DATA/logs/transcript_qa.json \
+        --roster $DATA/roster/final.json $norm_opt \
+        --qa $DATA/logs/transcript_qa.json \
         --grades $DATA/grades \
         --log "$DATA/logs/normalize_${mode}.json" > /dev/null 2>>$DATA/logs/grade_loop.err; then
       norm_ok=0

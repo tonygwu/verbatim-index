@@ -203,8 +203,30 @@ while true; do
   # and idempotent, so running them here decouples grade-readiness from the
   # slow grading pass.
   if [ "$gained" -gt 0 ]; then
+  # A file is NAMED only when it exists. normalize_transcripts.py refuses a
+  # named-but-absent --repairs/--aliases/--qa, because silently reading nothing
+  # is how a missing glossary or a missing QA report used to pass every
+  # transcript as though it had been examined. But a study can legitimately have
+  # no repairs and no aliases: MEASURED 2026-09-16, pundits has neither, so
+  # naming them unconditionally would refuse every pundits cycle.
+  #
+  # The skip is SAID rather than silent. On leaders both files exist, so either
+  # line appearing in this log is the alarm that one has gone missing -- which
+  # matters, because aliases.json is also the QA glossary and losing it moves
+  # oov_rate, flips reject verdicts and orphans grades.
+  norm_opt=""; gloss_opt=""
+  for nf in repairs aliases; do
+    if [ -f "$DATA/sources/${nf}.json" ]; then
+      norm_opt="$norm_opt --${nf} $DATA/sources/${nf}.json"
+    else
+      say "  NOTE: no $DATA/sources/${nf}.json; normalizing without it"
+    fi
+  done
+  if [ -f "$DATA/sources/aliases.json" ]; then
+    gloss_opt="--glossaries $DATA/sources/aliases.json"
+  fi
     if ! $PY scripts/qa_transcripts.py --transcripts $DATA/transcripts \
-        --roster $DATA/roster/final.json --glossaries $DATA/sources/aliases.json \
+        --roster $DATA/roster/final.json $gloss_opt \
         --out $DATA/logs/transcript_qa.json >/dev/null 2>>$DATA/logs/fetch_loop.err; then
       # Named, because normalize now REFUSES a QA report older than the shelf.
       # Without this line the operator would chase a stale-report message
@@ -232,8 +254,8 @@ while true; do
       # reads.
       if ! $PY scripts/normalize_transcripts.py --mode "$m" \
           --transcripts $DATA/transcripts --out "$out" \
-          --roster $DATA/roster/final.json --repairs $DATA/sources/repairs.json \
-          --aliases $DATA/sources/aliases.json --qa $DATA/logs/transcript_qa.json \
+          --roster $DATA/roster/final.json $norm_opt \
+          --qa $DATA/logs/transcript_qa.json \
           --no-prune \
           --log "$DATA/logs/normalize_${m}.json" >/dev/null 2>>$DATA/logs/fetch_loop.err; then
         say "  NORMALIZE FAILED (${m}); this cycle grades nothing new: $(tail -1 $DATA/logs/fetch_loop.err)"
