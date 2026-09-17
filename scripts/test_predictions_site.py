@@ -361,7 +361,7 @@ def main() -> int:
               not any(k in outs[0]["outcome"] for k in ("telemetry", "run_id", "account", "harness")),
               str(sorted(outs[0]["outcome"])))
         check("DRAWER: a markdown source link renders its label, not its brackets",
-              '.replace(/^\[|\]$/g, "")' in h2)
+              r'.replace(/^\[|\]$/g, "")' in h2)
 
         check("SCORE: a score for somebody not on the page fails the render, naming them",
               p3.returncode != 0 and "ghost" in (p3.stdout + p3.stderr),
