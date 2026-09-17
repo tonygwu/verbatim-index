@@ -1,110 +1,127 @@
-# Pundits: where P8a2 ended, and the exact next step
+# Pundits: the current position, and the next step
 
-Written 2026-09-16 as a compaction handoff. Read this first if you are picking
-the pundits study up cold. The plan is `docs/PUNDITS-PLAN.md`; this file is the
-current position within it and the command that moves it forward.
+Written 2026-09-16 as a compaction handoff, and rewritten the same day after the
+P9 top-up. Read this first if you are picking the pundits study up cold. The plan
+is `docs/PUNDITS-PLAN.md`; this file is the current position within it.
+
+The filename still says P8A2 because commits and other clones reference it. It
+now covers the position through the **P9 top-up**.
 
 ## Position
 
-**P8a2 is complete and the board ranks for the first time.** 10 pilot people,
-5 complete recordings each, 200 of 200 panel cells filled, 0 dropped.
+**Every pilot person is graded to the P5 target of 12 recordings, or to the limit
+of their verified material.** 10 people, 77 recordings, 308 grades used.
 
 ```
- rk person            blinded    95% interval   open    halo     n
-  1 Ezra Klein           72.5     [63.4,78.4]   72.1   -0.46     5
-  2 Coleman Hughes       63.9     [59.8,65.8]   64.1   +0.13     5
-  3 Steven Bonnell       59.7     [50.7,66.8]   60.7   +0.91     5
-  4 Sam Seder            51.6     [46.1,54.6]   51.7   -0.19     5
-  5 Ana Kasparian        47.2     [39.7,52.7]   47.5   +0.25     5
-  6 Ben Shapiro          42.8     [33.8,53.3]   41.1   -1.94 *   5
-  7 Hasan Piker          36.2     [27.4,45.9]   35.2   -1.09     5
-  8 Matt Walsh           33.5     [30.3,37.4]   34.7   +1.42     5
-  9 Charlie Kirk         32.6     [28.7,34.3]   32.4   -0.27     5
- 10 Zack Hoyt            28.7     [21.2,37.8]   31.2   +2.56     5
- (* the only halo that is a panel finding; see halo_judge_agreement)
+ rk person            blinded    95% interval   open    halo      n
+  1 Ezra Klein           73.5    [67.1,79.1]    71.8   -1.72 *    7
+  2 Coleman Hughes       65.0    [62.4,67.8]    64.9   -0.09      7
+  3 Steven Bonnell       57.8    [50.8,65.0]    58.1   +0.38      6
+  4 Sam Seder            51.6    [48.3,55.5]    53.3   +1.40      7
+  5 Ana Kasparian        48.0    [41.8,53.6]    48.5   +0.34      6
+  6 Ben Shapiro          42.4    [36.6,48.8]    41.6   -0.94     12
+  7 Hasan Piker          34.6    [27.6,42.1]    34.6   -0.13      8
+  8 Zack Hoyt            34.2    [26.6,43.2]    35.7   +1.41 *   11
+  9 Charlie Kirk         32.5    [29.8,35.1]    32.3   -0.28      5
+ 10 Matt Walsh           31.3    [26.8,35.3]    32.0   +0.84      8
+ (* the only two halos that are panel findings; see halo_judge_agreement)
 ```
 
-Scores carry NO format adjustment: the support rule fails on this corpus and the
-gate now withholds it. Review page source is rebuilt by
-`scratchpad/page2.py` (session scratch, regenerate rather than hunt for it);
-the published copy is an Artifact, and a standalone local copy sits at
-`/Users/tonygwu/pundits-pilot-board.html`.
+The top seven hold their order against the 5-recording board. Zack Hoyt moved
+10th to 8th and Matt Walsh 8th to 10th; nobody else changed rank.
 
-An adversarial Fable audit of this board is `docs/PUNDITS-P8A2-AUDIT.md`. It
-reproduced every published number exactly and found 1 CRITICAL, 6 MAJOR and 10
-MINOR defects. Six are fixed (commits `203d63b`, `fb97bbb`); the rest are listed
-under "Open" below.
+Scores carry NO format adjustment. The support rule still fails, but for ONE
+reason now rather than three: `venue 'debate' seen 4 times, under the minimum of
+8`. Solo now clears the floor and the 80% mixed-format rule now passes. **Eight
+more debate recordings would turn the adjustment on**, and `venue_withheld_effects`
+shows what it would do (conversation +6.8 and reaction -5.9 on d3_good_faith, so
+it would not be cosmetic).
 
-## The next step: grade the remaining 39 verified recordings
+An adversarial Fable audit of the earlier 5-recording board is
+`docs/PUNDITS-P8A2-AUDIT.md`. Six of its findings are fixed (`203d63b`,
+`fb97bbb`); the rest are under "Open" below.
 
-The P6 pilot verified **89** recordings; 50 are graded. The remaining 39 cost
-about **156 calls** (39 x 2 judges x 2 modes).
+## Rebuilding the review page
 
-**Check quota BEFORE launching. This is the lesson of P8a2**, where a run was
-started into a 5-hour window at 8% and lost 22 of 64 Fable calls to
-`auth_or_quota`:
-
-```
-quotapick status          # read the `fable` column, not the 5h or 7d column
-```
-
-Pin the rotation to accounts that actually have Fable headroom, then:
+The page is DERIVED from `data-pundits/results.json` by two session-scratch
+scripts. They do not survive a new session, so regenerate them rather than hunt
+for them. Both are small and their shapes are recorded here:
 
 ```
-.venv/bin/python scripts/schedule.py build --study pundits \
-  --transcripts data-pundits/transcripts_blind \
-  --lean-labels data-pundits/private/lean_labels.json \
-  --judges fable,gemini --seed 20260916 \
-  --graded data-pundits/grades --target-per-person 12 \
-  --verified data-pundits/logs/pilot/report.json \
-  --out data-pundits/logs/schedule/p9_topup.jsonl
-
-nohup .venv/bin/python scripts/grade.py --study pundits \
-  --transcripts data-pundits/transcripts_blind \
-  --roster data-pundits/roster/final.json \
-  --out data-pundits/grades \
-  --schedule data-pundits/logs/schedule/p9_topup.jsonl \
-  --judges fable,gemini --workers 6 --timeout 2400 \
-  --fable-accounts <accounts with headroom> \
-  --errors data-pundits/logs/p9/grade_errors.jsonl \
-  >> data-pundits/logs/p9/run.log 2>&1 &
+scratchpad/payload.py <repo> <scratchpad>   # results.json -> board_payload.json
+scratchpad/page2.py <scratchpad>            # board_payload.json -> the HTML
 ```
 
-`--target-per-person 12` is the P5 target and counts what is already complete
-rather than adding a fixed number. The pool is very uneven (Ben Shapiro 22
-verified, Charlie Kirk 5), so the scheduler will report a shortfall for most
-people. That is expected and is printed, not silent.
+Local copy `/Users/tonygwu/pundits-pilot-board.html`; artifact
+`https://claude.ai/artifact/QRG3zDv64jmnz8ckNKN7XN` (Version 6).
 
-The retry cap is now live: a judge stops once its failures pass 15% of its own
-scheduled calls, and the run summary reports `skipped_over_retry_cap` and
-`retry_cap_stopped_judges`. If a judge stops, read the taxonomy before relaunching.
+**The page copy goes stale silently.** Nine sentences in `page2.py` asserted the
+5-recording board, an audit path that had moved, a halo result that had changed
+and a format adjustment that was applied. Every claim that can change with the
+data belongs in a `${D.…}` expression or behind `D.venue_applied`, never typed.
 
-Then: `aggregate.py`, `build_site.py`, and rebuild the review page.
+## The next step
 
-## Open decisions, none of which block the run
+The pilot pool is exhausted at this target. The options, in the plan's order:
 
-1. **The 25-word quote cap.** Measured skew: gemini 19 of 24 rejections, 19.0%
-   against fable's 5.0%, a ratio of 3.8x. Changing the cap re-grades the whole
-   corpus because it is hashed into `contract_id`. Three options and their costs
-   are in `BACKLOG.md`. Decide before P9 proper, while the cost is 200 cells.
-2. **What halo measures.** All 100 blinded grades named the speaker correctly,
-   and the blinded and open prompts differ by a whole instruction block, not
-   just a name. Fixing that means re-grading every open cell.
-3. **Seven recordings have zero blinding substitutions**, four of them
-   Asmongold's. Fixing means re-blinding and re-grading those.
+1. **Discovery for the remaining 29 roster people** (P6 for the rest of the
+   roster). The roster holds 39; these 10 are the pilot group.
+2. **More debate recordings**, which is the one thing standing between this board
+   and a format-adjusted one. It needs 4 more to reach `MIN_VENUE_N`.
+3. **The P7 human-label work**, which no amount of grading unblocks.
+
+## Quota, and the lesson that keeps costing calls
+
+**Read BOTH windows, not just the `fable` column.**
+
+```
+quotapick status
+```
+
+P8a2 launched into a 5-hour window at 8% and lost 22 of 64 Fable calls. The P9
+top-up then lost 5 more to a subtler version of the same thing: `claude_b`'s
+weekly Fable pool read a healthy 67% while its **5-hour** window had gone to 0,
+and an account in that state refuses every call. Pin with `--fable-accounts` to
+accounts healthy on both windows. A repair run on one good account cleared all
+five.
+
+The retry cap is live: a judge stops once its failures pass 15% of its own
+scheduled calls, and the summary reports `skipped_over_retry_cap` and
+`retry_cap_stopped_judges`. It did not trip on either run.
+
+## Open decisions
+
+1. **The 25-word quote cap: RESOLVED for the penalty, still open for the number.**
+   An over-long quote is now recorded rather than rejecting the grade
+   (`quote_overruns`, commit `2c5e617`), and `contract_id` is unchanged at
+   `3844dd2693acd471`. **The corpus now mixes two regimes**, and
+   `diagnostics.quote_cap` is how a later reader tells them apart. Raising the
+   number itself to 40 would move the contract to `7aa8f163de1f0b2e` and re-grade
+   everything.
+2. **What halo measures.** All blinded grades named the speaker correctly, and
+   the blinded and open prompts differ by a whole instruction block, not just a
+   name. Fixing that means re-grading every open cell.
+3. **Seven recordings have zero blinding substitutions**, four of them Zack
+   Hoyt's. Fixing means re-blinding and re-grading those.
 4. **The open score has no bootstrap interval**, which plan P5 requires.
-5. **The bootstrap at n=5** has only 126 distinct resamples; "20,000 resamples"
-   overstates the precision five recordings can carry.
+5. **The bootstrap at small n.** Charlie Kirk sits at 5, where there are only 126
+   distinct resamples, so "20,000 resamples" overstates the precision.
+6. **Whether a gameplay stream belongs in the corpus.** Three cells are excluded
+   as `unsupported_dimension`, all from one Zack Hoyt recording where both judges
+   independently found no opposing argument to score under D1. That is the rubric
+   working. It was deliberately NOT re-graded: re-running a judgement until it
+   changes is the same selection effect the quote cap had. The lever, if any, is
+   the discovery rules, applied to everyone.
 
 ## Standing constraints
 
 - Never call a judge through `cl`: it injects `--dangerously-skip-permissions`.
   Raw `claude` only.
 - Private lean labels never enter a public commit, a prompt, or the page. Stage
-  files by name; never `git add -A`.
-- No deploy. P11 publication to the pundits domain needs explicit approval at
-  the time it happens. The domain itself is still unconfirmed:
-  wrangler and the plan say `verbatim-pundits.tonygwu.com`, the operator once
-  wrote `verbatim.pundits.tonygwu.com`. Ask before deploying.
+  files by name; never `git add -A`. The page build is checked for leakage.
+- No deploy. P11 publication needs explicit approval at the time it happens. The
+  domain is still unconfirmed: wrangler and the plan say
+  `verbatim-pundits.tonygwu.com`, the operator once wrote
+  `verbatim.pundits.tonygwu.com`. Ask before deploying.
 - Subscription quota (claude, codex) needs no approval. Metered APIs do.
 - Do not touch other clones' running jobs.
