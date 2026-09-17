@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import sys
@@ -30,7 +31,30 @@ from aggregate import (  # noqa: E402
     MIN_TRANSCRIPTS_TO_RANK,
 )
 
-TEMPLATE = r"""<title>Verbatim Index</title>
+TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verbatim Index</title>
+<meta name="description" content="__SOCIAL_DESC__">
+<link rel="canonical" href="__SITE_URL__">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Verbatim Index">
+<meta property="og:locale" content="en_GB">
+<meta property="og:url" content="__SITE_URL__">
+<meta property="og:title" content="__SOCIAL_TITLE__">
+<meta property="og:description" content="__SOCIAL_DESC__">
+<meta property="og:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Verbatim Index. __SOCIAL_TITLE__">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="__SOCIAL_TITLE__">
+<meta name="twitter:description" content="__SOCIAL_DESC__">
+<meta name="twitter:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
+<meta name="twitter:image:alt" content="Verbatim Index. __SOCIAL_TITLE__">
 __FONTS__
 <style>
 __THEME__
@@ -344,6 +368,8 @@ footer{
 .toggle:hover{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
 </style>
+</head>
+<body>
 
 <button class="toggle" id="themeBtn" type="button">THEME</button>
 <div class="wrap">
@@ -429,7 +455,8 @@ __METHOD__
   recorded speech, not a person.
   The rubric, pipeline and grading harness are open source at
   <a href="https://github.com/tonygwu/verbatim-index">github.com/tonygwu/verbatim-index</a>;
-  the transcripts and raw grades are not published.
+  every judge&rsquo;s grade, reasoning and cited evidence is embedded in this page; the
+  underlying transcripts are not published.
 </footer>
 </div>
 
@@ -760,6 +787,8 @@ document.getElementById("themeBtn").addEventListener("click", () => {
 });
 render();
 </script>
+</body>
+</html>
 """
 
 
@@ -775,6 +804,88 @@ render();
 # the intent is to put it back, and a deleted line is harder to find than a
 # False. The back-link on the predictions page is deliberately UNCHANGED:
 # that direction sends a reader from the unfinished board to the finished one.
+# The public origin, needed absolute because Open Graph and Twitter cards are
+# fetched by a crawler that has no page context to resolve a relative path
+# against. It matches the custom domain claimed in wrangler.toml.
+SITE_URL = "https://verbatim-index.tonygwu.com/"
+
+# The counts stay as placeholders so the card text is rendered from the corpus
+# actually being published, never from a number typed here that goes stale.
+SOCIAL_TITLE = ("__N_LEADERS__ tech leaders, ranked on how well they think in public")
+SOCIAL_DESC = (
+    "__N_LEADERS__ technology leaders, ranked on the thinking their public speech actually "
+    "demonstrates. __N_JUDGES_WORD__ frontier models graded __N_TRANSCRIPTS__ verbatim "
+    "transcripts independently against a 15-criterion rubric."
+)
+
+OG_CARD = Path(__file__).resolve().parent.parent / "site" / "og.png"
+OG_CARD_META = OG_CARD.with_suffix(".meta.json")
+
+
+def og_version() -> str:
+    """Cache key for the social card image.
+
+    Twitter and LinkedIn cache a card by its URL for days. A regenerated card
+    at an unchanged URL therefore keeps showing the old picture. The key is the
+    card's own bytes, so it changes exactly when the picture changes.
+    """
+    if not OG_CARD.is_file():
+        return "0"
+    return hashlib.sha256(OG_CARD.read_bytes()).hexdigest()[:12]
+
+
+def check_og_card(results: dict) -> None:
+    """Say so when the drawn card no longer matches the corpus it quotes.
+
+    The card carries counts, and it is a committed image rather than something
+    this renderer draws, so nothing else would notice it going stale. This
+    never blocks a render: a stale social card is worth reporting, and it is
+    not worth refusing to publish a correct page over.
+    """
+    if not OG_CARD.is_file():
+        print("WARNING: site/og.png is missing; social cards will show no image",
+              file=sys.stderr)
+        return
+    if not OG_CARD_META.is_file():
+        print("WARNING: site/og.png has no .meta.json; its counts cannot be checked",
+              file=sys.stderr)
+        return
+    d = results["diagnostics"]
+    drawn = json.loads(OG_CARD_META.read_text()).get("counts", {})
+    now = {
+        "leaders": len([l for l in results["leaders"] if l["status"] == "scored"]),
+        "transcripts": d.get("transcripts_with_blinded_consensus", 0),
+        "judges": len(published_judges(results)),
+    }
+    drift = {k: (drawn.get(k), v) for k, v in now.items() if drawn.get(k) != v}
+    if drift:
+        detail = ", ".join(f"{k}: card says {a}, corpus has {b}" for k, (a, b) in drift.items())
+        print(f"WARNING: site/og.png is stale ({detail}); "
+              f"re-run scripts/build_og_card.py", file=sys.stderr)
+
+
+def check_exclusions(roster: dict) -> None:
+    """A person may not be both ranked and named as excluded.
+
+    build_method renders dropped_for_no_transcripts as the page's "Who was
+    excluded, and why" section. Nothing recomputed that list when the roster
+    expanded on 2026-09-10, so the published board ranked Amjad Masad 29th on 14
+    transcripts while the same page named him among 12 people left out for lack
+    of retrievable long-form public speech. The roster's own
+    expanded_2026_09_10 note had already recorded the reversal; only the derived
+    list was stale, which is the same failure as sector_note_correction_2026_09_10.
+    A page that contradicts itself is worse than a page that fails to build, so
+    this refuses rather than warns.
+    """
+    seated = {p.get("name") for p in roster.get("roster", [])}
+    dropped = {e.get("name") for e in roster.get("dropped_for_no_transcripts", [])}
+    both = sorted(n for n in seated & dropped if n)
+    if both:
+        sys.exit("REFUSING: seated on the roster and named on the exclusion list at once: "
+                 + ", ".join(both)
+                 + ". Remove them from dropped_for_no_transcripts in the roster.")
+
+
 SHOW_PREDICTIONS_LINK = False
 PREDICTIONS_LINK = (' &middot; <a href="https://verbatim-predictions.tonygwu.com">'
                     'Verbatim Predictions &rarr;</a>')
@@ -1042,6 +1153,7 @@ def main() -> int:
 
     results = json.loads(Path(args.results).read_text())
     audit = json.loads(Path(args.audit).read_text())
+    check_og_card(results)
     # The drawer only ever renders blinded grades, and sub-criterion justifications
     # are 15 extra strings per grade that nothing on the page reads. Both stay in
     # results_audit.json on disk for auditing; neither is embedded in the page.
@@ -1049,6 +1161,7 @@ def main() -> int:
                     for a in rows if a.get("mode") == "blinded"]
              for slug, rows in audit.items()}
     roster = json.loads(Path(args.roster).read_text())
+    check_exclusions(roster)
     calib = json.loads(Path(args.calibration).read_text())
 
     src_meta: dict[str, dict] = {}
@@ -1075,20 +1188,35 @@ def main() -> int:
 
     d = results["diagnostics"]
     head = calib.get("headline") or {}
-    total_words = sum(1 for _ in [])  # replaced below if transcripts are available
-    tdir = Path(SP.data_link(args.study)) / "transcripts"
+    # "Words graded" counts the corpus that was GRADED, from the same production
+    # source --results came from. It used to read `<own data link>/transcripts`,
+    # which was wrong twice over: `transcripts` is everything FETCHED, including
+    # transcripts QA rejected and withdrew, and the own data link is the
+    # deploying clone's, not the production source being published. On
+    # 2026-09-16 that published 9.5M words over 720 fetched files beside a
+    # "Transcripts 653" stat counting graded ones, overstating the graded corpus
+    # by 7.8%. A deploy from an experiment clone would also have published that
+    # clone's own number.
+    tdir = Path(args.results).resolve().parent / "transcripts_blind"
     SP.guard(args.study, tdir)
+    if not tdir.is_dir():
+        sys.exit(f"REFUSING: no graded corpus at {tdir}; cannot report words graded")
     words = 0
-    if tdir.exists():
-        for p in tdir.rglob("*.json"):
-            try:
-                words += json.loads(p.read_text()).get("word_count", 0)
-            except Exception:
-                pass
+    for p in tdir.rglob("*.json"):
+        try:
+            words += json.loads(p.read_text()).get("word_count", 0)
+        except Exception:
+            pass
+    if not words:
+        sys.exit(f"REFUSING: {tdir} carries no word_count; cannot report words graded")
 
     html_out = (TEMPLATE
         .replace("__FONTS__", FONT_LINKS)
         .replace("__THEME__", THEME_CSS)
+        .replace("__SOCIAL_TITLE__", SOCIAL_TITLE)
+        .replace("__SOCIAL_DESC__", SOCIAL_DESC)
+        .replace("__SITE_URL__", SITE_URL)
+        .replace("__OG_VERSION__", og_version())
         .replace("__DATA__", json.dumps(rows))
         .replace("__AUDIT__", json.dumps(audit))
         .replace("__METHOD__", build_method(results, calib, roster))

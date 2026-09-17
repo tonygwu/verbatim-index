@@ -1,0 +1,10 @@
+{
+ "counts": {
+  "leaders": 50,
+  "transcripts": 653,
+  "judges": 3
+ },
+ "words_graded": 8839787,
+ "drawn_by": "scripts/build_og_card.py",
+ "note": "build_site.py warns when these counts drift from results.json."
+}
