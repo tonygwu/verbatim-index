@@ -48,6 +48,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 MIN_SEC = 1800
 MAX_SEC = 10800
 LISTING_DEPTH = 600
+# Pacing. Discovery shells out to yt-dlp once per channel tab and once per
+# search, and each --flat-playlist listing paginates internally, so the real
+# request count is several times the invocation count. The yt-dlp wiki documents
+# a guest session at roughly 1000 webpage or player requests per hour.
+# --sleep-requests is the flag that covers data extraction, which is what a
+# listing and a search both are; --sleep-interval covers media downloads and
+# does not apply here. Workers multiply the real rate, so the default is low.
+SLEEP_REQUESTS = 1.5
+DEFAULT_WORKERS = 3
 SEARCH_N = 40
 
 REJECT_TITLE = re.compile(
@@ -112,9 +121,10 @@ def stratum(candidate: dict, path: str) -> str:
     return "debate" if DEBATE_TITLE.search(candidate.get("title", "")) else "interlocutor"
 
 
-def _yt_dlp(target: str, depth: int) -> list[dict]:
+def _yt_dlp(target: str, depth: int, sleep_requests: float = SLEEP_REQUESTS) -> list[dict]:
     proc = subprocess.run(
         ["yt-dlp", "--flat-playlist", "--no-warnings", "--socket-timeout", "30", "--playlist-end", str(depth),
+         "--sleep-requests", str(sleep_requests),
          "--print", "%(id)s\t%(duration)s\t%(channel_id)s\t%(channel)s\t%(title)s", target],
         capture_output=True, text=True, timeout=900)
     out = []
@@ -132,17 +142,17 @@ def _yt_dlp(target: str, depth: int) -> list[dict]:
     return out
 
 
-def list_channel(channel: dict, depth: int) -> list[dict]:
+def list_channel(channel: dict, depth: int, sleep_requests: float = SLEEP_REQUESTS) -> list[dict]:
     base = channel["url"].rstrip("/")
     rows = []
     for tab in ("videos", "streams"):
-        for r in _yt_dlp(f"{base}/{tab}", depth):
+        for r in _yt_dlp(f"{base}/{tab}", depth, sleep_requests):
             rows.append({**r, "channel_id": channel["channel_id"], "channel": r["channel"] or channel["channel_name"]})
     return rows
 
 
-def search(query: str) -> list[dict]:
-    return _yt_dlp(f"ytsearch{SEARCH_N}:{query}", SEARCH_N)
+def search(query: str, sleep_requests: float = SLEEP_REQUESTS) -> list[dict]:
+    return _yt_dlp(f"ytsearch{SEARCH_N}:{query}", SEARCH_N, sleep_requests)
 
 
 def queries_for(person: dict) -> list[str]:
@@ -153,13 +163,14 @@ def queries_for(person: dict) -> list[str]:
     return list(dict.fromkeys(qs))
 
 
-def discover(person: dict, depth: int = LISTING_DEPTH, lister=list_channel, searcher=search) -> dict:
+def discover(person: dict, depth: int = LISTING_DEPTH, lister=list_channel, searcher=search,
+             sleep_requests: float = SLEEP_REQUESTS) -> dict:
     seen: dict[str, dict] = {}
     for ch in person.get("own_channels") or []:
-        for r in lister(ch, depth):
+        for r in lister(ch, depth, sleep_requests):
             seen.setdefault(r["video_id"], r)
     for q in queries_for(person):
-        for r in searcher(q):
+        for r in searcher(q, sleep_requests):
             seen.setdefault(r["video_id"], r)
 
     sources, rejected = [], []
@@ -201,7 +212,10 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--only", default=None)
     ap.add_argument("--listing-depth", type=int, default=LISTING_DEPTH)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
+                    help="Workers multiply the real request rate; keep this low.")
+    ap.add_argument("--sleep-requests", type=float, default=SLEEP_REQUESTS,
+                    help="Seconds yt-dlp sleeps between extraction requests.")
     SP.add_study_arg(ap)
     args = ap.parse_args()
     SP.guard(args.study, args.roster, args.out)
@@ -214,7 +228,7 @@ def main() -> int:
         roster = [p for p in roster if p["slug"] in want]
     results, failed = [], []
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(discover, p, args.listing_depth): p for p in roster}
+        futs = {ex.submit(discover, p, args.listing_depth, list_channel, search, args.sleep_requests): p for p in roster}
         for fut in cf.as_completed(futs):
             p = futs[fut]
             try:
