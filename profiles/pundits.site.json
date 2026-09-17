@@ -3,6 +3,8 @@
  "title": "Verbatim Pundits",
  "tagline": "How intellectually honest political commentators are in what they actually say on the record.",
  "interpretation": "Scores describe argumentative behaviour observed in sampled recordings. They are not fact-checks, and they are not judgements of a person's sincerity or character.",
+ "status_label": "Pilot board",
+ "status_note": "This is an early run, published so the method can be checked in the open rather than because the evidence is settled.",
  "blinding_note": "In the blinded score the judges read the transcript with the speaker's name and show removed. That does not make the speaker anonymous: a well-known commentator is often recognisable from their positions, and one of the two judges can search the web, which is measured and disclosed rather than blocked. The open score gives the judges the name; the difference between the two is shown as the halo.",
  "dimensions": {
   "d1_steelmanning": {

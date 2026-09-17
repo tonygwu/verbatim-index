@@ -32,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from site_theme import FONT_LINKS, THEME_CSS  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-REQUIRED_COPY = ("study_id", "title", "tagline", "interpretation", "blinding_note", "dimensions", "method")
+REQUIRED_COPY = ("study_id", "title", "tagline", "interpretation", "blinding_note", "dimensions", "method",
+                 "status_label", "status_note")
 _TYPED_PERCENT = re.compile(r"\d+\s*%")
 
 
@@ -101,6 +102,44 @@ footer{color:var(--faint); font-size:.85rem; margin-top:40px}
 """
 
 
+def status_banner(results: dict, copy: dict) -> str:
+    """How much evidence stands behind this board, in figures taken from the run.
+
+    Every number here is DERIVED. None may be typed into the copy file, because a
+    typed number goes stale the moment the corpus grows, and this repo has twice
+    published copy that had gone stale that way. `status_note` carries the prose
+    and `_TYPED_PERCENT` already refuses a percentage inside it.
+
+    Written for a PILOT board, but nothing here is pilot-specific: when the whole
+    roster is scored the first clause reads "39 of 39" on its own.
+    """
+    d = results.get("diagnostics") or {}
+    ranked = results.get("leaders") or []
+    roster = len(ranked) + len(results.get("unranked") or []) + len(results.get("unscored") or [])
+    ns = [p.get("n_transcripts") for p in ranked if isinstance(p.get("n_transcripts"), int)]
+    bits = [f"<b>{esc(copy['status_label'])}.</b> {esc(copy['status_note'])}"]
+    bits.append(f"It ranks {len(ranked)} of {roster} people on the roster")
+    if ns:
+        lo, hi = min(ns), max(ns)
+        bits[-1] += (f", each on {lo} recordings." if lo == hi
+                     else f", each on {lo} to {hi} recordings.")
+    else:
+        bits[-1] += "."
+    leak = d.get("blinding_leakage_rate")
+    if isinstance(leak, (int, float)):
+        bits.append(f"Blinding removes the name from the transcript and does not make the speaker "
+                    f"unknown: the judges still identified them on {leak * 100:.0f}% of blinded "
+                    f"recordings, so read the blinded score as name-removed rather than anonymous.")
+    if d.get("venue_adjustment_applied") is False:
+        reasons = d.get("venue_support_reasons") or []
+        why = f" ({esc('; '.join(reasons))})" if reasons else ""
+        bits.append("Scores carry no correction for the format of the appearance. It was fitted and "
+                    f"then <b>withheld</b>, because the corpus does not yet support it{why}. A "
+                    "reaction stream and a sit-down interview are not equally demanding, and that "
+                    "difference sits inside these scores.")
+    return '<p class="status">' + " ".join(bits) + "</p>"
+
+
 def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
     validate_copy(profile, copy)
     by_key = {d["key"]: i + 1 for i, d in enumerate(profile["scoring"]["dimensions"])}
@@ -162,6 +201,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
 <h1>{esc(copy["title"])}</h1>
 <p class="tagline">{esc(copy["tagline"])}</p>
 <p class="note">{esc(copy["interpretation"])}</p>
+{status_banner(results, copy)}
 <ul class="dims">
 {legend}
 </ul>
