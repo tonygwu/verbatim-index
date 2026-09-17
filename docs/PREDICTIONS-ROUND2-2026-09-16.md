@@ -289,6 +289,61 @@ carry a horizon, so those predictions cannot become eligible. This is the
 fetcher refusing to invent a date, which is correct, and the cost is visible
 rather than hidden.
 
+## The handoff contract: what a round actually spans
+
+Written after round 1 was placed and produced **432 provenance failures**, which
+took 12 manifests copied by hand to clear. The manifests had been shipped,
+tracked and pushed before the placement; they were simply one directory up from
+the records, and a per-slug copy does not reach them.
+
+**This is the list a RECEIVER checks before placing, not only the list a sender
+ships.** The failure was on the receiving side of the handoff, and a rule phrased
+as "remember to include the manifests" puts the burden on the person who already
+did it right.
+
+```
+<run>/results/<slug>/*.jsonl          the prediction records
+<run>/results/<slug>/*.meta.json      per-transcript extract/verify state
+<run>/results/_runs/*.json            RUN MANIFESTS - NOT OPTIONAL
+<run>/transcripts/<slug>/web-*.json   the source text, -> data/transcripts_web/<slug>/
+<run>/resolutions/<slug>/*.json       outcomes, one per past-due prediction
+<run>/priors/<slug>/*.json            the p assigned to each, assessed blind
+<run>/findings/<slug>.json            what discovery reported, for audit
+<run>/fetch_manifest.json             fetch outcome per source, with the taxonomy
+```
+
+`results/_runs/*.json` is the entry that bites, so it is worth saying plainly:
+**a placement without it fails validation, and the cost is 432 provenance
+failures, not a warning.**
+
+### Why it is easy to miss, which is the part worth remembering
+
+`_`-prefixed directories are skipped BY CONVENTION throughout this repo.
+`aggregate_predictions`, `prediction_inputs_sha256`,
+`build_predictions_site.load_records` and `market_consensus` all skip them
+deliberately, and correctly: they hold run logs and error files that are not
+records. Commit `3578d3f`, "Stop reading error logs as prediction records",
+exists because somebody once read them as records, and this document records a
+second instance on 2026-09-16 where 54 error-log rows were misread the same way.
+
+So the same convention that protects every consumer from reading `_runs` as data
+also hides `_runs` from anyone copying data. A directory that four readers are
+right to skip is exactly the directory a copier will forget. That is why the
+boundary has to be written down rather than remembered: the convention makes
+forgetting it the default behaviour.
+
+### Verifying a placement landed whole
+
+```
+validate_predictions.py --predictions <production>/predictions \
+                        --transcripts <production>/transcripts_web
+```
+Point `--transcripts` at the web shelf for web-sourced records. It takes ONE
+root, so a corpus holding both YouTube and web transcripts needs two passes; do
+NOT reconcile it by moving web transcripts next to the YouTube ones, because
+`normalize_transcripts` would then derive them, `grade.py` would grade them, and
+every score on the OTHER published board would move.
+
 ## How to finish this run
 
 Written down because the run outlives a session and the next person should not

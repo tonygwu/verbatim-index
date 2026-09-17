@@ -115,14 +115,61 @@ def main() -> int:
                 lambda: len(C.load(d)), 3)
 
     # The corpus as it stands, so this test says something about the live data too.
+    #
+    # RE-SCOPED 2026-09-16. This used to assert that NO file in the corpus splits
+    # differently under the two readings. That assertion was wrong in kind, and it
+    # went red the moment the supplemental web records were placed in production:
+    # patrick-collison/web-assets-ctfassets-net-cbb20aaa.jsonl carries one U+2028
+    # inside a quoted string, from a Stripe letter that really contains it.
+    #
+    # JSON permits that character raw inside a string, so such a record is VALID
+    # and the corpus is entitled to hold it. Asserting its absence asserts that
+    # legitimate data must not exist, and it fails precisely when the codebase
+    # meets the data this whole test was written to survive. The two ways to make
+    # that green were to sanitise the record, which destroys real source text and
+    # re-stales the production index for no correctness gain, or to delete the
+    # check. Neither is right.
+    #
+    # What matters is not whether such a file EXISTS but whether the production
+    # loaders READ it. So the check now finds every differing file and proves the
+    # real readers handle each one. That is strictly stronger than the old
+    # assertion: it still goes red if anybody reintroduces splitlines() in the
+    # read path, and it turns this record from a liability into a real-world
+    # fixture that a synthetic one cannot replace.
     live = ROOT / "data" / "predictions"
     if live.exists():
-        n = 0
+        affected = []
         for f in sorted(live.glob("*/*.jsonl")):
             t = f.read_text()
-            n += len([l for l in t.splitlines() if l.strip()]) != len([l for l in t.split("\n") if l.strip()])
-        check("LIVE: no file in the current corpus splits differently under the two readings",
-              n == 0, f"{n} files disagree, so the corpus is already affected")
+            if len([l for l in t.splitlines() if l.strip()]) != len([l for l in t.split("\n") if l.strip()]):
+                affected.append(f)
+
+        bad_count, bad_parse = [], []
+        for f in affected:
+            t = f.read_text()
+            want = len([l for l in t.split("\n") if l.strip()])
+            got = L.parse_lines(t, str(f))
+            if len(got) != want:
+                bad_count.append(f"{f.name}: reader returned {len(got)}, byte-split has {want}")
+            for line in L.jsonl_lines(t):
+                if not line.strip():
+                    continue
+                try:
+                    json.loads(line)
+                except Exception as exc:  # noqa: BLE001
+                    bad_parse.append(f"{f.name}: {type(exc).__name__} {str(exc)[:60]}")
+                    break
+
+        check("LIVE: every corpus file carrying a splitlines-only separator is read "
+              "correctly by the production loader",
+              not bad_count and not bad_parse,
+              f"count mismatches {bad_count}; parse failures {bad_parse}")
+        # Reported, not asserted. An experiment clone legitimately has 0 affected
+        # files while production has 1, so a non-vacuity assertion would be red in
+        # one clone and green in the other for no defect. The count is printed so a
+        # reader can see whether the check had anything to bite on.
+        print(f"       ({len(affected)} of {len(list(live.glob('*/*.jsonl')))} corpus files carry "
+              f"such a separator: {', '.join(f.name for f in affected) if affected else 'none'})")
 
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0
