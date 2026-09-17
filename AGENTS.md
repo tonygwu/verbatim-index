@@ -1179,6 +1179,21 @@ new grades incomparable with the corpus already graded.
   The digest is what catches verification and market consensus, which rewrite
   records in place and leave both counts unchanged. Only repo-0 can refresh it, because `--refresh`
   carries the daemon-clone precondition.
+- **Verbatim Pundits is PUBLISHED** (2026-09-16, operator-approved): two custom domains on
+  one Worker, `pundits.tonygwu.com` and `verbatim-pundits.tonygwu.com`, both serving
+  `site-pundits/index.html`. Deploy with
+  `bash scripts/deploy_pundits.sh --production-data data-pundits --data-revision "$(git -C data-pundits rev-parse HEAD)"`,
+  and `--dry-run` first. A bare `npx wrangler deploy` reads `wrangler.toml` and publishes the
+  LEADERS board instead, never this one. Right after a trigger deploy the new hostname can
+  return Cloudflare error 1104 for a minute; it clears on its own, so re-check before
+  debugging it.
+  The board is a PILOT and says so on the page. `status_banner()` in
+  `build_study_site.py` renders the coverage, the recordings-per-person range, the measured
+  blinding leakage and whether the format adjustment was withheld, all DERIVED from
+  `results.json`. `status_label` and `status_note` are required copy keys so the notice
+  cannot vanish by omission, and no figure may be typed into `profiles/pundits.site.json`.
+  Guarded by `scripts/test_pundits_site_banner.py`.
+
 - Grader validation (reliability, bias probes): `scripts/validate_grader.py`
 - Pundits study plan: `docs/PUNDITS-PLAN.md` is the approved plan (revision 2, with the
   P3 decisions folded in). It is the contract every clone works from: phases P0-P11,
