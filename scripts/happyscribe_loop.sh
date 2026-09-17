@@ -91,13 +91,22 @@ unsearched=$($PY scripts/fetch_happyscribe.py --report-unsearched \
     --roster $DATA/roster/final.json --candidates "$CANDS" \
     2>>$DATA/logs/happyscribe_loop.err)
 if [ ! -s "$CANDS" ] || [ -n "$unsearched" ]; then
+  # SCOPE the re-discovery to the leaders that are actually unsearched. Without
+  # --only, adding people to the roster re-derives the pool for everyone, and
+  # discovery merges rather than replaces precisely because a crawl that hits a
+  # transient sitemap failure returns less than the pool holds. --only does not
+  # save the sitemap walk; it keeps the write narrow and the log honest.
+  only_arg=""
+  if [ -s "$CANDS" ] && [ -n "$unsearched" ]; then
+    only_arg="--only $(echo $unsearched | tr ' ' ',')"
+  fi
   if [ -n "$unsearched" ]; then
     say "roster has unsearched leaders, re-running discovery: ${unsearched}"
   else
     say "no candidate file; running discovery"
   fi
   $PY scripts/fetch_happyscribe.py --discover --roster $DATA/roster/final.json \
-      --candidates "$CANDS" --interval "$INTERVAL" >/dev/null 2>>$DATA/logs/happyscribe_loop.err
+      --candidates "$CANDS" --interval "$INTERVAL" $only_arg >/dev/null 2>>$DATA/logs/happyscribe_loop.err
 fi
 
 cycle=0

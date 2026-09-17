@@ -156,6 +156,63 @@ def unsearched_leaders(roster_path, pool_path) -> tuple[list[str], list[str]]:
     return unsearched, sorted(stale)
 
 
+def select_roster(roster: list[dict], only: list[str] | None) -> list[dict]:
+    """Restrict discovery to named slugs, refusing a slug the roster does not hold.
+
+    Adding seven people to the roster makes happyscribe_loop.sh re-run discovery,
+    and without a scope that re-derives the pool for everyone. --only writes just
+    the named slugs. It does NOT save the sitemap walk: discover() walks
+    children[:max_sitemaps] whatever it is matching against, so the saving is in
+    what gets written, not in what gets fetched.
+
+    An unknown slug RAISES rather than selecting nothing. A typo that quietly
+    discovers nobody would leave the slug absent from the pool, and an absent
+    slug is what makes the loop re-run discovery every cycle for ever.
+    """
+    if only is None:
+        return roster
+    by_slug = {p["slug"]: p for p in roster}
+    unknown = [s for s in only if s not in by_slug]
+    if unknown:
+        raise SystemExit(f"--only names {unknown!r}, which are not on the roster. "
+                         f"Roster holds {len(by_slug)} slugs.")
+    return [by_slug[s] for s in only]
+
+
+def merge_pool(existing: dict, found: dict, *, replace: bool) -> tuple[dict, dict]:
+    """Fold a discovery result into the candidate pool without losing candidates.
+
+    A fresh crawl legitimately returns LESS than the pool holds: discover() caps
+    at max_sitemaps (40) and skips any child sitemap that does not answer 200, so
+    one transient failure shrinks the result. Writing that result wholesale
+    deleted the difference, and because the leader stays PRESENT in the pool it
+    still counts as searched, so nothing ever re-found it.
+
+    Candidates are identified by source_id, existing order is preserved, and new
+    ones are appended. A leader discovered with an empty list is still WRITTEN,
+    because present-but-empty is how this file records "searched, found nothing".
+    """
+    pool = {k: list(v) for k, v in existing.items()}
+    report: dict = {"candidates_kept_from_pool": 0, "candidates_added": 0,
+                    "candidates_dropped_by_replace": {}}
+    for slug, cands in found.items():
+        old = pool.get(slug, [])
+        if replace:
+            lost = sorted({c["source_id"] for c in old} - {c["source_id"] for c in cands})
+            if lost:
+                report["candidates_dropped_by_replace"][slug] = lost
+            pool[slug] = list(cands)
+            continue
+        have = {c["source_id"] for c in old}
+        added = [c for c in cands if c["source_id"] not in have]
+        # Never a bare count: a kept candidate is one this crawl did not return,
+        # which is the difference a wholesale write used to delete.
+        report["candidates_kept_from_pool"] += len(have - {c["source_id"] for c in cands})
+        report["candidates_added"] += len(added)
+        pool[slug] = old + added
+    return pool, report
+
+
 def discover(roster: list[dict], session: requests.Session, pacer: Pacer,
              max_sitemaps: int = 40) -> dict:
     """Walk the sitemap index and keep episodes whose slug names one of our leaders.
@@ -371,6 +428,15 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--max-sitemaps", type=int, default=40)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--only", default=None,
+                    help="Comma-separated slugs to discover, instead of the whole "
+                         "roster. Use it when the roster gains people, so the pool "
+                         "for everyone else is not re-derived. An unknown slug is "
+                         "refused.")
+    ap.add_argument("--replace-candidates", action="store_true",
+                    help="Overwrite the candidate pool with this crawl instead of "
+                         "merging into it, DROPPING any candidate the crawl did not "
+                         "return. The dropped ids are named in the output.")
     ap.add_argument("--report-unsearched", action="store_true",
                     help="Print the roster slugs absent from the candidate pool and exit. "
                          "The pool is derived from the roster, so the loop uses this to notice "
@@ -404,14 +470,32 @@ def main() -> int:
 
     if args.discover:
         roster = json.loads(Path(args.roster).read_text())["roster"]
-        found = discover(roster, session, pacer, args.max_sitemaps)
-        Path(args.candidates).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.candidates).write_text(json.dumps(found, indent=1))
+        only = [s.strip() for s in args.only.split(",") if s.strip()] if args.only else None
+        selected = select_roster(roster, only)
+        found = discover(selected, session, pacer, args.max_sitemaps)
+        pool_path = Path(args.candidates)
+        existing: dict = {}
+        if pool_path.is_file() and pool_path.stat().st_size:
+            try:
+                existing = json.loads(pool_path.read_text())
+            except json.JSONDecodeError as e:
+                # Never silently start from empty: that is the wholesale write.
+                raise SystemExit(f"{args.candidates} exists but is not valid JSON "
+                                 f"({e}). Fix or remove it; refusing to overwrite a "
+                                 "candidate pool this run cannot read.")
+        pool, merge_report = merge_pool(existing, found,
+                                        replace=args.replace_candidates)
+        pool_path.parent.mkdir(parents=True, exist_ok=True)
+        pool_path.write_text(json.dumps(pool, indent=1, ensure_ascii=False))
         n = sum(len(v) for v in found.values())
         with_any = sum(1 for v in found.values() if v)
         print(json.dumps({
+            "discovered_for": len(selected),
             "candidates_found": n,
-            "leaders_with_candidates": f"{with_any}/{len(roster)}",
+            "leaders_with_candidates": f"{with_any}/{len(selected)}",
+            "pool_slugs": len(pool),
+            "pool_candidates": sum(len(v) for v in pool.values()),
+            **merge_report,
             "per_leader": {k: len(v) for k, v in sorted(found.items()) if v},
             "leaders_with_none": sorted(k for k, v in found.items() if not v),
         }, indent=2))
