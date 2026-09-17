@@ -472,6 +472,28 @@ the mix even.
   its own failure with the last line of `grade_loop.err`, consecutive failures
   are counted, and a stale board exits 1. Guarded by
   `scripts/test_render_integrity.py`.
+- **The published page is held under a link crawler's fetch limit, and the
+  evidence lives beside it.** FOUND 2026-09-17, by trying to post the board to
+  Twitter: the card validator answered `ERROR: Fetching the page failed because
+  the response is too large`, and the link posted bare. Every og: and twitter:
+  tag was correct and in the head. The crawler never read them, because
+  `build_site.py` inlined the whole audit as `const AUDIT = {...}` and the
+  document was 16,044,532 bytes. Each leader's grades now go to
+  `site/audit/<slug>.json`, fetched when that row is opened, and the page is
+  418,420 bytes. A missing file comes back as the page itself with status 200,
+  because the asset worker serves single-page-application fallbacks, so the
+  drawer checks that it parsed JSON and says what it got instead of showing an
+  empty drawer that would read as "no evidence exists". `MAX_PAGE_BYTES` is
+  2,000,000 and a render over it REFUSES: that number is not Twitter's, which
+  is unpublished, it is a line far below anything plausible so a breach is
+  caught at render rather than by a link that quietly unfurls bare. Guarded by
+  `scripts/test_site_evidence_split.py`, 26 checks, verified failing against
+  the pre-fix renderer. `site/index.html` is a build artifact and so is
+  `site/audit/`; both are ignored here, because the evidence is data.
+  NOT FIXED: the predictions page has the same shape, 4,716,433 bytes of which
+  `const PRED` is 4,536,549. Whether that is under the limit is UNMEASURED:
+  nobody has put it through the card validator, and Twitter does not publish
+  the number, so do not assume either way.
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing

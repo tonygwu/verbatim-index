@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Render the leaderboard HTML from results.json and results_audit.json.
 
-The page is self-contained apart from Google Fonts. Data is embedded as JSON
-so the table can sort and the audit drawers can open without a server.
+The table's own numbers are embedded as JSON so it sorts without a server. The
+evidence behind them is NOT: each leader's grades go to site/audit/<slug>.json
+beside the page, fetched when that leader's row is opened. Inlining them made
+the document 16 MB, which is over the size Twitter's card crawler will fetch,
+so the link unfurled with no card. MAX_PAGE_BYTES holds the page to that.
 
 Usage:
   build_site.py --results data/results.json --audit data/results_audit.json \
@@ -16,6 +19,7 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -455,8 +459,8 @@ __METHOD__
   recorded speech, not a person.
   The rubric, pipeline and grading harness are open source at
   <a href="https://github.com/tonygwu/verbatim-index">github.com/tonygwu/verbatim-index</a>;
-  every judge&rsquo;s grade, reasoning and cited evidence is embedded in this page; the
-  underlying transcripts are not published.
+  every judge&rsquo;s grade, reasoning and cited evidence is published beside this page and
+  opens with the leader&rsquo;s row; the underlying transcripts are not published.
 </footer>
 </div>
 
@@ -464,7 +468,37 @@ __METHOD__
 
 <script>
 const DATA = __DATA__;
-const AUDIT = __AUDIT__;
+
+/* The evidence is deliberately NOT in this document.
+
+   Every judge's reasoning and quotes for one leader live in
+   audit/<slug>.json, fetched the first time that leader's row is opened and
+   kept for the rest of the visit. They were inline until 2026-09-17, which
+   made this page 16 MB: over the size Twitter's card crawler will fetch, so
+   the link posted with no card at all. A reader now downloads the evidence
+   for the rows they open rather than for all __N_LEADERS__ leaders. */
+const AUDIT_VERSION = "__AUDIT_VERSION__";
+const AUDIT_SLUGS = __AUDIT_SLUGS__;
+const AUDIT = {};
+async function loadAudit(slug){
+  if (AUDIT[slug]) return AUDIT[slug];
+  const url = `audit/${encodeURIComponent(slug)}.json?v=${AUDIT_VERSION}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
+  const body = await res.text();
+  let rows;
+  try { rows = JSON.parse(body); }
+  catch (err){
+    /* A file the site does not have comes back as this page, with status 200,
+       because the asset worker serves single-page-application fallbacks. An
+       empty drawer would read as "this leader has no evidence", so say what
+       actually happened instead. */
+    throw new Error(`${url} did not answer with JSON (${body.length} bytes)`);
+  }
+  if (!Array.isArray(rows)) throw new Error(`${url} is not a list of grades`);
+  AUDIT[slug] = rows;
+  return rows;
+}
 const TIE = __TIEBAND__;
 const DIMS = [["d2","Insight","k2"],["d3","Technical &amp; industry depth","k3"],["d1","Clarity","k1"]];
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -555,8 +589,8 @@ function judgeBlock(a){
   return h;
 }
 
-function drawer(slug, person){
-  const rows = (AUDIT[slug] || []).filter(a => a.mode === "blinded");
+function drawer(audit, person){
+  const rows = audit.filter(a => a.mode === "blinded");
   const bySrc = {};
   for (const a of rows) (bySrc[a.source_id] = bySrc[a.source_id] || []).push(a);
   const ids = Object.keys(bySrc);
@@ -772,8 +806,21 @@ document.addEventListener("click", e => {
   const person = DATA.find(d => d.slug === slug);
   const row = document.createElement("tr");
   row.className = "audit";
-  row.innerHTML = `<td colspan="11">${drawer(slug, person)}</td>`;
+  row.innerHTML = `<td colspan="11"><div class="drawer"><div class="sub">`
+    + `Loading ${esc(person.name)}&rsquo;s evidence&hellip;</div></div></td>`;
   tr.after(row);
+  const cell = row.firstElementChild;
+  if (!AUDIT_SLUGS.includes(slug)){
+    cell.innerHTML = `<div class="drawer"><div class="sub">No graded transcripts yet.</div></div>`;
+    return;
+  }
+  loadAudit(slug)
+    .then(a => { cell.innerHTML = drawer(a, person); })
+    .catch(err => {
+      cell.innerHTML = `<div class="drawer"><h3>${esc(person.name)} &mdash; the evidence</h3>`
+        + `<div class="sub">The evidence for this leader did not load, so none is shown rather `
+        + `than an empty drawer that would read as none existing: ${esc(err.message)}</div></div>`;
+    });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && tipBtn){ const b = tipBtn; hideTip(); b.blur(); return; }
@@ -817,6 +864,18 @@ SOCIAL_DESC = (
     "demonstrates. __N_JUDGES_WORD__ frontier models graded __N_TRANSCRIPTS__ verbatim "
     "transcripts independently against a 15-criterion rubric."
 )
+
+# Twitter's card crawler refuses a page it considers too large: on 2026-09-17
+# cards-dev.x.com answered "Fetching the page failed because the response is
+# too large" for this board at 16,044,532 bytes, and the tweet posted with no
+# card. Twitter does not publish the exact cut-off, so this budget is not it:
+# it is a line far below anything plausible, chosen so a breach is caught here
+# rather than by a link that quietly unfurls bare. The page is about 0.4 MB
+# once the evidence is fetched per row, so reaching 2 MB means something was
+# inlined again.
+# VI_MAX_PAGE_BYTES is a test seam only, so the refusal can be exercised
+# without fabricating a 2 MB fixture.
+MAX_PAGE_BYTES = int(os.environ.get("VI_MAX_PAGE_BYTES") or 2_000_000)
 
 OG_CARD = Path(__file__).resolve().parent.parent / "site" / "og.png"
 OG_CARD_META = OG_CARD.with_suffix(".meta.json")
@@ -862,6 +921,58 @@ def check_og_card(results: dict) -> None:
         detail = ", ".join(f"{k}: card says {a}, corpus has {b}" for k, (a, b) in drift.items())
         print(f"WARNING: site/og.png is stale ({detail}); "
               f"re-run scripts/build_og_card.py", file=sys.stderr)
+
+    # The card draws the top rows of the board, so it can disagree with the
+    # page about who is first while every count above still matches.
+    card_top = json.loads(OG_CARD_META.read_text()).get("counts", {}).get("top")
+    if card_top:
+        scored = [l for l in results["leaders"] if l["status"] == "scored"]
+        scored.sort(key=lambda l: (l.get("rank") or 10**6, -l["blinded"]["overall"]))
+        page_top = [{"rank": l["rank"], "slug": l["slug"],
+                     "overall": round(l["blinded"]["overall"], 1)}
+                    for l in scored[:len(card_top)]]
+        if page_top != card_top:
+            print(f"WARNING: site/og.png draws {card_top} and the board now reads "
+                  f"{page_top}; re-run scripts/build_og_card.py", file=sys.stderr)
+
+
+def write_audit(audit_dir: Path, audit: dict[str, list]) -> tuple[str, list[str]]:
+    """Publish each leader's evidence as its own file beside the page.
+
+    Returns the version key for the fetch URLs and the slugs that have a file.
+    The key is the sha256 of everything written, so a browser holding last
+    week's copy of one leader re-fetches it exactly when that leader's grades
+    change, and the page and its evidence cannot be served from two different
+    renders.
+
+    Files from an earlier render that this one did not write are DELETED. A
+    withdrawn leader's evidence would otherwise stay on the site, reachable by
+    URL and served under a row that no longer exists.
+    """
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    written: dict[str, int] = {}
+    for slug in sorted(audit):
+        rows = audit[slug]
+        if not rows:
+            continue
+        body = json.dumps(rows, sort_keys=True)
+        digest.update(f"{slug}\n{body}\n".encode())
+        # Atomic for the same reason the page is: a clone may be deploying
+        # this directory while another clone renders into it.
+        write_atomic(audit_dir / f"{slug}.json", body)
+        written[slug] = len(body)
+    stale = sorted(p.name for p in audit_dir.glob("*.json") if p.stem not in written)
+    for name in stale:
+        (audit_dir / name).unlink()
+    total = sum(written.values())
+    print(f"wrote {len(written)} evidence files to {audit_dir} "
+          f"({total/1024/1024:.1f} MB, largest {max(written.values())/1024:.0f} KB)"
+          if written else f"wrote no evidence files to {audit_dir}")
+    if stale:
+        print(f"  removed {len(stale)} evidence file(s) no longer on the board: "
+              f"{', '.join(stale)}")
+    return digest.hexdigest()[:12], sorted(written)
 
 
 def check_exclusions(roster: dict) -> None:
@@ -1197,6 +1308,11 @@ def main() -> int:
     # "Transcripts 653" stat counting graded ones, overstating the graded corpus
     # by 7.8%. A deploy from an experiment clone would also have published that
     # clone's own number.
+    # The evidence goes beside the page, in the directory the asset worker
+    # serves, and must be written BEFORE the page that points at it.
+    audit_dir = Path(args.out).resolve().parent / "audit"
+    audit_version, audit_slugs = write_audit(audit_dir, audit)
+
     tdir = Path(args.results).resolve().parent / "transcripts_blind"
     SP.guard(args.study, tdir)
     if not tdir.is_dir():
@@ -1218,7 +1334,8 @@ def main() -> int:
         .replace("__SITE_URL__", SITE_URL)
         .replace("__OG_VERSION__", og_version())
         .replace("__DATA__", json.dumps(rows))
-        .replace("__AUDIT__", json.dumps(audit))
+        .replace("__AUDIT_VERSION__", audit_version)
+        .replace("__AUDIT_SLUGS__", json.dumps(audit_slugs))
         .replace("__METHOD__", build_method(results, calib, roster))
         .replace("__RUNDATE__", datetime.now(timezone.utc).strftime("%d %B %Y"))
         .replace("__N_LEADERS__", str(len(rows)))
@@ -1236,6 +1353,12 @@ def main() -> int:
         .replace("__CORR__", str(d.get("mean_pairwise_correlation") or "&ndash;"))
         .replace("__NOISE__", str(head.get("mean_within_judge_sd_overall", "1.5")))
         .replace("__TIEBAND__", str(head.get("least_significant_difference_95pct", 4.3))))
+
+    size = len(html_out.encode("utf-8"))
+    if size > MAX_PAGE_BYTES:
+        sys.exit(f"REFUSING: the page is {size:,} bytes, over the {MAX_PAGE_BYTES:,} "
+                 f"budget a link crawler will fetch. Something large is inlined "
+                 f"again; the evidence belongs in {audit_dir}, not in the document.")
 
     # Atomic: a clone may be reading this file to deploy while another writes it.
     write_atomic(args.out, html_out)

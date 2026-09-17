@@ -1,10 +1,28 @@
 {
+ "site": "leaderboard",
  "counts": {
   "leaders": 50,
   "transcripts": 653,
-  "judges": 3
+  "judges": 3,
+  "words_graded": 8839787,
+  "top": [
+   {
+    "rank": 1,
+    "slug": "yann-lecun",
+    "overall": 75.7
+   },
+   {
+    "rank": 2,
+    "slug": "jeff-bezos",
+    "overall": 72.9
+   },
+   {
+    "rank": 3,
+    "slug": "tim-sweeney",
+    "overall": 71.7
+   }
+  ]
  },
- "words_graded": 8839787,
  "drawn_by": "scripts/build_og_card.py",
- "note": "build_site.py warns when these counts drift from results.json."
+ "note": "The site builder warns when these counts drift from the corpus."
 }
