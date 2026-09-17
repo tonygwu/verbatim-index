@@ -143,6 +143,55 @@ def main() -> int:
         data, src, pred = embedded(html, "DATA"), embedded(html, "SRC"), embedded(html, "PRED")
         check("FIXTURE: DATA, SRC and PRED parse", isinstance(data, list) and isinstance(src, dict) and isinstance(pred, dict))
 
+        # ------------------------------------------------------------------
+        # The page is a real HTML document and unfurls as a link.
+        #
+        # Until 2026-09-17 this page, like the leaderboard before it, had no
+        # DOCTYPE, no <html>, no <head> and no <meta> tags at all: it began
+        # with <title>. Browsers therefore rendered it in quirks mode, a phone
+        # fell back to a ~980px layout viewport because no viewport meta said
+        # otherwise, and Twitter and LinkedIn unfurled the link as a bare URL
+        # with no title, description or image. Measured on the live site:
+        # 0 meta tags.
+        # ------------------------------------------------------------------
+        check("SOCIAL: starts with a DOCTYPE, so browsers use standards mode",
+              html.lstrip().lower().startswith("<!doctype html>"), repr(html[:60]))
+        for frag, why in [('<html lang="en">', "declares its language"),
+                          ('<meta charset="utf-8">', "declares its encoding"),
+                          ('name="viewport"', "tells a phone to use device width"),
+                          ("</head>", "closes the head"),
+                          ("<body>", "opens a body"),
+                          ("</html>", "closes the document")]:
+            check(f"SOCIAL: page {why}", frag in html, f"missing {frag!r}")
+        for prop in ("og:type", "og:url", "og:title", "og:description",
+                     "og:image", "og:image:width", "og:image:height"):
+            check(f"SOCIAL: has {prop}", f'property="{prop}"' in html)
+        check("SOCIAL: twitter card is the large-image kind",
+              'name="twitter:card" content="summary_large_image"' in html)
+        for nm in ("twitter:title", "twitter:description", "twitter:image"):
+            check(f"SOCIAL: has {nm}", f'name="{nm}"' in html)
+        check("SOCIAL: has a canonical url", 'rel="canonical"' in html)
+        check("SOCIAL: has a meta description", 'name="description"' in html)
+
+        # A crawler has no page context, so every card URL must be absolute,
+        # and must point at THIS site rather than the leaderboard beside it.
+        card_urls = re.findall(
+            r'(?:property|name)="(?:og:image|twitter:image|og:url)" content="([^"]+)"', html)
+        check("SOCIAL: card urls are absolute",
+              bool(card_urls) and all(u.startswith("https://") for u in card_urls), f"{card_urls}")
+        check("SOCIAL: card urls name the predictions host, not the leaderboard",
+              all("verbatim-predictions.tonygwu.com" in u for u in card_urls), f"{card_urls}")
+        check("SOCIAL: card image carries a cache-busting version",
+              any("og.png?v=" in u for u in card_urls), f"{card_urls}")
+
+        # Social text must be rendered from the corpus, never left as a placeholder.
+        headpart = html[:html.find("</head>")]
+        check("SOCIAL: no unrendered placeholder survives in the head",
+              not re.search(r"__[A-Z_]+__", headpart),
+              str(re.findall(r"__[A-Z_]+__", headpart)[:5]))
+        check("SOCIAL: the description carries the corpus counts",
+              str(len(data)) in headpart, f"expected {len(data)} people named in the head")
+
         # Two fenced regions may name a verdict: the disclaimer, and the Score column, which now
         # holds a real number and whose copy has to be able to say so. Both fences are stripped
         # before the scan rather than the pattern being weakened, so an evaluative word ANYWHERE

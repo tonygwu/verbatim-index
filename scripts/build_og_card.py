@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Draw site/og.png, the 1200x630 image Twitter and LinkedIn show for the link.
+"""Draw the 1200x630 image Twitter and LinkedIn show for a link to one of the sites.
 
-The card carries counts, so it is rendered from results.json rather than from
-numbers typed here, and it writes a sidecar recording what it drew. build_site.py
-reads that sidecar and warns when the drawn counts no longer match the corpus.
+Serves both published sites, named by --site: `leaderboard` draws site/og.png
+from results.json, and `predictions` draws site-predictions/og.png from the
+predictions index.json. The card carries counts, so it is rendered from the
+corpus rather than from numbers typed here, and it writes a sidecar recording
+what it drew. Each site's builder reads that sidecar and warns when the drawn
+counts no longer match the corpus.
 
 The card is a committed asset rather than something the render pipeline draws on
 every cycle. Drawing it needs a browser, and putting a browser in the grading
@@ -11,7 +14,8 @@ loop's publication path would make a deploy fail for a reason unrelated to the
 data. Re-run this by hand when the roster or the corpus moves.
 
 Usage:
-  build_og_card.py --results ../data/results.json
+  build_og_card.py --site leaderboard --results ../data/results.json --transcripts ../data/transcripts_blind
+  build_og_card.py --site predictions --index ../data/predictions/index.json
 """
 
 from __future__ import annotations
@@ -25,7 +29,6 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_site import published_judges  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 CHROME_CANDIDATES = (
@@ -86,17 +89,11 @@ CARD = """<!DOCTYPE html>
 </head>
 <body>
   <div>
-    <div class="eyebrow">verbatim-index.tonygwu.com</div>
-    <h1>Verbatim <em>Index</em></h1>
-    <p class="thesis">Tech leaders, ranked on the thinking their
-      <b>public speech</b> actually demonstrates.</p>
+    <div class="eyebrow">__DOMAIN__</div>
+    <h1>Verbatim <em>__WORDMARK__</em></h1>
+    <p class="thesis">__TAGLINE__</p>
   </div>
-  <dl class="strip">
-    <div><dt>Leaders</dt><dd>__LEADERS__</dd></div>
-    <div><dt>Transcripts</dt><dd>__TRANSCRIPTS__</dd></div>
-    <div><dt>Judges</dt><dd>__JUDGES__</dd></div>
-    <div><dt>Words graded</dt><dd>__WORDS__</dd></div>
-  </dl>
+  <dl class="strip">__STATS__</dl>
 </body>
 </html>
 """
@@ -112,14 +109,8 @@ def find_chrome() -> str:
     sys.exit("REFUSING: no Chrome or Chromium found to render the card")
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--results", required=True)
-    ap.add_argument("--transcripts", required=True,
-                    help="blinded transcripts dir; word count is summed exactly as build_site.py sums it")
-    ap.add_argument("--out", default=str(REPO / "site" / "og.png"))
-    args = ap.parse_args()
-
+def leaderboard_counts(args) -> tuple[dict, list[tuple[str, str]]]:
+    from build_site import published_judges
     results = json.loads(Path(args.results).read_text())
     d = results["diagnostics"]
     counts = {
@@ -138,16 +129,87 @@ def main() -> int:
             pass
     if not words:
         sys.exit(f"REFUSING: no word counts under {tdir}")
-    if not counts["leaders"] or not counts["transcripts"] or not counts["judges"]:
-        sys.exit(f"REFUSING: results.json gave an empty count: {counts}")
+    counts["words_graded"] = words
+    stats = [("Leaders", str(counts["leaders"])),
+             ("Transcripts", str(counts["transcripts"])),
+             ("Judges", str(counts["judges"])),
+             ("Words graded", f"{words / 1e6:.1f}M")]
+    return counts, stats
 
+
+def predictions_counts(args) -> tuple[dict, list[tuple[str, str]]]:
+    """Every figure comes straight out of index.json.
+
+    The page's own "People" stat is deliberately NOT drawn here. That number is
+    person_rows()'s output, which filters the index against the roster and a
+    listing floor, so index.json alone cannot reproduce it and a card drawn
+    from the index would quietly disagree with the page beside it. The people
+    count goes in the card's DESCRIPTION instead, where the page substitutes
+    its own __N_PEOPLE__.
+    """
+    index = json.loads(Path(args.index).read_text())
+    c = index["corpus"]
+    accepted = c["accepted"]
+    if not accepted:
+        sys.exit(f"REFUSING: {args.index} reports no accepted predictions")
+    dated = accepted - c["statement_date_unknown"]
+    counts = {
+        "predictions": accepted,
+        "transcripts_scanned": index["coverage"]["extract"].get("ok", 0),
+        "pct_dated": round(100 * dated / accepted),
+    }
+    stats = [("Predictions", str(counts["predictions"])),
+             ("Transcripts scanned", str(counts["transcripts_scanned"])),
+             ("With a date said", f"{counts['pct_dated']}%")]
+    return counts, stats
+
+
+SITES = {
+    "leaderboard": {
+        "out": REPO / "site" / "og.png",
+        "domain": "verbatim-index.tonygwu.com",
+        "wordmark": "Index",
+        "tagline": ("Tech leaders, ranked on the thinking their "
+                    "<b>public speech</b> actually demonstrates."),
+        "counts": leaderboard_counts,
+        "requires": ("results", "transcripts"),
+    },
+    "predictions": {
+        "out": REPO / "site-predictions" / "og.png",
+        "domain": "verbatim-predictions.tonygwu.com",
+        "wordmark": "Predictions",
+        "tagline": ("Forward-looking claims, quoted <b>verbatim</b> from "
+                    "what tech leaders said on the record, with the date."),
+        "counts": predictions_counts,
+        "requires": ("index",),
+    },
+}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--site", choices=sorted(SITES), default="leaderboard")
+    ap.add_argument("--results")
+    ap.add_argument("--transcripts",
+                    help="blinded transcripts dir; word count is summed exactly as build_site.py sums it")
+    ap.add_argument("--index", help="predictions index.json")
+    ap.add_argument("--out")
+    args = ap.parse_args()
+
+    site = SITES[args.site]
+    missing = [f"--{r}" for r in site["requires"] if not getattr(args, r)]
+    if missing:
+        sys.exit(f"REFUSING: --site {args.site} needs {', '.join(missing)}")
+
+    counts, stats = site["counts"](args)
+    cells = "".join(f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in stats)
     html = (CARD
-            .replace("__LEADERS__", str(counts["leaders"]))
-            .replace("__TRANSCRIPTS__", str(counts["transcripts"]))
-            .replace("__JUDGES__", str(counts["judges"]))
-            .replace("__WORDS__", f"{words / 1e6:.1f}M" if words else "–"))
+            .replace("__DOMAIN__", site["domain"])
+            .replace("__WORDMARK__", site["wordmark"])
+            .replace("__TAGLINE__", site["tagline"])
+            .replace("__STATS__", cells))
 
-    out = Path(args.out)
+    out = Path(args.out) if args.out else site["out"]
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / "card.html"
@@ -164,12 +226,12 @@ def main() -> int:
 
     meta = out.with_suffix(".meta.json")
     meta.write_text(json.dumps(
-        {"counts": counts, "words_graded": words,
+        {"site": args.site, "counts": counts,
          "drawn_by": "scripts/build_og_card.py",
-         "note": "build_site.py warns when these counts drift from results.json."},
+         "note": "The site builder warns when these counts drift from the corpus."},
         indent=1) + "\n")
     print(f"wrote {out} ({out.stat().st_size} bytes) and {meta.name}")
-    print(f"  counts: {counts}, words {words}")
+    print(f"  site {args.site}, counts: {counts}")
     return 0
 
 

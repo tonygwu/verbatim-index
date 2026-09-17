@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 import statistics
 import sys
@@ -35,6 +36,67 @@ from site_theme import FONT_LINKS, THEME_CSS  # noqa: E402
 import predictions_lib as L  # noqa: E402
 import score_predictions as SP  # noqa: E402
 
+# The public origin, needed absolute because Open Graph and Twitter cards are
+# fetched by a crawler that has no page context to resolve a relative path
+# against. It matches the custom domain claimed in wrangler.predictions.toml.
+SITE_URL = "https://verbatim-predictions.tonygwu.com/"
+
+# Counts stay as placeholders so the card text is rendered from the corpus
+# being published, never from a number typed here that goes stale.
+SOCIAL_TITLE = "What __N_PEOPLE__ tech leaders predicted in public, quoted verbatim and dated"
+SOCIAL_DESC = (
+    "Forward-looking claims that __N_PEOPLE__ technology leaders made in public, quoted verbatim "
+    "from transcripts of their own recorded speech, with the date they said it and the date it "
+    "refers to. __N_ACCEPTED__ predictions from __N_TX__ transcripts."
+)
+
+OG_CARD = Path(__file__).resolve().parent.parent / "site-predictions" / "og.png"
+OG_CARD_META = OG_CARD.with_suffix(".meta.json")
+
+
+def og_version() -> str:
+    """Cache key for the social card image.
+
+    Twitter and LinkedIn cache a card by its URL for days. A regenerated card
+    at an unchanged URL therefore keeps showing the old picture. The key is the
+    card's own bytes, so it changes exactly when the picture changes.
+    """
+    if not OG_CARD.is_file():
+        return "0"
+    return hashlib.sha256(OG_CARD.read_bytes()).hexdigest()[:12]
+
+
+def check_og_card(index: dict) -> None:
+    """Say so when the drawn card no longer matches the corpus it quotes.
+
+    The card is a committed image rather than something this renderer draws, so
+    nothing else would notice it going stale. This never blocks a render: a
+    stale social card is worth reporting, and it is not worth refusing to
+    publish a correct page over.
+    """
+    if not OG_CARD.is_file():
+        print("WARNING: site-predictions/og.png is missing; social cards will show no image",
+              file=sys.stderr)
+        return
+    if not OG_CARD_META.is_file():
+        print("WARNING: site-predictions/og.png has no .meta.json; its counts cannot be checked",
+              file=sys.stderr)
+        return
+    c = index["corpus"]
+    accepted = c["accepted"]
+    drawn = json.loads(OG_CARD_META.read_text()).get("counts", {})
+    now = {
+        "predictions": accepted,
+        "transcripts_scanned": index["coverage"]["extract"].get("ok", 0),
+        "pct_dated": round(100 * (accepted - c["statement_date_unknown"]) / accepted) if accepted else 0,
+    }
+    drift = {k: (drawn.get(k), v) for k, v in now.items() if drawn.get(k) != v}
+    if drift:
+        detail = ", ".join(f"{k}: card says {a}, corpus has {b}" for k, (a, b) in drift.items())
+        print(f"WARNING: site-predictions/og.png is stale ({detail}); "
+              f"re-run scripts/build_og_card.py --site predictions", file=sys.stderr)
+
+
 MODEL_LABELS = {
     "claude-fable-5-1": "Claude Fable 5.1",
     "gpt-6-astra": "OpenAI GPT-6 Astra",
@@ -42,7 +104,30 @@ MODEL_LABELS = {
 }
 PLATFORM_LABELS = {"polymarket": "Polymarket", "kalshi": "Kalshi"}
 
-TEMPLATE = r"""<title>Verbatim Predictions</title>
+TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verbatim Predictions</title>
+<meta name="description" content="__SOCIAL_DESC__">
+<link rel="canonical" href="__SITE_URL__">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Verbatim Predictions">
+<meta property="og:locale" content="en_GB">
+<meta property="og:url" content="__SITE_URL__">
+<meta property="og:title" content="__SOCIAL_TITLE__">
+<meta property="og:description" content="__SOCIAL_DESC__">
+<meta property="og:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Verbatim Predictions. __SOCIAL_TITLE__">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="__SOCIAL_TITLE__">
+<meta name="twitter:description" content="__SOCIAL_DESC__">
+<meta name="twitter:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
+<meta name="twitter:image:alt" content="Verbatim Predictions. __SOCIAL_TITLE__">
 __FONTS__
 <style>
 __THEME__
@@ -268,6 +353,8 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
 .toggle:hover{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
 </style>
+</head>
+<body>
 
 <button class="toggle" id="themeBtn" type="button">THEME</button>
 <div class="wrap">
@@ -700,6 +787,8 @@ document.getElementById("themeBtn").addEventListener("click", () => {
 });
 render();
 </script>
+</body>
+</html>
 """
 
 
@@ -1176,6 +1265,7 @@ def main(argv: list[str] | None = None) -> int:
     for k in ("generated_at_utc", "run_ids_seen", "contracts_seen", "leaders", "corpus", "coverage", "files_read", "records_read"):
         if k not in index:
             raise SystemExit(f"index.json lacks {k}; re-run aggregate_predictions.py")
+    check_og_card(index)
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
     loaded = load_records(Path(args.predictions))
     by_slug: dict[str, list[dict]] = {}
@@ -1217,6 +1307,10 @@ def main(argv: list[str] | None = None) -> int:
     html_out = (TEMPLATE
         .replace("__FONTS__", FONT_LINKS)
         .replace("__THEME__", THEME_CSS)
+        .replace("__SOCIAL_TITLE__", SOCIAL_TITLE)
+        .replace("__SOCIAL_DESC__", SOCIAL_DESC)
+        .replace("__SITE_URL__", SITE_URL)
+        .replace("__OG_VERSION__", og_version())
         .replace("__DATA__", data_js)
         .replace("__SRC__", src_js)
         .replace("__PRED__", pred_js)
