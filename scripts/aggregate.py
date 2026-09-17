@@ -491,6 +491,34 @@ def resolve_venue(votes: list[str]) -> tuple[str | None, bool]:
     return top, agreed
 
 
+def quote_cap_report(grades: list[dict]) -> dict:
+    """What the 25-word evidence-quote cap cut, by judge and by dimension.
+
+    The cap no longer rejects a grade (see grading_contract.quote_overruns); it
+    records the overrun instead. A cap that silently kept no record would be the
+    same bias with the evidence removed, so the incidence is published.
+
+    Counts OVERRUNS, and separately the grades carrying at least one, because a
+    single grade can break the cap several times. A judge with no overrun does
+    not appear, and an empty corpus reports empty rather than absent.
+    """
+    by_judge: dict[str, int] = {}
+    by_dim: dict[str, int] = {}
+    with_overrun = 0
+    for g in grades:
+        over = g.get("quote_cap_overruns") or []
+        if not over:
+            continue
+        with_overrun += 1
+        j = g.get("judge")
+        by_judge[j] = by_judge.get(j, 0) + len(over)
+        for o in over:
+            d = o.get("dimension")
+            by_dim[d] = by_dim.get(d, 0) + 1
+    return {"grades_read": len(grades), "grades_with_overrun": with_overrun,
+            "overruns": sum(by_judge.values()), "by_judge": by_judge, "by_dimension": by_dim}
+
+
 def halo_judge_agreement(by_judge: dict[str, float], ci_low: float | None,
                          ci_high: float | None) -> dict:
     """Does a person's halo survive looking at the judges separately?
@@ -1208,6 +1236,7 @@ def main() -> int:
         "grades_loaded": len(grades),
         "grades_used": len(usable),
         "grades_excluded_validation": sum(1 for g in excluded if g["_excluded"] == "validation_errors"),
+        **({"quote_cap": quote_cap_report(grades + excluded)} if is_v2 else {}),
         **({"grades_excluded_unsupported_dimension":
             sum(1 for g in excluded if g["_excluded"] == "unsupported_dimension")} if is_v2 else {}),
         "transcripts_with_blinded_consensus": len(all_b),

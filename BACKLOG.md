@@ -5,9 +5,16 @@ Newest first.
 
 ## Verbatim Pundits
 
-- **The 25-word quote cap is uneven, and moving it costs a full re-grade.**
-  Filed 2026-09-16, MEASURED 2026-09-16 after an adversarial audit.
-  Measure it any time with:
+- **The 25-word quote cap is uneven. RESOLVED 2026-09-16 by moving the PENALTY,
+  not the number.** Filed 2026-09-16, measured the same day, decided by the
+  operator during the P9 top-up run.
+
+  The cap limits how much of the transcript a judge may paste back as evidence.
+  The judge always read the whole transcript. Until now one over-long quote
+  appended a validation error, which invalidated the whole record and threw away
+  the score, the reasoning and both other dimensions.
+
+  Measure the incidence any time with:
 
   ```
   .venv/bin/python scripts/filter_incidence.py --logs data-pundits/logs/p8a2 \
@@ -15,32 +22,41 @@ Newest first.
       --match "exceeds 25 words" --attempted 50
   ```
 
-  Across all eight grading rounds it rejected **24** grades:
+  Across eight P8a2 rounds it rejected **24** grades:
 
   ```
   by judge   fable 5 (5.0%)   gemini 19 (19.0%)     ratio 3.8x, flagged SKEWED
   by cell    gemini/blinded 12, gemini/open 7, fable/open 4, fable/blinded 1
-  by person  hasan-piker 5, steven-bonnell 5, ana-kasparian 3, asmongold 3,
-             coleman-hughes 3, ezra-klein 2, matt-walsh 2, ben-shapiro 1,
-             charlie-kirk 0, sam-seder 0
   ```
 
-  So it is not the uniform ~8% tax the first version of this entry implied. It
-  is a filter on ONE judge's formatting habit, and every rejection is re-graded
-  until it passes, which selects which of that judge's samples reaches the
-  corpus. The audit measured the selection at +1.07 points (se 0.77, n=24),
-  which is not distinguishable from zero at this size.
+  The P9 top-up then showed WHERE it bites. All four rejections in its first 69
+  calls landed on `d3_good_faith`, for both judges and two different people. D3
+  asks whether a person applies one standard, answers the question asked, and
+  concedes when warranted. None of that is showable in one sentence, because it
+  takes a back-and-forth to demonstrate a shift of position. D1 and D2 are
+  showable in a single claim. So the penalty selected D3 grades for quote
+  brevity, on the dimension carrying 0.30 of the overall score. The audit put
+  that selection at +1.07 points (se 0.77, n=24).
 
-  **Changing the cap re-grades everything.** The number lives in RUBRIC.md and
-  judge_output.schema.json, both hashed into `contract_id`. VERIFIED by
-  simulation: raising it to 40 words moves the contract from
-  `3844dd2693acd471` to `7aa8f163de1f0b2e`, which makes every grade already
-  collected incompatible at aggregation. Decide before the full P9 run, while
-  the re-grade cost is 200 cells rather than a thousand. Three options, none
-  measured yet: raise the cap; keep the cap but relax the HANDLING so an
-  overrun is recorded rather than rejecting the whole grade, which does NOT
-  change `contract_id` because the check lives in `grade.py`; or accept the
-  re-grade cost and budget for it.
+  **THE FIX, and why it cost no re-grade.** `grading_contract.quote_overruns()`
+  now records each over-long quote with its dimension, word count, speaker and a
+  head of the text, and `validate_v2` no longer rejects for it. `grade.py` writes
+  them to the record as `quote_cap_overruns`, and `aggregate.quote_cap_report()`
+  publishes the incidence by judge and by dimension, so the cap still reports
+  what it cut. The number 25 stays in `profiles/pundits.json`, `RUBRIC.md` and
+  the schema, all of which are hashed; only the consequence moved, and it lives
+  in code no hash covers. VERIFIED: `contract_id` is still `3844dd2693acd471`,
+  so the 267 grades already collected stay poolable. Guarded by
+  `scripts/test_quote_cap_handling.py`, 24 checks, verified failing first.
+
+  **Known cost, stated rather than hidden:** the corpus now mixes two regimes.
+  Grades collected before this change survived reject-and-regrade, so their D3
+  quotes are selected for brevity; grades after it are not. `quote_cap` in
+  diagnostics is how a later reader tells the two apart.
+
+  Still open: raising the number itself to 40 would move the contract to
+  `7aa8f163de1f0b2e` and re-grade everything. Not done, and not needed unless
+  the recorded overruns turn out to be large rather than one or two words.
 
 - **A grade record that failed validation counts as a cache hit. FIXED for
   pundits (v2) 2026-09-16; LEADERS (v1) still has it.** Filed 2026-09-16.

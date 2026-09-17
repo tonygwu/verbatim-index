@@ -1975,9 +1975,13 @@ def grade_one(job: dict) -> dict:
                 "run": job["run"], "error_type": E_REFUSED, "detail": refusal[:300],
                 "path": str(dest), "elapsed": elapsed}
 
+    overruns: list[dict] = []
     if v2:
         import grading_contract as GC
         errs = GC.validate_v2(obj, tid, job["profile"]["scoring"])
+        # An over-long evidence quote is recorded, not a rejection. The cap
+        # number stays in the contract; only the consequence lives here.
+        overruns = GC.quote_overruns(obj, job["profile"]["scoring"])
     else:
         errs = validate(obj, tid)
     record = {
@@ -1992,6 +1996,7 @@ def grade_one(job: dict) -> dict:
         "elapsed_sec": elapsed,
         "telemetry": telemetry,
         "validation_errors": errs,
+        **({"quote_cap_overruns": overruns} if v2 else {}),
         "grade": obj,
         **_policy_fields(job),
         **(_v2_record_fields(job, telemetry, expected) if v2 else {}),

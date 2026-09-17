@@ -276,8 +276,8 @@ def validate_v2(obj: dict, tid: str, scoring: dict) -> list[str]:
         for q in quotes:
             if not isinstance(q, dict) or q.get("speaker") not in EVIDENCE_SPEAKERS:
                 errs.append(f"{d['key']} evidence speaker must be one of {EVIDENCE_SPEAKERS}")
-            elif len(str(q.get("quote", "")).split()) > scoring["max_quote_words"]:
-                errs.append(f"{d['key']} quote exceeds {scoring['max_quote_words']} words")
+        # An over-long quote is NOT an error here. It is recorded by
+        # quote_overruns() and the grade is kept. See that function for why.
         scored = sum(1 for c in d["subcriteria"] if (score_of.get(c) or 0) > 0)
         subject_quotes = sum(1 for q in quotes if isinstance(q, dict) and q.get("speaker") == "subject")
         if status == "supported":
@@ -301,6 +301,49 @@ def validate_v2(obj: dict, tid: str, scoring: dict) -> list[str]:
     elif not all_supported and overall is not None:
         errs.append("overall must be null when any dimension is unsupported")
     return errs
+
+
+def quote_overruns(obj: dict, scoring: dict) -> list[dict]:
+    """Every evidence quote longer than the cap, as a record rather than a rejection.
+
+    The cap limits CITATION length. The judge reads the whole transcript; this
+    only bounds how much of it may be pasted back as evidence. Rejecting the
+    whole grade over one long quote threw away the score, the reasoning and both
+    other dimensions, and bought the same answer again one word shorter.
+
+    MEASURED 2026-09-16, which is why the penalty moved. Across eight P8a2
+    rounds the cap rejected 24 grades, gemini 19 (19.0%) against fable 5 (5.0%),
+    a ratio of 3.8x. In the P9 top-up all four rejections in the first 69 calls
+    landed on `d3_good_faith`, for both judges and two different people. D3 asks
+    whether a person applies one standard, answers the question asked, and
+    concedes when warranted, and none of that is showable in one sentence. So
+    the penalty was selecting D3 grades for quote brevity, on the dimension that
+    carries 0.30 of the overall score.
+
+    The cap number stays in the contract. Only the consequence moved, and the
+    consequence is this code, which no hash covers, so `contract_id` is unchanged
+    and grades collected under the old penalty stay poolable.
+
+    Returns one entry per over-long quote, never a count, so aggregation can
+    report what was cut and for which judge and dimension.
+    """
+    out: list[dict] = []
+    cap = scoring["max_quote_words"]
+    dims = obj.get("dimensions") if isinstance(obj.get("dimensions"), dict) else {}
+    for d in scoring["dimensions"]:
+        x = dims.get(d["key"])
+        if not isinstance(x, dict):
+            continue
+        quotes = x.get("evidence") if isinstance(x.get("evidence"), list) else []
+        for q in quotes:
+            if not isinstance(q, dict):
+                continue
+            words = len(str(q.get("quote", "")).split())
+            if words > cap:
+                out.append({"dimension": d["key"], "words": words, "cap": cap,
+                            "speaker": q.get("speaker"),
+                            "quote_head": " ".join(str(q.get("quote", "")).split()[:8])})
+    return out
 
 
 # ---------------------------------------------------------------------------
