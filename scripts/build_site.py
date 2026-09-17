@@ -936,43 +936,51 @@ def check_og_card(results: dict) -> None:
                   f"{page_top}; re-run scripts/build_og_card.py", file=sys.stderr)
 
 
-def write_audit(audit_dir: Path, audit: dict[str, list]) -> tuple[str, list[str]]:
-    """Publish each leader's evidence as its own file beside the page.
+def audit_payload(audit: dict[str, list]) -> tuple[str, dict[str, str]]:
+    """The file each leader's evidence will be published as, and its version key.
 
-    Returns the version key for the fetch URLs and the slugs that have a file.
-    The key is the sha256 of everything written, so a browser holding last
-    week's copy of one leader re-fetches it exactly when that leader's grades
-    change, and the page and its evidence cannot be served from two different
-    renders.
+    Nothing is written here, because the page has to be built and checked
+    before anything lands on disk: a refused render must leave the site's
+    evidence exactly as the last good render left it, or the published page
+    would point at files newer than itself.
 
-    Files from an earlier render that this one did not write are DELETED. A
-    withdrawn leader's evidence would otherwise stay on the site, reachable by
-    URL and served under a row that no longer exists.
+    The key is the sha256 of every body, so a browser holding last week's copy
+    of one leader re-fetches it exactly when that leader's grades change.
     """
-    audit_dir.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
-    written: dict[str, int] = {}
+    bodies: dict[str, str] = {}
     for slug in sorted(audit):
         rows = audit[slug]
         if not rows:
             continue
         body = json.dumps(rows, sort_keys=True)
         digest.update(f"{slug}\n{body}\n".encode())
+        bodies[slug] = body
+    return digest.hexdigest()[:12], bodies
+
+
+def write_audit(audit_dir: Path, bodies: dict[str, str]) -> None:
+    """Publish each leader's evidence as its own file beside the page.
+
+    Files from an earlier render that this one did not write are DELETED. A
+    withdrawn leader's evidence would otherwise stay on the site, reachable by
+    URL and served under a row that no longer exists.
+    """
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    for slug, body in bodies.items():
         # Atomic for the same reason the page is: a clone may be deploying
         # this directory while another clone renders into it.
         write_atomic(audit_dir / f"{slug}.json", body)
-        written[slug] = len(body)
-    stale = sorted(p.name for p in audit_dir.glob("*.json") if p.stem not in written)
+    stale = sorted(p.name for p in audit_dir.glob("*.json") if p.stem not in bodies)
     for name in stale:
         (audit_dir / name).unlink()
-    total = sum(written.values())
-    print(f"wrote {len(written)} evidence files to {audit_dir} "
-          f"({total/1024/1024:.1f} MB, largest {max(written.values())/1024:.0f} KB)"
-          if written else f"wrote no evidence files to {audit_dir}")
+    print(f"wrote {len(bodies)} evidence files to {audit_dir} "
+          f"({sum(map(len, bodies.values()))/1024/1024:.1f} MB, "
+          f"largest {max(map(len, bodies.values()))/1024:.0f} KB)"
+          if bodies else f"wrote no evidence files to {audit_dir}")
     if stale:
         print(f"  removed {len(stale)} evidence file(s) no longer on the board: "
               f"{', '.join(stale)}")
-    return digest.hexdigest()[:12], sorted(written)
 
 
 def check_exclusions(roster: dict) -> None:
@@ -1309,9 +1317,11 @@ def main() -> int:
     # by 7.8%. A deploy from an experiment clone would also have published that
     # clone's own number.
     # The evidence goes beside the page, in the directory the asset worker
-    # serves, and must be written BEFORE the page that points at it.
+    # serves. It is prepared here and written below, once the page it belongs
+    # to has been built and passed its size check.
     audit_dir = Path(args.out).resolve().parent / "audit"
-    audit_version, audit_slugs = write_audit(audit_dir, audit)
+    audit_version, audit_bodies = audit_payload(audit)
+    audit_slugs = sorted(audit_bodies)
 
     tdir = Path(args.results).resolve().parent / "transcripts_blind"
     SP.guard(args.study, tdir)
@@ -1360,6 +1370,7 @@ def main() -> int:
                  f"budget a link crawler will fetch. Something large is inlined "
                  f"again; the evidence belongs in {audit_dir}, not in the document.")
 
+    write_audit(audit_dir, audit_bodies)
     # Atomic: a clone may be reading this file to deploy while another writes it.
     write_atomic(args.out, html_out)
     print(f"wrote {args.out}  ({len(html_out)/1024:.0f} KB, {len(rows)} leaders)")

@@ -193,6 +193,8 @@ with tempfile.TemporaryDirectory() as td:
           "1,000" in (r.stderr + r.stdout) and "bytes" in (r.stderr + r.stdout),
           f"stderr={r.stderr[-300:]}")
     check("nothing is published on refusal", not out.exists())
+    check("and no evidence file is left behind either, pointing at a page that does not exist",
+          not (site / "audit").exists() or not list((site / "audit").glob("*.json")))
 
     bs = load("build_site")
     check("the shipped budget is well under a megabyte-scale page",

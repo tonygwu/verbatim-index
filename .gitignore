@@ -25,7 +25,8 @@ site-predictions/index.html
 /data-pundits
 site-pundits/index.html
 
-# Build artifact: each leader's evidence, written beside site/index.html by
-# build_site.py and uploaded by wrangler. Data, so never committed here.
+# Build artifacts: each leader's evidence and each person's prediction records,
+# written beside the pages by build_site.py and build_predictions_site.py and
+# uploaded by wrangler. Data, so never committed here.
 site/audit/
-site-predictions/audit/
+site-predictions/predictions/

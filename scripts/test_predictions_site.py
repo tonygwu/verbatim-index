@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The predictions page must show what was said, never a verdict, and must deploy from the right config.
 
-  FIXTURE    renders from a synthetic index.json plus jsonl; DATA, SRC and PRED parse
+  FIXTURE    renders from a synthetic index.json plus jsonl; DATA and SRC parse
+  PAYLOAD    the records are files beside the page, versioned, and the page stays under the budget
   NEUTRAL    no evaluative vocabulary outside the fenced disclaimer and the data constants
   SORT       alphabetical by default, static aria-sort, exact column keys, DATA alphabetical
   TIMESTAMP  [01:02:03] gives t 3723 and a YouTube link at that second; a null mark gives no link
@@ -127,6 +128,17 @@ def embedded(html: str, name: str):
     return json.loads(m.group(1).replace("<\\/", "</"))
 
 
+def records(out: Path) -> dict[str, list]:
+    """The prediction records, read from the files the page fetches them from.
+
+    They were inlined as `const PRED` until 2026-09-17. Everything this test
+    asserted about what may and may not reach a reader still holds; it holds
+    about these files now, because they are what the drawer renders.
+    """
+    d = out.parent / "predictions"
+    return {f.stem: json.loads(f.read_text()) for f in sorted(d.glob("*.json"))} if d.is_dir() else {}
+
+
 def main() -> int:
     L = load("predictions_lib")
     A = load("aggregate_predictions")
@@ -140,8 +152,43 @@ def main() -> int:
                            capture_output=True, text=True, cwd=REPO)
         check("FIXTURE: builder exits 0 and writes the page", p.returncode == 0 and out.exists(), p.stdout + p.stderr[-500:])
         html = out.read_text()
-        data, src, pred = embedded(html, "DATA"), embedded(html, "SRC"), embedded(html, "PRED")
-        check("FIXTURE: DATA, SRC and PRED parse", isinstance(data, list) and isinstance(src, dict) and isinstance(pred, dict))
+        data, src, pred = embedded(html, "DATA"), embedded(html, "SRC"), records(out)
+        check("FIXTURE: DATA and SRC parse, and the records are files beside the page",
+              isinstance(data, list) and isinstance(src, dict) and sorted(pred) == ["ada", "alan"],
+              f"{sorted(pred)}")
+
+        # ------------------------------------------------------------------
+        # PAYLOAD. The records were inline until 2026-09-17, which made this
+        # page 4.7 MB. The board at verbatim-index carried its evidence the
+        # same way at 16 MB, and Twitter's card validator refused it:
+        # "Fetching the page failed because the response is too large", so the
+        # link posted with no card although every og: tag was correct.
+        # ------------------------------------------------------------------
+        check("PAYLOAD: no prediction record is serialised into the page",
+              '"prediction_id"' not in html and "by 2030 most code" not in html,
+              f"page is {len(html.encode())} bytes")
+        m = re.search(r'const PRED_VERSION = "([0-9a-f]+)"', html)
+        check("PAYLOAD: the page carries a version for the record files", bool(m))
+        check("PAYLOAD: the fetch url is per person and carries that version",
+              "predictions/${encodeURIComponent(slug)}.json?v=${PRED_VERSION}" in html)
+        sl = re.search(r"const PRED_SLUGS = (\[[^\]]*\])", html)
+        check("PAYLOAD: the page names who has records",
+              bool(sl) and json.loads(sl.group(1).replace("<\\/", "</")) == ["ada", "alan"],
+              sl.group(1) if sl else "none")
+        stale_file = out.parent / "predictions" / "gone.json"
+        stale_file.write_text("[]")
+        p2 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(out)],
+                            capture_output=True, text=True, cwd=REPO)
+        check("PAYLOAD: a file from an earlier render is deleted and named",
+              p2.returncode == 0 and not stale_file.exists() and "gone.json" in p2.stdout,
+              p2.stdout[-300:] + p2.stderr[-200:])
+        p3 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(out)],
+                            capture_output=True, text=True, cwd=REPO,
+                            env={**__import__("os").environ, "VI_MAX_PAGE_BYTES": "1000"})
+        check("PAYLOAD: a page over the crawler budget is refused",
+              p3.returncode != 0 and "1,000" in (p3.stderr + p3.stdout), p3.stderr[-300:])
 
         # ------------------------------------------------------------------
         # The page is a real HTML document and unfurls as a link.
@@ -396,7 +443,7 @@ def main() -> int:
         # The drawer is what makes a published number auditable. A reader who doubts a
         # score has to be able to see the outcome, the sources it rests on and the p it
         # was priced at, without leaving the page.
-        pr2 = embedded(h2, "PRED")
+        pr2 = records(out2)
         outs = [r for rs in pr2.values() for r in rs if r.get("outcome")]
         check("DRAWER: a resolved prediction carries its outcome, evidence, p and points",
               len(outs) == 1 and outs[0]["outcome"]["verdict"] == "occurred"
@@ -463,11 +510,14 @@ def main() -> int:
         check("REJECTED: the rejected quote is never a quote or claim on the page, and its count is embedded",
               "REJECTED-MARKER-QUOTE" not in embedded_claims and len(ada) == 2
               and next(d for d in data if d["slug"] == "ada")["rejected"] == 1)
-        check("TRIM: no telemetry, gates, offsets, harness or accepted flag in PRED",
+        check("TRIM: no telemetry, gates, offsets, harness or accepted flag in the records",
               not re.search(r"secret_telemetry|\"gates\"|quote_char_start|\"harness\"|\"accepted\"", json.dumps(pred)) and "prediction_id" in first)
         check("PROVENANCE: run ids, contract ids and both model names are on the page",
               "run-x" in html and "aaaaaaaaaaaa" in html and "bbbbbbbbbbbb" in html and "Claude Fable 5.1" in html and "OpenAI GPT-6 Astra" in html)
-        check("ESCAPE: '</script>' occurs exactly once in the page although a quote contains it", html.count("</script>") == 1)
+        check("ESCAPE: '</script>' occurs exactly once in the page, and the quote holding it is in its own file",
+              html.count("</script>") == 1
+              and any("</script>" in r["quote"] for r in pred["ada"]),
+              f"{html.count('</script>')} in the page")
         m = first["market"]
         check("MARKET: the matched market is embedded with number, platform, staleness and precision; proxies carry no number",
               m and m["status"] == "matched" and m["probability"] == 0.27 and m["exact"]["platform"] == "Polymarket"

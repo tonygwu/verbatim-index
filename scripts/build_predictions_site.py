@@ -25,6 +25,7 @@ import argparse
 import collections
 import hashlib
 import json
+import os
 import statistics
 import sys
 from datetime import datetime
@@ -444,7 +445,35 @@ __METHOD__
 <script>
 const DATA = __DATA__;
 const SRC = __SRC__;
-const PRED = __PRED__;
+
+/* The prediction records are deliberately NOT in this document.
+
+   One person's accepted predictions live in predictions/<slug>.json, fetched
+   the first time that row is opened and kept for the rest of the visit. They
+   were inline until 2026-09-17, which made this page 4.7 MB. The board at
+   verbatim-index went over Twitter's card-crawler limit the same way, at
+   16 MB, and posted with no card. This page was the same defect waiting. */
+const PRED_VERSION = "__PRED_VERSION__";
+const PRED_SLUGS = __PRED_SLUGS__;
+const PRED = {};
+async function loadPred(slug){
+  if (PRED[slug]) return PRED[slug];
+  const url = `predictions/${encodeURIComponent(slug)}.json?v=${PRED_VERSION}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
+  const body = await res.text();
+  let recs;
+  try { recs = JSON.parse(body); }
+  catch (err){
+    /* A file the site does not have comes back as this page, with status 200,
+       because the asset worker serves single-page-application fallbacks. An
+       empty drawer would read as "this person predicted nothing". */
+    throw new Error(`${url} did not answer with JSON (${body.length} bytes)`);
+  }
+  if (!Array.isArray(recs)) throw new Error(`${url} is not a list of predictions`);
+  PRED[slug] = recs;
+  return recs;
+}
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const CAT = {ai_capability:"AI capability", technology_product:"Technology & product", company_business:"Company & business",
   market_industry:"Market & industry", macro_economy:"Macro & economy", policy_regulation:"Policy & regulation",
@@ -762,9 +791,22 @@ document.addEventListener("click", e => {
   const person = DATA.find(d => d.slug === slug);
   const row = document.createElement("tr");
   row.className = "audit";
-  row.innerHTML = `<td colspan="6">${drawer(slug, person)}</td>`;
+  row.innerHTML = `<td colspan="6"><div class="drawer"><div class="sub">`
+    + `Loading ${esc(person.name)}&rsquo;s predictions&hellip;</div></div></td>`;
   tr.after(row);
   tr.setAttribute("aria-expanded", "true");
+  const cell = row.firstElementChild;
+  if (!PRED_SLUGS.includes(slug)){
+    cell.innerHTML = `<div class="drawer"><div class="sub">No accepted predictions yet.</div></div>`;
+    return;
+  }
+  loadPred(slug)
+    .then(() => { cell.innerHTML = drawer(slug, person); })
+    .catch(err => {
+      cell.innerHTML = `<div class="drawer"><h3>${esc(person.name)}</h3>`
+        + `<div class="sub">These predictions did not load, so none are shown rather than an empty `
+        + `drawer that would read as none existing: ${esc(err.message)}</div></div>`;
+    });
 });
 document.addEventListener("change", e => {
   const sel = e.target.closest && e.target.closest("select.pf");
@@ -1178,6 +1220,57 @@ def safe_json(obj) -> str:
     return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
 
 
+# The leaderboard's own budget, for the same reason and with the same evidence:
+# scripts/build_site.py MAX_PAGE_BYTES. Repeated rather than imported because
+# the two pages are built by two scripts and neither should quietly follow the
+# other's number.
+# VI_MAX_PAGE_BYTES is a test seam only.
+MAX_PAGE_BYTES = int(os.environ.get("VI_MAX_PAGE_BYTES") or 2_000_000)
+
+
+def predictions_payload(pred: dict[str, list]) -> tuple[str, dict[str, str]]:
+    """The file each person's records will be published as, and its version key.
+
+    Nothing is written here. The page is built and size-checked first, so a
+    refused render leaves the site's records exactly as the last good render
+    left them rather than newer than the page that points at them.
+
+    The key is the sha256 of every body, so a browser holding an older copy of
+    one person re-fetches it exactly when their records change.
+    """
+    digest = hashlib.sha256()
+    bodies: dict[str, str] = {}
+    for slug in sorted(pred):
+        recs = pred[slug]
+        if not recs:
+            continue
+        body = json.dumps(recs, ensure_ascii=False, sort_keys=True)
+        digest.update(f"{slug}\n{body}\n".encode())
+        bodies[slug] = body
+    return digest.hexdigest()[:12], bodies
+
+
+def write_predictions(pred_dir: Path, bodies: dict[str, str]) -> None:
+    """Publish each person's accepted predictions as their own file.
+
+    Files from an earlier render that this one did not write are DELETED. A
+    person dropped from the index would otherwise keep a reachable file under
+    a row that no longer exists.
+    """
+    pred_dir.mkdir(parents=True, exist_ok=True)
+    for slug, body in bodies.items():
+        write_atomic(pred_dir / f"{slug}.json", body)
+    stale = sorted(f.name for f in pred_dir.glob("*.json") if f.stem not in bodies)
+    for name in stale:
+        (pred_dir / name).unlink()
+    print(f"wrote {len(bodies)} prediction files to {pred_dir} "
+          f"({sum(map(len, bodies.values()))/1024/1024:.1f} MB, "
+          f"largest {max(map(len, bodies.values()))/1024:.0f} KB)"
+          if bodies else f"wrote no prediction files to {pred_dir}")
+    if stale:
+        print(f"  removed {len(stale)} file(s) no longer in the index: {', '.join(stale)}")
+
+
 def nice_date(iso: str) -> str:
     return datetime.strptime(iso[:10], "%Y-%m-%d").strftime("%-d %B %Y")
 
@@ -1303,7 +1396,12 @@ def main(argv: list[str] | None = None) -> int:
     ve = " / ".join(model_label(m) for m in c["verifier_models"]) or "none yet"
     dated = c["accepted"] - c["statement_date_unknown"]
     contracts = ", ".join(sorted(set(index["contracts_seen"]["extraction"]) | set(index["contracts_seen"]["verification"]))) or "none"
-    data_js, src_js, pred_js = safe_json(rows), safe_json(src), safe_json(pred)
+    data_js, src_js = safe_json(rows), safe_json(src)
+    # The records go beside the page, and must be written BEFORE the page that
+    # points at them.
+    pred_dir = Path(args.out).resolve().parent / "predictions"
+    pred_version, pred_bodies = predictions_payload(pred)
+    pred_slugs = sorted(pred_bodies)
     html_out = (TEMPLATE
         .replace("__FONTS__", FONT_LINKS)
         .replace("__THEME__", THEME_CSS)
@@ -1313,7 +1411,8 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__OG_VERSION__", og_version())
         .replace("__DATA__", data_js)
         .replace("__SRC__", src_js)
-        .replace("__PRED__", pred_js)
+        .replace("__PRED_VERSION__", pred_version)
+        .replace("__PRED_SLUGS__", safe_json(pred_slugs))
         .replace("__YEARS__", safe_json(span))
         .replace("__Y0__", span[0] if span else "n/a")
         .replace("__Y1__", span[-1] if span else "n/a")
@@ -1337,6 +1436,12 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__VERIFIER__", ve)
         .replace("__RUN_ID__", ", ".join(index["run_ids_seen"][-3:]) or "none")
         .replace("__CONTRACT_ID__", contracts))
+    size = len(html_out.encode("utf-8"))
+    if size > MAX_PAGE_BYTES:
+        raise SystemExit(f"REFUSING: the page is {size:,} bytes, over the {MAX_PAGE_BYTES:,} "
+                         f"budget a link crawler will fetch. Something large is inlined again; "
+                         f"the prediction records belong in {pred_dir}, not in the document.")
+    write_predictions(pred_dir, pred_bodies)
     write_atomic(args.out, html_out)
     if scores_doc:
         sc = scores_doc["corpus"]
@@ -1347,7 +1452,8 @@ def main(argv: list[str] | None = None) -> int:
         print("scores: none supplied; the Score column renders empty")
     ctx = [len(r["context_before"]) + len(r["context_after"]) for rs in pred.values() for r in rs]
     print(f"wrote {args.out}  ({len(html_out) // 1024} KB; DATA {len(data_js) // 1024} KB, SRC {len(src_js) // 1024} KB, "
-          f"PRED {len(pred_js) // 1024} KB; {len(rows)} people, {c['accepted']} accepted, {loaded['rejected']} rejected not embedded; "
+          f"records in {len(pred_slugs)} files beside it; {len(rows)} people, {c['accepted']} accepted, "
+          f"{loaded['rejected']} rejected not embedded; "
           f"context chars median {int(statistics.median(ctx)) if ctx else 0} max {max(ctx) if ctx else 0})")
     return 0
 
