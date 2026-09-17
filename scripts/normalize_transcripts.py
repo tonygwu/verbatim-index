@@ -654,6 +654,87 @@ def prune_orphans(out_root: Path, kept: set[tuple[str, str]], mode: str,
     return report
 
 
+QA_COMMAND = ("scripts/qa_transcripts.py --transcripts <shelf> --roster <roster> "
+              "--glossaries <aliases> --out <shelf>/../logs/transcript_qa.json")
+
+
+def arrival_of(rec: dict) -> str | None:
+    """When this record reached the SHELF, read out of the record.
+
+    shelf_arrived_at_utc first: a Happy Scribe record is fetched into
+    transcripts_hs and merged onto the shelf on a later cycle, so its
+    fetched_at_utc can be ten days older than its arrival. fetched_at_utc is the
+    fallback, and every one of the 720 live shelf records carries it.
+
+    Never mtime. mtime records when a file was touched, and three loops touch
+    these constantly.
+    """
+    return rec.get("shelf_arrived_at_utc") or rec.get("fetched_at_utc")
+
+
+def require_qa_covers_shelf(qa: dict, shelf: Path, qa_path: Path) -> None:
+    """Refuse a STALE QA report. Tolerate a QA RACE.
+
+    Three daemons write the shelf and the report with no lock, and a blinding
+    pass takes about 50 seconds over 720 transcripts, so a transcript that lands
+    mid-pass is legitimately uncovered. Refusing that would skip a healthy cycle
+    every time a fetch overlapped a normalize.
+
+    Arrival time separates the two. An uncovered transcript that reached the
+    shelf BEFORE the report was generated means the report does not describe
+    this shelf, and every unexamined transcript would pass as though QA had
+    cleared it. One that arrived after is simply newer than the report, and the
+    next cycle covers it.
+
+    Every way this can be wrong is a FALSE REFUSE, never a false skip:
+    equal-second arrivals count as after, a report with no stamp refuses rather
+    than being assumed fresh, and a record with no arrival time at all refuses
+    rather than being given one.
+    """
+    generated = (qa.get("summary") or {}).get("generated_at_utc")
+    if not generated:
+        raise SystemExit(
+            f"{qa_path} carries no summary.generated_at_utc, so there is no way "
+            f"to tell a QA race from a stale report. Re-run QA:\n  {QA_COMMAND}")
+
+    covered = {(r["leader_slug"], r["source_id"]) for r in qa.get("reports", [])}
+    stale: list[str] = []
+    undated: list[str] = []
+    for path in sorted(shelf.rglob("*.json")):
+        if path.name.endswith(".json.tmp"):
+            continue
+        try:
+            rec = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue  # a half-written file from a live loop
+        if "leader_slug" not in rec or "source_id" not in rec:
+            continue
+        key = (rec["leader_slug"], rec["source_id"])
+        if key in covered:
+            continue
+        arrived = arrival_of(rec)
+        if not arrived:
+            undated.append(f"{key[0]}/{key[1]}")
+        elif arrived < generated:
+            # String compare is correct for this format: both are
+            # %Y-%m-%dT%H:%M:%SZ, fixed width, UTC, so lexical order is
+            # chronological order. An exact tie is NOT "before", which is the
+            # safe direction.
+            stale.append(f"{key[0]}/{key[1]} arrived {arrived}")
+
+    if undated:
+        raise SystemExit(
+            f"{len(undated)} shelf transcript(s) carry neither shelf_arrived_at_utc "
+            f"nor fetched_at_utc, so their age cannot be read: "
+            f"{', '.join(sorted(undated)[:10])}. Refusing rather than guessing.")
+    if stale:
+        raise SystemExit(
+            f"{qa_path} was generated at {generated} but {len(stale)} shelf "
+            f"transcript(s) that predate it are not in it, so it is STALE and "
+            f"every unexamined transcript would pass as though QA had cleared "
+            f"it: {', '.join(sorted(stale)[:10])}. Re-run QA:\n  {QA_COMMAND}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--transcripts", required=True)
@@ -690,14 +771,36 @@ def main() -> int:
 
     roster = json.loads(Path(args.roster).read_text())
     by_slug = {r["slug"]: r for r in roster["roster"]}
-    repairs = json.loads(Path(args.repairs).read_text()) if args.repairs and Path(args.repairs).exists() else {}
-    aliases = json.loads(Path(args.aliases).read_text()) if args.aliases and Path(args.aliases).exists() else {}
+
+    def _named_file(flag: str, path: str | None) -> Path | None:
+        """A file that was NAMED must exist. Naming nothing is still fine.
+
+        These used to be read with `if args.X and Path(args.X).exists()`, so a
+        typo or a path from another clone silently produced an empty mapping:
+        no repairs applied, no aliases blinded, and -- worst -- no QA exclusions,
+        which let every transcript through as if QA had passed it.
+        """
+        if not path:
+            return None
+        p = Path(path)
+        if not p.is_file():
+            raise SystemExit(f"--{flag} names {path}, which does not exist. "
+                             f"Refusing to continue as though it held nothing.")
+        return p
+
+    repairs_path = _named_file("repairs", args.repairs)
+    aliases_path = _named_file("aliases", args.aliases)
+    qa_path = _named_file("qa", args.qa)
+
+    repairs = json.loads(repairs_path.read_text()) if repairs_path else {}
+    aliases = json.loads(aliases_path.read_text()) if aliases_path else {}
     dictionary = load_dictionary() if args.mode == "blinded" else set()
 
     rejected: set[tuple[str, str]] = set()
-    if args.qa and Path(args.qa).exists():
-        qa = json.loads(Path(args.qa).read_text())
+    if qa_path:
+        qa = json.loads(qa_path.read_text())
         rejected = {(r["leader_slug"], r["source_id"]) for r in qa["reports"] if r["verdict"] == "reject"}
+        require_qa_covers_shelf(qa, Path(args.transcripts), qa_path)
 
     out_root = Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)

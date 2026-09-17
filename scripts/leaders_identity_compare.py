@@ -26,7 +26,12 @@ import json
 import sys
 from pathlib import Path
 
-ALLOWED = ("normalization.normalized_at_utc",)
+# summary.generated_at_utc joined this list when qa_transcripts.py started
+# stamping the report. normalize_transcripts.py reads that stamp to tell a QA
+# race from a stale report, so it has to move between runs; without it here,
+# leaders_baseline.py would report logs/transcript_qa.json as a real
+# difference on every comparison.
+ALLOWED = ("normalization.normalized_at_utc", "summary.generated_at_utc")
 
 
 def flatten(d: dict, prefix: str = "") -> dict[str, str]:

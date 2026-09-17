@@ -34,6 +34,7 @@ import json
 import re
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 WORD_RE = re.compile(r"[a-z']+")
@@ -268,6 +269,14 @@ def main() -> int:
 
     reports = []
     troot = Path(args.transcripts)
+    # TAKEN BEFORE THE FIRST DIRECTORY LISTING, not when the summary is built.
+    # The scan takes about 6 seconds on the live corpus, and normalize refuses
+    # when an uncovered transcript arrived BEFORE this stamp. Stamping at the
+    # end would mark every transcript that landed during the scan as both
+    # uncovered and pre-stamp, which is a false refusal of a healthy cycle.
+    #
+    # UTC from the clock, never the filesystem: three loops touch these files.
+    generated_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for path in sorted(troot.rglob("*.json")):
         if path.name.endswith(".json.tmp"):
             continue
@@ -309,6 +318,9 @@ def main() -> int:
     tally = Counter(r["verdict"] for r in reports)
     per_leader = Counter(r["leader_slug"] for r in reports if r["verdict"] != "reject")
     summary = {
+        # normalize_transcripts.py reads this to tell a QA race from a stale
+        # report. A report without it is refused rather than assumed fresh.
+        "generated_at_utc": generated_at_utc,
         "transcripts_examined": len(reports),
         "verdicts": dict(tally),
         "leaders_with_usable_transcripts": len(per_leader),

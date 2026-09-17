@@ -1187,7 +1187,8 @@ new grades incomparable with the corpus already graded.
 - Pundits study (verbatim-pundits.tonygwu.com, in progress): the P0 leaders
   baseline in `docs/PUNDITS-P0-BASELINE.md`, re-run with
   `.venv/bin/python scripts/leaders_baseline.py --code DIR --snapshot DIR --run-dir NEW --python .venv/bin/python`
-  (quota-free; two identical runs differ only in `normalization.normalized_at_utc`).
+  (quota-free; two identical runs differ only in `normalization.normalized_at_utc`
+  and `summary.generated_at_utc` in the QA report).
   The P1 study-isolation checklist is `docs/STUDY-ISOLATION-TRACE.md`.
 - Studies: this engine serves more than one study, named by `profiles/<study>.json`.
   Run a loop or script for a study with `STUDY=pundits` or `--study pundits`. With
@@ -1274,7 +1275,8 @@ new grades incomparable with the corpus already graded.
   read, list, write and child-shell access to the container are denied (network is not
   denied, by the P3 decision). Leaders byte identity:
   `.venv/bin/python scripts/leaders_identity_compare.py --a RUN1 --b RUNN` over two
-  `leaders_baseline.py` runs, tolerating only `normalization.normalized_at_utc`; a raw hash
+  `leaders_baseline.py` runs, tolerating only `normalization.normalized_at_utc` and
+  `summary.generated_at_utc`; a raw hash
   diff overstates change (1,328 false differences on 2026-09-14).
 - P4d Fable tools-off measurement (SPENDS QUOTA with `--run`):
   `scripts/p4d_fable_tools_off.py`. Result in `docs/PUNDITS-P4D-FABLE-TOOLS-OFF.md`:

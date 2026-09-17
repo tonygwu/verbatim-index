@@ -36,11 +36,12 @@ transcripts, and changed 0 grade files.
 | 1,328 rendered judge prompts and `grading_contract()` | identical |
 | `results.json`, `results_audit.json`, `logs/calibration.json` | identical |
 | `site/index.html` | identical |
-| `logs/transcript_qa.json`, `logs/normalize_blinded.json`, `logs/normalize_open.json` | identical |
+| `logs/normalize_blinded.json`, `logs/normalize_open.json` | identical |
+| `logs/transcript_qa.json` | identical apart from `summary.generated_at_utc` |
 | `coverage_table.py` output, leaderboard `fingerprint()` | identical |
 | `transcripts_blind/`, `transcripts_open/` | 664 of 664 files differ in each, in one field only |
 
-**The allowed-difference list is exactly one field:**
+**The allowed-difference list is two fields:**
 `normalization.normalized_at_utc` in each normalized transcript. It is the wall
 clock at the moment normalize ran (`normalize_transcripts.py:659`), for example
 `2026-09-14T05:28:03Z` against `2026-09-14T05:29:20Z` for the same file. No

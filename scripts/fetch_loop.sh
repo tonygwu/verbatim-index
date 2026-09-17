@@ -203,9 +203,14 @@ while true; do
   # and idempotent, so running them here decouples grade-readiness from the
   # slow grading pass.
   if [ "$gained" -gt 0 ]; then
-    $PY scripts/qa_transcripts.py --transcripts $DATA/transcripts \
+    if ! $PY scripts/qa_transcripts.py --transcripts $DATA/transcripts \
         --roster $DATA/roster/final.json --glossaries $DATA/sources/aliases.json \
-        --out $DATA/logs/transcript_qa.json >/dev/null 2>>$DATA/logs/fetch_loop.err
+        --out $DATA/logs/transcript_qa.json >/dev/null 2>>$DATA/logs/fetch_loop.err; then
+      # Named, because normalize now REFUSES a QA report older than the shelf.
+      # Without this line the operator would chase a stale-report message
+      # whose real cause was a QA run that never finished.
+      say "  QA FAILED: $(tail -1 $DATA/logs/fetch_loop.err)"
+    fi
     # --no-prune, and deliberately no --grades. Withdrawing a transcript is
     # grade_loop.sh's job alone. Both loops normalize the same two directories,
     # and each lists the corpus once at the top, so a second pruner would delete
@@ -213,12 +218,26 @@ while true; do
     # directory, the same rule the clones follow for data/.
     for m in blinded open; do
       out=$DATA/transcripts_blind; [ "$m" = open ] && out=$DATA/transcripts_open
-      $PY scripts/normalize_transcripts.py --mode "$m" \
+      # A normalize failure is LOGGED and FALLS THROUGH to the sleep at the
+      # bottom of the loop. Deliberately not `continue`: the sleep is the last
+      # statement before `done`, so continue skips both the barren accounting
+      # and the sleep, and the loop spins hot re-fetching YouTube every
+      # iteration. Deliberately not `exit`: that kills the run marker, so
+      # grade_loop.sh:64 sees no source running, idles to COMPLETE and
+      # publishes if PUBLISH_ON_COMPLETE=1.
+      #
+      # This matters more now that normalize refuses a stale QA report. That
+      # refusal is a legitimate, self-healing outcome -- the next cycle re-runs
+      # QA -- but it must be visible, not swallowed into an error log nobody
+      # reads.
+      if ! $PY scripts/normalize_transcripts.py --mode "$m" \
           --transcripts $DATA/transcripts --out "$out" \
           --roster $DATA/roster/final.json --repairs $DATA/sources/repairs.json \
           --aliases $DATA/sources/aliases.json --qa $DATA/logs/transcript_qa.json \
           --no-prune \
-          --log "$DATA/logs/normalize_${m}.json" >/dev/null 2>>$DATA/logs/fetch_loop.err
+          --log "$DATA/logs/normalize_${m}.json" >/dev/null 2>>$DATA/logs/fetch_loop.err; then
+        say "  NORMALIZE FAILED (${m}); this cycle grades nothing new: $(tail -1 $DATA/logs/fetch_loop.err)"
+      fi
     done
     say "  normalized; $(find $DATA/transcripts_blind -name '*.json' ! -name '*.tmp' | wc -l | tr -d ' ') ready to grade"
   fi

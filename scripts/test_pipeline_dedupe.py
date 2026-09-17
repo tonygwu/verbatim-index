@@ -220,8 +220,15 @@ def test_qa_rejected_transcript_is_pruned(tmp: Path) -> None:
     normalize(env, out, tmp, extra=["--grades", str(env["grades"])])
 
     qa = tmp / "qa.json"
-    qa.write_text(json.dumps({"reports": [
-        {"leader_slug": "alan-turing", "source_id": "lecture-ccc", "verdict": "reject"}]}))
+    # summary.generated_at_utc is required: normalize refuses a report without
+    # one, because it cannot otherwise tell a QA race from a stale report. It
+    # is dated BEFORE the fixture's fetched_at_utc (2026-09-06), so the two
+    # transcripts this report does not mention read as "arrived after the
+    # report", which is the benign race rather than the stale case.
+    qa.write_text(json.dumps({
+        "summary": {"generated_at_utc": "2026-09-05T00:00:00Z"},
+        "reports": [
+            {"leader_slug": "alan-turing", "source_id": "lecture-ccc", "verdict": "reject"}]}))
     normalize(env, out, tmp, qa=qa, extra=["--grades", str(env["grades"])])
 
     check("the rejected transcript's derived copy is removed",
