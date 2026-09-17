@@ -12,6 +12,13 @@ compatibility_date = "2026-09-01"
 directory = "./site-pundits"
 not_found_handling = "none"
 
+# Two hostnames, both custom domains on the same Worker. The verbatim- form
+# matches the other two sites; the short form is what the operator asked for on
+# 2026-09-16. Either URL serves the same assets.
 [[routes]]
 pattern = "verbatim-pundits.tonygwu.com"
+custom_domain = true
+
+[[routes]]
+pattern = "pundits.tonygwu.com"
 custom_domain = true
