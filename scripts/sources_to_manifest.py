@@ -31,6 +31,12 @@ def main() -> int:
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--aliases", required=True)
     ap.add_argument("--repairs", required=True)
+    ap.add_argument("--replace-aliases", action="store_true",
+                    help="Overwrite aliases.json with the derived set instead of "
+                         "merging into it, DROPPING any term the file holds that "
+                         "discovery did not return. The dropped terms are named in "
+                         "the report. Merging is the default because aliases.json "
+                         "is hand-curated and is also the QA glossary.")
     ap.add_argument("--report", default=None, help="Default: <study data>/logs/manifest_report.json.")
     import study_profile as SP
     SP.add_study_arg(ap)
@@ -102,7 +108,70 @@ def main() -> int:
     with open(args.manifest, "w") as fh:
         for r in rows:
             fh.write(json.dumps(r) + "\n")
-    Path(args.aliases).write_text(json.dumps(aliases, indent=1))
+    # MERGE, do not overwrite. aliases.json is not purely derived: terms have
+    # been added by hand since the last discovery run, and re-derivation is a
+    # strict subset of what is on disk. MEASURED 2026-09-16 against the live
+    # data/sources/discovered.json: 14 terms only on disk, 0 only derived,
+    # across 7 slugs -- Alphabet, Sun Microsystems, OpenAI, comma.ai, geohot,
+    # Scale AI and the rest. A wholesale write destroyed all 14.
+    #
+    # It is not cosmetic. grade_loop.sh:150 passes this same file to
+    # qa_transcripts.py as --glossaries, which computes `known = dictionary |
+    # glossary` at :142; that drives oov_rate, which drives the reject verdict,
+    # which orphans a leader's grades.
+    #
+    # The assertion is SUBSET CONTAINMENT, never byte equality. Byte equality
+    # points the wrong way: it would treat the 14 curated terms as a difference
+    # to remove rather than state to keep.
+    existing_aliases: dict[str, list[str]] = {}
+    ap_path = Path(args.aliases)
+    if ap_path.exists():
+        try:
+            existing_aliases = json.loads(ap_path.read_text())
+        except json.JSONDecodeError as e:
+            # Never silently start from empty: that is the wholesale write again.
+            raise SystemExit(f"{args.aliases} exists but is not valid JSON ({e}). "
+                             "Fix or remove it; refusing to overwrite a glossary "
+                             "this run cannot read.")
+
+    dropped_by_replace: dict[str, list[str]] = {}
+    preserved = 0
+    if args.replace_aliases:
+        for slug, terms in existing_aliases.items():
+            lost = sorted(set(terms) - set(aliases.get(slug, [])))
+            if lost:
+                dropped_by_replace[slug] = lost
+        written_aliases = aliases
+    else:
+        # ORDER IS LOAD-BEARING, so the existing file's order is preserved and
+        # new terms are only appended. The live blinder is the `wordlist is
+        # None` branch of normalize_transcripts.blind(), which builds
+        # `name_forms + [a for a in aliases if a]` and applies them IN THAT
+        # ORDER with no length sort. Re-sorting would replace "Aaron" before
+        # "Aaron Levie" and change blinded text under 2,260 existing grades.
+        # Sorting looked tidy and was the wrong direction; only the opt-in
+        # wordlist branch sorts longest-first for itself.
+        written_aliases = {}
+        for slug in list(existing_aliases) + [s for s in aliases if s not in existing_aliases]:
+            kept = list(existing_aliases.get(slug, []))
+            kept_set = set(kept)
+            added = [a for a in aliases.get(slug, []) if a not in kept_set]
+            preserved += len(kept_set - set(aliases.get(slug, [])))
+            written_aliases[slug] = kept + added
+        # Fail loud rather than write a file that lost a glossary term.
+        for slug, terms in existing_aliases.items():
+            missing_terms = sorted(set(terms) - set(written_aliases.get(slug, [])))
+            if missing_terms:
+                raise SystemExit(
+                    f"refusing to write {args.aliases}: merge would drop "
+                    f"{missing_terms!r} from {slug}. Pass --replace-aliases if "
+                    "that is really intended.")
+
+    # ensure_ascii=False so a merge that adds nothing is byte-identical to the
+    # file it read. The live file holds literal UTF-8 ("Tobi Lutke" with the
+    # umlaut); escaping it to \\u00fc made a no-op merge show a two-line diff,
+    # which would defeat the pre-push audit that requires this file unchanged.
+    ap_path.write_text(json.dumps(written_aliases, indent=1, ensure_ascii=False))
     Path(args.repairs).write_text(json.dumps(repairs, indent=1))
 
     counts = Counter(r["leader_slug"] for r in rows)
@@ -118,7 +187,13 @@ def main() -> int:
         "leaders_with_fewer_than_3": thin,
         "leaders_with_zero": missing,
         "kinds": dict(Counter(r["kind"] for r in rows)),
-        "alias_terms": sum(len(v) for v in aliases.values()),
+        "alias_terms": sum(len(v) for v in written_aliases.values()),
+        "alias_terms_derived": sum(len(v) for v in aliases.values()),
+        # Never a bare count on either branch: a merge that keeps state
+        # silently cannot be audited, and a replace that drops curated terms
+        # must name them rather than report a number.
+        "alias_terms_preserved_by_merge": preserved,
+        "alias_terms_dropped_by_replace": dropped_by_replace,
         "repair_pairs": sum(len(v) for v in repairs.values()),
     }
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
