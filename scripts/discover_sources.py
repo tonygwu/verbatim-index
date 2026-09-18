@@ -86,11 +86,29 @@ def log(msg: str) -> None:
         print(msg, file=sys.stderr, flush=True)
 
 
-def search(query: str, n: int = 25) -> list[dict]:
+# Pacing. 9925c0e paced `discover_pundits.py` and left THIS file untouched, so
+# the leaders path kept firing yt-dlp searches with no sleep flag from EIGHT
+# worker threads at once. That is the configuration BACKLOG.md blames for the
+# pundits P6 pilot's 202 IP blocks in 218 first-pass errors, and this machine was
+# IP-blocked on YouTube the day it was noticed.
+#
+# `--sleep-requests` is the flag that covers data extraction, which is what a
+# flat-playlist search is. `--sleep-interval` covers media downloads and does not
+# apply, and `--limit-rate` caps bytes while a block counts requests. The yt-dlp
+# wiki documents a guest session at roughly 1000 requests per hour, and each
+# `--flat-playlist` search paginates internally, so the real request count is
+# several times the invocation count. Workers multiply the rate, so the default
+# is low.
+SLEEP_REQUESTS = 1.5
+DEFAULT_WORKERS = 3
+
+
+def search(query: str, n: int = 25, sleep_requests: float = SLEEP_REQUESTS) -> list[dict]:
     """One YouTube search via yt-dlp, returning flat metadata."""
     try:
         proc = subprocess.run(
             ["yt-dlp", "--flat-playlist", "--no-warnings",
+             "--sleep-requests", str(sleep_requests),
              "--print", "%(id)s\t%(duration)s\t%(channel)s\t%(title)s",
              f"ytsearch{n}:{query}"],
             capture_output=True, text=True, timeout=240,
@@ -196,7 +214,8 @@ def aliases_for(person: dict) -> list[str]:
     return sorted(w for w in out if len(w) > 2)
 
 
-def discover(person: dict, target: int, cap: int = CANDIDATES_PER_LEADER) -> dict:
+def discover(person: dict, target: int, cap: int = CANDIDATES_PER_LEADER,
+             sleep_requests: float = SLEEP_REQUESTS) -> dict:
     slug, name, company = person["slug"], person["name"], person["company"]
     queries = [
         f"{name} interview", f"{name} podcast", f"{name} keynote",
@@ -205,7 +224,7 @@ def discover(person: dict, target: int, cap: int = CANDIDATES_PER_LEADER) -> dic
     ]
     pool: dict[str, dict] = {}
     for q in queries:
-        for c in search(q):
+        for c in search(q, sleep_requests=sleep_requests):
             pool.setdefault(c["video_id"], c)
         if len(pool) > 90:
             break
@@ -320,7 +339,12 @@ def main() -> int:
     ap.add_argument("--roster", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--target", type=int, default=5)
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
+                    help="Workers multiply the real request rate; keep this low. "
+                         f"Default {DEFAULT_WORKERS}, lowered from 8 with the pacing fix.")
+    ap.add_argument("--sleep-requests", type=float, default=SLEEP_REQUESTS,
+                    help="Seconds yt-dlp sleeps between extraction requests. "
+                         "Zero means unpaced, which is how IP blocks happen.")
     ap.add_argument("--only", default=None, help="Comma-separated slugs, for topping up specific leaders.")
     ap.add_argument("--candidates-per-leader", type=int, default=CANDIDATES_PER_LEADER,
                     help=f"How deep to go in the ranked list (default {CANDIDATES_PER_LEADER}).")
@@ -338,7 +362,8 @@ def main() -> int:
 
     results = []
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(discover, p, args.target, args.candidates_per_leader): p for p in roster}
+        futs = {ex.submit(discover, p, args.target, args.candidates_per_leader,
+                          args.sleep_requests): p for p in roster}
         for fut in cf.as_completed(futs):
             try:
                 results.append(fut.result())
