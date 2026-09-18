@@ -175,6 +175,27 @@ def main() -> int:
             check("the off-board seven are reported separately",
                   sorted(cov.get("off_board") or []) == sorted(OFF_BOARD), str(cov))
 
+
+        print("\n[5] happyscribe's unsearched report does not trigger a crawl for them")
+        # happyscribe_loop.sh runs a sitemap crawl whenever --report-unsearched
+        # is non-empty. The seven are on the roster, have never been searched and
+        # never will be by this path, so leaving them in triggered a fresh crawl
+        # on every cycle. Their transcripts would also be merged onto the GRADED
+        # shelf, which the plan forbids for predictions-only people.
+        sys.path.insert(0, str(REPO / "scripts"))
+        import fetch_happyscribe as HS
+        import membership as MBreal
+        pool = tmp / "pool.json"
+        pool.write_text(json.dumps({s: [] for s in ON_BOARD}))
+        board = json.loads((tmp / "membership.json").read_text())
+        uns, stale = HS.unsearched_leaders(D / "roster/final.json", pool, board)
+        check("nothing is reported unsearched", uns == [], str(uns))
+        check("... and the off-board people are not called stale either",
+              sorted(stale) == [], str(stale))
+        uns_no_board, _ = HS.unsearched_leaders(D / "roster/final.json", pool, None)
+        check("without the board they WOULD be reported, which is the defect",
+              sorted(uns_no_board) == sorted(OFF_BOARD), str(uns_no_board))
+
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 

@@ -127,7 +127,7 @@ def get(session: requests.Session, url: str, pacer: Pacer, timeout: int = 60) ->
     return session.get(url, timeout=timeout, allow_redirects=True)
 
 
-def unsearched_leaders(roster_path, pool_path) -> tuple[list[str], list[str]]:
+def unsearched_leaders(roster_path, pool_path, board=None) -> tuple[list[str], list[str]]:
     """Which roster slugs the candidate pool has never been searched for.
 
     Returns (unsearched, stale). The pool is DERIVED from the roster, so it has
@@ -147,6 +147,19 @@ def unsearched_leaders(roster_path, pool_path) -> tuple[list[str], list[str]]:
     error: that is the first-run case the loop already handles.
     """
     roster = [r["slug"] for r in json.loads(Path(roster_path).read_text())["roster"]]
+    # THE LEADERS BOARD, not the roster. This function decides whether the loop
+    # runs a Happy Scribe sitemap crawl. Since 2026-09-18 the roster carries
+    # seven people on the predictions board only; they have never been searched
+    # and never will be by this path, so leaving them in reported "7 roster
+    # leader(s) never searched" on EVERY cycle and triggered a fresh crawl each
+    # time, which is the forever-re-walking failure the docstring above already
+    # describes, arriving from a new direction. Their transcripts would also land
+    # in transcripts_hs and be merged onto the GRADED shelf, which the membership
+    # plan forbids for predictions-only people; their sourcing is P4's, through
+    # transcripts_web.
+    if board is not None:
+        import membership as _MB
+        roster = [s for s in roster if _MB.on_board(board, s, "leaders")]
     pool_path = Path(pool_path)
     pool: dict = {}
     if pool_path.is_file() and pool_path.stat().st_size:
@@ -442,7 +455,9 @@ def main() -> int:
                          "The pool is derived from the roster, so the loop uses this to notice "
                          "a roster change instead of assuming one never happens.")
     import study_profile as SP
+    import membership as MB
     SP.add_study_arg(ap)
+    MB.add_membership_arg(ap)
     args = ap.parse_args()
     SP.guard(args.study)
     link = SP.data_link(args.study)
@@ -458,7 +473,8 @@ def main() -> int:
     if args.report_unsearched:
         # Space-separated on stdout so the loop can test it for emptiness, with
         # the detail on stderr so a human reading the log sees who and why.
-        unsearched, stale = unsearched_leaders(args.roster, args.candidates)
+        unsearched, stale = unsearched_leaders(
+            args.roster, args.candidates, MB.for_study(args.study, args.membership))
         if stale:
             print(f"pool holds {len(stale)} leader(s) no longer on the roster: "
                   f"{', '.join(stale)}", file=sys.stderr)
