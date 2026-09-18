@@ -40,6 +40,26 @@ it. The overall verdict is `pass`, `review` or `reject`, and `review` is the
 honest answer for most records: this screen is a cheap filter in front of a human,
 not a replacement for one.
 
+DO NOT "CLEAN UP" THE EXCLUSIVITY NOISE. Some flagged names are title-case
+phrases rather than people: "First Principles", "Silicon Valley", "Growth
+Stocks". The obvious fix is to reject a pair whose last token is an ordinary
+dictionary word. MEASURED 2026-09-18 against the 98 real candidates:
+
+    removes 5 of 8 noise phrases
+    LOSES   4 of 15 real co-guests: Jeff Jordan, Elad Gil, Rich Barton,
+            Scott Miller
+
+A 27% loss of true positives to remove a handful of phrases a human skims past is
+the wrong trade for a screen whose whole purpose is recall. And the decisive case
+is worse than the ratio suggests: that heuristic removes "One Medical Group",
+which is the ONLY signal flagging "Keynote Tom Lee, Founder & CEO, One Medical
+Group". That candidate is a different Tom Lee, the physician who founded One
+Medical, not Fundstrat's Thomas J. Lee. Its identity and aboutness signals both
+PASS, so silencing exclusivity turns the single most valuable catch this screen
+has made into a clean pass.
+
+The noise is the price of the catch. Leave it.
+
 WHAT IT DELIBERATELY DOES NOT DO. It spends no quota, calls no judge, makes no
 network request, and reads no grade. It is safe to run over any corpus at any
 time, which is the whole point: the alternative on the table was hand-reviewing
