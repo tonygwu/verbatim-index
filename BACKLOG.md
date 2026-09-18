@@ -234,6 +234,37 @@ plan was right when it was written and the tree has moved since.
   safe, but a later edit that puts one there kills the leaders render rather than
   warning.
 
+## Site rendering
+
+- **`test_the_method_section_counts_the_roster` renders against whichever data
+  checkout the clone is linked to, so the suite's verdict is clone-dependent.**
+  Filed 2026-09-17. The check in `scripts/test_render_integrity.py` reads
+  `REPO/data/results.json`, `results_audit.json`, `logs/calibration.json` and
+  `roster/final.json`, which is each clone's OWN private data link rather than
+  a fixture. It proves a real property: the page's "A roster of N" is derived
+  from the roster and is not a literal, shown by rendering the same results
+  against two rosters of different sizes.
+
+  What it cost here: repo-1's private roster still carried the Amjad Masad
+  exclusion-list contradiction that repo-0 fixed in production on 2026-09-16 at
+  data `b55217a9`. `bash scripts/run_tests.sh` therefore reported
+  `FAILED scripts/test_render_integrity.py` in this clone while the published
+  board was correct and every other clone was green. The message named the real
+  problem, `REFUSING: seated on the roster and named on the exclusion list at
+  once: Amjad Masad`, so the canary worked; it was filed under a code test.
+  Fixed by taking the production file, not by changing the test.
+
+  NOT changed, deliberately, and this is the decision to revisit. Two readings,
+  and they disagree. A render from self-contradicting inputs SHOULD fail, so a
+  stale clone failing is arguably correct. Against that, a suite whose result
+  depends on private data is not reproducible across clones, and this repo
+  already holds `leaders_baseline.py` and `test_site_social_and_exclusions.py`
+  as proof that the same property can be proven on a fixture with no data link
+  at all. Bring it back the next time a clone goes red for a data reason: if
+  that happens twice, move the derived-number proof onto a fixture and keep the
+  live render as a separately named data-staleness check, so the two failures
+  stop sharing one line.
+
 ## Shared fetcher
 
 - **`fetch_loop.sh` (leaders) runs 10.8x over the documented request ceiling.**
