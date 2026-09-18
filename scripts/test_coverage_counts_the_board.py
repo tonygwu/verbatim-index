@@ -196,6 +196,32 @@ def main() -> int:
         check("without the board they WOULD be reported, which is the defect",
               sorted(uns_no_board) == sorted(OFF_BOARD), str(uns_no_board))
 
+
+        print("\n[6] STUDY=pundits: the loops filter NOTHING, so repo-3 is untouched")
+        # These four counts now import membership. repo-3 runs the same scripts
+        # for its pundits production, and no pundit slug is in membership.json,
+        # so an unscoped filter would drop its entire roster and its loop would
+        # report zero leaders. for_study returns None off leaders BEFORE any file
+        # is read, which is also why repo-3 needs no membership.json at all.
+        pund = subprocess.run(
+            [PY, str(runner), "1"], capture_output=True, text=True, cwd=clone,
+            env={**env, "DATA": str(D), "STUDY": "pundits"})
+        if pund.returncode == 0:
+            pcov = json.loads(pund.stdout.strip().splitlines()[-1])
+            check("a pundits run keeps every roster entry",
+                  pcov["leaders"] == len(ON_BOARD) + len(OFF_BOARD),
+                  f"{pcov['leaders']} of {len(ON_BOARD) + len(OFF_BOARD)}; filtering "
+                  f"here would empty repo-3's roster")
+            check("... and reports nothing as off-board",
+                  not pcov.get("off_board"), str(pcov.get("off_board")))
+        else:
+            # A pundits run refuses for its own reasons in a leaders fixture. What
+            # matters is WHICH refusal: it must never be membership's.
+            combined = pund.stdout + pund.stderr
+            check("a pundits run never refuses for a membership reason",
+                  "membership" not in combined.lower(),
+                  f"said {combined.strip()[-300:]!r}")
+
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
