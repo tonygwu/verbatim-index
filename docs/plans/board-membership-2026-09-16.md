@@ -35,6 +35,83 @@ working tree, not taken from a review agent. Two agent claims were wrong on
 checking and are corrected here: the extraction-cache count (0 of 671, not 11 of
 693) and the tip of `origin/main` (`2f02346`, not `01ba57c`).
 
+## REVISION 2026-09-18: P1, P2 and most of P3 are BUILT. Read this before the plan.
+
+Everything below this section is the plan as approved. It is still the reasoning
+of record. Four of its claims are now wrong, and two phases are done, so read
+this first.
+
+### What landed
+
+  P1  membership.json (58) and scripts/membership.py            240d472, 50aeaac
+  P2  three readers, study-scoped through membership.for_study  239f934, 851909b,
+                                                                5549f15, 23ff9e4
+      the publication floor                                     62e79f5
+      the pre-push audit, docs/MEMBERSHIP-P2-AUDIT.md           899493b
+  P3  the seven appended at ranks 51-57, bench corrected        data ea1ba9ca
+      their alias blocks, curated and measured                  data cd7225a0
+      a grade-free identity screen, scripts/identity_screen.py  ee27927
+
+**The leaders board did not move.** aggregate before and after: results.json
+identical as whole objects apart from two added diagnostics keys, 50 leaders, 0
+ranks or scores changed. The rendered page is byte-identical. Evidence and the
+commands are in `docs/MEMBERSHIP-P2-AUDIT.md`.
+
+### Four claims in this plan are wrong
+
+1. **"`market_consensus.py` is public-API only, no model calls" is false.**
+   `scripts/market_consensus.py:53` imports `agy_profiles` from `grade`, and
+   `:605` takes `--matcher {auto,fable,astra,gemini}` with `auto` as the default.
+   Treat the stage as spending until somebody measures it with the matcher
+   pinned off. Anyone planning P4 under a no-spend constraint will otherwise
+   read this plan and get it wrong.
+
+2. **The proposed `deploy.sh` floor, `len(leaders) + len(unranked) +
+   len(unscored)`, refuses publication for ever from P3.** That sum is the
+   ROSTER; `deploy.sh` counts only the scored. The two diverge the moment a
+   roster member is not scored, which P3 causes deliberately and a withdrawal
+   causes by accident. The operator decided on 2026-09-17 to derive the floor
+   from the PREVIOUS PUBLISHED COUNT instead; see `scripts/publication_floor.py`.
+
+3. **Every `file:line` in the P2 section is stale**, and two of the moves matter
+   rather than being bookkeeping. `roster_n` lives inside `build_method()`, not
+   `main()`, so membership has to be passed down; and the word count now reads
+   `transcripts_blind`, not `transcripts`, so the plan's measured-no-op
+   arithmetic must be recomputed rather than quoted.
+
+4. **The P2 test inventory counts `aggregate.py` invocations and never
+   `build_site.py`**, which is one of the three readers. MEASURED: 7 files broke,
+   not 5, and 6 of them inherit one seam through
+   `test_render_integrity.run_aggregate`. Two `build_site` fixtures also wrote
+   transcripts with no `leader_slug`, which the plan's own rule requires.
+
+### What P3 broke that the plan does not anticipate
+
+Adding seven people to the roster broke four counts that derive from its length,
+and one of them was fatal. `fetch_loop.sh` exits when
+`leaders_at_target >= leaders`; with 57 in the denominator and at most 50
+reachable it could NEVER complete and would have re-fetched YouTube for ever.
+`status.sh`, `coverage_table.py` and `fetch_happyscribe.py --report-unsearched`
+were the other three. All four are fixed and the rule is now in `AGENTS.md`: a
+count derived from the roster is not a count of the board.
+
+### Still open
+
+- **P3 discovery has NOT run.** repo-3's pundits fetcher was IP-blocked on this
+  machine, so a crawl from the same address would have failed and could have
+  deepened it. The pinned command is in `docs/MEMBERSHIP-P4-STATUS.md`, and
+  `--only` is now enforced by `discover_sources.py` itself rather than by
+  discipline alone.
+- **P4 has not started.** Extract, verify and market consensus all spend; the
+  publish is a deploy. `docs/MEMBERSHIP-P4-STATUS.md` has the order, the
+  commands, and one hazard P3 created: the predictions index now unions the seven
+  in, and a page built without `--scores` would claim 57 people.
+- **Both operator questions remain.** The identity screen now exists and is
+  grade-free, which changes question 1 from "build, review or accept the risk"
+  into "review the screen's output". The investor rule is scoped rather than
+  rewritten, recorded in `data/roster/final.json` under
+  `investor_rule_scoped_2026_09_18`.
+
 ## REVISION 2026-09-16 (later the same day): what changed after approval
 
 Thirteen commits landed after this plan was approved, none of them from this
