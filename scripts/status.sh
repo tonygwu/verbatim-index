@@ -13,6 +13,33 @@ b(){ printf '\n\033[1m%s\033[0m\n' "$*"; }
 BRIEF=0
 [ "${1:-}" = "--brief" ] && BRIEF=1
 
+# Refuse before printing anything else when this clone does not hold the
+# study's data. Without this, each section failed its own way: a traceback in
+# FETCH, "no grades yet", "0/0 blinded", and a NEXT line telling the operator to
+# start the fetch loop in a clone that does not own the study. The first three
+# read as a real, empty study. The sibling search below is a hint only: it lists
+# clones next to this one that carry a link of the same name, and proves nothing
+# about which of them owns production.
+refuse_data(){
+  printf 'REFUSING: %s\n' "$1" >&2
+  here=$(pwd -P); hits=""
+  for d in ../*/"$DATA"; do
+    [ -e "$d" ] || continue
+    c=$(cd "$(dirname "$d")" && pwd -P)
+    [ "$c" = "$here" ] || hits="$hits $(basename "$c")"
+  done
+  if [ -n "$hits" ]; then
+    printf '  a %s link exists in:%s. Run status.sh from that clone.\n' "$DATA" "$hits" >&2
+  else
+    printf '  no sibling clone of this one holds a %s link either.\n' "$DATA" >&2
+  fi
+  exit 1
+}
+[ -d "$DATA" ] || refuse_data "$DATA does not exist in $(pwd); the $STUDY study's data is not checked out in this clone."
+if ! guard_msg=$($PY -c 'import sys; sys.path.insert(0, "scripts"); import study_profile as SP; SP.guard(sys.argv[1], sys.argv[2])' "$STUDY" "$DATA" 2>&1); then
+  refuse_data "${guard_msg#REFUSING: }"
+fi
+
 printf '\n  study: %s  (data: %s)\n' "$STUDY" "$DATA"
 
 # The flag file lags reality. It is only written after a failed probe at the
@@ -20,6 +47,11 @@ printf '\n  study: %s  (data: %s)\n' "$STUDY" "$DATA"
 # minutes after YouTube has actually blocked us. Observed exactly that: probe
 # said IpBlocked while status.sh showed no banner. So probe live here. It costs
 # one caption request, and when blocked it fails in about a second.
+# STATUS_SKIP_YT_PROBE is a TEST SEAM, so test_status_study_guard.py makes no
+# network call. The output says the probe was skipped, never that it was clear.
+if [ "${STATUS_SKIP_YT_PROBE:-0}" = 1 ]; then
+  YT_STATE=SKIPPED
+else
 YT_STATE=$($PY - <<'PYEOF' 2>/dev/null
 from youtube_transcript_api import YouTubeTranscriptApi
 try:
@@ -30,7 +62,10 @@ try:
 except Exception as e: print(type(e).__name__)
 PYEOF
 )
-if [ "$YT_STATE" != "CLEAR" ]; then
+fi
+if [ "$YT_STATE" = "SKIPPED" ]; then
+  printf '\n  youtube: NOT PROBED  (STATUS_SKIP_YT_PROBE=1)\n'
+elif [ "$YT_STATE" != "CLEAR" ]; then
   printf '\n\033[1;31m  >>> ROTATE THE VPN — youtube is %s right now <<<\033[0m\n' "$YT_STATE"
   printf '  (live probe, not the flag file. The loop resumes on its own within 60s of a new IP.)\n'
 else
@@ -112,11 +147,20 @@ root = Path(os.environ["DATA"]) / "grades"
 if not root.exists():
     print("  no grades yet")
 else:
-    rows = []
+    # A folder whose name starts with "_" holds records that are not current
+    # grades: _raw (judge output), _provenance (contract v2 run records) and
+    # _obsolete (grades moved aside by --force). Reading _provenance as grades
+    # crashed this section with KeyError: 'judge' on 2026-09-17.
+    rows, not_grades = [], []
     for p in root.rglob("*.json"):
-        if "_raw" in p.parts: continue
-        try: rows.append(json.loads(p.read_text()))
-        except Exception: pass
+        if any(part.startswith("_") for part in p.relative_to(root).parts): continue
+        try: r = json.loads(p.read_text())
+        except Exception: continue
+        if isinstance(r, dict) and "judge" in r and "mode" in r: rows.append(r)
+        else: not_grades.append(p)
+    if not_grades:
+        print(f"  \033[1;31m{len(not_grades)} file(s) under grades/ are not grades\033[0m, "
+              f"e.g. {not_grades[0].relative_to(root)}")
     if not rows:
         print("  no grades yet")
     else:
@@ -183,7 +227,7 @@ graded = set()
 gd = D / "grades" / "gemini"
 if gd.is_dir():
     for p in gd.rglob("*.json"):
-        if "_raw" in p.parts: continue
+        if any(part.startswith("_") for part in p.relative_to(gd).parts): continue
         try: r = json.loads(p.read_text())
         except Exception: continue
         if r.get("mode") == "blinded":
