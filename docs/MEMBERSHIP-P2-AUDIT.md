@@ -171,10 +171,14 @@ real `transcripts_hs`, because that flag defaults to it, and retired nothing.
 
 ## What this audit does NOT cover
 
-- **P3 and P4.** The seven are not on the roster yet and no transcript of theirs
-  exists. The transcript-set comparison the plan describes, with its rule that a
-  removal under the 50 must be empty or individually explained, belongs to the
-  P3 audit, because P3 is the first phase that writes.
+- **P4, and P3's discovery.** This audit was taken before P3 appended the seven.
+  P3 LANDED LATER THE SAME DAY, and its own evidence is in the commit for
+  `data/roster/final.json` and in the section above: with the 57-name roster the
+  render is byte-identical to this one, the page still reads "A roster of 50",
+  and the seven appear only in `results.json["unscored"]`. What has NOT happened
+  is discovery and fetching, so no transcript of theirs exists and the
+  transcript-set comparison the plan describes has nothing to compare yet. It
+  belongs to the P4 audit.
 - **A deploy.** Nothing was published. The floor was exercised with `--dry-run`
   only.
 - **The pundits study end to end.** It cannot be exercised from repo-0:
