@@ -512,8 +512,12 @@ the mix even.
 These change the published number. Each was measured before it was chosen, and
 the measurement is named so a later reader can re-run it rather than trust it.
 
-- **The roster is 50 people, and `longform_availability` means two different
-  things.** It was 40 until 2026-09-10, when C.C. Wei was withdrawn and eleven
+- **The roster is 57 people and the leaders board is 50, and
+  `longform_availability` means two different things.** The two numbers stopped
+  being the same on 2026-09-18, when seven investors were appended at ranks 51 to
+  57 for the PREDICTIONS board only. `membership.json` is what separates them, so
+  a figure below that says "of 50" still describes the leaders board correctly.
+  It was 40 until 2026-09-10, when C.C. Wei was withdrawn and eleven
   were added: Tobi Lütke, Michael Saylor, Eric Schmidt, Ilya Sutskever, Aaron
   Levie, Dylan Field, Amjad Masad, George Hotz, Greg Brockman, Vlad Tenev and
   Alexandr Wang. Any figure in this file that says "of 40" is a record of a
@@ -1184,9 +1188,12 @@ new grades incomparable with the corpus already graded.
   run on the same corpus: the screen flagged 4 recordings, 2 of them live on the
   board, where `identity_audit` found 0. Its labelled fixture survives as
   `scripts/test_wrong_person_regressions.py`.
-- The roster, 50 people: `data/roster/final.json`, with the expansion reasoning
+- The roster, 57 people: `data/roster/final.json`, with the expansion reasoning
   and the two meanings of `longform_availability` in
-  `docs/ROSTER-EXPANSION-2026-09-10.md`
+  `docs/ROSTER-EXPANSION-2026-09-10.md`. 50 of the 57 are on the leaders board;
+  the seven appended on 2026-09-18 carry `boards: ["predictions"]` and are
+  deliberately absent from it. Read `membership.json`, never the roster length,
+  to answer "how many are on the board".
 - Board membership: `membership.json` at the public repo root, slug to boards
   only so no person metadata leaves the private repo, read through
   `scripts/membership.py` and nothing else. 58 entries: the 50 on the roster
