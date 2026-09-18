@@ -2069,7 +2069,9 @@ def main() -> int:
                          "ordered by headroom: Antigravity exposes no usage endpoint at "
                          "all, so the rotation is plain round-robin.")
     import study_profile as SP
+    import membership as MB
     SP.add_study_arg(ap)
+    MB.add_membership_arg(ap)
     args = ap.parse_args()
     # First, before the rubric, the account router or any judge: a grade written
     # into another study's tree would be pooled into that study's score.
@@ -2116,6 +2118,48 @@ def main() -> int:
         paths = sorted(Path(args.transcripts).rglob("*.json"))
     if not paths:
         raise SystemExit("no transcripts found")
+
+    # MEMBERSHIP. Drop transcripts belonging to people who are not on the leaders
+    # board, BEFORE a judge is chosen, so somebody who publishes only on the
+    # predictions board never costs a Fable, Astra or Gemini call.
+    #
+    # WHY HERE. fable_accounts() below reads the macOS Keychain and spawns
+    # `codex app-server`. Everything above that line is free and everything
+    # below has already touched a credential, so the gate belongs above it.
+    #
+    # WHY THE NON-EMPTY CHECK IS RE-ASSERTED. The `if not paths` two lines up
+    # runs BEFORE this gate, so a membership file that excludes everything would
+    # sail past it and the run would exit 0 having graded nothing, which reads
+    # as a healthy pass rather than a misconfiguration.
+    #
+    # WHY STUDY-SCOPED. This script is shared with the pundits study, which is
+    # live and whose slugs are not in membership.json.
+    #
+    # The slug is taken from the RECORD, never from the path component: a
+    # directory name is renameable and the record is the fact.
+    membership_dropped: dict[str, int] = {}
+    if args.study == SP.LEGACY_STUDY:
+        board = MB.load(args.membership)
+        kept = []
+        for p in paths:
+            slug = json.loads(p.read_text())["leader_slug"]
+            if MB.on_board(board, slug, "leaders"):
+                kept.append(p)
+            else:
+                membership_dropped[slug] = membership_dropped.get(slug, 0) + 1
+        if membership_dropped:
+            named = ", ".join(f"{s} ({n})" for s, n in sorted(membership_dropped.items()))
+            log(f"membership: dropping {sum(membership_dropped.values())} transcript(s) "
+                f"for {len(membership_dropped)} leader(s) not on the leaders board: {named}")
+        if not kept:
+            raise SystemExit(
+                f"REFUSING: membership excludes every transcript under "
+                f"{args.transcripts}. {len(paths)} transcript(s) were found and all of "
+                f"them belong to leaders who are not on the leaders board, across "
+                f"{len(membership_dropped)} slug(s). Exiting 0 here would report a "
+                f"clean pass over an empty work list. Check --membership "
+                f"{args.membership or MB.DEFAULT_PATH}.")
+        paths = kept
 
     if args.limit_per_leader is not None:
         slug_of = {p: json.loads(p.read_text())["leader_slug"] for p in paths}
@@ -2383,6 +2427,11 @@ def main() -> int:
         "skipped_over_retry_cap": len(skipped),
         "retry_cap_stopped_judges": budget.stopped(),
         "error_taxonomy": tax,
+        # Not an error, but it belongs beside the counts: a pass that graded
+        # fewer transcripts than the corpus holds should say why, or the gap
+        # reads as a fetch that never landed.
+        "membership_dropped": sum(membership_dropped.values()),
+        "membership_dropped_by_slug": dict(sorted(membership_dropped.items())),
         "median_elapsed_sec": sorted(r["elapsed"] for r in ok)[len(ok) // 2] if ok else None,
         "gemini_identities": gemini_ids,
         "stale_cache": len(stale),
