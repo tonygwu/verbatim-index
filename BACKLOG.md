@@ -3,7 +3,7 @@
 Work deliberately deferred, with the reason and the condition that brings it back.
 Newest first.
 
-## Board membership (P1 shipped, P2 pending)
+## Board membership (P1, P2 and most of P3 shipped 2026-09-18)
 
 Reviewed 2026-09-17 against `docs/plans/board-membership-2026-09-16.md`, at
 `240d472` with the whole suite green (`bash scripts/run_tests.sh` -> `failed: 0`).
@@ -43,7 +43,7 @@ plan was right when it was written and the tree has moved since.
   file the named file here. A flake in the verification gate for the membership
   change is worth naming precisely once it can be named at all.
 
-- **The floor the plan proposes for `deploy.sh` refuses publication for ever on
+- **RESOLVED 2026-09-18 (62e79f5). The floor the plan proposes for `deploy.sh` refuses publication for ever on
   the first cycle after P3.** Filed 2026-09-17. The plan says to derive the floor
   as the roster size, "which `aggregate.py:1169` writes as
   `len(leaders) + len(unranked) + len(unscored)`", and to compare it against the
@@ -128,6 +128,35 @@ plan was right when it was written and the tree has moved since.
   zero-leader deploy it asserts will take the bootstrap path and pass for the
   wrong reason.
 
+
+### How the four above were resolved, 2026-09-18
+
+All four were filed by the P1 review and all four are now addressed. Evidence in
+`docs/MEMBERSHIP-P2-AUDIT.md` and in each commit.
+
+- **The deploy floor** is the PREVIOUS PUBLISHED COUNT, decided by the operator
+  on 2026-09-17 over the two cheaper derivations. `scripts/publication_floor.py`,
+  state in `site/published.json` because `deploy.sh` stays read-only on data.
+  The baseline was seeded from the live board's own row count, not assumed:
+  50 rows, ranks 1 to 50, LeCun first and Benioff last. 38 checks.
+- **The test inventory** was re-derived rather than trusted. MEASURED: 7 files
+  failed once the aggregate reader landed, and 6 of them inherit one seam through
+  `test_render_integrity.run_aggregate`; only `test_site_ci.py` shells out
+  directly. Three `build_site` fixtures gained the `leader_slug` the plan's own
+  rule requires.
+- **The stale citations** were re-derived at the top of the work and recorded in
+  the audit. Two things the plan does not carry: `roster_n` lives inside
+  `build_method()`, not `main()`, so membership has to be passed down; and the
+  word count now reads `transcripts_blind`, not `transcripts`.
+- **The fingerprint gap** is closed by `SITE_REPO_INPUTS`, declared per site.
+  MEASURED before the fix: retyping every board name in `membership.json` left
+  the fingerprint byte-identical. Only `leaderboard` names it, because
+  `build_predictions_site.py` does not read membership, and one arm asserts that
+  non-coverage deliberately.
+
+**Still open from that review:** nothing. The two LOW findings were fixed the day
+they were filed (50aeaac).
+
 - **`aggregate.py` applies membership to the GRADES only, never to the roster
   iteration. DECIDED BY THE OPERATOR 2026-09-17.** Filed 2026-09-17. The plan
   specifies the grade filter at `usable = grades` and says nothing about the
@@ -158,7 +187,7 @@ plan was right when it was written and the tree has moved since.
   Nothing to do until P2 wires the aggregate reader. Recorded so the next pass
   does not re-open a settled question.
 
-- **The plan's P2 test inventory counts `aggregate.py` invocations and never
+- **RESOLVED 2026-09-18 (239f934, 5549f15). The plan's P2 test inventory counts `aggregate.py` invocations and never
   counts `build_site.py` invocations, and `build_site.py` is one of the three
   readers.** Filed 2026-09-17. Three leaders-mode test files run `build_site.py`
   directly against rosters whose slugs `membership.json` does not know:
@@ -197,7 +226,7 @@ plan was right when it was written and the tree has moved since.
   because it runs against the real `data/roster/final.json` and the real
   `data/grades`, but it is an argv the implementer will otherwise miss.
 
-- **Every `file:line` in the plan's P2 section is stale, and one of them now
+- **RESOLVED 2026-09-18 (899493b). Every `file:line` in the plan's P2 section is stale, and one of them now
   names a different directory.** Filed 2026-09-17. The plan's own revision note
   says "only `build_site.py` moved". That was true at `b8a8a73`. Re-derived at
   `240d472`:
@@ -235,7 +264,7 @@ plan was right when it was written and the tree has moved since.
   to narrow the except to `(json.JSONDecodeError, OSError)`, parse inside it, and
   put the membership decision after it in the loop body.
 
-- **After P2, `membership.json` is a render input that the deploy fingerprint
+- **RESOLVED 2026-09-18 (38e0c04). After P2, `membership.json` is a render input that the deploy fingerprint
   cannot see.** Filed 2026-09-17. `check_publication_unchanged` in
   `scripts/deploy_source.sh:32-40` compares `data_clone_workflow.fingerprint()`
   before and after the render, and that function hashes only paths under the
@@ -339,6 +368,50 @@ plan was right when it was written and the tree has moved since.
   `dropped_for_no_transcripts`. None of the seven is in that list today, so P3 is
   safe, but a later edit that puts one there kills the leaders render rather than
   warning.
+
+- **The predictions page claims 57 people when `scores.json` is absent, and the
+  seven have no records.** Filed 2026-09-18. `aggregate_predictions.py:147` unions
+  roster slugs with any slug that has records, so P3 putting the seven on the
+  roster puts them in the predictions index empty. MEASURED, to a scratch path so
+  production was untouched:
+
+  ```
+  live data/predictions/index.json   50 leaders
+  a fresh aggregate_predictions run  57 leaders
+  the seven: on_roster True, accepted 0, transcripts_with_accepted 0
+
+  page built WITHOUT --scores   "Forward-looking claims that 57 technology leaders"
+  page built WITH    --scores   "Forward-looking claims that 45 technology leaders"
+  the live published page today  45 technology leaders
+  ```
+
+  Today's production is SAFE: `data/predictions/scores.json` exists,
+  `deploy_predictions.sh` passes it, and the past-due floor filters the seven out.
+  `build_predictions_site.person_rows` only filters when scores are supplied, and
+  `scores.json` is UNTRACKED, so a clone without it publishes a masthead claiming
+  57 people while seven of them contribute nothing.
+
+  NOT fixed, because the obvious fix is not neutral. Skipping any row with zero
+  accepted predictions would also hide five leaders already on the board who sit
+  at zero (`fei-fei-li`, `ilya-sutskever`, `jack-dorsey`, `sergey-brin`,
+  `tobi-lutke`), and what the board says about its own coverage is a publication
+  decision rather than a bug. The condition that brings it back: before any
+  predictions deploy, either confirm `scores.json` is under the production
+  checkout, or decide whether a zero-record person should be a row at all.
+  Full context in `docs/MEMBERSHIP-P4-STATUS.md`.
+
+- **`market_consensus.py` is not quota-free, and the plan says it is.** Filed
+  2026-09-18. `docs/plans/board-membership-2026-09-16.md` states it is
+  "public-API only, no model calls". `scripts/market_consensus.py:53` imports
+  `agy_profiles` from `grade`, and `:605` takes
+  `--matcher {auto,fable,astra,gemini}` with `auto` as the default, beside
+  `--fable-bin`, `--agy-bin` and `--astra-model`. The market lookups may well be
+  public-API; the MATCHER is a model and it is on by default. Anyone planning P4
+  under a no-spend constraint will read the plan and get this wrong.
+
+  NOT fixed here because the fix is a measurement, not an edit: run it once with
+  the matcher pinned off and record what it actually costs. Until then treat the
+  stage as spending. The condition that brings it back is the first P4 run.
 
 ## Site rendering
 
