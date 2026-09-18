@@ -533,6 +533,30 @@ the mix even.
   Guarded by `scripts/test_coverage_counts_the_board.py`, which extracts and RUNS
   fetch_loop.sh's own coverage block rather than reading it.
 
+- **A mutate-restore-retest cycle inside one second can test the WRONG
+  BYTECODE.** CPython's timestamp invalidation records the source mtime with
+  one-second resolution, so restoring a file and re-importing it in the same
+  second reuses the `.pyc` compiled from the version you just replaced.
+
+  OBSERVED 2026-09-18 while mutation-testing `discover_sources.py`: the file on
+  disk read `DEFAULT_WORKERS = 3`, `grep` agreed, and `import discover_sources`
+  returned 8. Deleting `scripts/__pycache__/discover_sources*.pyc` fixed it.
+
+  This matters because mutation testing is how this repo proves a check is real,
+  and it fails in BOTH directions. A restore that silently keeps the mutation
+  shows failures you will chase. Worse, a mutation that silently keeps the GOOD
+  bytecode shows no failures, and the honest conclusion from that is "this test
+  is vacuous", which is a conclusion you may then act on.
+
+  So when a mutation does NOT bite, do not conclude the test is vacuous until you
+  have ruled this out. Either `find scripts/__pycache__ -name '*.pyc' -delete`
+  first, or run the arm with `PYTHONDONTWRITEBYTECODE=1`, or confirm the finding
+  by a route that does not import the module at all. The one conclusion this
+  actually threatened, that `test_membership_study_scope.py`'s end-to-end pundits
+  arms were vacuous, was re-derived with a cleared cache and stands: a pundits
+  aggregate run refuses at "no grades found" without ever reaching the membership
+  block.
+
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing
