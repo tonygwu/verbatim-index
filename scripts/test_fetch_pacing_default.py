@@ -22,8 +22,14 @@ WHAT IT COST, measured from the P6 pilot's own error logs:
     retry1  218 / 202     retry2  202 / 186     retry3  182 / 166
     retry4    3 /   3     retry5    3 /   3     retry6    0 /   0
 
-Six retry passes to clear a block on 248 candidates. The Pacer and the Breaker
-both worked and reported honestly; they were handed a rate that could not work.
+Six retry passes to clear a block on 248 candidates.
+
+CORRECTED the same day. This docstring first said the fast pace CAUSED that
+block. It did not: at one request every 6 seconds, four IPs still blocked after
+60, 14, 14 and 9 fetches, so the caption endpoint enforces a per-IP volume
+budget and pace only decides how soon the block arrives. What this test still
+guards is real: a documented constant that nothing read, and an effective rate
+that no run reported. The warning is informational and says so.
 
 This is the third time in this repo that a constant and the value in force
 disagreed, after the hand-typed judge list and the TARGET default that read 5

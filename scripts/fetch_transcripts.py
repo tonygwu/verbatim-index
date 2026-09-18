@@ -65,9 +65,14 @@ def effective_rate(interval: float, workers: int) -> dict:
 
     Each worker waits on the shared pacer, so N workers issue N requests per
     interval. A 2-second interval on 6 workers is one request every 0.33
-    seconds, which is ten times the documented guest ceiling. That combination
-    is what blocked this IP during the P6 pilot, and both numbers looked
-    reasonable on their own.
+    seconds, ten times the documented guest figure, although both numbers look
+    modest on their own.
+
+    Reported, NOT enforced, because rate is measured not to be what blocks the
+    caption endpoint. MEASURED 2026-09-17 at one request every 6 seconds, one
+    worker: four IPs blocked after 60, 14, 14 and 9 fetches. That is a per-IP
+    VOLUME budget, and slowing down does not buy more of it. fetch_loop.sh paces
+    fast on purpose for that reason: trip early, rotate the IP.
     """
     workers = max(1, int(workers))
     spr = float(interval) / workers
@@ -78,7 +83,7 @@ def effective_rate(interval: float, workers: int) -> dict:
 
 
 def pacing_warning(interval: float, workers: int) -> "str | None":
-    """A warning naming the numbers, or None when the configuration is safe.
+    """A note naming the numbers, or None when the configuration is inside the documented figure.
 
     Names the effective rate and the figure it is compared against, because
     "too fast" is not something a reader can act on or check.
@@ -89,9 +94,11 @@ def pacing_warning(interval: float, workers: int) -> "str | None":
     return (f"PACING: {r['interval']:.1f}s across {r['workers']} workers is one request every "
             f"{r['seconds_per_request']:.2f}s ({r['requests_per_hour']:.0f}/hour). The yt-dlp wiki "
             f"documents a guest session at one request every {DOCUMENTED_GUEST_SECONDS_PER_REQUEST}s "
-            f"(~1000/hour). This configuration is "
-            f"{DOCUMENTED_GUEST_SECONDS_PER_REQUEST / r['seconds_per_request']:.1f}x over that "
-            f"ceiling. The P6 pilot ran at 0.33s and took six retry passes to clear the block.")
+            f"(~1000/hour), so this is "
+            f"{DOCUMENTED_GUEST_SECONDS_PER_REQUEST / r['seconds_per_request']:.1f}x that figure. "
+            f"Informational: on the caption endpoint a block is a per-IP volume budget, measured "
+            f"at 60, 14, 14 and 9 fetches per IP even at 6s pacing, so the remedy for a block is "
+            f"a new IP, not a slower pace.")
 
 
 class Pacer:
