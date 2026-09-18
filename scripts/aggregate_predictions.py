@@ -21,6 +21,7 @@ count unchanged.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import Counter, defaultdict
@@ -108,7 +109,8 @@ def summarise_meta(metas: list[dict]) -> dict:
     }
 
 
-def build_index(pred_root: Path, roster: dict, transcripts_root: Path | None) -> dict:
+def build_index(pred_root: Path, roster: dict, transcripts_root: Path | None,
+                roster_path: Path | None = None) -> dict:
     files = sorted(p for p in pred_root.glob("*/*.jsonl") if not p.parent.name.startswith("_"))
     all_recs: list[dict] = []
     per_slug: dict[str, list[dict]] = {}
@@ -174,6 +176,15 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | None) ->
         "files_read": len(files),
         "records_read": records_read,
         "inputs_sha256": prediction_inputs_sha256(pred_root),
+        # THE ROSTER IS AN INPUT TOO, and inputs_sha256 cannot see it. This index
+        # unions roster slugs with every slug that has records, so a roster change
+        # changes the index while every record stays byte-identical. MEASURED
+        # 2026-09-18: appending seven investors took the index from 50 leaders to
+        # 57, and files_read, records_read and inputs_sha256 were all unchanged,
+        # so deploy_predictions.sh would have published a stale index and said
+        # "current".
+        "roster_sha256": (hashlib.sha256(Path(roster_path).read_bytes()).hexdigest()
+                          if roster_path else None),
         "run_ids_seen": sorted(run_ids),
         "contracts_seen": {"extraction": sorted(contracts_x), "verification": sorted(contracts_v), "matching": sorted(contracts_m)},
         "corpus": corpus,
@@ -217,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no predictions tree at {pred_root}", file=sys.stderr)
         return 2
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
-    index = build_index(pred_root, roster, Path(args.transcripts))
+    index = build_index(pred_root, roster, Path(args.transcripts),
+                        Path(args.roster))
     bad = forbidden_keys(index)
     if bad:
         raise SystemExit(f"index carries evaluative keys, refusing to write: {bad[:5]}")

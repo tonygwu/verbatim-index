@@ -2,6 +2,7 @@
 """Quota-free integration tests. Every Git write and fake deployment uses temp repos."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -185,12 +186,18 @@ def main():
         try:
             (live / 'results.json').write_text(json.dumps({
                 'leaders': [], 'diagnostics': {'grades_used': 0, 'grade_files_read': 0}}))
+            (live / 'roster').mkdir()
+            (live / 'roster/final.json').write_text('{}')
+            # roster_sha256 joins the fixture for the same reason inputs_sha256
+            # did: the deploy refuses an index that cannot prove it describes the
+            # current roster, and aggregate_predictions unions roster slugs.
+            roster_digest = hashlib.sha256(
+                (live / 'roster/final.json').read_bytes()).hexdigest()
             (live / 'predictions/index.json').write_text(json.dumps({
                 'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
                 'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 0, 'records_read': 0,
+                'roster_sha256': roster_digest,
                 'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}))
-            (live / 'roster').mkdir()
-            (live / 'roster/final.json').write_text('{}')
             renderer = """import pathlib, sys
 args = sys.argv[1:]
 source_flag = '--results' if '--results' in args else '--index'
@@ -215,6 +222,7 @@ out.write_text('rendered from explicit production source')
             # Existing count drift blocks publication before npx too.
             drift = {'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
                      'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 0,
+                     'roster_sha256': roster_digest,
                      'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}
             (live / 'predictions/index.json').write_text(json.dumps(drift))
             p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
@@ -237,6 +245,7 @@ out.write_text('rendered from explicit production source')
             (live / 'predictions/index.json').write_text(json.dumps({
                 'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
                 'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 1,
+                'roster_sha256': roster_digest,
                 'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}))
             p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
                     '--data-revision', revision, '--dry-run')

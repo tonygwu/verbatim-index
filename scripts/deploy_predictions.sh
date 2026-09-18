@@ -44,7 +44,7 @@ $PY scripts/build_predictions_site.py --index "${PRODUCTION_DATA}/predictions/in
 
 # What is about to ship, and whether the index is behind the files on disk.
 $PY - "$PRODUCTION_DATA" <<'EOF'
-import json, pathlib, sys
+import hashlib, json, pathlib, sys
 sys.path.insert(0, "scripts")
 from data_clone_workflow import prediction_inputs_sha256
 data = pathlib.Path(sys.argv[1])
@@ -56,9 +56,23 @@ print(f"about to publish {len(idx['leaders'])} people, {c['accepted']} accepted 
 files = [p for p in (data / "predictions").glob("*/*.jsonl") if not p.parent.name.startswith("_")]
 lines = sum(1 for p in files for _ in open(p))
 digest = prediction_inputs_sha256(data / "predictions")
+roster_digest = hashlib.sha256((data / "roster/final.json").read_bytes()).hexdigest()
 if any(k not in idx for k in ("files_read", "records_read", "inputs_sha256")):
     print("index.json predates inputs_sha256; staleness cannot be checked")
     raise SystemExit("REFUSING: refresh the production index before publication")
+elif "roster_sha256" not in idx:
+    # THE ROSTER IS AN INPUT inputs_sha256 cannot see. aggregate_predictions.py
+    # unions roster slugs with every slug that has records, so the roster can
+    # change while every record stays byte-identical and all three counts match.
+    print("index.json predates roster_sha256, so a roster change since it was "
+          "built cannot be detected")
+    raise SystemExit("REFUSING: re-run aggregate_predictions.py from repo-0")
+elif idx["roster_sha256"] != roster_digest:
+    print(f"STALE: the roster changed since the index was built "
+          f"(index {idx['roster_sha256'][:12]}, disk {roster_digest[:12]}). The "
+          f"index unions roster slugs, so it lists the wrong people even though "
+          f"every record is unchanged; re-run aggregate_predictions.py from repo-0")
+    raise SystemExit("REFUSING: stale production index")
 elif (idx["files_read"], idx["records_read"]) != (len(files), lines):
     print(f"STALE: index read {idx['files_read']} files / {idx['records_read']} records, disk has {len(files)} / {lines}; "
           f"re-run aggregate_predictions.py from repo-0 before deploying")
