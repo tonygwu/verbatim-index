@@ -189,6 +189,39 @@ with tempfile.TemporaryDirectory() as td:
     check("it is not the everything-fetched pile", shown != f"{fetched_total/1000:.0f}k",
           f"page says {shown!r}, which is the ungraded total")
 
+    # AN OFF-BOARD PERSON'S TRANSCRIPTS ADD NO WORDS. This is the P3/P4 path:
+    # the seven investors are fetched, their transcripts may land on the leaders
+    # shelf, and grade.py's membership gate stops them being graded. But the
+    # words-graded total reads the shelf DIRECTLY, not the grades, so without a
+    # membership filter there it would count words nobody was scored on. Wired in
+    # build_site.py and untested end to end until now.
+    off = paths["results"].parent / "transcripts_blind" / "off-board-person"
+    off.mkdir(parents=True, exist_ok=True)
+    for t in range(4):
+        (off / f"src{t}.json").write_text(json.dumps(
+            {"leader_slug": "off-board-person", "word_count": 50_000}))
+    mem = json.loads(Path(ri.membership_for(paths["roster"])).read_text())
+    mem["off-board-person"] = ["predictions"]
+    (paths["roster"].parent / "membership.json").write_text(json.dumps(mem))
+    out2 = paths["results"].parent / "with-off-board.html"
+    r2 = subprocess.run(
+        [PY, str(REPO / "scripts" / "build_site.py"),
+         "--results", str(paths["results"]), "--audit", str(paths["audit"]),
+         "--roster", str(paths["roster"]), "--calibration", str(paths["calibration"]),
+         "--sources", str(paths["sources"]), "--out", str(out2),
+         "--membership", str(paths["roster"].parent / "membership.json")],
+        capture_output=True, text=True)
+    check("the render still succeeds with an off-board corpus present",
+          r2.returncode == 0, r2.stderr[-300:])
+    if r2.returncode == 0:
+        h2 = out2.read_text()
+        m2 = re.search(r"<dt>Words graded</dt><dd>([^<]*)", h2)
+        shown2 = m2.group(1).strip() if m2 else ""
+        check("200,000 off-board words change the total by nothing",
+              shown2 == shown,
+              f"was {shown!r}, now {shown2!r}; the membership filter in the word "
+              f"count is what stops the seven inflating the published figure")
+
 print("\n== a missing graded corpus fails loud rather than reporting zero ==")
 with tempfile.TemporaryDirectory() as td:
     root = Path(td)
