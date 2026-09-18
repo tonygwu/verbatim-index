@@ -113,12 +113,19 @@ def main() -> int:
         print("\n[2] a board name outside the whitelist raises, which is the typo case")
         typo = write(tmp, "typo.json", '{"sam-altman": ["leader"]}')
         raises("the 'leader'-for-'leaders' typo raises", lambda: M.load(typo),
-               naming="leader")
+               naming="'leader'")
         raises("... and the message names the slug it came from",
                lambda: M.load(typo), naming="sam-altman")
         dupe = write(tmp, "dupe.json", '{"sam-altman": ["leaders", "leaders"]}')
         raises("a board repeated for one slug raises", lambda: M.load(dupe),
                naming="sam-altman")
+        # json.loads keeps the LAST value for a repeated key and says nothing, so a
+        # slug declared twice silently discards one of the two board lists. A file
+        # edited by hand from more than one clone produces exactly that.
+        dupslug = write(tmp, "dupslug.json",
+                        '{"sam-altman": ["leaders"], "sam-altman": ["predictions"]}')
+        raises("a SLUG declared twice raises rather than keeping the last",
+               lambda: M.load(dupslug), naming="sam-altman")
 
         print("\n[3] an unknown slug RAISES where an empty board RETURNS EMPTY")
         fx = write(tmp, "fixture.json", json.dumps({
@@ -148,9 +155,9 @@ def main() -> int:
 
         print("\n[4] an unknown BOARD name raises at the call site too")
         raises("on_board with 'leader' raises",
-               lambda: M.on_board(data, "sam-altman", "leader"), naming="leader")
+               lambda: M.on_board(data, "sam-altman", "leader"), naming="'leader'")
         raises("slugs_on with 'leader' raises",
-               lambda: M.slugs_on(data, "leader"), naming="leader")
+               lambda: M.slugs_on(data, "leader"), naming="'leader'")
         check("slugs_on returns the members of a board",
               M.slugs_on(data, "leaders") == ["sam-altman"],
               f"got {M.slugs_on(data, 'leaders')!r}")

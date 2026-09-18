@@ -66,6 +66,25 @@ DEFAULT_PATH = REPO / "membership.json"
 BOARDS = ("leaders", "predictions")
 
 
+def _no_duplicate_slugs(pairs: list[tuple[str, object]]) -> dict:
+    """Refuse a slug declared twice, which json.loads would otherwise collapse.
+
+    Python's decoder keeps the LAST value for a repeated key and says nothing.
+    So a file declaring a slug twice, which is what a careless merge or a second
+    edit produces, silently discards one of the two board lists. This file is
+    edited by hand and by more than one clone, so that is a live shape rather
+    than a hypothetical, and a silently discarded edit is exactly the quiet
+    wrong answer this module exists to refuse.
+    """
+    seen: dict[str, object] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError(f"slug {key!r} is declared more than once; JSON would keep "
+                             f"only the last board list and discard the other silently")
+        seen[key] = value
+    return seen
+
+
 def load(path: str | Path | None = None) -> dict[str, list[str]]:
     """Read membership, validated. Raises RuntimeError; never returns a guess."""
     p = Path(path) if path is not None else DEFAULT_PATH
@@ -73,9 +92,11 @@ def load(path: str | Path | None = None) -> dict[str, list[str]]:
         raise RuntimeError(f"no membership file at {p}; membership is explicit and "
                            f"there is no default board for a slug")
     try:
-        data = json.loads(p.read_text())
+        data = json.loads(p.read_text(), object_pairs_hook=_no_duplicate_slugs)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"{p} is not valid JSON: {exc}") from exc
+    except ValueError as exc:  # raised by the hook above; JSONDecodeError is caught first
+        raise RuntimeError(f"{p}: {exc}") from exc
     if not isinstance(data, dict):
         raise RuntimeError(f"{p} must be an object of slug -> boards, got {type(data).__name__}")
     for slug, boards in data.items():
