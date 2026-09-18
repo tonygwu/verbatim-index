@@ -302,17 +302,50 @@ SITE_SHELVES = {
     'predictions': ['predictions', 'roster/final.json'],
 }
 
+#: Render inputs that live in the PUBLIC repository rather than the data
+#: checkout, per site. Declared explicitly and per site, never guessed: binding
+#: the predictions render to membership.json would refuse deploys over an input
+#: build_predictions_site.py has never read. Every key in SITE_SHELVES needs an
+#: entry here, and test_publication_fingerprint_inputs.py asserts that.
+SITE_REPO_INPUTS = {
+    'leaderboard': ('membership.json',),
+    'pundits': (),
+    'predictions': (),
+}
 
-def fingerprint(source: Path, site: str) -> str:
+
+def fingerprint(source: Path, site: str, repo: Path | None = None) -> str:
     """Bind one render to the live bytes read, including dirty production files.
 
     An unknown site is refused. It used to fall through to the predictions
     shelves, so any new site would have been fingerprinted on the wrong files.
+
+    SOME RENDER INPUTS ARE NOT IN THE DATA CHECKOUT. `membership.json` lives at
+    the root of the PUBLIC repository and, since P2 of the board-membership work,
+    it decides which grades reach `usable`, how many people the page says are on
+    the roster, and which transcripts count toward the words-graded total. It is
+    therefore hashed too, from `SITE_REPO_INPUTS`, or an edit between the before
+    and after checks would change the published page with the guard still
+    passing. MEASURED before this: retyping every board name left the fingerprint
+    byte-identical.
+
+    `scripts/` is deliberately NOT covered. Code is tracked, reviewed and pinned
+    by the commit being deployed; `membership.json` is a config file edited by
+    hand that now moves the board.
     """
     if site not in SITE_SHELVES:
         raise RuntimeError(f'unknown publication site {site!r}; known: {sorted(SITE_SHELVES)}')
     shelves = SITE_SHELVES[site]
     hashes = {}
+    root = Path(repo) if repo is not None else REPO
+    for name in SITE_REPO_INPUTS.get(site, ()):
+        p = root / name
+        if not p.is_file():
+            raise RuntimeError(
+                f'{p} is missing, and it is a render input for {site!r}. Hashing '
+                f'nothing here would make a deleted gate look like an unchanged '
+                f'one, so publication is refused instead.')
+        hashes[f'<repo>/{name}'] = hashlib.sha256(p.read_bytes()).hexdigest()
     for shelf in shelves:
         base = source / shelf
         paths = base.rglob('*') if base.is_dir() else [base]
