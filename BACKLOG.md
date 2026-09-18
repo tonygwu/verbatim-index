@@ -454,6 +454,40 @@ they were filed (50aeaac).
   evidence is already gathered and reproducible with
   `.venv/bin/python scripts/statement_date_evidence.py --only bill-gates,jeff-bezos,andy-jassy,lisa-su,vlad-tenev,arvind-krishna`.
 
+- **Discovery will re-pollute the seven's curated alias lists, and it costs
+  nothing.** Filed 2026-09-18. `discover_sources.aliases_for()` honours
+  `GENERIC_COMPANY_WORDS`, but that set holds `cloud`, `labs`, `technologies` and
+  the like, not `capital`, `social`, `craft` or `ventures`. So the 2026-09-18
+  discovery run wrote these into `discovered.json`, and the next
+  `sources_to_manifest.py` will merge them into the hand-curated blocks:
+
+  ```
+  chamath-palihapitiya  would add  Capital, Palihapitiya, Social
+  david-sacks           would add  Craft, David, Sacks, Ventures
+  vinod-khosla          would add  Khosla, Ventures
+  tom-lee               would add  Lee, Tom
+  ```
+
+  MEASURED, and this is why it is filed rather than fixed: the merge adds ZERO
+  incremental blinding damage for all seven. Every one of those words is already
+  redacted by the NAME and COMPANY paths, so the curated list and the merged list
+  remove exactly the same words from a probe paragraph:
+
+  ```
+  chamath-palihapitiya  curated ['social','capital']  merged ['social','capital']  added []
+  david-sacks           curated ['craft','ventures','sacks']  merged same  added []
+  tom-lee               curated ['lee']  merged ['lee']  added []
+  ```
+
+  So the curation was never buying a smaller blast radius; it was buying a list
+  that says what it means. Widening `GENERIC_COMPANY_WORDS` to cover these is NOT
+  the fix, because that set is shared with the leaders blinder and changing it
+  re-blinds a corpus under 2,260 grades.
+
+  The condition that brings it back: promoting any of the seven to the leaders
+  board, at which point the whole company-string question reopens and is already
+  recorded against each person in `data/roster/final.json`.
+
 ## Site rendering
 
 - **`test_the_method_section_counts_the_roster` renders against whichever data
