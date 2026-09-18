@@ -1191,18 +1191,35 @@ new grades incomparable with the corpus already graded.
   only so no person metadata leaves the private repo, read through
   `scripts/membership.py` and nothing else. 58 entries: the 50 on the roster
   with both boards, the seven investors with `predictions` alone, and `cc-wei`
-  with none. **NOTHING READS IT YET.** P1 of `docs/plans/board-membership-2026-09-16.md`
-  added the file and the module; P2 wires grade, aggregate and build_site and
-  must replace this sentence. Editing it today changes no published number.
+  with none. Since P3 the seven are on the roster as well, so the roster holds 57
+  and the leaders board holds 50; `cc-wei` is on neither. **THREE READERS READ IT, all study-scoped through
+  `membership.for_study`:** `grade.py` drops an off-board transcript before a
+  judge is chosen and reports `membership_dropped_by_slug`; `aggregate.py`
+  filters `usable` and declares the remainder in an `off_board` bucket that the
+  accounting sum and its failure message both name; `build_site.py` counts who is
+  on the board rather than how long the roster is, and reads `leader_slug` from
+  the record. Editing membership.json now MOVES THE PUBLISHED BOARD.
   The module raises on a missing file, malformed JSON, an unknown slug or a
   board name outside `BOARDS`, and never defaults to empty, because
   `data.get(slug, [])` turning an unknown slug into an empty board is the whole
-  defect it exists to refuse. Every reader will be study-scoped: membership is
-  leaders-only, and pundits slugs are not in this file. Membership decides what
+  defect it exists to refuse. Every reader IS study-scoped, through one function:
+  membership is leaders-only and no pundit slug is in this file, so an unscoped
+  reader would raise on the first one and stop repo-3's production on its next
+  cycle. That half cannot be proved end to end from repo-0, because a pundits run
+  refuses at `data-pundits is not a git checkout` before any reader; see
+  `scripts/test_membership_study_scope.py`, which says so and tests the rule
+  directly instead. Membership decides what
   is READ, never what is WRITTEN, so no writer may consult it; an earlier draft
   that gated normalize's writes would have deleted 153 derived transcripts and
-  orphaned 514 grades under `prune_orphans`' 25% ceiling. Proof:
-  `.venv/bin/python scripts/test_membership.py`.
+  orphaned 514 grades under `prune_orphans`' 25% ceiling.
+  `scripts/publication_floor.py` stops a collapsed board publishing over the one
+  that did not: the floor is the PREVIOUS PUBLISHED COUNT in `site/published.json`,
+  never the roster size, which would refuse for ever from P3. Proof:
+  `.venv/bin/python scripts/test_membership.py`,
+  `scripts/test_membership_study_scope.py`,
+  `scripts/test_aggregate_off_board_bucket.py`,
+  `scripts/test_grade_membership_gate.py`, `scripts/test_deploy_floor.py`.
+  Evidence that the leaders board did not move: `docs/MEMBERSHIP-P2-AUDIT.md`.
 - Corpus-integrity findings and their re-derivation:
   `docs/CORPUS-INTEGRITY-2026-09-10.md`, `docs/CORPUS-INTEGRITY-FOLLOWUP.md`,
   and the withdrawal manifest `docs/withdrawals-2026-09-10.json`. The re-grade
