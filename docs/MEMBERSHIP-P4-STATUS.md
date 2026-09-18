@@ -9,7 +9,7 @@ hazard that the roster change introduced.
 
 | stage | spends model quota | deploys | can run now |
 |---|---|---|---|
-| discovery (`discover_sources.py --only`) | no | no | **no**, network blocked, see below |
+| discovery (`discover_sources.py --only`) | no | no | **DONE 2026-09-18**, see `docs/MEMBERSHIP-P3-DISCOVERY.md` |
 | fetch (`fetch_transcripts.py`) | no | no | no, same block |
 | `extract_predictions.py` | **yes** | no | no |
 | verification | **yes** | no | no |
@@ -29,7 +29,7 @@ lookups may well be public-API, but the MATCHER is a model and the default is on
 Treat this stage as spending until somebody measures a run with the matcher
 pinned off.
 
-### Discovery is blocked on something current, not on caution
+### Discovery has RUN. This section is kept for the fetch, which is still blocked
 
 `repo-3/data-pundits/logs/NEEDS_IP_ROTATION` exists, and that loop's log reads:
 

@@ -76,6 +76,20 @@ A handful are title-case phrases the pattern reads as names: "First Principles",
 the screen's own test records, and it costs a human glance rather than a judge
 call.
 
+## The leaders board did not move
+
+98 new source blocks in `discovered.json`, and `build_site.py` renders that file
+per row. Re-rendered against it:
+
+```
+diff audit.post.html after_discovery.html  ->  no output
+RENDER IDENTICAL after discovery
+```
+
+409 KB, 50 leaders, both arms. The seven have sources and no rendered row,
+because membership decides who is on the board and `discovered.json` is read only
+for the rows that exist.
+
 ## What happens next
 
 1. Rotate the VPN; `repo-3/data-pundits/logs/NEEDS_IP_ROTATION` is the flag to
