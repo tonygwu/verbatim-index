@@ -87,9 +87,17 @@ def main() -> int:
     check("every deploy reports staleness, refresh or not",
           "grade_files_read" in src and "STALE" in src,
           "a stale publish stays silent, which is the original bug")
+    # Asserted by WHAT IS EXCLUDED, not by how the exclusion is spelled. This
+    # used to match the literal '"_raw" not in p.parts', which broke the day the
+    # check grew a SKIP set to also exclude _obsolete and match
+    # aggregate.load_grades. A test pinned to a spelling fails a correct change.
     check("staleness compares grades on disk with the ones results.json used",
-          'rglob("*.json")' in src and '"_raw" not in p.parts' in src,
+          'rglob("*.json")' in src and '"_raw"' in src,
           "raw judge dumps would be counted as grades")
+    check("... and excludes _obsolete too, as aggregate.load_grades does",
+          '"_obsolete"' in src,
+          "a file counted by deploy and not by aggregate makes this check refuse "
+          "for ever, and --refresh cannot fix it")
     check("a results.json with no grade_files_read says so rather than passing",
           "cannot be checked" in src,
           "an older results.json would report itself current")

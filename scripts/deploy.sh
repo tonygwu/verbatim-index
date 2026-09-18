@@ -43,8 +43,18 @@ for i, l in enumerate(led[:3], 1):
 # grade file aggregate.py read, so comparing it to what is on disk now says
 # exactly how far behind results.json is. Silence here is the failure mode
 # --refresh exists to prevent, so this prints on every deploy.
+# The SAME exclusions aggregate.load_grades applies, or the two counts disagree
+# and this check refuses for ever. _raw holds judge transcripts and _obsolete
+# holds grades moved aside by `grade.py --force`; neither is a score. deploy.sh
+# was the only one of the three out of step: aggregate.py has skipped _obsolete
+# since contract v2 arrived, and deploy_pundits.sh skips it too. Latent rather
+# than live today, because _obsolete is written only under contract v2 and
+# leaders is v1, so nothing under data/grades has ever landed there. It would
+# have bitten the day leaders moved to v2, and --refresh could not have fixed it:
+# re-aggregating still excludes the file that deploy was counting.
+SKIP = {"_raw", "_obsolete"}
 on_disk = sum(1 for p in (data / "grades").rglob("*.json")
-              if "_raw" not in p.parts)
+              if not SKIP & set(p.parts))
 # grade_files_read is the count BEFORE any filter, which is the only figure
 # comparable to a count of files. grades_loaded is post-filter and would report
 # a permanent false staleness equal to the rows the subject-share cutoff drops.

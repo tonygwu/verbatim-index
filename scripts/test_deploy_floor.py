@@ -194,6 +194,32 @@ def main() -> int:
                   f"deploy.sh calls {name} but test_data_clone_workflow.py does not "
                   f"copy it into the synthetic clone, so that test dies on a missing file")
 
+
+        print("\n[10] the three grade-file walks agree on what is not a score")
+        # aggregate.py decides grade_files_read; deploy.sh refuses to publish
+        # unless its own count matches. If the two disagree about a directory the
+        # check refuses for ever, and --refresh cannot fix it because
+        # re-aggregating excludes the same file again. deploy_pundits.sh is the
+        # third walk over the same shelf. Derived from the sources, not typed.
+        import re as _re
+        agg = (ROOT / "scripts" / "aggregate.py").read_text()
+        i = agg.index("def load_grades(")
+        agg_skip = set(_re.findall(r'"(_[a-z]+)" in path\.parts', agg[i:i + 600]))
+        dep_skip = set(_re.findall(r'"(_[a-z]+)"', 
+                                   (ROOT / "scripts" / "deploy.sh").read_text()
+                                   .split("on_disk = ")[0][-300:]))
+        pun = (ROOT / "scripts" / "deploy_pundits.sh").read_text()
+        pun_skip = set(_re.findall(r'"(_[a-z]+)"', pun[pun.index("skip = {"):pun.index("skip = {") + 120]))
+        check("aggregate's exclusions were found", "_raw" in agg_skip and "_obsolete" in agg_skip,
+              str(agg_skip))
+        check("deploy.sh excludes everything aggregate does",
+              agg_skip <= dep_skip,
+              f"aggregate skips {sorted(agg_skip)}, deploy.sh skips {sorted(dep_skip)}; "
+              f"a file counted by one and not the other makes the staleness check "
+              f"refuse for ever")
+        check("deploy_pundits.sh does too", agg_skip <= pun_skip,
+              f"pundits skips {sorted(pun_skip)}")
+
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
