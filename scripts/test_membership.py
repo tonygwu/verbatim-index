@@ -26,15 +26,19 @@ directory and runs it there. A default resolved from the CALLER's file or from
 the working directory would resolve into that temporary directory and fail, so
 one check below runs load() from a temporary working directory.
 
-THE SLUG-SET ASSERTION IS ONE-WAY, AND THE BOARD ASSERTION IS WRITTEN TO SURVIVE
-P3. Roster slugs must be a subset of membership slugs, never equal to them: the
-seven are declared here from P1 onward, because membership gates no writer, so
-their blinded copies would land before P3 adds their roster entries and an
-unknown-slug raise would fire on the first cycle. Equality between the two sets
-would therefore be red across P1 and P2, which is how an operator learns to
-ignore a red suite. The leaders BOARD is pinned exactly, as the roster minus the
-seven, which holds today (the seven are not on the roster yet, so it is the 50)
-and still holds after P3 appends them (roster 57, minus seven, still the 50).
+THE SLUG-SET ASSERTION IS ONE-WAY. Roster slugs must be a subset of membership
+slugs, never equal to them: the seven were declared here from P1, before P3 put
+them on the roster, because membership gates no writer and their blinded copies
+could land first. Equality between the two sets would have been red across P1 and
+P2, which is how an operator learns to ignore a red suite. It is STILL one-way
+today, because `cc-wei` is in membership and not on the roster.
+
+P3 LANDED ON 2026-09-18, so the roster now holds 57 and the leaders board holds
+50. The board assertion was written to survive that and did. Section [6] used to
+SIMULATE the change by appending the seven; it appended nothing once they were
+really there, which made it a silent duplicate of section [5]. It now guards the
+change that has not happened yet instead, which is a roster entry arriving with
+no membership entry.
 
 Fixtures are temporary files. Nothing under data/ is read or written. No quota,
 no network.
@@ -199,17 +203,34 @@ def main() -> int:
               f"symmetric difference "
               f"{set(shipped) ^ (set(roster_slugs) | set(SEVEN) | {'cc-wei'})}")
 
-        print("\n[6] the same assertions survive P3, simulated rather than argued")
-        p3_roster = roster_slugs + [s for s in SEVEN if s not in roster_slugs]
-        check("P3: the roster reaches 57", len(p3_roster) == 57, f"got {len(p3_roster)}")
-        check("P3: containment still holds",
-              not [s for s in p3_roster if s not in shipped])
-        check("P3: nobody new reaches the leaders board",
-              not [s for s in M.slugs_on(shipped, "leaders") if s not in p3_roster])
-        check("P3: the leaders board is still the roster minus the seven",
-              M.slugs_on(shipped, "leaders") == [s for s in p3_roster if s not in SEVEN])
-        check("P3: and it is still the 50", len(M.slugs_on(shipped, "leaders")) == 50,
-              f"got {len(M.slugs_on(shipped, 'leaders'))}")
+        print("\n[6] the NEXT roster change cannot slip past containment")
+        # THIS ARM USED TO SIMULATE P3 by appending the seven to the roster and
+        # re-running the checks above. P3 LANDED on 2026-09-18, so the roster
+        # already holds them and that simulation appended nothing: it became a
+        # duplicate of section [5] and stopped testing anything. A test that
+        # cannot fail is not a test, so it now guards the change that has NOT
+        # happened yet.
+        #
+        # The live invariant going forward is that a person added to the roster
+        # without being added to membership.json is caught. Every reader raises
+        # on an undeclared slug, so the failure is loud at run time; this makes
+        # it loud at test time instead.
+        future = roster_slugs + ["someone-new-2027"]
+        missing_now = [s for s in future if s not in shipped]
+        check("a roster entry with no membership entry IS detected",
+              missing_now == ["someone-new-2027"], str(missing_now))
+        check("... and the real roster has no such entry today", 
+              [s for s in roster_slugs if s not in shipped] == [],
+              "containment holds for every slug actually on the roster")
+        raised_new = False
+        try:
+            M.on_board(shipped, "someone-new-2027", "leaders")
+        except RuntimeError:
+            raised_new = True
+        check("... and asking about them RAISES rather than answering False",
+              raised_new,
+              "an undeclared slug must not be silently off-board; that is the "
+              "whole difference between this module and data.get(slug, [])")
 
         print("\n[7] the default path is membership.py's own, not the caller's")
         proc = subprocess.run(
