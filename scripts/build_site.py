@@ -1036,13 +1036,19 @@ def judge_count_word(results: dict) -> str:
     return NUMBER_WORDS.get(n, str(n))
 
 
-def build_method(results: dict, calib: dict, roster: dict) -> str:
+def build_method(results: dict, calib: dict, roster: dict,
+                 on_leaders_board=None) -> str:
     d = results["diagnostics"]
     w = d["weights"]
     # Read from the roster, never written as a literal. The page claimed "a
     # roster of 40" for the whole time the roster held 40, and would have gone
     # on claiming it after the expansion to 50.
-    roster_n = len(roster["roster"])
+    # Membership, not the raw roster length. From P3 the roster carries people
+    # who publish only on the predictions board, so the raw length would claim
+    # "a roster of 57" on a page showing 50 rows. That is the same drift this
+    # comment already records, arriving from the other direction.
+    roster_n = (sum(1 for p in roster["roster"] if on_leaders_board(p["slug"]))
+                if on_leaders_board is not None else len(roster["roster"]))
     # The panel, and how far each judge has actually reached. A judge added
     # partway through the corpus does not hold every transcript, and averaging
     # over "the judges" without saying which ones is how the page came to claim
@@ -1260,6 +1266,17 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     import study_profile as SP
     SP.add_study_arg(ap)
+    # Declared INLINE rather than through membership.add_membership_arg, because
+    # importing membership here would run BEFORE the study dispatch below and
+    # defeat the whole point of the lazy import. test_deploy_pundits.py builds a
+    # synthetic public repo from a typed SCRIPTS tuple that does not carry
+    # membership.py, and must not start carrying it: a typed list of filenames is
+    # the stale-literal defect this repo has already paid for twice. The flag
+    # name is the contract and test_membership_study_scope.py asserts it.
+    ap.add_argument("--membership", default=None,
+                    help="Path to membership.json, which declares which boards each slug "
+                         "publishes on. Defaults to the copy beside this repository's "
+                         "scripts/. Leaders study only; other studies ignore it.")
     args = ap.parse_args()
     # This template is the leaders page and nothing else. Any other study is
     # rendered from its profile by build_study_site.py, so a leaders byte cannot
@@ -1267,6 +1284,19 @@ def main() -> int:
     if args.study != SP.LEGACY_STUDY:
         import build_study_site
         return build_study_site.main_from_args(args)
+    # MEMBERSHIP, imported HERE and not at module scope. test_deploy_pundits.py
+    # builds a synthetic public repo from a typed SCRIPTS tuple and runs this
+    # file inside it, so a module-level import would fail with
+    # ModuleNotFoundError before the study dispatch above could no-op it. The
+    # quota_router import inside grade.fable_accounts is the precedent. Adding
+    # membership.py to that typed tuple would be the stale-list defect this repo
+    # has paid for twice.
+    import membership as MB
+    membership_board = MB.load(args.membership)
+
+    def on_leaders_board(slug: str) -> bool:
+        """Raises on a slug membership has never been told about."""
+        return MB.on_board(membership_board, slug, "leaders")
     # Inputs only. --out is a build artifact in the public clone, not data.
     SP.guard(args.study, args.results, args.audit, args.roster, args.calibration, args.sources)
 
@@ -1327,12 +1357,33 @@ def main() -> int:
     SP.guard(args.study, tdir)
     if not tdir.is_dir():
         sys.exit(f"REFUSING: no graded corpus at {tdir}; cannot report words graded")
+    # MEMBERSHIP decides which transcripts count toward the published total, and
+    # the decision is made OUTSIDE the try. The except below used to be a bare
+    # `except Exception: pass`, so a membership raise inside it would have been
+    # swallowed and the transcript dropped from the total silently, which is the
+    # opposite of what a gate is for. It is now narrowed to the two failures it
+    # was actually written for: a file that is not JSON, and a file that cannot
+    # be read.
     words = 0
+    words_off_board = 0
     for p in tdir.rglob("*.json"):
         try:
-            words += json.loads(p.read_text()).get("word_count", 0)
-        except Exception:
-            pass
+            rec = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if on_leaders_board is not None:
+            slug = rec.get("leader_slug")
+            if not slug:
+                sys.exit(f"REFUSING: {p} carries no leader_slug, so membership cannot "
+                         f"be decided for it. A record with no slug is a defect in "
+                         f"whatever wrote it, not a transcript to count silently.")
+            # Raises on a slug nobody declared. Deliberately NOT a set membership
+            # test: `slug not in board` would read an undeclared slug as merely
+            # off-board and drop its words without a word.
+            if not on_leaders_board(slug):
+                words_off_board += rec.get("word_count", 0)
+                continue
+        words += rec.get("word_count", 0)
     if not words:
         sys.exit(f"REFUSING: {tdir} carries no word_count; cannot report words graded")
 
@@ -1346,7 +1397,7 @@ def main() -> int:
         .replace("__DATA__", json.dumps(rows))
         .replace("__AUDIT_VERSION__", audit_version)
         .replace("__AUDIT_SLUGS__", json.dumps(audit_slugs))
-        .replace("__METHOD__", build_method(results, calib, roster))
+        .replace("__METHOD__", build_method(results, calib, roster, on_leaders_board))
         .replace("__RUNDATE__", datetime.now(timezone.utc).strftime("%d %B %Y"))
         .replace("__N_LEADERS__", str(len(rows)))
         .replace("__N_JUDGES_WORD__", judge_count_word(results))

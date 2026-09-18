@@ -86,7 +86,11 @@ def build_inputs(root: Path, bump: int = 0) -> dict[str, Path]:
         d = blind / leader
         d.mkdir(parents=True, exist_ok=True)
         for t in range(6):
-            (d / f"src{t}.json").write_text(json.dumps({"word_count": 1000}))
+            # leader_slug is REQUIRED: build_site decides membership from the
+            # record, never the path component, so a fixture without it reads
+            # as off-board and the words-graded total comes out zero.
+            (d / f"src{t}.json").write_text(json.dumps(
+                {"leader_slug": leader, "word_count": 1000}))
 
     (root / "calibration.json").write_text(json.dumps({"headline": {}}))
     (root / "sources.json").write_text(json.dumps({}))
@@ -104,7 +108,11 @@ def render(paths: dict[str, Path], out: Path, env: dict | None = None) -> subpro
         [PY, str(REPO / "scripts" / "build_site.py"),
          "--results", str(paths["results"]), "--audit", str(paths["audit"]),
          "--roster", str(paths["roster"]), "--calibration", str(paths["calibration"]),
-         "--sources", str(paths["sources"]), "--out", str(out)],
+         # build_site reads membership and raises on a slug it has not been
+         # told about, so this synthetic roster needs its own file. Derived
+         # from the roster by the same seam aggregate uses, never typed.
+         "--sources", str(paths["sources"]), "--out", str(out),
+         "--membership", str(ri.membership_for(paths["roster"]))],
         capture_output=True, text=True, cwd=REPO, env={**os.environ, **(env or {})})
 
 

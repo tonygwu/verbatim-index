@@ -380,9 +380,15 @@ def test_the_method_section_counts_the_roster(tmp: Path) -> None:
         rpath = tmp / f"roster-{n}.json"
         rpath.write_text(json.dumps(trimmed))
         out = tmp / f"site-{n}.html"
+        # The page now counts who is ON THE BOARD rather than the raw roster
+        # length, because from P3 the roster carries people who publish only on
+        # the predictions board. Putting every padded slug on the leaders board
+        # keeps this test asking its original question: is the number derived,
+        # or is it a literal? A literal gives the same answer for both sizes.
         r = subprocess.run([PY, str(REPO / "scripts" / "build_site.py"),
                             "--results", str(results), "--audit", str(audit),
                             "--roster", str(rpath), "--calibration", str(calib),
+                            "--membership", str(membership_for(rpath)),
                             "--out", str(out)], capture_output=True, text=True)
         if r.returncode != 0:
             check(f"build_site renders a {n}-name roster", False, r.stderr[-300:])
