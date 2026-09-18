@@ -500,6 +500,39 @@ the mix even.
   never before. A refused render must leave the site's data as the last good
   render left it: files newer than the page that points at them is the stale
   pair this repo keeps finding in other forms.
+- **A count derived from the roster is not a count of the board, and since
+  2026-09-18 they are different numbers.** The roster holds 57 and the leaders
+  board holds 50. Adding seven predictions-only people broke FOUR separate
+  counts in the same way, and they were found by sweeping for the pattern rather
+  than one at a time:
+
+  ```
+  status.sh            leaders at 5+ 50/57, leaders at zero 7, every cycle
+  coverage_table.py    leaders with any transcript 50/57
+  fetch_loop.sh        exits when leaders_at_target >= leaders. at_target caps
+                       at 50 against 57, so COMPLETE was UNSATISFIABLE and the
+                       loop would have re-fetched YouTube for ever
+  fetch_happyscribe.py --report-unsearched returned the seven every cycle, so
+                       happyscribe_loop.sh ran a sitemap crawl every cycle
+  ```
+
+  The fetch_loop one is the reason this is a rule and not a note. An unbounded
+  fetch loop is how the IP blocks already recorded in `BACKLOG.md` happen, and
+  repo-3's pundits fetcher was IP-blocked while this was being fixed. The others
+  are the shape this repo already knows: a component reporting a false number
+  every cycle teaches the operator to stop reading the line, and the next real
+  shortfall lands in an output nobody trusts.
+
+  All four now scope through `membership.for_study(study, path)`, the same one
+  function the three P2 readers use, and all four REPORT the excluded people on
+  their own line rather than quietly dropping them, because "deliberately not
+  here" and "missing" are different facts and they were the same number before.
+  A keyed lookup such as `by_slug[slug]` is fine and needs no scoping;
+  `normalize_transcripts.py` in fact requires the seven present, since it refuses
+  a transcript whose slug has no roster entry. It is the COUNTS that lie.
+  Guarded by `scripts/test_coverage_counts_the_board.py`, which extracts and RUNS
+  fetch_loop.sh's own coverage block rather than reading it.
+
 - **Stage by name.** `git add -A` in a shared clone sweeps in another agent's
   untracked work.
 - **Data commits happen inside `data/`.** The root repo is public; nothing
