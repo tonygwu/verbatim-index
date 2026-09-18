@@ -106,8 +106,17 @@ def test_aggregate_emits_ci(tmp: Path) -> None:
                               ("d1_clarity", "d2_insight", "d3_technical_depth")},
                               "coverage": 1.0, "subject_speech_share_pct": 80, "overall": v}}))
     out = tmp / "results.json"
+    # aggregate.py reads membership and raises on a slug it has not been told
+    # about, so this synthetic roster of "ada" and "alan" needs its own file.
+    # Derived from the roster, never typed, and passed explicitly. This is the
+    # only leaders-mode test that shells out directly; the other six inherit the
+    # same seam from test_render_integrity.run_aggregate.
+    mem = tmp / "membership.json"
+    mem.write_text(json.dumps({p["slug"]: ["leaders", "predictions"]
+                               for p in json.loads(roster.read_text())["roster"]}))
     r = subprocess.run([PY, str(REPO / "scripts" / "aggregate.py"), "--grades", str(g),
-                        "--roster", str(roster), "--out", str(out)],
+                        "--roster", str(roster), "--out", str(out),
+                        "--membership", str(mem)],
                        capture_output=True, text=True, cwd=REPO)
     check("aggregate.py runs", r.returncode == 0, r.stderr[-400:])
     if r.returncode != 0:

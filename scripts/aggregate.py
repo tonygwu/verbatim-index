@@ -788,7 +788,9 @@ def main() -> int:
                          "because averaging scores from different rubrics is a silent "
                          "correctness failure rather than a loud one.")
     import study_profile as SP
+    import membership as MB
     SP.add_study_arg(ap)
+    MB.add_membership_arg(ap)
     args = ap.parse_args()
     SP.guard(args.study, args.grades, args.roster, args.transcripts, args.out)
     from data_clone_workflow import guard_aggregate
@@ -956,19 +958,49 @@ def main() -> int:
     # one. Everything still here passed validation.
     usable = grades
 
+    # MEMBERSHIP. Who is on the leaders board is explicit, and this is the reader
+    # that decides the published score: calibrate(), the venue fit, the transcript
+    # rollup and the bootstrap all read `usable`.
+    #
+    # WHY HERE AND NOWHERE EARLIER. grade_files_read was taken at load time, and
+    # deploy.sh refuses to publish unless that number equals the count of grade
+    # files on disk. Filtering before the count is taken makes the two disagree
+    # for ever, so publication would never happen again.
+    #
+    # WHY STUDY-SCOPED. This script is shared with the pundits study, which is
+    # live and whose slugs are not in membership.json. An unscoped reader raises
+    # on the first pundit slug and stops that production on its next cycle.
+    #
+    # An unknown slug RAISES. It is not quietly treated as off-board, because a
+    # slug nobody declared and a slug declared with no boards are different
+    # facts and only one of them is an error.
+    off_board: list[dict] = []
+    if args.study == SP.LEGACY_STUDY:
+        board = MB.load(args.membership)
+        on, off = [], []
+        for g in usable:
+            (on if MB.on_board(board, g["leader_slug"], "leaders") else off).append(g)
+        usable, off_board = on, off
+
     # Every record read is now in exactly one bucket, and the four add up to the
     # files read. If that stops being true a record is being dropped silently,
     # which is how a leader loses evidence without anything saying so.
     # partial_report is the fifth bucket, added 2026-09-16 with the panel rule:
     # a recording missing a panel cell leaves the corpus, and those grades have
     # to be declared here or this guard reads their absence as a silent loss.
-    accounted = len(excluded) + len(unscorable) + len(refusals) + len(usable) + len(partial_report)
+    # off_board is the sixth bucket, added with the membership reader above: a
+    # grade for somebody who is not on this board still EXISTS, so it is declared
+    # here rather than subtracted silently.
+    accounted = (len(excluded) + len(unscorable) + len(refusals) + len(usable)
+                 + len(partial_report) + len(off_board))
     if accounted != grade_files_read:
         raise SystemExit(
             f"records do not add up: read {grade_files_read}, accounted {accounted} "
             f"(excluded {len(excluded)}, unscorable {len(unscorable)}, "
-            f"refused {len(refusals)}, usable {len(usable)}). A record is being "
-            f"dropped or double-counted between load_grades and here.")
+            f"refused {len(refusals)}, usable {len(usable)}, "
+            f"partial_report {len(partial_report)}, off_board {len(off_board)}). "
+            f"A record is being dropped or double-counted between load_grades "
+            f"and here.")
 
     # Pooling scores produced by different rubrics is a silent correctness
     # failure: the numbers still average, they just no longer mean the same
@@ -1235,6 +1267,10 @@ def main() -> int:
         "grade_files_read": grade_files_read,
         "grades_loaded": len(grades),
         "grades_used": len(usable),
+        # Reported at 0 as well as above it. A bucket that appears only when it is
+        # non-empty cannot be distinguished from a bucket nothing computes.
+        "grades_off_board": len(off_board),
+        "off_board_slugs": sorted({g["leader_slug"] for g in off_board}),
         "grades_excluded_validation": sum(1 for g in excluded if g["_excluded"] == "validation_errors"),
         **({"quote_cap": quote_cap_report(grades + excluded)} if is_v2 else {}),
         **({"grades_excluded_unsupported_dimension":

@@ -145,11 +145,37 @@ def build_corpus(root: Path, poison: str | None) -> tuple[Path, Path]:
     return grades, roster_path
 
 
+def membership_for(roster: Path) -> Path:
+    """A membership file putting every slug in `roster` on the leaders board.
+
+    THE ONE SEAM. aggregate.py reads membership and RAISES on a slug that is not
+    declared, which is the whole point of it. Every leaders-mode test in this
+    repository builds a synthetic roster of names like `leader-0` and `alpha`
+    that the real membership.json has never heard of, so without this every one
+    of them exits nonzero. Six test files reach aggregate.py through
+    `run_aggregate` below, so they all inherit this from one place; only
+    test_site_ci.py shells out directly and passes `--membership` itself.
+
+    The file is DERIVED from the roster rather than typed, because a typed list
+    here would be the stale-literal defect this repo has already paid for twice.
+    And it is passed as an explicit `--membership` argument, never through the
+    environment: an environment fallback is exactly the silently-disabled gate
+    the membership work exists to remove.
+    """
+    data = json.loads(roster.read_text())
+    out = roster.parent / "membership.json"
+    out.write_text(json.dumps({p["slug"]: ["leaders", "predictions"]
+                               for p in data["roster"]}, indent=1))
+    return out
+
+
 def run_aggregate(script: Path, grades: Path, roster: Path, out: Path,
-                  cwd: Path = REPO) -> subprocess.CompletedProcess:
+                  cwd: Path = REPO, membership: Path | None = None
+                  ) -> subprocess.CompletedProcess:
     return subprocess.run(
         [PY, str(script), "--grades", str(grades), "--roster", str(roster),
-         "--out", str(out)],
+         "--out", str(out),
+         "--membership", str(membership or membership_for(roster))],
         capture_output=True, text=True, cwd=cwd,
         env={**__import__("os").environ, "PYTHONPATH": str(REPO / "scripts")})
 
@@ -191,11 +217,16 @@ def build_prefix_copy(tmp: Path) -> Path | None:
                       '    excluded = [g for g in grades if g.get("_excluded")]\n'
                       '    usable = [g for g in grades if not g.get("_excluded")]\n', 1)
     # The tally check postdates the fix, so it does not belong in the old copy.
-    tally = src.find("    accounted = len(excluded)")
-    tally_end = src.find("dropped or double-counted between load_grades and here.\")", tally)
+    # Found STRUCTURALLY, by the statement that opens it and the blank line that
+    # closes it, rather than by quoting its failure message. The message names
+    # every bucket and therefore changes whenever a bucket is added: `off_board`
+    # arrived with the membership reader and `partial_report` before it, and a
+    # literal match silently returned None and disabled this whole file.
+    tally = src.find("    accounted = ")
+    tally_end = src.find("\n\n", tally) if tally != -1 else -1
     if -1 in (tally, tally_end):
         return None
-    src = src[:tally] + src[tally_end + len("dropped or double-counted between load_grades and here.\")"):]
+    src = src[:tally] + src[tally_end + 1:]
     p = tmp / "aggregate_prefix.py"
     p.write_text(src)
     return p
