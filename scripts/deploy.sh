@@ -62,8 +62,30 @@ EOF
 
 check_publication_unchanged
 
+# THE PUBLICATION FLOOR. A board that collapsed must not publish over the board
+# that did not. Membership made that reachable: "leader" typed for "leaders"
+# across membership.json is valid JSON naming no unknown slug, and every grade
+# would land off-board, render zero leaders and publish, because the block above
+# prints the count and applies no floor.
+#
+# The floor is the PREVIOUS PUBLISHED COUNT, in site/published.json beside the
+# page. It is not in the data repository, because deploy.sh stays read-only on
+# data. scripts/publication_floor.py carries the reasoning and the one threshold.
+LEADERS_PUBLISHED="$($PY - "$PRODUCTION_DATA" <<'EOF'
+import json, pathlib, sys
+r = json.loads((pathlib.Path(sys.argv[1]) / "results.json").read_text())
+print(sum(1 for l in r["leaders"] if l["status"] == "scored"))
+EOF
+)"
+# Runs on --dry-run too: a dry run is where an operator finds out.
+$PY scripts/publication_floor.py check --site-dir site --count "$LEADERS_PUBLISHED"
+
 if [ "$DRY" -eq 1 ]; then
   echo "--dry-run: rendered site/index.html, published nothing"
   exit 0
 fi
 npx wrangler deploy
+# AFTER the publish, never before: recording a baseline for a publication that
+# failed would raise the floor to a board that never went live.
+$PY scripts/publication_floor.py record --site-dir site --count "$LEADERS_PUBLISHED" \
+    --results "${PRODUCTION_DATA}/results.json" --data-revision "${DATA_REVISION}"

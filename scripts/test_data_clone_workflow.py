@@ -151,8 +151,12 @@ def main():
         (a / 'scripts').mkdir()
         (a / '.venv/bin').mkdir(parents=True)
         (a / '.venv/bin/python').symlink_to(sys.executable)
+        # publication_floor.py is here because deploy.sh calls it. This list is
+        # typed, which is the stale-literal defect this repo has paid for twice,
+        # so test_deploy_floor.py now asserts that every script deploy.sh invokes
+        # appears in it. Add to both, or that assertion fails.
         for name in ('data_clone_workflow.py', 'study_profile.py', 'daemon_guard.sh', 'deploy_source.sh',
-                     'deploy.sh', 'deploy_predictions.sh'):
+                     'deploy.sh', 'deploy_predictions.sh', 'publication_floor.py'):
             shutil.copy2(REPO / 'scripts' / name, a / 'scripts' / name)
         # data_clone_workflow resolves the production key through the study profile.
         shutil.copytree(REPO / 'profiles', a / 'profiles')

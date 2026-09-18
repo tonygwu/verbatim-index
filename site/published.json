@@ -1,0 +1,8 @@
+{
+ "leaders_published": 50,
+ "published_at_utc": "2026-09-18T06:41:48Z",
+ "results_sha256": "965f799a0f23f20fb69acc765c3d5ce7623294424ab91c1cac2be53ef37103ba",
+ "data_revision": "b55217a9851ef88115c89212cc471da2ad8c878d",
+ "source": "seeded",
+ "note": "SEEDED, not written by a deploy. Counted from the LIVE board at https://verbatim-index.tonygwu.com on 2026-09-18: the embedded DATA array holds 50 rows, ranks 1 to 50, Yann LeCun first and Marc Benioff last, matching data/results.json. Seeded so the next real deploy is GUARDED rather than taking the unguarded bootstrap path. Delete this file to bootstrap again; scripts/publication_floor.py carries the reasoning."
+}
