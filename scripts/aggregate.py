@@ -975,8 +975,8 @@ def main() -> int:
     # slug nobody declared and a slug declared with no boards are different
     # facts and only one of them is an error.
     off_board: list[dict] = []
-    if args.study == SP.LEGACY_STUDY:
-        board = MB.load(args.membership)
+    board = MB.for_study(args.study, args.membership)
+    if board is not None:
         on, off = [], []
         for g in usable:
             (on if MB.on_board(board, g["leader_slug"], "leaders") else off).append(g)

@@ -119,6 +119,37 @@ def load(path: str | Path | None = None) -> dict[str, list[str]]:
     return data
 
 
+def for_study(study: str, path: str | Path | None = None) -> dict[str, list[str]] | None:
+    """The board for `study`, or None when membership does not apply to it.
+
+    THE SCOPING RULE, IN ONE PLACE. membership.json describes the leaders study
+    alone. grade.py, aggregate.py and build_site.py are shared with the pundits
+    study, which is live in repo-3 and whose slugs are not in this file, so an
+    unscoped reader would raise on the first pundit slug and stop that
+    production on its next cycle.
+
+    It lives here rather than as `if args.study == SP.LEGACY_STUDY:` repeated in
+    three readers, because a condition written three times is a condition that
+    can be got right twice. A caller writes:
+
+        board = MB.for_study(args.study, args.membership)
+        if board is not None:
+            ...
+
+    NOTE FOR ANYONE TESTING THIS: the pundits half cannot be proved end to end
+    from repo-0. A pundits grade.py run refuses at "data-pundits is not a git
+    checkout" and a pundits aggregate.py run refuses at the v2 contract check,
+    both of them long before any reader, because repo-3 owns pundits production
+    and this clone has no data-pundits link. That is why the scoping is a
+    function with its own direct test rather than something only an end-to-end
+    run could exercise.
+    """
+    import study_profile as SP
+    if study != SP.LEGACY_STUDY:
+        return None
+    return load(path)
+
+
 def boards_for(data: dict[str, list[str]], slug: str) -> list[str]:
     """The boards `slug` belongs to. An unknown slug RAISES.
 

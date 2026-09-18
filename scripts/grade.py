@@ -2138,8 +2138,8 @@ def main() -> int:
     # The slug is taken from the RECORD, never from the path component: a
     # directory name is renameable and the record is the fact.
     membership_dropped: dict[str, int] = {}
-    if args.study == SP.LEGACY_STUDY:
-        board = MB.load(args.membership)
+    board = MB.for_study(args.study, args.membership)
+    if board is not None:
         kept = []
         for p in paths:
             slug = json.loads(p.read_text())["leader_slug"]

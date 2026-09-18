@@ -1292,7 +1292,7 @@ def main() -> int:
     # membership.py to that typed tuple would be the stale-list defect this repo
     # has paid for twice.
     import membership as MB
-    membership_board = MB.load(args.membership)
+    membership_board = MB.for_study(args.study, args.membership)
 
     def on_leaders_board(slug: str) -> bool:
         """Raises on a slug membership has never been told about."""
