@@ -141,6 +141,34 @@ trees and the grades tree are tracked, so the tag is a real rollback as well as
 this audit's enumeration source. P2 itself needs no data rollback, because it
 wrote nothing to `data/`.
 
+## The loop's own pipeline was run end to end, on a copy
+
+The unit suite covers each changed script in isolation. Nothing ran the CHAIN
+`grade_loop.sh` runs, and this day changed ten files in it. So the chain was run,
+against a six-leader copy of the corpus in a scratch directory, with the loop's
+own argv at each stage.
+
+```
+dedupe --sweep      youtube 24 transcripts / 6 leaders; sweep_retired 0,
+                    orphaned_grades_removed 0, orphans_skipped_other_slug 0
+qa_transcripts      24 examined, summary.generated_at_utc stamped
+normalize blinded   698 substitutions, transcripts_with_zero_blind_hits []
+normalize open      0 substitutions
+grade.py            membership dropped nothing; --limit-per-leader 0 then
+                    reported "keeping 0 transcripts, dropping 22 across 6 leaders"
+aggregate           6 leaders, grades_off_board 0, grade_files_read 285
+build_site          88 KB, 6 leaders, "A roster of 6", "Words graded 324k"
+```
+
+Every stage completed. `normalize` accepted the QA report that `qa_transcripts`
+had just stamped, which is the P0-4b handshake, and `grade.py` reached its
+`--limit-per-leader` accounting, which is past the membership gate and above the
+account router.
+
+PRODUCTION WAS NOT TOUCHED. The corpus fingerprint is byte-identical before and
+after, and `git -C data status --short` is empty. `dedupe --sweep` did read the
+real `transcripts_hs`, because that flag defaults to it, and retired nothing.
+
 ## What this audit does NOT cover
 
 - **P3 and P4.** The seven are not on the roster yet and no transcript of theirs
