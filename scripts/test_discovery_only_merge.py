@@ -119,22 +119,31 @@ def main() -> int:
         check("... and that is only safe because the roster held them ALL",
               sum(1 for s in slugs2 if s.startswith("old-")) == 50)
 
-        print("\n[3] the destructive case: --only omitted AND the roster scoped")
-        # The real shape of the accident. A roster trimmed to the seven, or a
-        # --roster pointing at a partial file, with --only forgotten.
+        print("\n[3] the destructive case is now REFUSED, not merely documented")
+        # THIS ARM USED TO ASSERT THE DAMAGE. It ran a scoped roster without
+        # --only, watched all 50 leaders disappear, and recorded that exit 0 was
+        # what made it dangerous. discover_sources.py now refuses instead, when
+        # and only when the run covers strictly fewer people than the file
+        # already holds. The arm was rewritten rather than deleted, because the
+        # shape of the accident is the thing worth keeping.
         out.write_text(json.dumps(existing))
         small = tmp / "seven.json"
         small.write_text(json.dumps({"roster": [
             {"slug": "new-one", "name": "New One", "company": "C"}]}))
         r3 = run_discovery(tmp, small, out, None)
-        check("the run succeeds, which is what makes this dangerous", r3.returncode == 0,
-              r3.stderr[-300:])
+        check("the run is refused", r3.returncode != 0,
+              f"rc={r3.returncode}; it used to exit 0 having deleted 50 leaders")
+        combined = r3.stdout + r3.stderr
+        check("... and says it would have DELETED people", "DELETE" in combined,
+              combined.strip()[-300:])
+        check("... naming how many", "50" in combined, combined.strip()[-300:])
+        check("... and tells the operator the flag to use", "--only" in combined,
+              combined.strip()[-300:])
         got3 = json.loads(out.read_text())
-        slugs3 = [x["leader_slug"] for x in got3["leaders"]]
-        check("ALL 50 EXISTING LEADERS WERE DELETED", slugs3 == ["new-one"],
-              f"got {slugs3[:5]}")
-        check("and the file says total_sources 1", got3["total_sources"] == 1,
-              str(got3["total_sources"]))
+        check("THE FILE IS UNTOUCHED",
+              sorted(x["leader_slug"] for x in got3["leaders"])
+              == sorted(x["leader_slug"] for x in existing["leaders"]),
+              "a refusal that still wrote the file would be worse than none")
 
         print("\n[4] the same run WITH --only is harmless")
         out.write_text(json.dumps(existing))
@@ -147,8 +156,10 @@ def main() -> int:
 
     print(f"\n{passed} passed, {failed} failed")
     print("\nTHE RULE: any discovery run that does not cover the WHOLE roster must "
-          "pass --only. There is no guard inside discover_sources.py; the flag is "
-          "the guard.")
+          "pass --only, which MERGES. Since 2026-09-18 discover_sources.py also "
+          "refuses a run that would drop people the file already holds, so the "
+          "flag is no longer the only thing standing between a scoped crawl and "
+          "2,000 deleted sources.")
     return 1 if failed else 0
 
 

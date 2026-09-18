@@ -354,9 +354,34 @@ def main() -> int:
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     existing = {}
-    if Path(args.out).exists() and args.only:
+    prev_slugs: set[str] = set()
+    if Path(args.out).exists():
         prev = json.loads(Path(args.out).read_text())
-        existing = {r["leader_slug"]: r for r in prev.get("leaders", [])}
+        prev_slugs = {r["leader_slug"] for r in prev.get("leaders", [])}
+        if args.only:
+            existing = {r["leader_slug"]: r for r in prev.get("leaders", [])}
+
+    # THE GUARD THE FLAG USED TO BE ON ITS OWN. Without --only this file is
+    # REPLACED by the current run, which is correct for a full-roster crawl and
+    # catastrophic for a scoped one: a roster trimmed to seven people, or a
+    # --roster pointing at a partial file, deletes every other leader's sources
+    # and exits 0. build_site renders discovered.json per row, so the loss is
+    # visible on the published page.
+    #
+    # Refused only when this run covers STRICTLY FEWER people than the file
+    # already holds, so a genuine full-roster crawl is untouched, and a crawl
+    # that GAINS people is untouched too.
+    if not args.only and prev_slugs:
+        would_drop = sorted(prev_slugs - {r["leader_slug"] for r in results})
+        if would_drop:
+            raise SystemExit(
+                f"REFUSING: this run covers {len(results)} leader(s) but "
+                f"{args.out} already holds {len(prev_slugs)}, so writing it would "
+                f"DELETE the sources of {len(would_drop)}: "
+                f"{', '.join(would_drop[:8])}{' ...' if len(would_drop) > 8 else ''}. "
+                f"Pass --only with the slugs you meant to refresh, which merges "
+                f"instead of replacing. If you really intend to rebuild the whole "
+                f"file from a smaller roster, move the old one aside first.")
     for r in results:
         existing[r["leader_slug"]] = r
     merged = sorted(existing.values(), key=lambda r: r["leader_slug"])
