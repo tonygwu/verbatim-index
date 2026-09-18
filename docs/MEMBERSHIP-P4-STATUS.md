@@ -1,6 +1,6 @@
 # P4 status: what is ready, what is parked, and one hazard P3 created
 
-P1, P2 and most of P3 are done. P4 is the phase that fetches the seven's
+P1, P2 and P3 are done, discovery included. P4 is the phase that fetches the seven's
 recordings, extracts and verifies their predictions, and publishes. Most of it
 cannot run here, and this records exactly why, what the commands are, and one new
 hazard that the roster change introduced.
@@ -29,33 +29,35 @@ lookups may well be public-API, but the MATCHER is a model and the default is on
 Treat this stage as spending until somebody measures a run with the matcher
 pinned off.
 
-### Discovery has RUN. This section is kept for the fetch, which is still blocked
+### Discovery HAS RUN. Fetching is what is still blocked
 
-`repo-3/data-pundits/logs/NEEDS_IP_ROTATION` exists, and that loop's log reads:
+Discovery completed on 2026-09-18: 98 candidates for the seven, 14 each, the
+existing 50 byte-identical, and all 98 screened before any fetch. Full record in
+`docs/MEMBERSHIP-P3-DISCOVERY.md`, including three `tom-lee` candidates that are
+the One Medical physician rather than Fundstrat's Thomas J. Lee.
+
+It ran because the earlier reason for parking it was wrong. Discovery makes no
+caption requests at all: `caption_probe()` is defined in `discover_sources.py`
+and never called, and one `ytsearch` probe returned results normally. The block is
+per-endpoint. The real problem, found while checking, was that leaders discovery
+had NO pacing, because `9925c0e` fixed `discover_pundits.py` and left this path
+at eight unpaced workers. That is fixed and the run used three workers at 1.5s.
+
+**FETCHING is still blocked.** `repo-3/data-pundits/logs/NEEDS_IP_ROTATION`
+exists and that loop's log reads:
 
 ```
 [2026-09-18T07:20:57Z]   #  BLOCKED on IP 187.14.233.80
 [2026-09-18T07:20:57Z]   #  ROTATE THE VPN TO A NEW EXIT. The loop re-probes every 60s
 ```
 
-repo-3's pundits fetcher is IP-blocked by YouTube on this machine right now and
-is polling for a new exit. A discovery run from the same address would fail and
-could deepen a block another clone's production is actively recovering from.
+Fetching is exactly the caption endpoint that is blocked, so it must wait for the
+rotation. repo-3's loop resumes by itself the moment a new exit works.
 
-**The command, when the VPN has rotated and repo-3 has resumed:**
-
-```
-.venv/bin/python scripts/discover_sources.py \
-  --roster data/roster/final.json \
-  --out data/sources/discovered.json \
-  --only cathie-wood,marc-andreessen,chamath-palihapitiya,david-sacks,bill-gurley,vinod-khosla,tom-lee
-```
-
-**`--only` is mandatory and is the whole guard.** Without it the other 50
-leaders' source lists are deleted, because `discover_sources.py` builds its
-`existing` map only when the flag is present. That is now asserted by
-`scripts/test_discovery_only_merge.py`, which proves all four arms including the
-destructive one, with `discover()` stubbed so it makes no request.
+**If discovery is ever re-run, `--only` is mandatory.** Without it the other 50
+leaders' source lists are replaced by that run alone. `discover_sources.py` now
+also refuses a run that would drop anyone the file already holds, and
+`scripts/test_discovery_only_merge.py` proves both.
 
 ## THE HAZARD P3 CREATED, which is new and is not in the plan
 
@@ -119,7 +121,7 @@ board it produces today.
 
 Serialised, repo-0 only, from the plan's P4 revision:
 
-1. discovery, `--only` pinned, after the VPN rotates
+1. ~~discovery~~ DONE 2026-09-18, and the candidates are already screened
 2. fetch into `data/transcripts_web/<slug>/`, **never** `data/transcripts/`; if
    web transcripts enter the graded shelf, `normalize` derives them, `grade`
    scores them, `calibrate` pools them and all 50 leaders' scores move
