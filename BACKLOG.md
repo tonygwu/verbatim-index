@@ -413,6 +413,47 @@ they were filed (50aeaac).
   the matcher pinned off and record what it actually costs. Until then treat the
   stage as spending. The condition that brings it back is the first P4 run.
 
+- **VP-16 is now blocked on a representation question, not on research.** Filed
+  2026-09-18. `scripts/statement_date_evidence.py` finds the real year for five
+  of the affected recordings, each verified against its own title:
+
+  ```
+  jeff-bezos  src-pnsjkt         2019 -> 1998   "Jeff Bezos - March 1998, earliest long speech"
+  bill-gates  thurrott-com       2023 -> 1996   "Microsoft PDC 1996 Keynote with Bill Gates"
+  bill-gates  ...ces2005-5vjge2  2013 -> 2005   "CES 2005 - Microsoft Keynote - Bill Gates"
+  bill-gates  carnegie-mellon    2012 -> 2009   "Bill Gates - Keynote Address- ICTD 2009"
+  vlad-tenev  cnbc-events        2022 -> 2021   "Watch CNBC's 2021 D50 Summit Interview"
+  ```
+
+  It was NOT applied, and the reason is worth reading before anyone tries.
+  `source.statement_date` is a FULL ISO DATE, today carrying the upload date with
+  `statement_date_basis: "youtube_upload_date"`. The evidence gives a YEAR:
+
+  ```
+  carnegie-mellon-qatar   kind=year   '2009'
+  microsoftces2005-5vjge2 kind=year   '2005'
+  thurrott-com--sfi3q     kind=year   '1996'
+  src-pnsjkt              kind=year   '1998'
+  cnbc-events-bgjbuj      kind=year   '2021'
+  ```
+
+  Writing `1996-01-01` would invent a day and a month. That is not cosmetic:
+  `phase2_resolvability.py:179` adds a horizon span FROM the statement date, so a
+  fabricated January shifts every relative deadline by up to a year, and the
+  whole point of VP-16 is that a wrong statement date flips whether a prediction
+  came true. Using the true year with a wrong day trades one wrong answer for a
+  quieter one.
+
+  So the repair needs a DECISION rather than more research: either
+  `statement_date` gains a companion precision field, or the resolver learns to
+  take a year-only statement date, or each of the five gets its exact date found
+  by hand. The first two are schema changes and that rail was not granted for
+  this run.
+
+  The condition that brings it back: the operator picks one of those three. The
+  evidence is already gathered and reproducible with
+  `.venv/bin/python scripts/statement_date_evidence.py --only bill-gates,jeff-bezos,andy-jassy,lisa-su,vlad-tenev,arvind-krishna`.
+
 ## Site rendering
 
 - **`test_the_method_section_counts_the_roster` renders against whichever data
