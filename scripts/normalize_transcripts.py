@@ -735,6 +735,42 @@ def require_qa_covers_shelf(qa: dict, shelf: Path, qa_path: Path) -> None:
             f"it: {', '.join(sorted(stale)[:10])}. Re-run QA:\n  {QA_COMMAND}")
 
 
+def _without_stamp(record: dict) -> dict:
+    out = dict(record)
+    norm = dict(out.get("normalization") or {})
+    norm.pop("normalized_at_utc", None)
+    out["normalization"] = norm
+    return out
+
+
+def write_if_changed(dest: Path, rec_out: dict) -> str:
+    """Write a derived record, unless the file already holds the same content.
+
+    Returns "unchanged" when the existing file equals `rec_out` in everything but
+    `normalized_at_utc`, and leaves that file untouched, bytes and stamp both.
+    Returns "written" otherwise, including when the file is missing or unreadable.
+
+    Two consumers depend on this. The contract v2 grade cache keys on the sha256
+    of the whole file, so rewriting identical text with a new stamp made every
+    grade of it stale: MEASURED 2026-09-17, a re-normalize of the pundits corpus
+    changed 114 of 114 files, and only in this one field. And
+    `withdraw_sources.regrade()` reads the stamp as when the text was written, so
+    restamping unchanged text made every grade look older than its input.
+    """
+    if dest.exists():
+        try:
+            old = json.loads(dest.read_text())
+        except (OSError, ValueError):
+            old = None
+        if isinstance(old, dict) and _without_stamp(old) == _without_stamp(rec_out):
+            return "unchanged"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(rec_out, ensure_ascii=False, indent=1))
+    os.replace(tmp, dest)
+    return "written"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--transcripts", required=True)
@@ -806,6 +842,7 @@ def main() -> int:
     out_root.mkdir(parents=True, exist_ok=True)
 
     entries = []
+    kept_unchanged = 0
     skipped = 0
     for path in sorted(Path(args.transcripts).rglob("*.json")):
         if path.name.endswith(".json.tmp"):
@@ -861,10 +898,8 @@ def main() -> int:
         # The original identity is kept out of the graded payload but retained
         # here in the record for the aggregation step to join on.
         dest = out_root / slug / f"{sid}.json"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(rec_out, ensure_ascii=False, indent=1))
-        os.replace(tmp, dest)
+        if write_if_changed(dest, rec_out) == "unchanged":
+            kept_unchanged += 1
 
         entries.append({
             "leader_slug": slug, "source_id": sid,
@@ -887,7 +922,10 @@ def main() -> int:
 
     summary = {
         "mode": args.mode,
-        "written": len(entries),
+        "written": len(entries) - kept_unchanged,
+        # Files whose content matched what was already on disk, left untouched
+        # so their input hash and their normalized_at_utc do not move.
+        "kept_unchanged": kept_unchanged,
         "skipped_qa_reject": skipped,
         "prune": prune,
         "total_repair_substitutions": sum(e["repair_substitutions"] for e in entries),
