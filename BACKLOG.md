@@ -41,16 +41,90 @@ plan was right when it was written and the tree has moved since.
   have published. That is the same shape the plan spent a paragraph keeping out
   of `membership.py`, arriving one file further down.
 
-  NOT fixed here, because P2 is not implemented and the floor is a design choice
-  the plan owes a number and a reason. Two candidate derivations, both cheap:
-  count the membership leaders board (`len(slugs_on(data, "leaders"))`, 50 today
-  and 50 after P3, which is the number the board is supposed to hold), or compare
-  against `len(leaders) + len(unranked)` and leave `unscored` out. Decide it
-  before writing the `deploy.sh` guard, and change
-  `test_data_clone_workflow.py:177-178` in the same commit: its fixture writes
-  `{"leaders": [], "diagnostics": {...}}` with no `unranked` or `unscored` key at
-  all, so a floor reading those keys raises `KeyError` there rather than failing
-  the assertion the plan expects.
+  NOT fixed here, because P2 is not implemented.
+
+  **DECIDED BY THE OPERATOR 2026-09-17: the floor is derived from the PREVIOUS
+  PUBLISHED COUNT, not from the roster and not from the membership board.** The
+  two derivations offered alongside it were rejected with their costs understood.
+  Counting the membership leaders board is the tightest guard and still refuses
+  when a real leader legitimately drops under `MIN_TRANSCRIPTS_TO_RANK`, which is
+  arm C above. `len(leaders) + len(unranked)` survives that but is blind to slow
+  erosion. The previous published count is the only one of the three that catches
+  a board eroding 50 -> 40 over weeks, and the operator took its costs
+  deliberately: it needs state that `deploy.sh` does not keep, a first-run
+  bootstrap, and a tolerance that is itself a typed number.
+
+  **THE CONSTRAINT THAT DECIDES WHERE THE STATE LIVES, and it is not in the
+  plan.** `AGENTS.md:127` records that `deploy.sh` stays READ-ONLY ON DATA, and
+  the only write to `PRODUCTION_DATA` in the script is the `--refresh` aggregate
+  at `scripts/deploy.sh:18`. So the previous published count may NOT be written
+  into the data repository, which is the obvious place and the wrong one. It has
+  to live where `deploy.sh` already writes, or be read without being written.
+  Three candidates, in the order I would try them:
+
+  1. `site/published.json`, written beside `site/index.html`, which `deploy.sh`
+     already writes, and committed to the PUBLIC repo so every clone sees the
+     same number through git. Records the count, the `results.json` digest and
+     `published_at_utc`. Breaks no documented rule. Its failure mode is a deploy
+     from a clone that has not pulled, reading a stale count; `--data-revision`
+     already pins the data side and code staleness is an existing hazard.
+  2. Read the live site over the network and count the rows. No state at all and
+     it cannot drift, because it IS the published board. Costs a network
+     dependency and HTML parsing inside a publication guard, which is a poor
+     place for either.
+  3. Extend `site/og.meta.json`, which already records the rows that were drawn
+     (`scripts/test_og_card_rows.py`). Cheapest diff, but it overloads a social-
+     card sidecar with a publication guard, and the two will be edited by
+     different people for different reasons.
+
+  **The tolerance is a typed number and there is no way to derive it**, so put it
+  in ONE place, name it, and print it on every deploy whether or not it fires. A
+  guard whose threshold is invisible until it refuses is one an operator
+  bypasses. The plan's own reasoning applies: too tight and `grade_loop.sh:237`
+  prints AGGREGATE FAILED every cycle while the site serves the last good build.
+
+  **The first run has no previous count.** Bootstrap must be explicit and loud,
+  not a silent pass. An absent `site/published.json` should print that it is
+  bootstrapping and name the count it is recording, so the one deploy that cannot
+  be guarded says so rather than looking guarded.
+
+  Change `test_data_clone_workflow.py:177-178` in the same commit whatever the
+  derivation: its fixture writes `{"leaders": [], "diagnostics": {...}}` with no
+  `unranked` or `unscored` key at all, so a floor reading those keys raises
+  `KeyError` there rather than failing the assertion the plan expects. Under the
+  decided derivation that fixture also needs a previous-count file, or the
+  zero-leader deploy it asserts will take the bootstrap path and pass for the
+  wrong reason.
+
+- **`aggregate.py` applies membership to the GRADES only, never to the roster
+  iteration. DECIDED BY THE OPERATOR 2026-09-17.** Filed 2026-09-17. The plan
+  specifies the grade filter at `usable = grades` and says nothing about the
+  roster loop at `aggregate.py:1109`, which iterates every roster person and
+  appends one with no grades as `status: "no_grades"`. The review could not tell
+  from the plan which behaviour was intended, because filtering the roster too
+  would have made the plan's original floor work.
+
+  The operator chose NOT to filter the roster. So from P3 the seven investors
+  appear in the leaders `results.json` under `unscored` with `status:
+  "no_grades"`, visible in diagnostics and absent from the page. The reason is
+  that `results.json` stays a faithful record of what the roster held, and
+  membership decides only what is RENDERED. That reading is consistent with the
+  plan's decisive rule, which is about reads and writes rather than about what
+  the record may mention.
+
+  Two consequences to carry into P2, neither of them blocking:
+
+  - `unscored` becomes non-empty for the first time. Anything that treats an
+    empty `unscored` as normal will see seven entries. `results.json` is read by
+    `deploy.sh`, `coverage_table.py` and `build_site.py`; check each before the
+    P3 commit, not after.
+  - This is WHY the floor could not be derived from the roster sum. The two
+    decisions are linked and were taken together: the roster sum stays 57 after
+    P3 while the published count stays 50, so the previous-published-count
+    derivation above is doing the work the roster sum cannot.
+
+  Nothing to do until P2 wires the aggregate reader. Recorded so the next pass
+  does not re-open a settled question.
 
 - **The plan's P2 test inventory counts `aggregate.py` invocations and never
   counts `build_site.py` invocations, and `build_site.py` is one of the three
