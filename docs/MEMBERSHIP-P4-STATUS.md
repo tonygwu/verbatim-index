@@ -122,19 +122,36 @@ board it produces today.
 Serialised, repo-0 only, from the plan's P4 revision:
 
 1. ~~discovery~~ DONE 2026-09-18, and the candidates are already screened
-2. fetch into `data/transcripts_web/<slug>/`, **never** `data/transcripts/`; if
+2. **REBUILD THE FETCH MANIFEST FIRST.** The seven's 98 sources are in
+   `discovered.json` and NOT in `data/sources/all.jsonl`, which is what
+   `fetch_transcripts.py --manifest` reads. Checked 2026-09-18: the manifest
+   holds 801 rows across 50 slugs and 0 rows for any of the seven, so a fetch
+   today would silently fetch nothing for them.
+
+   `sources_to_manifest.py` writes the manifest WHOLESALE from discovered.json
+   (`open(args.manifest, "w")`), unlike the aliases beside it, which merge. That
+   is the behaviour `coverage_table.py` already warns about: "rebuilding
+   data/sources/all.jsonl from discovered.json drops candidates already
+   fetched". It costs nothing real, because those transcripts and their grades
+   are already on disk and valid, but the IDENT column will move for the 17
+   leaders currently over 100% on FET%.
+
+   Not done here, because the manifest is only needed for fetching and fetching
+   is blocked. Running it now would change production data for no benefit.
+
+3. fetch into `data/transcripts_web/<slug>/`, **never** `data/transcripts/`; if
    web transcripts enter the graded shelf, `normalize` derives them, `grade`
    scores them, `calibrate` pools them and all 50 leaders' scores move
-3. `identity_screen.py` over the new transcripts BEFORE extraction, since
+4. `identity_screen.py` over the new transcripts BEFORE extraction, since
    extraction is the first stage that spends
-4. `extract_predictions.py --leaders <the seven>`, `--force` forbidden
-5. verification, then `market_consensus.py --leaders <the seven>`
-6. `aggregate_predictions.py`
-7. `score_predictions.py --trend` — **`--trend` is not optional**: omitting it
+5. `extract_predictions.py --leaders <the seven>`, `--force` forbidden
+6. verification, then `market_consensus.py --leaders <the seven>`
+7. `aggregate_predictions.py`
+8. `score_predictions.py --trend` — **`--trend` is not optional**: omitting it
    scores 114 instead of 117 and drops Aaron Levie and Dara Khosrowshahi off the
    board, which reads as the supplemental corpus deleting two unrelated leaders
-8. build, then `deploy_predictions.sh --production-data ../data --data-revision <FULL SHA>`
+9. build, then `deploy_predictions.sh --production-data ../data --data-revision <FULL SHA>`
 
-Step 3 is an addition to the plan. The screen did not exist when the plan was
-written, and running it before step 4 is what makes the seven's identity problem
+Step 4 is an addition to the plan. The screen did not exist when the plan was
+written, and running it before step 5 is what makes the seven's identity problem
 cheap instead of judge-priced.
