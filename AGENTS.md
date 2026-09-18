@@ -1187,6 +1187,22 @@ new grades incomparable with the corpus already graded.
 - The roster, 50 people: `data/roster/final.json`, with the expansion reasoning
   and the two meanings of `longform_availability` in
   `docs/ROSTER-EXPANSION-2026-09-10.md`
+- Board membership: `membership.json` at the public repo root, slug to boards
+  only so no person metadata leaves the private repo, read through
+  `scripts/membership.py` and nothing else. 58 entries: the 50 on the roster
+  with both boards, the seven investors with `predictions` alone, and `cc-wei`
+  with none. **NOTHING READS IT YET.** P1 of `docs/plans/board-membership-2026-09-16.md`
+  added the file and the module; P2 wires grade, aggregate and build_site and
+  must replace this sentence. Editing it today changes no published number.
+  The module raises on a missing file, malformed JSON, an unknown slug or a
+  board name outside `BOARDS`, and never defaults to empty, because
+  `data.get(slug, [])` turning an unknown slug into an empty board is the whole
+  defect it exists to refuse. Every reader will be study-scoped: membership is
+  leaders-only, and pundits slugs are not in this file. Membership decides what
+  is READ, never what is WRITTEN, so no writer may consult it; an earlier draft
+  that gated normalize's writes would have deleted 153 derived transcripts and
+  orphaned 514 grades under `prune_orphans`' 25% ceiling. Proof:
+  `.venv/bin/python scripts/test_membership.py`.
 - Corpus-integrity findings and their re-derivation:
   `docs/CORPUS-INTEGRITY-2026-09-10.md`, `docs/CORPUS-INTEGRITY-FOLLOWUP.md`,
   and the withdrawal manifest `docs/withdrawals-2026-09-10.json`. The re-grade
