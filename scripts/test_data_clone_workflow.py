@@ -160,6 +160,11 @@ def main():
             shutil.copy2(REPO / 'scripts' / name, a / 'scripts' / name)
         # data_clone_workflow resolves the production key through the study profile.
         shutil.copytree(REPO / 'profiles', a / 'profiles')
+        # membership.json is a RENDER INPUT for the leaderboard since P2, so the
+        # publication fingerprint covers it and refuses when it is missing. Every
+        # real clone has it, because it is tracked in the public repository; this
+        # synthetic one has to be given it explicitly.
+        shutil.copy2(REPO / 'membership.json', a / 'membership.json')
         p = run('bash', '-c', '. scripts/daemon_guard.sh; require_daemon_clone', cwd=a, ok=False)
         assert p.returncode and 'experiment' in p.stderr
         for script in ('deploy.sh', 'deploy_predictions.sh'):
