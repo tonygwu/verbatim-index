@@ -73,6 +73,10 @@ def pct(num: int, den: int) -> float | None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=None)
+    ap.add_argument("--membership", default=None,
+                    help="membership.json, which decides who is on the leaders board. "
+                         "Defaults to the copy beside this repository's scripts/. "
+                         "Coverage is counted against the BOARD, not the roster.")
     import study_profile as SP
     SP.add_study_arg(ap)
     args = ap.parse_args()
@@ -83,6 +87,21 @@ def main() -> int:
     SP.guard(args.study, D)
 
     roster = json.loads((D / "roster/final.json").read_text())["roster"]
+
+    # COVERAGE IS COUNTED AGAINST THE BOARD, NOT THE ROSTER. Since 2026-09-18 the
+    # roster carries seven people who publish on the predictions board only, and
+    # grade.py drops them, so they can never have a leaders transcript. Counting
+    # them in the denominator printed "50/57" and "leaders at zero 7" on every
+    # run, which is a permanent false shortfall in the line an operator reads to
+    # decide whether fetching is finished.
+    off_board = []
+    if args.study == SP.LEGACY_STUDY:
+        import membership as MB
+        board = MB.for_study(args.study, args.membership)
+        if board is not None:
+            off_board = [p for p in roster
+                         if not MB.on_board(board, p["slug"], "leaders")]
+            roster = [p for p in roster if MB.on_board(board, p["slug"], "leaders")]
 
     # 1. identified: ranked candidates the discovery step produced
     identified: Counter = Counter()
@@ -346,6 +365,12 @@ def main() -> int:
     print(f"  leaders with any transcript : {started}/{len(rows)}")
     print(f"  leaders at target ({TARGET})       : {sum(1 for r in rows if r['fetched'] >= TARGET)}/{len(rows)}")
     print(f"  leaders with any grade      : {sum(1 for r in rows if r['graded'] > 0)}/{len(rows)}")
+    if off_board:
+        # Named, not hidden. "Deliberately not here" and "missing" are different
+        # facts, and this line exists because they were the same number before.
+        print(f"  off the leaders board       : {len(off_board)} on the roster for the "
+              f"predictions board only, excluded from every count above "
+              f"({', '.join(p['slug'] for p in off_board)})")
     print(f"  remaining to fetch          : {max(0, len(rows) * TARGET - tot['fetched'])} transcripts")
     sets = [by_judge_tx.get(j, set()) for j in judges]
     # "Graded by every judge" is a statement about the PUBLISHED score, so it

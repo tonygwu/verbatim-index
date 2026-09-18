@@ -54,6 +54,44 @@ ROSTER = [
     {"slug": "bob", "name": "Bob Metcalfe", "company": "3Com"},
 ]
 
+
+def membership_for(root: Path) -> Path:
+    """Put every fixture slug on the leaders board, derived from ROSTER.
+
+    coverage_table counts against the BOARD since 2026-09-18 and raises on a slug
+    membership has not been told about, so a synthetic roster needs its own file.
+    Derived, never typed, and passed as an explicit argument.
+    """
+    # Derived from the roster THIS fixture wrote, not from the ROSTER constant:
+    # one section of this file builds its own roster with extra people, and a
+    # constant-derived file left them undeclared.
+    slugs = {r["slug"] for r in ROSTER}
+    # Sections of this file put the checkout at root/ and others at root/data/,
+    # so both are searched. Looking in only one missed 'cyd', who has a roster
+    # entry and deliberately no transcripts at all.
+    bases = [root, root / "data"]
+    for base in bases:
+        written = base / "roster" / "final.json"
+        if written.is_file():
+            slugs |= {r["slug"] for r in json.loads(written.read_text())["roster"]}
+    # Plus every slug the fixture put on disk. Sections of this file build their
+    # own rosters and their own corpora, and a seam that missed one raised on
+    # 'cyd'. A fixture helper may be permissive; the production reader is not.
+    for base in bases:
+      for shelf in ("transcripts", "transcripts_blind", "transcripts_open"):
+        d = base / shelf
+        if d.is_dir():
+            slugs |= {c.name for c in d.iterdir() if c.is_dir()}
+    for base in bases:
+        g = base / "grades"
+        if g.is_dir():
+            for judge in g.iterdir():
+                if judge.is_dir():
+                    slugs |= {c.name for c in judge.iterdir() if c.is_dir()}
+    p = root / "membership.json"
+    p.write_text(json.dumps({s: ["leaders", "predictions"] for s in sorted(slugs)}))
+    return p
+
 # (leader, source, judge, mode, validation_errors)
 GRADES = [
     ("ada", "t1", "fable", "blinded", []),
@@ -137,7 +175,8 @@ def check_shadow(check) -> None:
         # and a test that silently stops exercising this path would leave the
         # next arm's promotion gate unguarded.
         env = dict(os.environ, VI_SHADOW_JUDGES="gemini")
-        r = subprocess.run([sys.executable, str(SCRIPT)], cwd=root,
+        r = subprocess.run([sys.executable, str(SCRIPT),
+                            "--membership", str(membership_for(root))], cwd=root,
                            capture_output=True, text=True, env=env)
     if r.returncode != 0:
         check("SHADOW", False, f"coverage_table.py exited {r.returncode}: {r.stderr}")
@@ -261,7 +300,8 @@ def check_pct(check) -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build_pct(root)
-        r = subprocess.run([sys.executable, str(SCRIPT)], cwd=root,
+        r = subprocess.run([sys.executable, str(SCRIPT),
+                            "--membership", str(membership_for(root))], cwd=root,
                            capture_output=True, text=True)
     if r.returncode != 0:
         check("PCT", False, f"coverage_table.py exited {r.returncode}: {r.stderr}")
@@ -341,7 +381,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         build(root)
-        r = subprocess.run([sys.executable, str(SCRIPT)], cwd=root,
+        r = subprocess.run([sys.executable, str(SCRIPT),
+                            "--membership", str(membership_for(root))], cwd=root,
                            capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAIL  coverage_table.py exited {r.returncode}\n{r.stderr}")

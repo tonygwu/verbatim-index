@@ -106,6 +106,19 @@ from collections import Counter
 from pathlib import Path
 D = Path(os.environ["DATA"])
 roster = [r["slug"] for r in json.loads((D / "roster/final.json").read_text())["roster"]]
+# Counted against the BOARD, not the roster. Since 2026-09-18 the roster carries
+# seven people on the predictions board only; grade.py drops them, so they can
+# never have a leaders transcript. Leaving them in printed "50/57" and "leaders
+# at zero 7" every cycle, which is a permanent false shortfall in the line an
+# operator reads to decide whether fetching is done.
+import sys as _sys
+_sys.path.insert(0, "scripts")   # the block above this one is all stdlib; these are not
+import study_profile as SP, membership as MB
+_board = MB.for_study(SP.default_study())
+off_board = []
+if _board is not None:
+    off_board = [s for s in roster if not MB.on_board(_board, s, "leaders")]
+    roster = [s for s in roster if MB.on_board(_board, s, "leaders")]
 counts = {s: len(list((D / "transcripts" / s).glob("*.json"))) for s in roster}
 total = sum(counts.values())
 words = 0
@@ -117,6 +130,11 @@ print(f"  transcripts        {total}  ({words/1000:.0f}k words)")
 print(f"  leaders at 5+      {sum(1 for v in counts.values() if v >= 5)}/{len(roster)}")
 print(f"  leaders at 3+      {sum(1 for v in counts.values() if v >= 3)}/{len(roster)}")
 print(f"  leaders at zero    {sum(1 for v in counts.values() if v == 0)}")
+if off_board:
+    # Named rather than hidden: "deliberately not here" and "missing" are
+    # different facts, and they were the same number before this line existed.
+    print(f"  off the board      {len(off_board)} on the roster for predictions only "
+          f"({', '.join(off_board)})")
 print(f"  per-leader spread  " + ", ".join(f"{k}:{v}" for k, v in sorted(dist.items())))
 zero = [s for s, v in counts.items() if v == 0]
 if zero:
