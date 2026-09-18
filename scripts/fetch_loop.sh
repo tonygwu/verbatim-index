@@ -88,6 +88,19 @@ from pathlib import Path
 target = int(sys.argv[1])
 D = Path(os.environ["DATA"])
 roster = [r["slug"] for r in json.loads((D / "roster/final.json").read_text())["roster"]]
+# THE LOOP'S EXIT CONDITION DEPENDS ON THIS COUNT, so it must be the BOARD and
+# not the roster. It exits when leaders_at_target >= leaders. Since 2026-09-18
+# the roster carries seven people on the predictions board only; grade.py drops
+# them, so they can never hold a leaders transcript and at_target caps seven
+# short of len(roster). The loop would never reach COMPLETE and would re-fetch
+# YouTube for ever, which is how the IP blocks already in BACKLOG.md happen.
+sys.path.insert(0, "scripts")
+import study_profile as SP, membership as MB
+_board = MB.for_study(SP.default_study())
+off_board = []
+if _board is not None:
+    off_board = [s for s in roster if not MB.on_board(_board, s, "leaders")]
+    roster = [s for s in roster if MB.on_board(_board, s, "leaders")]
 # TARGET means GRADEABLE transcripts, not raw fetches. Counting data/transcripts
 # reported a leader "at target" while QA had rejected enough of them to leave him
 # far short: Michael Dell, 16 raw, 9 gradeable, target 14, loop exited COMPLETE.
@@ -105,6 +118,9 @@ print(json.dumps({
     "raw_transcripts": sum(raw.values()),
     "leaders_with_zero": [s for s, v in counts.items() if v == 0],
     "thin": {s: v for s, v in sorted(counts.items()) if 0 < v < target},
+    # Reported so the count above is readable: these are on the roster for the
+    # predictions board and are excluded from every number here on purpose.
+    "off_board": off_board,
 }))
 PYEOF
 }

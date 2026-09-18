@@ -143,6 +143,38 @@ def main() -> int:
                   for l in sout.splitlines()),
               [l for l in sout.splitlines() if "leaders at zero" in l])
 
+
+        print("\n[4] fetch_loop's COMPLETE condition is reachable")
+        # THE BLOCK IS EXTRACTED FROM fetch_loop.sh AND RUN, not read. The loop
+        # exits when leaders_at_target >= leaders, so if that denominator is the
+        # roster rather than the board it can never be satisfied and the loop
+        # re-fetches YouTube for ever. Extracting keeps this in step with the
+        # script: an edit to the block is an edit to what this test runs.
+        loop_src = (REPO / "scripts" / "fetch_loop.sh").read_text().splitlines()
+        start = next(i for i, l in enumerate(loop_src) if l.strip().startswith("coverage()"))
+        opens = next(i for i in range(start, len(loop_src)) if "<<'PYEOF'" in loop_src[i])
+        ends = next(i for i in range(opens, len(loop_src)) if loop_src[i].strip() == "PYEOF")
+        cov_py = "\n".join(loop_src[opens + 1:ends])
+        check("the coverage block was extracted", "leaders_at_target" in cov_py,
+              "if this fails the markers moved and the arm below proves nothing")
+        runner = tmp / "cov_block.py"
+        runner.write_text(cov_py)
+        rc = subprocess.run([PY, str(runner), "1"], capture_output=True, text=True,
+                            cwd=clone, env={**env, "DATA": str(D)})
+        check("it runs", rc.returncode == 0, (rc.stdout + rc.stderr)[-400:])
+        if rc.returncode == 0:
+            cov = json.loads(rc.stdout.strip().splitlines()[-1])
+            check("'leaders' is the board size, 4, not the roster's 6",
+                  cov["leaders"] == 4, str(cov))
+            check("COMPLETE is reachable: at_target equals leaders",
+                  cov["leaders_at_target"] >= cov["leaders"],
+                  f"at_target {cov['leaders_at_target']} of {cov['leaders']}; "
+                  f"if this is false the loop never exits")
+            check("no phantom zero-transcript leaders",
+                  cov["leaders_with_zero"] == [], str(cov["leaders_with_zero"]))
+            check("the off-board seven are reported separately",
+                  sorted(cov.get("off_board") or []) == sorted(OFF_BOARD), str(cov))
+
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
