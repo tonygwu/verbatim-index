@@ -11,6 +11,38 @@ P1 itself is sound and nothing reads `membership.json` yet, so none of this move
 a published number today. Every entry below is P2's, and each one is a place the
 plan was right when it was written and the tree has moved since.
 
+- **`bash scripts/run_tests.sh` returned `failed: 1` once and has not
+  reproduced in five attempts. The failing file's name was lost.** Filed
+  2026-09-17. One red run between two green ones, with nothing changed in
+  between but `BACKLOG.md` prose. Five subsequent full runs are green, including
+  one against a freshly rebased tree:
+
+  ```
+  --- run 1   failed: 0
+  --- run 2   failed: 0
+  --- run 3   failed: 0
+  (after git pull --rebase onto 2505df7)   failed: 0
+  ```
+
+  The runner DOES print `FAILED <path>` per file. The name was lost because the
+  caller piped it through `tail -1` and kept only the summary. That is the
+  operator error, not a runner defect, and the lesson is that this suite's
+  output must never be truncated to its last line.
+
+  RULED OUT, not by argument but by running it: `test_normalize_qa_race.py`,
+  which is the only test in the suite carrying a real wall-clock assertion. Five
+  timed runs at 3.43 to 3.53 seconds, all rc=0, and the check refuses to pass
+  vacuously below 1.0s rather than silently weakening. So the most plausible
+  candidate is not the cause.
+
+  NOT chased further, because this repo's own precedent says a failure that
+  repeats is not the same as a failure that is deterministic, and here it did
+  not even repeat. Chasing an unnamed one-off costs more than it returns.
+  The condition that brings it back: a SECOND observation. If `run_tests.sh`
+  reports a nonzero count again, capture the whole output, not the summary, and
+  file the named file here. A flake in the verification gate for the membership
+  change is worth naming precisely once it can be named at all.
+
 - **The floor the plan proposes for `deploy.sh` refuses publication for ever on
   the first cycle after P3.** Filed 2026-09-17. The plan says to derive the floor
   as the roster size, "which `aggregate.py:1169` writes as
