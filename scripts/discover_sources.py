@@ -36,6 +36,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from atomicio import write_atomic  # noqa: E402
 from normalize_transcripts import GENERIC_COMPANY_WORDS  # noqa: E402
 from pathlib import Path
 
@@ -386,7 +387,12 @@ def main() -> int:
         existing[r["leader_slug"]] = r
     merged = sorted(existing.values(), key=lambda r: r["leader_slug"])
 
-    Path(args.out).write_text(json.dumps({
+    # ATOMIC. build_site.py reads discovered.json during a render, and another
+    # clone may be writing it at that moment. Path.write_text truncates first, so
+    # a reader can get a prefix; json.load raises on that, which fails loudly but
+    # leaves an intermittent deploy failure to debug months later. Same reasoning
+    # and same helper as results.json and site/index.html.
+    write_atomic(args.out, json.dumps({
         "leaders": merged,
         "total_sources": sum(len(r["sources"]) for r in merged),
         "target_per_leader": args.target,

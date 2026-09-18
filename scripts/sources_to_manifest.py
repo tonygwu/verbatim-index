@@ -21,6 +21,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from atomicio import write_atomic  # noqa: E402
+
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 KINDS = {"podcast", "interview", "keynote", "fireside", "panel"}
 
@@ -171,8 +175,11 @@ def main() -> int:
     # file it read. The live file holds literal UTF-8 ("Tobi Lutke" with the
     # umlaut); escaping it to \\u00fc made a no-op merge show a two-line diff,
     # which would defeat the pre-push audit that requires this file unchanged.
-    ap_path.write_text(json.dumps(written_aliases, indent=1, ensure_ascii=False))
-    Path(args.repairs).write_text(json.dumps(repairs, indent=1))
+    # Atomic: aliases.json is the blinder input AND the QA glossary, read by
+    # normalize and qa while other clones run. A torn read there flips a QA
+    # verdict, which orphans grades.
+    write_atomic(ap_path, json.dumps(written_aliases, indent=1, ensure_ascii=False))
+    write_atomic(args.repairs, json.dumps(repairs, indent=1))
 
     counts = Counter(r["leader_slug"] for r in rows)
     thin = {s: n for s, n in counts.items() if n < 3}
@@ -197,7 +204,7 @@ def main() -> int:
         "repair_pairs": sum(len(v) for v in repairs.values()),
     }
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.report).write_text(json.dumps(report, indent=1))
+    write_atomic(args.report, json.dumps(report, indent=1))
     print(json.dumps({k: v for k, v in report.items() if k != "rejected_detail"}, indent=2))
     if missing:
         print(f"WARNING: {len(missing)} leaders have no usable source: {missing}", file=sys.stderr)
