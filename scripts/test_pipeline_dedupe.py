@@ -571,9 +571,25 @@ def test_superseded_source_is_not_refetched(tmp: Path) -> None:
           '"superseded":' in src_txt, "superseded results vanish from the summary")
     check("the progress line subtracts superseded skips from the failure count",
           "done - ok - sup" in src_txt, "done - ok would report the skip as failed")
+    # Checked by BEHAVIOUR, not by pinning the source line. The first version of
+    # this check matched the literal `if r["status"] in ("ok", "cached"):`, and
+    # broke on 2026-09-18 when that line was rewritten to count only GRADEABLE
+    # cached files, a change that kept exactly the property it protects.
+    calls = []
+    def _fake(c, *a, **k):
+        calls.append(c["source_id"])
+        return {"status": {"dup": "superseded"}.get(c["source_id"], "ok"), "source_id": c["source_id"]}
+    _real = f.fetch_with_retry
+    f.fetch_with_retry = _fake
+    try:
+        f.fetch_leader("ada-lovelace",
+                       [{"leader_slug": "ada-lovelace", "source_id": s} for s in ("dup", "a", "b")],
+                       2, out, 100, False, f.Pacer(0.0), f.Breaker())
+    finally:
+        f.fetch_with_retry = _real
     check("a superseded candidate does not count toward a leader's target",
-          'if r["status"] in ("ok", "cached"):\n            got += 1' in src_txt,
-          "got += 1 must not fire for a superseded result")
+          calls == ["dup", "a", "b"],
+          f"with target 2 the walk must pass the superseded one and fetch two more; walked {calls}")
 
 
 def main() -> int:

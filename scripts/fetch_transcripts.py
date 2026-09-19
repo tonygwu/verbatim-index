@@ -472,7 +472,8 @@ def fetch_with_retry(src: dict, out_dir: Path, min_words: int, force: bool,
 
 def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
                  min_words: int, force: bool, pacer: Pacer, breaker: Breaker,
-                 timeout: float = HTTP_TIMEOUT_DEFAULT) -> list[dict]:
+                 timeout: float = HTTP_TIMEOUT_DEFAULT,
+                 have_dir: "Path | None" = None) -> list[dict]:
     """Walk a leader's ranked candidates until `target` transcripts are on disk.
 
     Candidates come pre-ranked by duration. Stopping early is the point: it means
@@ -487,8 +488,18 @@ def fetch_leader(slug: str, candidates: list[dict], target: int, out_dir: Path,
             break
         r = fetch_with_retry(c, out_dir, min_words, force, pacer, breaker, timeout)
         results.append(r)
-        if r["status"] in ("ok", "cached"):
+        if r["status"] == "ok":
+            # A fresh fetch counts at once. QA runs after the pass, and a file it
+            # rejects is caught by the cached rule below on the next pass.
             got += 1
+        elif r["status"] == "cached":
+            # With a have-dir the target is GRADEABLE transcripts, so a file on
+            # disk that QA rejected must not count, or the walk stops short while
+            # the loop, which counts have-dir, keeps asking for more. FOUND
+            # 2026-09-18: three pundits sat at 6 gradeable / 7 raw against a
+            # target of 7, and every pass fetched nothing.
+            if have_dir is None or (have_dir / slug / f"{c['source_id']}.json").exists():
+                got += 1
         # A superseded candidate is deliberately NOT counted toward the target.
         # It is a second copy of an appearance already held, so it adds no
         # coverage, and counting it would let a leader sit below target for ever
@@ -603,7 +614,8 @@ def main() -> int:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = {ex.submit(fetch_leader, slug, cands, args.target_per_leader,
                               out_dir, args.min_words, args.force, pacer, breaker,
-                              args.http_timeout): slug
+                              args.http_timeout,
+                              have_dir=Path(args.have_dir) if args.have_dir else None): slug
                     for slug, cands in by_leader.items()}
             for fut in cf.as_completed(futs):
                 rs = fut.result()
