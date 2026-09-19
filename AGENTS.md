@@ -1408,7 +1408,9 @@ new grades incomparable with the corpus already graded.
   read it back with the ArtifactData tool, then `pundits_verify_page.py import` writes
   `human_labels.json` for `pundits_pilot.py report`. A partly answered recording is left out
   and counted, never filled. The 2026-09-18 page is https://claude.ai/artifact/9TEivUMn7nhrYZJhkRRnsb
-  (218 recordings, 29 people). A second tab, Quote check, shows evidence quotes the judges
+  (218 recordings, 29 people). ONE screen per recording: the three questions and, below them,
+  any flagged evidence quotes for that same recording, so a video is opened once. The page shows
+  evidence quotes the judges
   credited to the subject that mechanical signals mark as suspect (a caption turn mark inside
   the quote, a question inside a conversation or debate, the subject's own name); build with
   `--grades` and `--quote-key`. The judges' labels go to the private key file only, never the

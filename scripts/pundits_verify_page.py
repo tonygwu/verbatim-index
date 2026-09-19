@@ -465,6 +465,11 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 .qcard{border:1px solid var(--rule2);border-radius:9px;padding:12px 14px;font-size:.9rem;line-height:1.6;color:var(--muted);max-width:92ch}
 .qcard .q{display:inline;color:var(--ink);background:var(--accentbg);box-shadow:0 0 0 2px var(--accentbg);border-radius:3px}
 .qhelp{font-size:.8rem;color:var(--muted);max-width:80ch}
+.qblock{display:grid;gap:10px;border-top:1px solid var(--rule);padding-top:14px}
+.qitem{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--rule);border-radius:9px}
+.qitem[data-focus="true"]{border-color:var(--accent);box-shadow:0 0 0 3px var(--accentbg)}
+.qitem .hd{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:.72rem;color:var(--faint)}
+.qitem .hd a{color:var(--accent);text-decoration:none}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 <div class="app">
@@ -477,10 +482,6 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
  </header>
  <div id="banner" class="banner" hidden></div>
  <div class="toolbar">
-  <div class="seg" role="group" aria-label="Task">
-   <button type="button" id="t-speaker" aria-pressed="true">Speaker check</button>
-   <button type="button" id="t-quotes" aria-pressed="false">Quote check</button>
-  </div>
   <div class="seg" role="group" aria-label="Show">
    <button type="button" id="f-todo" aria-pressed="true">To do</button>
    <button type="button" id="f-all" aria-pressed="false">All</button>
@@ -506,161 +507,166 @@ const ANSWERS = [["subject","The subject","s","y"],["other","Someone else","e","
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const el = id => document.getElementById(id);
 
-// Two tasks over one list: a speaker-check item is a recording; a quote-check item is one quote.
-const TASKS = {
- speaker: D.rows.map(r=>({id:r.key, rec:r, person:r.person, label:r.title})),
- quotes: (D.quote_rows||[]).flatMap(r=>r.quotes.map(c=>({id:c.qid, rec:r, card:c, person:r.person,
-   label:"“"+c.text.split(/\s+/).slice(0,9).join(" ")+"…”"})))};
-const byId = {}; for(const t in TASKS) for(const it of TASKS[t]) byId[t+"|"+it.id]=it;
-let task = TASKS.speaker.length ? "speaker" : "quotes", filter = "todo", cur = {speaker:null, quotes:null};
-let labels = {}, attrib = {}, db = null, writable = true;
+// ONE item per recording. A recording may need the three questions, a set of quote
+// attributions, or both — everything about it is answered on one screen, so a video
+// is never opened twice.
+const REC = {};
+for(const r of D.rows) REC[r.key] = {...r, ask:true, quotes:[]};
+for(const r of (D.quote_rows||[])){
+ const x = REC[r.key] ||= {...r, ask:false, hints:[], excerpts:[], description:"", mentions:null};
+ x.quotes = r.quotes; if(!x.title) Object.assign(x, {title:r.title, channel:r.channel, upload:r.upload, video_id:r.video_id, duration:r.duration, forms:r.forms, person:r.person, role:r.role});
+}
+const recs = Object.values(REC).sort((a,b)=>(a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
+let filter="todo", cur=recs.length?recs[0].key:null, focusQ=0;
+let labels={}, attrib={}, db=null, writable=true;
 
-function state(t, id){
- if(t==="speaker"){const l=labels[id]; if(!l) return "todo";
-  // pundits_pilot.py report needs ALL THREE answers for every recording, excluded ones included.
-  const answered = typeof l.subject_present==="boolean" && typeof l.political_content==="boolean" && D.venues.includes(l.venue);
-  if(!answered) return "part"; return (l.subject_present && l.political_content) ? "done" : "rej";}
- const a=(attrib[id]||{}).answer; return !a ? "todo" : a==="subject" ? "done" : a==="unclear" ? "part" : "rej";}
-const complete = (t,id) => t==="speaker" ? ["done","rej"].includes(state(t,id)) : !!(attrib[id]||{}).answer;
+const askDone = r => {const l=labels[r.key]||{}; return !r.ask || (typeof l.subject_present==="boolean" && typeof l.political_content==="boolean" && D.venues.includes(l.venue));};
+const quotesDone = r => r.quotes.every(c=>!!(attrib[c.qid]||{}).answer);
+const complete = r => askDone(r) && quotesDone(r);
+function recState(r){
+ if(complete(r)){
+  const l=labels[r.key]||{};
+  if(r.ask && !(l.subject_present && l.political_content)) return "rej";
+  if(r.quotes.some(c=>["other","both"].includes((attrib[c.qid]||{}).answer))) return "rej";
+  return "done";}
+ return (labels[r.key]||r.quotes.some(c=>(attrib[c.qid]||{}).answer)) ? "part" : "todo";}
+const outstanding = r => (r.ask && !askDone(r) ? 1 : 0) + r.quotes.filter(c=>!(attrib[c.qid]||{}).answer).length;
+
 function fmtT(s){if(s==null)return "";const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0");}
 function fmtDate(d){return d&&d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`:"unknown";}
 function highlight(text, forms){let h=esc(text).replace(/&gt;&gt;/g,'<span class="turn">⟩⟩ </span>');
- const sorted=[...forms].sort((a,b)=>b.length-a.length).map(f=>f.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+ const sorted=[...(forms||[])].sort((a,b)=>b.length-a.length).map(f=>f.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
  if(!sorted.length) return h; return h.replace(new RegExp("\\b("+sorted.join("|")+")\\b","gi"),"<mark>$1</mark>");}
-const items = () => TASKS[task];
-function visible(){return items().filter(it=> filter==="all" || (filter==="todo" ? !complete(task,it.id) : complete(task,it.id)));}
-
-function renderChrome(){
- const dot=c=>`<span class="dot ${c}" style="display:inline-block;vertical-align:-1px"></span>`;
- el("legend").innerHTML = task==="speaker"
-  ? `${dot("done")} verified · ${dot("rej")} excluded · ${dot("part")} incomplete`
-  : `${dot("done")} the subject · ${dot("rej")} someone else or both · ${dot("part")} can't tell`;
- el("keyhelp").innerHTML = task==="speaker"
-  ? "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political yes/no · <b>j</b>/<b>k</b> next/previous · <b>v</b> open video"
-  : "Keys: <b>s</b> the subject · <b>e</b> someone else · <b>b</b> both · <b>u</b> can't tell · <b>j</b>/<b>k</b> next/previous · <b>v</b> play this moment";
- el("t-speaker").textContent=`Speaker check (${TASKS.speaker.length})`;
- el("t-quotes").textContent=`Quote check (${TASKS.quotes.length})`;
- el("t-speaker").setAttribute("aria-pressed", task==="speaker"); el("t-quotes").setAttribute("aria-pressed", task==="quotes");}
+const visible = () => recs.filter(r=> filter==="all" || (filter==="todo" ? !complete(r) : complete(r)));
+const curRec = () => REC[cur];
 
 function renderList(){
  const vis=visible(), groups={}, per={};
- for(const it of vis)(groups[it.person] ||= []).push(it);
- for(const it of items()){const p=(per[it.person] ||= {n:0,ok:0,done:0}); p.n++; if(state(task,it.id)==="done") p.ok++; if(complete(task,it.id)) p.done++;}
+ for(const r of vis)(groups[r.person] ||= []).push(r);
+ for(const r of recs){const p=(per[r.person] ||= {n:0,ok:0,q:0}); p.n++; if(r.ask&&recState(r)==="done") p.ok++; p.q+=r.quotes.length;}
  let h="";
- for(const [person,its] of Object.entries(groups)){
+ for(const [person,rs] of Object.entries(groups)){
   const p=per[person];
-  h += task==="speaker"
-   ? `<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=5?"ok":""}" title="recordings verified so far (subject present and political); 5 are needed to rank">${p.ok} verified of ${p.n}</span></div>`
-   : `<div class="grp"><b>${esc(person)}</b><span>${p.done} of ${p.n} checked</span></div>`;
-  for(const it of its) h+=`<div class="item" tabindex="0" data-k="${esc(it.id)}" aria-current="${it.id===cur[task]}"><span class="dot ${state(task,it.id)}"></span><span class="t">${esc(it.label)}</span></div>`;
+  h+=`<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=5?"ok":""}" title="recordings verified so far (subject present and political); 5 are needed to rank">${p.ok} verified of ${p.n}${p.q?` · ${p.q} quotes`:""}</span></div>`;
+  for(const r of rs){
+   const left=outstanding(r);
+   h+=`<div class="item" tabindex="0" data-k="${esc(r.key)}" aria-current="${r.key===cur}"><span class="dot ${recState(r)}"></span><span class="t">${esc(r.title)}${r.quotes.length?` <span class="turn">· ${r.quotes.length} quote${r.quotes.length>1?"s":""}</span>`:""}</span></div>`;}
  }
- el("list").innerHTML = h || `<div class="item">Nothing here. ${filter==="todo"?"Every item has an answer.":""}</div>`;
- const done=items().filter(it=>complete(task,it.id)).length, n=items().length||1;
- el("count").textContent=`${done} of ${items().length} ${task==="speaker"?"recordings":"quotes"} checked`;
- el("bar").style.width=(100*done/n).toFixed(1)+"%";}
+ el("list").innerHTML = h || `<div class="item">Nothing here. ${filter==="todo"?"Everything has an answer.":""}</div>`;
+ const done=recs.filter(complete).length, q=recs.reduce((n,r)=>n+r.quotes.length,0);
+ el("count").textContent=`${done} of ${recs.length} recordings checked${q?` · ${recs.reduce((n,r)=>n+r.quotes.filter(c=>(attrib[c.qid]||{}).answer).length,0)} of ${q} quotes`:""}`;
+ el("bar").style.width=(100*done/(recs.length||1)).toFixed(1)+"%";}
 
-function opt(store, field, value, label, key, cls=""){
- const on=(store[cur[task]]||{})[field]===value;
- return `<button type="button" class="opt ${cls}" data-f="${field}" data-v='${JSON.stringify(value)}' aria-pressed="${on}" ${writable?"":"disabled"}>${esc(label)} <kbd>${key}</kbd></button>`;}
-
-function header(r, t){
- const start = t!=null ? t : (r.duration ? Math.floor(r.duration*0.2) : 0);
- return `<div class="who"><h2>${esc(r.person)}</h2><span class="role">${esc(r.role)}</span></div>
-  <p class="title">${esc(r.title)}</p>
-  <div class="facts"><span>${esc(r.channel)}</span><span>uploaded ${fmtDate(r.upload)}</span><span>${r.duration?Math.round(r.duration/60)+" min":""}</span>${r.words?`<span>${r.words.toLocaleString()} words</span>`:""}</div>
-  <a class="yt" id="yt" href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${start}s" target="_blank" rel="noopener">${t!=null?"Play this moment":"Open on YouTube"} at ${fmtT(start)} ↗</a>`;}
+function opt(store, id, field, value, label, key, cls=""){
+ const on=(store[id]||{})[field]===value;
+ return `<button type="button" class="opt ${cls}" data-store="${store===labels?"l":"a"}" data-id="${esc(id)}" data-f="${field}" data-v='${JSON.stringify(value)}' aria-pressed="${on}" ${writable?"":"disabled"}>${esc(label)} <kbd>${key}</kbd></button>`;}
 
 function renderDetail(){
- const it=byId[task+"|"+cur[task]];
- if(!it){el("detail").innerHTML='<p class="sub">Pick an item on the left.</p>';return;}
- const r=it.rec, foot=`<div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>`;
- if(task==="speaker"){
-  const l=labels[it.id]||{};
-  const hints=r.hints.map(h=>`<span class="chip">${esc(h)}</span>`).join("")+`<span class="chip info">${r.mentions} mention${r.mentions===1?"":"s"} of the name in the transcript</span>`;
-  const ex=r.excerpts.map(e=>`<article><div class="at"><span>${Math.round(e.at*100)}% in</span>${e.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${e.t}s" target="_blank" rel="noopener">play from ${fmtT(e.t)}</a>`:""}</div>${highlight(e.text,r.forms)}</article>`).join("");
-  el("detail").innerHTML=`${header(r,null)}<div class="chips">${hints}</div>
-   ${r.description?`<details class="desc"><summary>Video description</summary><p>${esc(r.description)}</p></details>`:""}
-   <div class="ex">${ex}</div>
-   <div class="form">
-    <div class="q"><label class="l">Subject present<small>Takes part live; a played clip is not presence</small></label><div class="opts">${opt(labels,"subject_present",true,"Yes","y","y")}${opt(labels,"subject_present",false,"No","n","n")}</div></div>
-    <div class="q"><label class="l">Format<small>of this recording</small></label><div class="opts">${D.venues.map((v,i)=>opt(labels,"venue",v,v,i+1)).join("")}</div></div>
-    <div class="q"><span></span><div class="def">${l.venue?esc(VENUE_DEF[l.venue]):"Pick the format that fills most of the recording."}</div></div>
-    <div class="q"><label class="l">Political content<small>politics, policy, news or public controversy</small></label><div class="opts">${opt(labels,"political_content",true,"Yes","p","y")}${opt(labels,"political_content",false,"No","o","n")}</div></div>
-    <div class="q"><label class="l" for="notes">Notes<small>optional</small></label><textarea id="notes" ${writable?"":"disabled"} placeholder="e.g. guest-only episode; the subject is only quoted">${esc(l.notes||"")}</textarea></div>
-    ${foot}</div>`;
-  el("status").textContent = l.updated_at ? "Saved" : "Not answered yet";
- } else {
-  const c=it.card, a=attrib[it.id]||{};
-  el("detail").innerHTML=`${header(r,c.t)}
-   <p class="qhelp">Who says the highlighted words? The grey text around them is there for context. If the transcript can't settle it, play this moment.</p>
-   <div class="qcard">${highlight(c.before,r.forms)} <span class="q">${highlight(c.text,r.forms)}</span> ${highlight(c.after,r.forms)}</div>
-   <div class="form">
-    <div class="q"><label class="l">Who says it?</label><div class="opts">${ANSWERS.map(([v,lab,k,cls])=>opt(attrib,"answer",v,lab,k,cls)).join("")}</div></div>
-    <div class="q"><label class="l" for="notes">Notes<small>optional</small></label><textarea id="notes" ${writable?"":"disabled"} placeholder="e.g. the host's question; the subject answers after the turn">${esc(a.notes||"")}</textarea></div>
-    ${foot}</div>`;
-  el("status").textContent = a.updated_at ? "Saved" : "Not answered yet";
- }
- el("detail").querySelectorAll("button[data-f]").forEach(b=>b.onclick=()=>setField(b.dataset.f, JSON.parse(b.dataset.v)));
+ const r=curRec();
+ if(!r){el("detail").innerHTML='<p class="sub">Pick a recording on the left.</p>';return;}
+ const l=labels[r.key]||{}, start=r.duration?Math.floor(r.duration*0.2):0;
+ const hints=(r.hints||[]).map(h=>`<span class="chip">${esc(h)}</span>`).join("")
+  + (r.mentions!=null?`<span class="chip info">${r.mentions} mention${r.mentions===1?"":"s"} of the name in the transcript</span>`:"");
+ const ex=(r.excerpts||[]).map(e=>`<article><div class="at"><span>${Math.round(e.at*100)}% in</span>${e.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${e.t}s" target="_blank" rel="noopener">play from ${fmtT(e.t)}</a>`:""}</div>${highlight(e.text,r.forms)}</article>`).join("");
+ const ask = r.ask ? `
+   <div class="q"><label class="l">1 · Subject present<small>Takes part live; a played clip is not presence</small></label><div class="opts">${opt(labels,r.key,"subject_present",true,"Yes","y","y")}${opt(labels,r.key,"subject_present",false,"No","n","n")}</div></div>
+   <div class="q"><label class="l">2 · Format<small>of this recording</small></label><div class="opts">${D.venues.map((v,i)=>opt(labels,r.key,"venue",v,v,i+1)).join("")}</div></div>
+   <div class="q"><span></span><div class="def">${l.venue?esc(VENUE_DEF[l.venue]):"Pick the format that fills most of the recording."}</div></div>
+   <div class="q"><label class="l">3 · Political content<small>politics, policy, news or public controversy</small></label><div class="opts">${opt(labels,r.key,"political_content",true,"Yes","p","y")}${opt(labels,r.key,"political_content",false,"No","o","n")}</div></div>
+   <div class="q"><label class="l" for="notes">Notes<small>optional</small></label><textarea id="notes" ${writable?"":"disabled"} placeholder="e.g. guest-only episode; the subject is only quoted">${esc(l.notes||"")}</textarea></div>` : "";
+ const quotes = r.quotes.length ? `
+  <div class="qblock">
+   <div class="q"><label class="l">${r.ask?"4 · ":""}Who says these lines?<small>the judges credited them to the subject</small></label>
+    <div class="qhelp">The highlighted words are the quote; grey text is context. If the transcript can't settle it, play the moment.</div></div>
+   ${r.quotes.map((c,i)=>`<div class="qitem" data-q="${i}" data-focus="${i===focusQ}">
+     <div class="hd"><span>quote ${i+1} of ${r.quotes.length}</span>${c.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${c.t}s" target="_blank" rel="noopener">play from ${fmtT(c.t)}</a>`:""}</div>
+     <div class="qcard">${highlight(c.before,r.forms)} <span class="q">${highlight(c.text,r.forms)}</span> ${highlight(c.after,r.forms)}</div>
+     <div class="opts">${ANSWERS.map(([v,lab,k,cls])=>opt(attrib,c.qid,"answer",v,lab,k,cls)).join("")}</div>
+    </div>`).join("")}
+  </div>` : "";
+ el("detail").innerHTML=`
+  <div class="who"><h2>${esc(r.person)}</h2><span class="role">${esc(r.role||"")}</span></div>
+  <p class="title">${esc(r.title)}</p>
+  <div class="facts"><span>${esc(r.channel||"")}</span><span>uploaded ${fmtDate(r.upload)}</span><span>${r.duration?Math.round(r.duration/60)+" min":""}</span>${r.words?`<span>${r.words.toLocaleString()} words</span>`:""}</div>
+  ${hints?`<div class="chips">${hints}</div>`:""}
+  <a class="yt" id="yt" href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${start}s" target="_blank" rel="noopener">Open on YouTube at ${fmtT(start)} ↗</a>
+  ${r.description?`<details class="desc"><summary>Video description</summary><p>${esc(r.description)}</p></details>`:""}
+  ${ex?`<div class="ex">${ex}</div>`:""}
+  <div class="form">${ask}${quotes}
+   <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
+  </div>`;
+ el("status").textContent = complete(r) ? "All answered" : `${outstanding(r)} left on this recording`;
+ el("detail").querySelectorAll("button[data-f]").forEach(b=>b.onclick=()=>{
+  const store = b.dataset.store==="l" ? labels : attrib;
+  if(b.dataset.store==="a"){const i=+b.closest(".qitem").dataset.q; focusQ=i;}
+  setField(store, b.dataset.id, b.dataset.f, JSON.parse(b.dataset.v));});
+ el("detail").querySelectorAll(".qitem").forEach(n=>n.onclick=e=>{ if(!e.target.closest("button")){focusQ=+n.dataset.q; renderDetail();} });
  el("prev").onclick=()=>step(-1); el("next").onclick=()=>step(1);
- const ta=el("notes"); let tm; ta.oninput=()=>{clearTimeout(tm); tm=setTimeout(()=>setField("notes", ta.value, true), 700);};}
+ const ta=el("notes"); if(ta){let tm; ta.oninput=()=>{clearTimeout(tm); tm=setTimeout(()=>setField(labels,r.key,"notes",ta.value,true),700);};}}
 
-function select(id){cur[task]=id; renderList(); renderDetail();
- const n=el("list").querySelector(`[data-k="${CSS.escape(id)}"]`); n&&n.scrollIntoView({block:"nearest"});}
-function step(d){const vis=visible(), order=vis.length?vis:items(); let i=order.findIndex(it=>it.id===cur[task]);
- if(i<0) i = d>0 ? -1 : order.length; const n=order[Math.min(Math.max(i+d,0),order.length-1)]; n&&select(n.id);}
-function firstTodo(t){const x=TASKS[t].find(it=>!complete(t,it.id)); return x ? x.id : (TASKS[t][0]||{}).id;}
-function setTask(t){task=t; if(!cur[t]) cur[t]=firstTodo(t); renderChrome(); renderList(); renderDetail();}
+function select(k){cur=k; focusQ=firstOpenQuote(REC[k]); renderList(); renderDetail();
+ const n=el("list").querySelector(`[data-k="${CSS.escape(k)}"]`); n&&n.scrollIntoView({block:"nearest"});}
+function firstOpenQuote(r){const i=r.quotes.findIndex(c=>!(attrib[c.qid]||{}).answer); return i<0?0:i;}
+function step(d){const vis=visible(), order=vis.length?vis:recs; let i=order.findIndex(r=>r.key===cur);
+ if(i<0) i = d>0 ? -1 : order.length; const n=order[Math.min(Math.max(i+d,0),order.length-1)]; n&&select(n.key);}
 
-const queue = {};
-function setField(f, v, quiet){
- if(!writable||!cur[task]) return;
- const t=task, id=cur[t], store = t==="speaker" ? labels : attrib;
- const base = t==="speaker" ? {key:id} : {qid:id, key:byId[t+"|"+id].rec.key};
+const queue={};
+function setField(store, id, f, v, quiet){
+ if(!writable) return;
+ const isQuote = store===attrib;
+ const base = isQuote ? {qid:id, key:cur} : {key:id};
  const next={...(store[id]||{}), ...base, [f]:v, checked_by:"operator", updated_at:new Date().toISOString()};
- store[id]=next; if(!quiet){renderList(); renderDetail();}
+ store[id]=next;
+ const r=curRec();
+ if(!quiet){ if(isQuote && f==="answer"){const nx=firstOpenQuote(r); focusQ = nx; } renderList(); renderDetail(); }
  const st=el("status"); st&&(st.textContent="Saving…", st.className="status");
- const ref = t==="speaker" ? db.collection("labels").doc(id.replace("/",":")) : db.collection("attribution").doc(id);
- queue[t+id]=(queue[t+id]||Promise.resolve()).then(()=>ref.set(next)).then(()=>{
-   if(cur[t]===id&&task===t&&el("status")) el("status").textContent="Saved";
+ const ref = isQuote ? db.collection("attribution").doc(id) : db.collection("labels").doc(id.replace("/",":"));
+ queue[id]=(queue[id]||Promise.resolve()).then(()=>ref.set(next)).then(()=>{
+   if(el("status")&&cur===(isQuote?next.key:id)) el("status").textContent = complete(curRec()) ? "All answered" : `${outstanding(curRec())} left on this recording`;
  }).catch(e=>{
    if(e&&e.code==="invalid_argument") writable=false;
-   if(cur[t]===id&&task===t&&el("status")){el("status").textContent="Not saved: "+(e&&e.message||e)+". Reload the page and try again."; el("status").className="status err";}
+   if(el("status")){el("status").textContent="Not saved: "+(e&&e.message||e)+". Reload the page and try again."; el("status").className="status err";}
  });
- if(!quiet && f!=="notes" && complete(t,id)) setTimeout(()=>{ if(cur[t]===id && task===t) step(1); }, 250);}
+ if(!quiet && f!=="notes" && complete(r)) setTimeout(()=>{ if(cur===r.key) step(1); }, 250);}
 
 document.addEventListener("keydown", e=>{
  if(e.target.tagName==="TEXTAREA"){ if(e.key==="Escape") e.target.blur(); return; }
  if(e.metaKey||e.ctrlKey||e.altKey) return;
+ const r=curRec(); if(!r) return;
  const k=e.key.toLowerCase();
  if(k==="j"||k==="arrowdown"){step(1);e.preventDefault();return;}
  if(k==="k"||k==="arrowup"){step(-1);e.preventDefault();return;}
  if(k==="v"){const a=el("yt"); a&&window.open(a.href,"_blank","noopener");return;}
- if(task==="speaker"){
-  if(k==="y") setField("subject_present",true); else if(k==="n") setField("subject_present",false);
-  else if(k==="p") setField("political_content",true); else if(k==="o") setField("political_content",false);
-  else if(/^[1-5]$/.test(k)) setField("venue", D.venues[+k-1]);
- } else { const a=ANSWERS.find(x=>x[2]===k); a&&setField("answer", a[0]); }
+ if(k==="]"||k==="tab"){if(r.quotes.length){focusQ=(focusQ+1)%r.quotes.length; renderDetail(); e.preventDefault();}return;}
+ if(k==="["){if(r.quotes.length){focusQ=(focusQ-1+r.quotes.length)%r.quotes.length; renderDetail(); e.preventDefault();}return;}
+ const ans=ANSWERS.find(x=>x[2]===k);
+ if(ans && r.quotes.length){ setField(attrib, r.quotes[focusQ].qid, "answer", ans[0]); return; }
+ if(!r.ask) return;
+ if(k==="y") setField(labels,r.key,"subject_present",true); else if(k==="n") setField(labels,r.key,"subject_present",false);
+ else if(k==="p") setField(labels,r.key,"political_content",true); else if(k==="o") setField(labels,r.key,"political_content",false);
+ else if(/^[1-5]$/.test(k)) setField(labels,r.key,"venue",D.venues[+k-1]);
 });
 el("list").addEventListener("click", e=>{const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);});
 el("list").addEventListener("keydown", e=>{if(e.key==="Enter"){const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);}});
 for(const [id,f] of [["f-todo","todo"],["f-all","all"],["f-done","done"]]) el(id).onclick=()=>{filter=f; for(const b of ["f-todo","f-all","f-done"]) el(b).setAttribute("aria-pressed", b===id); renderList();};
-el("t-speaker").onclick=()=>setTask("speaker"); el("t-quotes").onclick=()=>setTask("quotes");
+el("legend").innerHTML = `<span class="dot done" style="display:inline-block;vertical-align:-1px"></span> verified · <span class="dot rej" style="display:inline-block;vertical-align:-1px"></span> excluded or a misattributed quote · <span class="dot part" style="display:inline-block;vertical-align:-1px"></span> partly answered`;
+el("keyhelp").innerHTML = "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>s</b> subject, <b>e</b> someone else, <b>b</b> both, <b>u</b> can't tell, <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
 
-setTask(task);
+renderList(); renderDetail();
 (async()=>{
  db = await (window.claude?.use ? window.claude.use("db") : null);
  if(!db){ writable=false; el("banner").hidden=false;
   el("banner").textContent="Answers can't be saved in this view. Open this page on claude.ai while signed in, and every answer saves as you pick it.";
   renderDetail(); return; }
- let seen={labels:false, attribution:false};
- const sub=(coll, assign, t)=>db.collection(coll).onSnapshot(snap=>{
-  const next={}; for(const d of snap.docs){const x=d.data(); const k=t==="speaker"?x&&x.key:x&&x.qid; if(k) next[k]=x;}
+ let first=true;
+ const sub=(coll, assign, keyf)=>db.collection(coll).onSnapshot(snap=>{
+  const next={}; for(const d of snap.docs){const x=d.data(); const k=keyf(x); if(k) next[k]=x;}
   assign(next);
-  if(!seen[coll]){seen[coll]=true; cur[t]=firstTodo(t);}
-  renderList(); if(task===t) renderDetail();
+  if(first){first=false; const todo=recs.find(r=>!complete(r)); if(todo){cur=todo.key; focusQ=firstOpenQuote(todo);}}
+  renderList(); renderDetail();
  }, err=>{ writable=false; el("banner").hidden=false; el("banner").textContent="Saved answers stopped loading ("+err.code+"). Reload the page."; renderDetail(); });
- sub("labels", x=>labels=x, "speaker");
- sub("attribution", x=>attrib=x, "quotes");
+ sub("labels", x=>labels=x, x=>x&&x.key);
+ sub("attribution", x=>attrib=x, x=>x&&x.qid);
 })();
 </script>
 """
