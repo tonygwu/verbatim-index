@@ -535,6 +535,24 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
+- **The blinder turned two OTHER people's names into [SUBJECT].** Filed 2026-09-19,
+  found while building the quote check. Tim Walz became "Tim [SUBJECT]" 8 times in
+  `matt-walsh/matt-walsh-9bcva6` (Walz fuzzy-matches Walsh), and Josh Shapiro became
+  "Josh [SUBJECT]" twice in a Ben Shapiro recording (an exact surname). A judge then
+  reads "[SUBJECT] is a bad guy ... a total creep" as the subject describing himself.
+  Small: 10 occurrences in 2 recordings. Fixing it means re-blinding those two and
+  re-grading them, because their input hash moves. The leaders board measured blinder
+  defects of this kind as not moving scores; do it before the full grade, with a
+  failing-then-passing case for a first name followed by the subject's surname.
+
+- **137 judge quotes credited to the subject do not appear in the transcript.** Filed
+  2026-09-19. Of 3,290 subject quotes, `pundits_verify_page.locate` found 3,153; 137 (4%)
+  it could not place even allowing for [SUBJECT] tokens and "..." elisions. Some are
+  paraphrase, which the rubric forbids ("verbatim from the transcript"); some may be
+  matcher misses. Not yet read one by one. The quote cap and the minimum-subject-quotes
+  rule both assume quotes are real.
+
+
 - **The 25-word quote cap is uneven. RESOLVED 2026-09-16 by moving the PENALTY,
   not the number.** Filed 2026-09-16, measured the same day, decided by the
   operator during the P9 top-up run.
