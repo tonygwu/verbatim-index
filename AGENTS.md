@@ -1401,6 +1401,14 @@ new grades incomparable with the corpus already graded.
   PERSON must fill for every other recording; `report` stays INCONCLUSIVE until every label
   exists, then applies the P5 caps and gives yield with exact bounds. Proof:
   `.venv/bin/python scripts/test_pundits_pilot.py`.
+- P6 speaker check (human labels for the full roster): `scripts/pundits_verify_page.py build`
+  turns `pundits_pilot.py precheck`'s checklist into one page, written into the PRIVATE data
+  checkout because it carries transcript excerpts, and published as an Artifact with the `db`
+  capability. Each answer saves to the page's `labels` collection as the operator picks it;
+  read it back with the ArtifactData tool, then `pundits_verify_page.py import` writes
+  `human_labels.json` for `pundits_pilot.py report`. A partly answered recording is left out
+  and counted, never filled. The 2026-09-18 page is https://claude.ai/artifact/9TEivUMn7nhrYZJhkRRnsb
+  (218 recordings, 29 people). Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`.
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a
   person verified, by the human venue label; quotes hide the judge and its speaker label in a
