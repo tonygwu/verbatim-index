@@ -1422,8 +1422,8 @@ new grades incomparable with the corpus already graded.
   evidence quotes the judges
   credited to the subject that mechanical signals mark as suspect (a caption turn mark inside
   the quote, a question inside a conversation or debate, the subject's own name); build with
-  `--grades` and `--quote-key`. The judges' labels go to the private key file only, never the
-  page, and `import-quotes` joins answers to them. Its rates describe FLAGGED quotes only, so it
+  `--grades` and `--quote-key`. The private key preserves grading provenance,
+  and `import-quotes` joins answers to it. Its rates describe FLAGGED quotes only, so it
   does not replace the P7 random quote audit. Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`
   and `scripts/test_pundits_verify_serve.py`, which runs a real server on a real socket and
   reads the bind address off the listening socket rather than off the constant.
@@ -1434,6 +1434,21 @@ new grades incomparable with the corpus already graded.
   A browser found it in one keystroke. So after any change to the page's JS, drive it:
   serve the page, load it with Playwright, press `y`, and assert the answer reached the file.
   The globbed suite now carries the static half of that lesson as its SHADOW check.
+  **Speaker ranges (2026-09-20, operator requested assisted review):** each quote passage
+  has draggable text selection, multiple disjoint ranges, start/end sliders, remove and
+  undo; full transcript expansion stays on the same video. `pundits_span_editor.js` is
+  embedded at build time. Private `<page-stem>.transcripts/` sidecars hold raw tokens and
+  located evidence suggestions; `pundits_speaker_spans.py` records judge provenance and
+  withholds ambiguous matches. Model drafts are shown explicitly and require confirmation;
+  words without a saved attribution remain unknown. These assisted labels cannot count as
+  blind audit labels. Human ranges live in `human_answers.json`'s `spans` section with a
+  transcript SHA-256 and end-exclusive word offsets. The server refuses stale hashes,
+  overlapping ranges and invalid bounds; existing labels/attribution remain compatible.
+  Import using `pundits_verify_page.py import-spans --export <answers> --page <page> --out <output>`.
+  This preserves annotations separately; it does not rewrite grades. Verification:
+  `test_pundits_speaker_spans.py` plus `.venv/bin/python scripts/check_pundits_span_ui.py`
+  (Playwright, isolated synthetic data). Rebuild the page and restart ONLY its local server
+  after changing embedded JS; a running server holds its page in memory.
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a
   person verified, by the human venue label; quotes hide the judge and its speaker label in a

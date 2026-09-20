@@ -4,16 +4,14 @@
 Pundits plan, P6: discovery proves who UPLOADED a video, not who speaks in it, so a
 person labels every recording before it is graded. `pundits_pilot.py precheck`
 writes the checklist of recordings that need a person; this turns it into one
-self-contained page with, for each recording, a YouTube link, the description
-(which usually names the guest), and three transcript excerpts with the subject's
-name highlighted and a link to the matching moment in the video.
+local page with per-recording checks and a word-range speaker editor. Full raw
+transcripts and sparse model evidence suggestions live in private sidecar files
+loaded by the local server. Existing recording and quote answers are preserved.
 
-Labels are NOT stored in the page. The page declares the Artifact `db` capability
-and writes one document per recording to the `labels` collection, keyed
-`<slug>:<source_id>`, carrying exactly the fields `pundits_pilot.py report`
-reads: subject_present, venue, political_content, checked_by, notes.
-`pundits_verify_page.py import` turns an export of that collection into the
-human_labels.json shape.
+Labels are NOT stored in the page. The local server saves them in human_answers.json:
+recording decisions in labels, coarse quote decisions in attribution, and human
+word ranges in spans. import, import-quotes, and import-spans consume this file.
+Model drafts never enter the human store without an explicit operator action.
 
 The page holds transcript text, so it is written into the PRIVATE data checkout
 and never into this repository. No lean label is read or written.
@@ -27,10 +25,11 @@ and never into this repository. No lean label is read or written.
 
 QUOTE CHECK. With `--grades` and `--quote-key`, build also flags evidence quotes the
 judges credited to the subject that are most likely someone else's (see
-`suspect_quotes`), shows each in context on a second tab, and writes the judges'
-labels to the private key file only. `import-quotes` joins the operator's answers
-with that key. The sample is chosen for being suspect, so its rates describe flagged
-quotes only and cannot stand in for the P7 random quote audit.
+`suspect_quotes`), shows each in context on the same recording screen, and writes a
+private provenance key. Saved model estimates are exposed in the range editor at
+the operator's request (2026-09-20), so these are ASSISTED labels, not a blind audit.
+`import-quotes` joins the operator's answers with the key. The sample is selected for
+being suspect and cannot stand in for the P7 random quote audit.
 """
 from __future__ import annotations
 
@@ -71,7 +70,8 @@ def excerpts(text: str) -> list[dict]:
             h, m, s = (int(x) for x in marks[-1].groups())
             secs = h * 3600 + m * 60 + s
         chunk = text[start:span[-1].end()]
-        out.append({"at": frac, "t": secs, "text": MARK.sub("", chunk).strip()})
+        out.append({"at": frac, "t": secs, "text": MARK.sub("", chunk).strip(),
+                    "start": i, "end": i + len(span)})
     return out
 
 
@@ -214,7 +214,9 @@ def suspect_quotes(grades_dir: Path, transcripts_dir: Path, roster: dict) -> tup
                 h, m, s_ = (int(x) for x in marks[-1].groups())
                 t = h * 3600 + m * 60 + s_
             strip = lambda i, j: MARK.sub("", raw[toks[i].start():toks[j].end()]).strip() if j >= i else ""
-            cards.append({"qid": q["qid"], "t": t, "before": strip(b0, a - 1),
+            cards.append({"qid": q["qid"], "t": t, "start": b0,
+                          "end": min(len(toks), z + CONTEXT_WORDS + 1),
+                          "quote_start": a, "quote_end": z + 1, "before": strip(b0, a - 1),
                           "text": strip(a, z), "after": strip(z + 1, min(len(toks) - 1, z + CONTEXT_WORDS))})
             key_map[q["qid"]] = {"key": key, "signals": sorted(q["signals"]), "judges": q["judges"]}
         report["flagged"] += len(cards)
@@ -258,13 +260,31 @@ def build(args) -> int:
     quote_rows, key_map, qrep = ([], {}, {})
     if args.grades:
         quote_rows, key_map, qrep = suspect_quotes(Path(args.grades), Path(args.transcripts), roster)
-        # The judges' own labels stay out of the page; the key sits beside it in the
-        # private checkout and is joined only at import.
+        # Exact grading provenance stays in this key; the local range editor gets
+        # sparse model estimates separately from its transcript sidecar.
         Path(args.quote_key).write_text(json.dumps(key_map, indent=1, ensure_ascii=False) + "\n")
-    data = json.dumps({"rows": rows, "quote_rows": quote_rows, "venues": VENUES},
+    from pundits_speaker_spans import build_transcript, sidecar_path
+    from atomicio import write_atomic
+    grades_by_key = {}
+    if args.grades:
+        for path in sorted(Path(args.grades).glob("*/*/*__r0.json")):
+            if any(p in {"_obsolete", "_raw"} for p in path.parts):
+                continue
+            record = json.loads(path.read_text())
+            key = f"{record.get('leader_slug')}/{record.get('source_id')}"
+            grades_by_key.setdefault(key, []).append((path, record))
+    transcript_index = {}
+    for key in sorted({r["key"] for r in rows + quote_rows}):
+        rec = json.loads((Path(args.transcripts) / (key + ".json")).read_text())
+        transcript = build_transcript(key, rec.get("text") or "", grades_by_key.get(key, []))
+        write_atomic(sidecar_path(Path(args.out), key), json.dumps(transcript, ensure_ascii=False))
+        transcript_index[key] = {k: transcript[k] for k in ("text_sha256", "token_count")}
+    data = json.dumps({"rows": rows, "quote_rows": quote_rows, "venues": VENUES,
+                       "transcript_index": transcript_index},
                       ensure_ascii=False).replace("</", "<\\/")
-    page = TEMPLATE.replace("/*__DATA__*/null", data)
-    Path(args.out).write_text(page)
+    page = TEMPLATE.replace("/*__DATA__*/null", data).replace(
+        "/*__SPAN_EDITOR__*/", Path(__file__).with_name("pundits_span_editor.js").read_text())
+    write_atomic(Path(args.out), page)
     print(f"wrote {args.out}: {len(rows)} recordings to speaker-check, {len({r['slug'] for r in rows})} people; "
           f"{sum(len(r['quotes']) for r in quote_rows)} quotes to attribute across {len(quote_rows)} recordings; "
           f"{len(page) / 1024:.0f} KB")
@@ -308,7 +328,7 @@ def docs_from(raw, section: str) -> list[dict]:
     did not mean to hand over, not a file to interpret generously.
     """
     id_field = "key" if section == "labels" else "qid"
-    if isinstance(raw, dict) and set(raw) == {"labels", "attribution"}:
+    if isinstance(raw, dict) and {"labels", "attribution"} <= set(raw):
         raw = raw[section]
     if isinstance(raw, list):
         return raw
@@ -348,7 +368,8 @@ def join_quotes(docs: list[dict], key_map: dict) -> dict:
             bad.append(qid)
             continue
         out[qid] = {**key_map[qid], "answer": d["answer"], "notes": d.get("notes") or "",
-                    "checked_by": d.get("checked_by") or "operator"}
+                    "checked_by": d.get("checked_by") or "operator",
+                    "review_method": d.get("review_method", "legacy_quote_check")}
     if unknown:
         raise SystemExit(f"REFUSING: {len(unknown)} answers name quotes not in the key, e.g. {unknown[:3]}")
     by_signal: dict = {}
@@ -386,7 +407,15 @@ def main() -> int:
     q = sub.add_parser("import-quotes")
     for a in ("--export", "--key", "--out"):
         q.add_argument(a, required=True)
+    s = sub.add_parser("import-spans")
+    for a in ("--export", "--page", "--out"):
+        s.add_argument(a, required=True)
     args = ap.parse_args()
+    if args.cmd == "import-spans":
+        from pundits_speaker_spans import import_spans
+        result = import_spans(Path(args.export), Path(args.page), Path(args.out))
+        print(f"wrote {args.out}: {len(result['recordings'])} recordings with human word ranges")
+        return 0
     return {"build": build, "import": do_import, "import-quotes": do_import_quotes}[args.cmd](args)
 
 
@@ -410,6 +439,7 @@ TEMPLATE = r"""<title>Pundit Speaker Check</title>
  --rule:#2B2F35;--rule2:#3A3F47;--accent:#5EA3DE;--accentbg:#5EA3DE22;--yes:#35A08F;--yesbg:#35A08F22;--no:#E08876;--nobg:#E0887622;
  --warn:#D9A441;--warnbg:#D9A44122;--mark:#6B5A1F;--markink:#F5EFD8;}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:14.5px;line-height:1.5;margin:0;padding-inline:16px;padding-block:16px 40px}
 .app{max-width:1280px;margin:0 auto;display:grid;gap:14px}
 header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 20px;justify-content:space-between}
@@ -492,6 +522,41 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 .qitem[data-focus="true"]{border-color:var(--accent);box-shadow:0 0 0 3px var(--accentbg)}
 .qitem .hd{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:.72rem;color:var(--faint)}
 .qitem .hd a{color:var(--accent);text-decoration:none}
+
+/* Speaker attribution: label + pattern, never color alone. */
+.quote-exact{border-left:3px solid var(--muted);padding:4px 12px;font-size:.86rem}
+.quote-exact p{margin:4px 0;color:var(--ink)}
+.span-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.span-instructions,.span-model{font-size:.82rem;color:var(--ink2);margin:8px 0}
+.span-legend{display:flex;gap:8px 16px;flex-wrap:wrap;font-size:.73rem;margin:10px 0}
+.span-legend span{padding:2px 5px}
+.subject{background:var(--yesbg);color:var(--ink)}
+.other{background:var(--nobg);color:var(--ink)}
+.unclear,.conflict{background:var(--warnbg);color:var(--ink)}
+.draft.subject,.draft.other{border-bottom:2px dashed var(--muted)}
+.reviewed.subject{border-bottom:2px solid var(--yes)}
+.reviewed.other{border-bottom:2px solid var(--no)}
+.reviewed.unclear,.conflict{border-bottom:2px dotted var(--warn)}
+.evidence{text-decoration:underline;text-decoration-color:var(--accent);text-decoration-thickness:2px;text-underline-offset:5px}
+.span-actions{padding:10px;background:var(--surface2);border:1px solid var(--rule);border-radius:7px;margin:10px 0}
+.span-selection{font-size:.8rem;max-height:3.5em;overflow:auto;margin-bottom:8px;color:var(--ink2)}
+.span-transcript{font-size:.94rem;line-height:2.1;padding:16px;border:1px solid var(--rule2);border-radius:8px;max-height:440px;overflow:auto;user-select:text;margin:10px 0}
+.word.selected-word{outline:1px solid var(--accent);outline-offset:1px}
+.span-transcript ::selection{background:var(--accent);color:var(--surface)}
+.span-boundaries{display:flex;gap:20px;flex-wrap:wrap;font-size:.78rem;margin-top:10px}
+.span-boundaries[hidden]{display:none}
+.span-boundaries label{display:grid;gap:4px;flex:1;min-width:140px}
+.span-boundaries input{width:100%;accent-color:var(--accent)}
+.span-range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--rule);font-size:.76rem}
+.span-range>span{flex:1;min-width:120px}
+.span-ranges{margin:10px 0}
+.range-extra>summary,.span-ranges>summary{cursor:pointer;color:var(--ink2)}
+.range-extra{border-top:1px solid var(--rule);padding:12px 0}
+.span-status{margin:10px 0}
+[data-span-editor] button[disabled]{opacity:.5;cursor:not-allowed}
+.span-samples{display:block;margin:12px 0}
+.span-samples select{font:inherit;color:var(--ink);background:var(--surface);padding:5px}
+
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 <div class="app">
@@ -593,7 +658,6 @@ function renderDetail(){
  const l=labels[r.key]||{}, start=r.duration?Math.floor(r.duration*0.2):0;
  const hints=(r.hints||[]).map(h=>`<span class="chip">${esc(h)}</span>`).join("")
   + (r.mentions!=null?`<span class="chip info">${r.mentions} mention${r.mentions===1?"":"s"} of the name in the transcript</span>`:"");
- const ex=(r.excerpts||[]).map(e=>`<article><div class="at"><span>${Math.round(e.at*100)}% in</span>${e.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${e.t}s" target="_blank" rel="noopener">play from ${fmtT(e.t)}</a>`:""}</div>${highlight(e.text,r.forms)}</article>`).join("");
  const ask = r.ask ? `
    <div class="q"><label class="l">1 · Subject present<small>Takes part live; a played clip is not presence</small></label><div class="opts">${opt(labels,r.key,"subject_present",true,"Yes","y","y")}${opt(labels,r.key,"subject_present",false,"No","n","n")}</div></div>
    <div class="q"><label class="l">2 · Format<small>of this recording</small></label><div class="opts">${D.venues.map((v,i)=>opt(labels,r.key,"venue",v,v,i+1)).join("")}</div></div>
@@ -603,10 +667,12 @@ function renderDetail(){
  const quotes = r.quotes.length ? `
   <div class="qblock">
    <div class="q"><label class="l">${r.ask?"4 · ":""}Who says these lines?<small>the judges credited them to the subject</small></label>
-    <div class="qhelp">These ARE the lines to check. A judge quoted each one as ${esc(r.person)}'s own words and scored it, so a wrong one scores ${esc(r.person)} on somebody else's sentence. The highlighted words are the quote; grey text is the surrounding transcript. If the transcript can't settle it, play the moment.</div></div>
+    <div class="qhelp">These ARE the lines to check. A judge quoted each one as ${esc(r.person)}'s own words and scored it, so a wrong one scores ${esc(r.person)} on somebody else's sentence. The underlined words are the quote being checked. Mark speaker ranges in its surrounding passage, or use a quick answer for just the quote. Model drafts are not confirmed labels. If the transcript cannot settle it, play the moment.</div></div>
    ${r.quotes.map((c,i)=>`<div class="qitem" data-q="${i}" data-focus="${i===focusQ}">
      <div class="hd"><span>quote ${i+1} of ${r.quotes.length}</span>${c.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${c.t}s" target="_blank" rel="noopener">play from ${fmtT(c.t)}</a>`:""}</div>
-     <div class="qcard">${highlight(c.before,r.forms)} <span class="q">${highlight(c.text,r.forms)}</span> ${highlight(c.after,r.forms)}</div>
+     <div class="quote-exact"><b>Quote being checked</b><p>${esc(c.text)}</p></div>
+     <div data-span-editor="${i}">Loading speaker-range editor…</div>
+     <div class="sub">Quick answer for this quote only</div>
      <div class="opts">${ANSWERS.map(([v,lab,k,cls])=>opt(attrib,c.qid,"answer",v,lab,k,cls)).join("")}</div>
     </div>`).join("")}
   </div>` : "";
@@ -617,8 +683,8 @@ function renderDetail(){
   ${hints?`<div class="chips">${hints}</div>`:""}
   <a class="yt" id="yt" href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${start}s" target="_blank" rel="noopener">Open on YouTube at ${fmtT(start)} ↗</a>
   ${r.description?`<details class="desc"><summary>Video description</summary><p>${esc(r.description)}</p></details>`:""}
-  ${ex?`<details class="exwrap"><summary>Three transcript samples — rough triage only, nothing in them is attributed</summary><div class="exhd">Cut at 12%, 50% and 85% of the way through, so a glance can sometimes settle whether ${esc(r.person)} is in the recording. Everyone who speaks is in them and <code>&gt;&gt;</code> marks a change of speaker. They often cannot settle it, and then the video decides.${r.quotes.length?" The lines you ARE asked to attribute are in step "+(r.ask?"4":"1")+" below.":""}</div><div class="ex">${ex}</div></details>`:""}
   <div class="form">${ask}${quotes}
+   ${!r.quotes.length?`<details class="range-extra"><summary>Mark speaker ranges in this recording (optional)</summary><div data-span-editor="-1">Loading speaker-range editor…</div></details>`:""}
    <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
   </div>`;
  el("status").textContent = complete(r) ? "All answered" : `${outstanding(r)} answer${outstanding(r)===1?"":"s"} left on this recording`;
@@ -626,24 +692,32 @@ function renderDetail(){
   const store = b.dataset.store==="l" ? labels : attrib;
   if(b.dataset.store==="a"){const i=+b.closest(".qitem").dataset.q; focusQ=i;}
   setField(store, b.dataset.id, b.dataset.f, JSON.parse(b.dataset.v));});
- el("detail").querySelectorAll(".qitem").forEach(n=>n.onclick=e=>{ if(!e.target.closest("button")){focusQ=+n.dataset.q; renderDetail();} });
+ el("detail").querySelectorAll(".qitem").forEach(n=>n.onclick=()=>{focusQ=+n.dataset.q;});
+ mountSpanEditors(r);
  el("prev").onclick=()=>step(-1); el("next").onclick=()=>step(1);
  const ta=el("notes"); if(ta){let tm; ta.oninput=()=>{clearTimeout(tm); tm=setTimeout(()=>setField(labels,r.key,"notes",ta.value,true),700);};}}
 
-function select(k){cur=k; focusQ=firstOpenQuote(REC[k]); renderList(); renderDetail();
+function select(k){cur=k; history.replaceState(null,"","#"+encodeURIComponent(k)); focusQ=firstOpenQuote(REC[k]); renderList(); renderDetail();
  const n=el("list").querySelector(`[data-k="${CSS.escape(k)}"]`); n&&n.scrollIntoView({block:"nearest"});}
 function firstOpenQuote(r){const i=r.quotes.findIndex(c=>!(attrib[c.qid]||{}).answer); return i<0?0:i;}
 function step(d){const vis=visible(), order=vis.length?vis:recs; let i=order.findIndex(r=>r.key===cur);
  if(i<0) i = d>0 ? -1 : order.length; const n=order[Math.min(Math.max(i+d,0),order.length-1)]; n&&select(n.key);}
 
 const queue={};
-function setField(store, id, f, v, quiet){
+function setField(store, id, f, v, quiet, fromRanges=false){
  if(!writable) return;
  const isQuote = store===attrib;
  const base = isQuote ? {qid:id, key:cur} : {key:id};
- const next={...(store[id]||{}), ...base, [f]:v, checked_by:"operator", updated_at:new Date().toISOString()};
- store[id]=next;
+ const next={...(store[id]||{}), ...base, [f]:v, checked_by:"operator", updated_at:new Date().toISOString(),
+  ...(isQuote?{review_method:"assisted_range_editor"}:{})};
  const r=curRec();
+ const beforeRanges=isQuote && f==="answer" && !fromRanges && transcriptCache[r.key] ? structuredClone(humanRanges(r)) : null;
+ store[id]=next;
+ if(beforeRanges){
+  const quote=r.quotes.find(c=>c.qid===id);
+  if(quote){(spanUndo[r.key] ||= []).push(beforeRanges);saveRanges(r,paintRanges(beforeRanges,quote.quote_start,quote.quote_end,
+    ["subject","other","unclear"].includes(v)?v:null));}
+ }
  if(!quiet){ if(isQuote && f==="answer"){const nx=firstOpenQuote(r); focusQ = nx; } renderList(); renderDetail(); }
  const st=el("status"); st&&(st.textContent="Saving…", st.className="status");
  queue[id]=(queue[id]||Promise.resolve()).then(()=>saver.put(isQuote?"attribution":"labels", id, next)).then(()=>{
@@ -652,10 +726,13 @@ function setField(store, id, f, v, quiet){
    if(e&&e.code==="invalid_argument") writable=false;
    if(el("status")){el("status").textContent="Not saved: "+(e&&e.message||e)+". Reload the page and try again."; el("status").className="status err";}
  });
- if(!quiet && f!=="notes" && complete(r)) setTimeout(()=>{ if(cur===r.key) step(1); }, 250);}
+ // Stay on the video until Next: the operator may still be marking surrounding words.
+}
+
+/*__SPAN_EDITOR__*/
 
 document.addEventListener("keydown", e=>{
- if(e.target.tagName==="TEXTAREA"){ if(e.key==="Escape") e.target.blur(); return; }
+ if(["TEXTAREA","INPUT","SELECT"].includes(e.target.tagName)||e.target.closest("[data-span-editor]")){ if(e.key==="Escape") e.target.blur(); return; }
  if(e.metaKey||e.ctrlKey||e.altKey) return;
  const r=curRec(); if(!r) return;
  const k=e.key.toLowerCase();
@@ -703,7 +780,8 @@ const artifactStore = {
                                    : db.collection("labels").doc(id.replace("/",":"));
   return ref.set(value);
  }};
-function startAt(){const todo=recs.find(r=>!complete(r)); if(todo){cur=todo.key; focusQ=firstOpenQuote(todo);}}
+function startAt(){let key="";try{key=decodeURIComponent(location.hash.slice(1));}catch(e){}
+ const todo=REC[key]||recs.find(r=>!complete(r)); if(todo){cur=todo.key; focusQ=firstOpenQuote(todo);}}
 
 renderList(); renderDetail();
 (async()=>{
@@ -711,7 +789,7 @@ renderList(); renderDetail();
  try{ local = await localStore.load(); }catch(e){ local=null; }
  if(local){
   saver=localStore; writable=true;
-  labels=local.labels; attrib=local.attribution;
+  labels=local.labels; attrib=local.attribution; spanAnswers=local.spans||{};
   startAt(); renderList(); renderDetail();
   return;
  }
