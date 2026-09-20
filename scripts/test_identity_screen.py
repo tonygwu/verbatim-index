@@ -132,6 +132,38 @@ def main() -> int:
     check("... above the limit", r["signals"]["aboutness"]["name_density_per_1000"] > 1.6,
           str(r["signals"]["aboutness"]))
 
+    print("\n[5b] a SPEAKER-LABELLED transcript is not 'about' its own speaker")
+    # REAL CASE, 2026-09-20. bill-gurley/tim-ferriss-hsvfz2 is a 22,303-word
+    # interview WITH Gurley. Its turns are labelled "Bill Gurley:", 154 of them,
+    # which drove name density to 7.08 per 1000 against a limit of 1.6 and got a
+    # good recording REJECTED. The labels are evidence he is speaking; the
+    # aboutness signal read them as evidence the show is about him.
+    labelled = {
+        "source_id": "tim-ferriss-hsvfz2", "leader_slug": "bill-gurley",
+        "yt_title": "Legendary Investor Bill Gurley on Investing Rules",
+        # The REAL file's shape: some turns carry a [timestamp] and most run
+        # inline after the previous sentence. The general label regex needs the
+        # timestamp or a newline, which is deliberate: matching "Word:" anywhere
+        # would invent speakers out of "Note:" and "Remember:". The inline turns
+        # are still stripped from the density count, because that strip targets
+        # this person's own name rather than any label.
+        "text": ("[00:00:13] Tim Ferriss: Welcome to the show, my guest is Bill Gurley. "
+                 "[00:01:15] Bill Gurley: Thanks for having me. "
+                 + "Tim Ferriss: Tell me about markets. "
+                   "Bill Gurley: The thing about markets is that they clear eventually. " * 60),
+    }
+    person = {"slug": "bill-gurley", "name": "Bill Gurley", "company": "Benchmark"}
+    r = IS.screen_one(labelled, person)
+    check("the speaker labels are detected", bool(r["signals"]["own_voice"]["speaker_labels"]),
+          str(r["signals"]["own_voice"]))
+    check("... and own_voice confirms the subject speaks",
+          r["signals"]["own_voice"]["ok"] is True, str(r["signals"]["own_voice"]))
+    check("the labels do NOT count toward name density",
+          r["signals"]["aboutness"]["name_density_per_1000"] <= 1.6,
+          f"got {r['signals']['aboutness']['name_density_per_1000']}; the labels are "
+          f"evidence he SPEAKS, not evidence the show is about him")
+    check("so it is not rejected", r["verdict"] != "reject", r["verdict"])
+
     print("\n[6] own_voice is UNKNOWN without speaker labels, never 'pass'")
     plain = {"source_id": "z", "leader_slug": "cathie-wood",
              "title": "Cathie Wood on ARK's outlook", "text": "markets are interesting " * 90}

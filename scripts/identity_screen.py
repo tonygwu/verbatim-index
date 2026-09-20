@@ -93,8 +93,19 @@ ABOUT_TITLE = re.compile(
     r"\b(attempting|attempts) to\b|"
     r"\bwhat .* (said|got wrong|gets? wrong)\b|\baccording to\b)", re.I)
 
-#: Speaker-label markers used by human caption tracks.
-SPEAKER_LABEL = re.compile(r"(^|\n)\s*>>\s*([A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3})\s*:")
+#: Speaker-label markers. TWO conventions, because the corpora use different ones.
+#: YouTube caption tracks write ">> NAME:". Podcast and web transcripts write
+#: "Name:" at the start of a turn, often after a timestamp like "[00:01:15] ".
+#:
+#: MEASURED 2026-09-20 over the seven's 82 web transcripts: 0 carry ">>" and 1
+#: carries "Name:". That one is a 22,303-word Tim Ferriss interview with Bill
+#: Gurley, and missing its labels cost twice over. own_voice stayed unknown when
+#: it could have confirmed him, AND the labels inflated his name density to
+#: 7.08 per 1000 against a limit of 1.6, because every one of his turns opens
+#: with "Bill Gurley:". The screen REJECTED a good recording on a signal that
+#: the labels themselves created.
+SPEAKER_LABEL = re.compile(
+    r"(?:^|\n|\]\s*)\s*(?:>>\s*)?([A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3})\s*:\s")
 
 #: A capitalised full name anywhere in a title: "Firstname Lastname".
 OTHER_NAME = re.compile(r"\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b")
@@ -118,7 +129,7 @@ def speaker_labels(text: str) -> list[str]:
     """Distinct speaker labels in a caption track, in order of first appearance."""
     seen: list[str] = []
     for m in SPEAKER_LABEL.finditer(text or ""):
-        who = m.group(2).strip()
+        who = m.group(1).strip()
         if who not in seen:
             seen.append(who)
     return seen
@@ -292,9 +303,25 @@ def screen_one(rec: dict, person: dict, *, name_density_limit: float = 1.6) -> d
 
     ident_ok, ident_why = identifies(title, channel, person)
     others = other_named_people(title, person)
-    rate, hits = QA.name_density_after_intro(text, surname)
-    about = bool(ABOUT_TITLE.search(title))
     labels = speaker_labels(text)
+    # STRIP THE SPEAKER LABELS BEFORE MEASURING DENSITY. A labelled transcript
+    # repeats the subject's name on every turn they take, which is evidence they
+    # are SPEAKING, and the aboutness signal reads it as evidence the show is
+    # ABOUT them. Measured on the Tim Ferriss interview above: 7.08 per 1000 with
+    # the labels, and it is a normal interview.
+    # Strip THIS person's own label form, not every label. A general
+    # speaker-label regex needs a newline or a timestamp before the name, and
+    # MEASURED on the Tim Ferriss interview only 2 of 154 turns are formatted
+    # that way: the rest run inline, "...for making the time. Bill Gurley:
+    # Thanks...". Matching "<their name>:" anywhere is both sufficient and safe,
+    # because that exact string is a turn marker and effectively never prose.
+    density_text = text
+    if labels and person.get("name"):
+        full = re.escape(person["name"])
+        sur = re.escape(person["name"].split()[-1])
+        density_text = re.sub(rf"\b(?:{full}|{sur})\s*:", " ", text)
+    rate, hits = QA.name_density_after_intro(density_text, surname)
+    about = bool(ABOUT_TITLE.search(title))
 
     signals = {
         "identity": {"ok": ident_ok, "reason": ident_why},
