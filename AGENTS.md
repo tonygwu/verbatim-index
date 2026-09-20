@@ -1403,19 +1403,37 @@ new grades incomparable with the corpus already graded.
   `.venv/bin/python scripts/test_pundits_pilot.py`.
 - P6 speaker check (human labels for the full roster): `scripts/pundits_verify_page.py build`
   turns `pundits_pilot.py precheck`'s checklist into one page, written into the PRIVATE data
-  checkout because it carries transcript excerpts, and published as an Artifact with the `db`
-  capability. Each answer saves to the page's `labels` collection as the operator picks it;
-  read it back with the ArtifactData tool, then `pundits_verify_page.py import` writes
-  `human_labels.json` for `pundits_pilot.py report`. A partly answered recording is left out
-  and counted, never filled. The 2026-09-18 page is https://claude.ai/artifact/9TEivUMn7nhrYZJhkRRnsb
-  (218 recordings, 29 people). ONE screen per recording: the three questions and, below them,
+  checkout because it carries transcript excerpts. **Serve it locally; do not publish it as an
+  Artifact.** `scripts/pundits_verify_serve.py --page <the built page>` serves it on
+  127.0.0.1:5001 and saves every answer to `human_answers.json` beside the page, which
+  `import` and `import-quotes` both read. The socket binds to loopback and there is no flag to
+  widen it, because the page carries private transcript text; that is also why it is not a
+  fourth Cloudflare Worker. The server accepts only ids it reads out of the page it is serving,
+  so a stale page cannot accumulate answers the import would later throw away.
+  The page chooses where to save by asking, never by inspecting its own hostname: it probes
+  `api/answers` first and falls back to the Artifact `db` capability. The published Artifact
+  https://claude.ai/artifact/9TEivUMn7nhrYZJhkRRnsb still works, but ONLY for the one account
+  that owns it. The runtime grants db writes to people who can interact or edit and never to a
+  view-only viewer or a link visitor, and a page cannot lower that bar, so a second Google
+  account gets a read-only page. That is what sent this local.
+  A partly answered recording is left out and counted, never filled.
+  ONE screen per recording: the three questions and, below them,
   any flagged evidence quotes for that same recording, so a video is opened once. The page shows
   evidence quotes the judges
   credited to the subject that mechanical signals mark as suspect (a caption turn mark inside
   the quote, a question inside a conversation or debate, the subject's own name); build with
   `--grades` and `--quote-key`. The judges' labels go to the private key file only, never the
   page, and `import-quotes` joins answers to them. Its rates describe FLAGGED quotes only, so it
-  does not replace the P7 random quote audit. Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`.
+  does not replace the P7 random quote audit. Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`
+  and `scripts/test_pundits_verify_serve.py`, which runs a real server on a real socket and
+  reads the bind address off the listening socket rather than off the constant.
+  **The page's own JavaScript is not covered by either.** FOUND 2026-09-20: the save adapter
+  went in as a module-level `store`, and `setField(store, id, f, v)` already took a parameter of
+  that name, so inside setField the parameter won and every save died with
+  `store.put is not a function`. `node --check` passed it and no Python test executes the page.
+  A browser found it in one keystroke. So after any change to the page's JS, drive it:
+  serve the page, load it with Playwright, press `y`, and assert the answer reached the file.
+  The globbed suite now carries the static half of that lesson as its SHADOW check.
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a
   person verified, by the human venue label; quotes hide the judge and its speaker label in a

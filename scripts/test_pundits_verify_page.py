@@ -19,12 +19,14 @@ passed through would be a guessed label. So this checks the importer against
              quote are flagged; an ordinary answer is not
   HIDDEN     the judges' labels reach the private key file, never the page
   JOIN       quote answers join the key, and a foreign answer stops the import
+  SHADOW     no function parameter hides a module-level binding its own body uses
 
   .venv/bin/python scripts/test_pundits_verify_page.py
 """
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -157,6 +159,51 @@ def main() -> int:
         check("and no lean field or value, even when the roster has one",
               "SECRET-LEAN" not in page and '"lean"' not in page)
         check("the data placeholder was replaced", "/*__DATA__*/null" not in page)
+
+    print("\n[SHADOW]")
+    # FOUND 2026-09-20 in a real browser: the page grew a module-level `store` holding
+    # the save adapter, and `setField(store, id, f, v)` already took a parameter of that
+    # name for the labels object. Inside setField the parameter won, so every save died
+    # with "store.put is not a function". `node --check` passes it, and no unit test
+    # here executes the page, so nothing caught it until a browser ran the save path.
+    # The rule is general: a parameter may not hide a module-level binding its own body
+    # uses. It is a name collision, and the page has one name per idea.
+    src = V.TEMPLATE
+    js = src[src.index("const D = "):]
+    globals_ = set()
+    for decl in re.findall(r"^(?:let|const|var)\s+(.*?);?$", js, re.M):
+        # One `let` line declares several names, which is where the real bug sat. Split
+        # on commas at bracket depth 0, never on the first `=`: a lazy match to `=`
+        # sees only `labels` on `let labels={}, ..., saver=null, ...` and makes this
+        # whole check vacuous. That is how the first version of it passed the mutation.
+        depth, part, parts = 0, "", []
+        for ch in decl:
+            if ch in "{[(":
+                depth += 1
+            elif ch in "}])":
+                depth -= 1
+            if ch == "," and depth == 0:
+                parts.append(part)
+                part = ""
+            else:
+                part += ch
+        parts.append(part)
+        for p in parts:
+            name = p.split("=")[0].strip()
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
+                globals_.add(name)
+    assert {"labels", "attrib", "db", "writable"} <= globals_, f"extraction missed names: {sorted(globals_)}"
+    offenders = []
+    for m in re.finditer(r"function\s+(\w+)\s*\(([^)]*)\)\s*\{", js):
+        fname, params = m.group(1), m.group(2)
+        names = {re.split(r"[=:]", p)[0].strip() for p in params.split(",") if p.strip()}
+        names = {n for n in names if re.fullmatch(r"[A-Za-z_$][\w$]*", n)}
+        body = js[m.end():m.end() + 1400]
+        for n in names & globals_:
+            if re.search(r"\b" + re.escape(n) + r"\s*\.\w", body):
+                offenders.append(f"{fname}({n}) hides the module-level {n}")
+    check("no function parameter hides a module-level binding its body dereferences",
+          not offenders, "; ".join(offenders))
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

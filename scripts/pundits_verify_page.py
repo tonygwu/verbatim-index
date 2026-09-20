@@ -298,10 +298,28 @@ def to_labels(docs: list[dict], checklist: dict) -> dict:
     return {"labels": out, "partial": sorted(partial), "unlabelled": sorted(set(checklist) - set(out) - set(partial))}
 
 
+def docs_from(raw, section: str) -> list[dict]:
+    """Documents out of either an Artifact db export or the local server's answers file.
+
+    Three shapes reach here and all three are named rather than sniffed: the server
+    writes {"labels": {...}, "attribution": {...}}, an ArtifactData listing comes back
+    as a list, and a hand-made export may be one object of documents. Anything else
+    stops the import, because a shape this does not recognise is a file the operator
+    did not mean to hand over, not a file to interpret generously.
+    """
+    id_field = "key" if section == "labels" else "qid"
+    if isinstance(raw, dict) and set(raw) == {"labels", "attribution"}:
+        raw = raw[section]
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        return [dict(v, **{id_field: v.get(id_field, k)}) for k, v in raw.items() if isinstance(v, dict)]
+    raise SystemExit(f"REFUSING: {section} is neither a list of documents nor an object of them")
+
+
 def do_import(args) -> int:
     checklist = json.loads(Path(args.checklist).read_text())
-    raw = json.loads(Path(args.export).read_text())
-    docs = raw if isinstance(raw, list) else [dict(v, key=v.get("key", k)) for k, v in raw.items()]
+    docs = docs_from(json.loads(Path(args.export).read_text()), "labels")
     res = to_labels(docs, checklist)
     Path(args.out).write_text(json.dumps(res["labels"], indent=1, ensure_ascii=False) + "\n")
     print(f"wrote {args.out}: {len(res['labels'])} complete labels; "
@@ -346,8 +364,7 @@ def join_quotes(docs: list[dict], key_map: dict) -> dict:
 
 def do_import_quotes(args) -> int:
     key_map = json.loads(Path(args.key).read_text())
-    raw = json.loads(Path(args.export).read_text())
-    docs = raw if isinstance(raw, list) else [dict(v, qid=v.get("qid", k)) for k, v in raw.items()]
+    docs = docs_from(json.loads(Path(args.export).read_text()), "attribution")
     res = join_quotes(docs, key_map)
     Path(args.out).write_text(json.dumps(res, indent=1, ensure_ascii=False) + "\n")
     print(f"wrote {args.out}: {sum(res['tally'].values())} answered of {len(key_map)} flagged; "
@@ -521,7 +538,7 @@ for(const r of (D.quote_rows||[])){
 }
 const recs = Object.values(REC).sort((a,b)=>(a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
 let filter="todo", cur=recs.length?recs[0].key:null, focusQ=0;
-let labels={}, attrib={}, db=null, writable=true;
+let labels={}, attrib={}, db=null, saver=null, writable=false;
 
 const askDone = r => {const l=labels[r.key]||{}; return !r.ask || (typeof l.subject_present==="boolean" && typeof l.political_content==="boolean" && D.venues.includes(l.venue));};
 const quotesDone = r => r.quotes.every(c=>!!(attrib[c.qid]||{}).answer);
@@ -533,7 +550,11 @@ function recState(r){
   if(r.quotes.some(c=>["other","both"].includes((attrib[c.qid]||{}).answer))) return "rej";
   return "done";}
  return (labels[r.key]||r.quotes.some(c=>(attrib[c.qid]||{}).answer)) ? "part" : "todo";}
-const outstanding = r => (r.ask && !askDone(r) ? 1 : 0) + r.quotes.filter(c=>!(attrib[c.qid]||{}).answer).length;
+// Count the questions, not the blocks: a fresh recording has three unanswered
+// questions and used to report "1 left", which reads as one click away from done.
+const askLeft = r => {if(!r.ask) return 0; const l=labels[r.key]||{};
+ return (typeof l.subject_present==="boolean"?0:1) + (D.venues.includes(l.venue)?0:1) + (typeof l.political_content==="boolean"?0:1);};
+const outstanding = r => askLeft(r) + r.quotes.filter(c=>!(attrib[c.qid]||{}).answer).length;
 
 function fmtT(s){if(s==null)return "";const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0");}
 function fmtDate(d){return d&&d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`:"unknown";}
@@ -598,7 +619,7 @@ function renderDetail(){
   <div class="form">${ask}${quotes}
    <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
   </div>`;
- el("status").textContent = complete(r) ? "All answered" : `${outstanding(r)} left on this recording`;
+ el("status").textContent = complete(r) ? "All answered" : `${outstanding(r)} answer${outstanding(r)===1?"":"s"} left on this recording`;
  el("detail").querySelectorAll("button[data-f]").forEach(b=>b.onclick=()=>{
   const store = b.dataset.store==="l" ? labels : attrib;
   if(b.dataset.store==="a"){const i=+b.closest(".qitem").dataset.q; focusQ=i;}
@@ -623,9 +644,8 @@ function setField(store, id, f, v, quiet){
  const r=curRec();
  if(!quiet){ if(isQuote && f==="answer"){const nx=firstOpenQuote(r); focusQ = nx; } renderList(); renderDetail(); }
  const st=el("status"); st&&(st.textContent="Saving…", st.className="status");
- const ref = isQuote ? db.collection("attribution").doc(id) : db.collection("labels").doc(id.replace("/",":"));
- queue[id]=(queue[id]||Promise.resolve()).then(()=>ref.set(next)).then(()=>{
-   if(el("status")&&cur===(isQuote?next.key:id)) el("status").textContent = complete(curRec()) ? "All answered" : `${outstanding(curRec())} left on this recording`;
+ queue[id]=(queue[id]||Promise.resolve()).then(()=>saver.put(isQuote?"attribution":"labels", id, next)).then(()=>{
+   if(el("status")&&cur===(isQuote?next.key:id)) el("status").textContent = complete(curRec()) ? "All answered" : `${outstanding(curRec())} answer${outstanding(curRec())===1?"":"s"} left on this recording`;
  }).catch(e=>{
    if(e&&e.code==="invalid_argument") writable=false;
    if(el("status")){el("status").textContent="Not saved: "+(e&&e.message||e)+". Reload the page and try again."; el("status").className="status err";}
@@ -655,17 +675,54 @@ for(const [id,f] of [["f-todo","todo"],["f-all","all"],["f-done","done"]]) el(id
 el("legend").innerHTML = `<span class="dot done" style="display:inline-block;vertical-align:-1px"></span> verified · <span class="dot rej" style="display:inline-block;vertical-align:-1px"></span> excluded or a misattributed quote · <span class="dot part" style="display:inline-block;vertical-align:-1px"></span> partly answered`;
 el("keyhelp").innerHTML = "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>s</b> subject, <b>e</b> someone else, <b>b</b> both, <b>u</b> can't tell, <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
 
+// Two places answers can live, and the page picks by asking, never by guessing at
+// its own hostname. `pundits_verify_serve.py` answers api/answers; the published
+// Artifact has no such path, so the probe fails there and the Artifact db is used.
+const localStore = {
+ where: "this machine",
+ async load(){
+  const res = await fetch("api/answers", {headers:{accept:"application/json"}});
+  if(!res.ok) throw new Error("api/answers returned "+res.status);
+  const j = await res.json();
+  if(!j || typeof j.labels!=="object" || typeof j.attribution!=="object")
+   throw new Error("api/answers returned an unexpected shape");
+  return j;
+ },
+ async put(coll, id, value){
+  const res = await fetch("api/answer", {method:"POST", headers:{"content-type":"application/json"},
+   body: JSON.stringify({kind:coll, id, value})});
+  let j={}; try{ j = await res.json(); }catch(e){}
+  if(!res.ok) throw new Error(j.error || ("the server answered "+res.status));
+ }};
+const artifactStore = {
+ where: "claude.ai",
+ put(coll, id, value){
+  const ref = coll==="attribution" ? db.collection("attribution").doc(id)
+                                   : db.collection("labels").doc(id.replace("/",":"));
+  return ref.set(value);
+ }};
+function startAt(){const todo=recs.find(r=>!complete(r)); if(todo){cur=todo.key; focusQ=firstOpenQuote(todo);}}
+
 renderList(); renderDetail();
 (async()=>{
+ let local=null;
+ try{ local = await localStore.load(); }catch(e){ local=null; }
+ if(local){
+  saver=localStore; writable=true;
+  labels=local.labels; attrib=local.attribution;
+  startAt(); renderList(); renderDetail();
+  return;
+ }
  db = await (window.claude?.use ? window.claude.use("db") : null);
  if(!db){ writable=false; el("banner").hidden=false;
-  el("banner").textContent="Answers can't be saved in this view. Open this page on claude.ai while signed in, and every answer saves as you pick it.";
+  el("banner").textContent="Answers can't be saved in this view. Serve it with scripts/pundits_verify_serve.py and open the localhost URL, or open it on claude.ai while signed in as its owner. Either way every answer saves as you pick it.";
   renderDetail(); return; }
+ saver=artifactStore; writable=true;
  let first=true;
  const sub=(coll, assign, keyf)=>db.collection(coll).onSnapshot(snap=>{
   const next={}; for(const d of snap.docs){const x=d.data(); const k=keyf(x); if(k) next[k]=x;}
   assign(next);
-  if(first){first=false; const todo=recs.find(r=>!complete(r)); if(todo){cur=todo.key; focusQ=firstOpenQuote(todo);}}
+  if(first){first=false; startAt();}
   renderList(); renderDetail();
  }, err=>{ writable=false; el("banner").hidden=false; el("banner").textContent="Saved answers stopped loading ("+err.code+"). Reload the page."; renderDetail(); });
  sub("labels", x=>labels=x, x=>x&&x.key);
