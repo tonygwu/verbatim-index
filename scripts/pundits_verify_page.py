@@ -437,6 +437,9 @@ details.desc{font-size:.85rem;color:var(--ink2)}
 details.desc summary{cursor:pointer;color:var(--muted);font-size:.8rem}
 details.desc p{white-space:pre-wrap;margin:.4em 0 0;max-width:80ch}
 .ex{display:grid;gap:10px}
+.exhd{font-size:.8rem;color:var(--muted);max-width:80ch;margin-bottom:2px}
+.exhd b{color:var(--ink2)}
+.exhd code{font-family:var(--mono);font-size:.95em}
 .ex article{border-left:2px solid var(--rule2);padding:2px 0 2px 12px;font-size:.88rem;color:var(--ink2);max-width:90ch}
 .ex .at{font-family:var(--mono);font-size:.72rem;color:var(--faint);display:flex;gap:10px;margin-bottom:3px}
 .ex .at a{color:var(--accent);text-decoration:none}
@@ -577,7 +580,7 @@ function renderDetail(){
  const quotes = r.quotes.length ? `
   <div class="qblock">
    <div class="q"><label class="l">${r.ask?"4 · ":""}Who says these lines?<small>the judges credited them to the subject</small></label>
-    <div class="qhelp">The highlighted words are the quote; grey text is context. If the transcript can't settle it, play the moment.</div></div>
+    <div class="qhelp">These ARE the lines to check. A judge quoted each one as ${esc(r.person)}'s own words and scored it, so a wrong one scores ${esc(r.person)} on somebody else's sentence. The highlighted words are the quote; grey text is the surrounding transcript. If the transcript can't settle it, play the moment.</div></div>
    ${r.quotes.map((c,i)=>`<div class="qitem" data-q="${i}" data-focus="${i===focusQ}">
      <div class="hd"><span>quote ${i+1} of ${r.quotes.length}</span>${c.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${c.t}s" target="_blank" rel="noopener">play from ${fmtT(c.t)}</a>`:""}</div>
      <div class="qcard">${highlight(c.before,r.forms)} <span class="q">${highlight(c.text,r.forms)}</span> ${highlight(c.after,r.forms)}</div>
@@ -591,7 +594,7 @@ function renderDetail(){
   ${hints?`<div class="chips">${hints}</div>`:""}
   <a class="yt" id="yt" href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${start}s" target="_blank" rel="noopener">Open on YouTube at ${fmtT(start)} ↗</a>
   ${r.description?`<details class="desc"><summary>Video description</summary><p>${esc(r.description)}</p></details>`:""}
-  ${ex?`<div class="ex">${ex}</div>`:""}
+  ${ex?`<div class="exhd"><b>Three samples of the transcript, for question 1 only.</b> They are cut at 12%, 50% and 85% of the way through, so you can see whether ${esc(r.person)} is in the recording at all. Everyone who speaks is in them and <code>&gt;&gt;</code> marks a change of speaker. Nothing here is attributed, and you are not asked to attribute it${r.quotes.length?". The lines to attribute are in step "+(r.ask?"4":"1")+" below":""}.</div><div class="ex">${ex}</div>`:""}
   <div class="form">${ask}${quotes}
    <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
   </div>`;
