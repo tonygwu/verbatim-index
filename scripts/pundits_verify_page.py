@@ -454,7 +454,9 @@ details.desc{font-size:.85rem;color:var(--ink2)}
 details.desc summary{cursor:pointer;color:var(--muted);font-size:.8rem}
 details.desc p{white-space:pre-wrap;margin:.4em 0 0;max-width:80ch}
 .ex{display:grid;gap:10px}
-.exhd{font-size:.8rem;color:var(--muted);max-width:80ch;margin-bottom:2px}
+details.exwrap summary{cursor:pointer;color:var(--muted);font-size:.8rem}
+details.exwrap[open] summary{margin-bottom:8px}
+.exhd{font-size:.8rem;color:var(--muted);max-width:80ch;margin-bottom:8px}
 .exhd b{color:var(--ink2)}
 .exhd code{font-family:var(--mono);font-size:.95em}
 .ex article{border-left:2px solid var(--rule2);padding:2px 0 2px 12px;font-size:.88rem;color:var(--ink2);max-width:90ch}
@@ -615,7 +617,7 @@ function renderDetail(){
   ${hints?`<div class="chips">${hints}</div>`:""}
   <a class="yt" id="yt" href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${start}s" target="_blank" rel="noopener">Open on YouTube at ${fmtT(start)} ↗</a>
   ${r.description?`<details class="desc"><summary>Video description</summary><p>${esc(r.description)}</p></details>`:""}
-  ${ex?`<div class="exhd"><b>Three samples of the transcript, for question 1 only.</b> They are cut at 12%, 50% and 85% of the way through, so you can see whether ${esc(r.person)} is in the recording at all. Everyone who speaks is in them and <code>&gt;&gt;</code> marks a change of speaker. Nothing here is attributed, and you are not asked to attribute it${r.quotes.length?". The lines to attribute are in step "+(r.ask?"4":"1")+" below":""}.</div><div class="ex">${ex}</div>`:""}
+  ${ex?`<details class="exwrap"><summary>Three transcript samples — rough triage only, nothing in them is attributed</summary><div class="exhd">Cut at 12%, 50% and 85% of the way through, so a glance can sometimes settle whether ${esc(r.person)} is in the recording. Everyone who speaks is in them and <code>&gt;&gt;</code> marks a change of speaker. They often cannot settle it, and then the video decides.${r.quotes.length?" The lines you ARE asked to attribute are in step "+(r.ask?"4":"1")+" below.":""}</div><div class="ex">${ex}</div></details>`:""}
   <div class="form">${ask}${quotes}
    <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
   </div>`;
