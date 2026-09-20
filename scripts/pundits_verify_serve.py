@@ -47,7 +47,7 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
-from pundits_speaker_spans import sidecar_path, validate_annotation  # noqa: E402
+from pundits_speaker_spans import sidecar_path, validate_annotation, token_kinds, reconcile_quote_reviews  # noqa: E402
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5001
@@ -86,6 +86,10 @@ def load_answers(path: Path) -> dict:
 
 def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, answers_path: Path, lock: threading.Lock,
                  page_path: Path):
+    data = json.loads(DATA_LINE.search(page_bytes.decode()).group(1).replace("<\\/", "</"))
+    quote_rows = data.get("quote_rows", [])
+    quote_recordings = {q["qid"]: r["key"] for r in quote_rows for q in r.get("quotes", [])}
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "pundits-verify/1"
@@ -111,7 +115,7 @@ def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, ans
                 return self._send(200, page_bytes, "text/html; charset=utf-8")
             if path == "/api/answers":
                 with lock:
-                    return self._json(200, {s: answers[s] for s in SECTIONS})
+                    return self._json(200, reconcile_quote_reviews(answers, page_path, quote_rows))
             if path == "/api/transcript":
                 key = parse_qs(urlsplit(self.path).query).get("key", [""])[0]
                 if key not in ids["spans"]:
@@ -120,7 +124,7 @@ def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, ans
                     payload = json.loads(sidecar_path(page_path, key).read_text())
                 except (OSError, ValueError):
                     return self._json(409, {"error": "transcript unavailable; rebuild the page"})
-                return self._json(200, payload)
+                return self._json(200, {**payload, "token_kinds": token_kinds(payload["tokens"])})
             return self._json(404, {"error": f"no such path: {path}"})
 
         def do_POST(self):
@@ -152,14 +156,18 @@ def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, ans
                 except (OSError, ValueError) as exc:
                     return self._json(400, {"error": str(exc)})
             with lock:
+                if kind == "attribution" and quote_recordings.get(ident) in answers["spans"]:
+                    return self._json(409, {"error": "Quote results now follow your word markings. Reload the page to continue."})
                 updated = {**answers, kind: {**answers[kind], ident: value}}
+                updated = reconcile_quote_reviews(updated, page_path, quote_rows)
                 try:
                     write_atomic(answers_path, json.dumps(updated, indent=1, ensure_ascii=False) + "\n")
                 except OSError:
                     return self._json(500, {"error": "answer could not be written to disk; retry"})
-                answers[kind][ident] = value
+                answers.update(updated)
                 counts = {s: len(answers[s]) for s in SECTIONS}
-            return self._json(200, {"ok": True, "saved": counts})
+                reviews = dict(answers["attribution"])
+            return self._json(200, {"ok": True, "saved": counts, "attribution": reviews})
 
     return Handler
 

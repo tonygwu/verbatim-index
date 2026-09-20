@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
+import pundits_speaker_spans as spans
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -62,6 +63,34 @@ class SpeakerSpans(unittest.TestCase):
         for key in ('../secret', 'p/../../secret', '/tmp/x', 'p/a.json'):
             with self.assertRaises(ValueError): sidecar_path(self.root / 'page.html', key)
 
+    def test_caption_markers_are_not_speech(self):
+        tokens = '[00:06:06] Hello [ __ ] there ... >> goodbye [ ___'.split()
+        self.assertEqual(spans.token_kinds(tokens),
+                         ['timestamp','speech','gap','gap','gap','speech','gap','turn','speech','gap','gap'])
+        self.assertEqual(spans.token_kinds('[Music] really 2024 was good'.split()),
+                         ['gap','speech','speech','speech','speech'])
+
+    def test_unreviewed_quote_is_incomplete_not_unclear(self):
+        quote = {'quote_start': 7, 'quote_end': 12}
+        value = copy.deepcopy(self.value)
+        value['ranges'] = [{'start': 1, 'end': 6, 'speaker': 'other', 'origin': 'human'}]
+        review = spans.quote_review(quote, self.transcript, value)
+        self.assertEqual((review['answer'],review['review_status'],review['unreviewed_words']),
+                         (None,'incomplete',5))
+        value['ranges'] = [{'start': 7, 'end': 12, 'speaker': 'unclear', 'origin': 'human'}]
+        review = spans.quote_review(quote, self.transcript, value)
+        self.assertEqual((review['answer'],review['review_status']),('unclear','complete'))
+
+    def test_review_ignores_gaps_and_surrounding_speakers(self):
+        transcript = build_transcript('p/a','[00:01:00] Hello [ __ ] there >> outside',[])
+        value = {'key':'p/a','text_sha256':transcript['text_sha256'], 'token_count':transcript['token_count'],
+                 'checked_by':'operator', 'ranges':[
+                    {'start':1,'end':2,'speaker':'other','origin':'human'},
+                    {'start':5,'end':6,'speaker':'other','origin':'human'},
+                    {'start':7,'end':8,'speaker':'subject','origin':'human'}]}
+        review = spans.quote_review({'quote_start':0,'quote_end':7},transcript,value)
+        self.assertEqual((review['answer'],review['total_words'],review['unreviewed_words']),('other',2,0))
+
     def test_roundtrip_keeps_legacy_answers_and_imports_only_human_ranges(self):
         page = self.root / 'page.html'
         page.write_text('const D = ' + json.dumps({'rows': [{'key': 'p/a'}], 'transcript_index': {'p/a': {}}}) + ';\n')
@@ -83,7 +112,8 @@ class SpeakerSpans(unittest.TestCase):
         self.assertEqual(stored['attribution'], legacy['attribution'])
         self.assertEqual(stored['spans']['p/a'], self.value)
         with urllib.request.urlopen(base + '/api/transcript?key=p%2Fa') as response:
-            self.assertEqual(json.load(response), self.transcript)
+            payload = json.load(response)
+            self.assertEqual(payload, {**self.transcript, 'token_kinds':spans.token_kinds(self.transcript['tokens'])})
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(base + '/api/transcript?key=..%2Fsecret')
         before = answers.read_bytes()
@@ -96,6 +126,47 @@ class SpeakerSpans(unittest.TestCase):
         answers.write_text(json.dumps(stored)); prior = (self.root / 'imported.json').read_bytes()
         with self.assertRaises(ValueError): import_spans(answers, page, self.root / 'imported.json')
         self.assertEqual((self.root / 'imported.json').read_bytes(), prior)
+
+    def test_atomic_quote_result_and_legacy_pending_projection(self):
+        import pundits_verify_page as verify
+        from types import SimpleNamespace
+        page = self.root / 'page.html'
+        quote = {'qid':'p:a:7','quote_start':7,'quote_end':12}
+        page.write_text('const D = ' + json.dumps({'rows':[{'key':'p/a'}], 'transcript_index':{'p/a':{}},
+                        'quote_rows':[{'key':'p/a','quotes':[quote]}]}) + ';\n')
+        side = sidecar_path(page, 'p/a');side.parent.mkdir(parents=True);side.write_text(json.dumps(self.transcript))
+        answers = self.root / 'human_answers.json'
+        value = copy.deepcopy(self.value);value['ranges'] = value['ranges'][1:]
+        original = {'labels':{},'attribution':{'p:a:7':{'qid':'p:a:7','answer':'unclear'}},'spans':{'p/a':value}}
+        answers.write_text(json.dumps(original));before=answers.read_bytes()
+        server=build_server(page,answers,0);threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        base=f'http://127.0.0.1:{server.server_port}'
+        with urllib.request.urlopen(base+'/api/answers') as response: loaded=json.load(response)
+        self.assertIsNone(loaded['attribution']['p:a:7']['answer'])
+        self.assertEqual(loaded['attribution']['p:a:7']['legacy_answer'],'unclear')
+        self.assertEqual(loaded['spans'],original['spans'])
+        self.assertEqual(answers.read_bytes(),before,'GET rewrote original human data')
+        # Even without another save, import must not count legacy unreviewed words as an uncertain human decision.
+        key=self.root/'key.json';key.write_text(json.dumps({'p:a:7':{'signals':[],'judges':[]}}))
+        out=self.root/'quote_report.json'
+        verify.do_import_quotes(SimpleNamespace(export=str(answers),page=str(page),key=str(key),out=str(out)))
+        self.assertEqual(json.loads(out.read_text())['unanswered'],['p:a:7'])
+        def post(kind, value):
+            req=urllib.request.Request(base+'/api/answer',data=json.dumps({'kind':kind,'id':'p/a' if kind=='spans' else 'p:a:7','value':value}).encode(),headers={'Content-Type':'application/json'})
+            with urllib.request.urlopen(req) as response:return json.load(response)
+        result=post('spans',self.value)
+        self.assertEqual(result['attribution']['p:a:7']['answer'],'subject')
+        disk=json.loads(answers.read_text())
+        self.assertEqual(disk['spans']['p/a'],self.value)
+        self.assertEqual(disk['attribution']['p:a:7']['answer'],'subject')
+        # A stale browser's old manual answer controls cannot contradict ranges.
+        with self.assertRaises(urllib.error.HTTPError) as caught:post('attribution',{'answer':'other'})
+        self.assertEqual(caught.exception.code,409)
+        value['ranges']=[{'start':7,'end':9,'speaker':'subject','origin':'human'}]
+        result=post('spans',value)
+        self.assertEqual(result['attribution']['p:a:7']['unreviewed_words'],3)
+        self.assertIsNone(json.loads(answers.read_text())['attribution']['p:a:7']['answer'])
 
 
 if __name__ == '__main__': unittest.main()

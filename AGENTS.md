@@ -1449,6 +1449,17 @@ new grades incomparable with the corpus already graded.
   `test_pundits_speaker_spans.py` plus `.venv/bin/python scripts/check_pundits_span_ui.py`
   (Playwright, isolated synthetic data). Rebuild the page and restart ONLY its local server
   after changing embedded JS; a running server holds its page in memory.
+  **One annotation decision (2026-09-20):** quote answers now derive automatically
+  from reviewed speech ranges and save atomically with them; there are no independent
+  quote-answer buttons or shortcuts. Timestamps, caption gaps/ellipses and turn marks
+  are excluded from selection counts and quote coverage without changing raw offsets.
+  Unmarked quote words are INCOMPLETE, not an explicit uncertain answer. Only a human
+  `unclear` range supplies uncertainty. GET and quote import re-evaluate legacy stored
+  answers from ranges without rewriting those ranges; the old answer is retained as
+  `legacy_answer` when the reconciled result is saved. `import-quotes --page <page>`
+  uses the same calculation (defaults to speaker_check.html beside the answer file).
+  Context-only annotations cannot complete the quote, and a stale browser cannot
+  override a range-derived result using the old manual answer endpoint.
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a
   person verified, by the human venue label; quotes hide the judge and its speaker label in a

@@ -16,6 +16,74 @@ SPEAKERS = {"subject", "other", "unclear"}
 ORIGINS = {"human", "model_confirmed"}
 
 
+def token_kinds(tokens: list[str]) -> list[str]:
+    """Caption metadata is never speech, without changing existing raw offsets."""
+    kinds = []
+    for i, word in enumerate(tokens):
+        if re.fullmatch(r"\[\d{2}:\d{2}:\d{2}\]", word):
+            kind = "timestamp"
+        elif re.fullmatch(r">{2,}", word):
+            kind = "turn"
+        elif re.fullmatch(r"[\[\]_…]+|\.{2,}|\[(?:inaudible|music|applause|laughter)\]", word, re.I):
+            kind = "gap"
+        elif not re.search(r"\w", word):
+            kind = "punctuation"
+        else:
+            kind = "speech"
+        kinds.append(kind)
+    return kinds
+
+
+def quote_review(quote: dict, transcript: dict, annotation: dict) -> dict:
+    """Unreviewed speech is pending; explicit uncertainty is a completed review."""
+    validate_annotation(annotation, transcript)
+    kinds = token_kinds(transcript["tokens"])
+    start, end = quote["quote_start"], quote["quote_end"]
+    if not 0 <= start < end <= len(kinds):
+        raise ValueError("quote offsets are outside the transcript")
+    speech = [i for i in range(start, end) if kinds[i] == "speech"]
+    labels = {i: r["speaker"] for r in annotation["ranges"]
+              for i in range(max(start, r["start"]), min(end, r["end"])) if kinds[i] == "speech"}
+    missing = [i for i in speech if i not in labels]
+    uncertain = sum(v == "unclear" for v in labels.values())
+    answer = None
+    if speech and not missing:
+        answer = "unclear" if uncertain else "both" if len(set(labels.values())) > 1 else next(iter(labels.values()))
+    return {"answer": answer, "review_status": "complete" if answer else "incomplete",
+            "total_words": len(speech), "reviewed_words": len(labels),
+            "unreviewed_words": len(missing), "unclear_words": uncertain,
+            "first_unreviewed": missing[0] if missing else None}
+
+
+def reconcile_quote_reviews(answers: dict, page: Path, quote_rows: list[dict]) -> dict:
+    """Project saved ranges onto quotes, leaving source ranges/legacy answers intact.
+
+    Used by GET, atomic saves and import. Reading an old file never rewrites it.
+    A stale annotation cannot supply a completed quote decision.
+    """
+    out = {**answers, "attribution": dict(answers.get("attribution", {}))}
+    for row in quote_rows:
+        annotation = answers.get("spans", {}).get(row["key"])
+        if annotation is None:
+            continue
+        for quote in row.get("quotes", []):
+            if "quote_start" not in quote:
+                continue
+            previous = out["attribution"].get(quote["qid"], {})
+            try:
+                transcript = json.loads(sidecar_path(page, row["key"]).read_text())
+                result = quote_review(quote, transcript, annotation)
+            except (OSError, ValueError) as exc:
+                result = {"answer": None, "review_status": "stale", "review_error": str(exc)}
+            legacy = previous.get("legacy_answer")
+            if legacy is None and previous.get("review_method") != "range_review_v2":
+                legacy = previous.get("answer")
+            out["attribution"][quote["qid"]] = {**previous, **result, "qid": quote["qid"], "key": row["key"],
+                "review_method": "range_review_v2", "legacy_answer": legacy,
+                "checked_by": annotation["checked_by"], "updated_at": annotation.get("updated_at")}
+    return out
+
+
 def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -105,7 +173,10 @@ def import_spans(export: Path, page: Path, out: Path) -> dict:
     for key, value in answers.get("spans", {}).items():
         transcript = json.loads(sidecar_path(page, key).read_text())
         validate_annotation(value, transcript)
-        ranges = [{**s, "text": " ".join(transcript["tokens"][s["start"]:s["end"]])}
+        kinds = token_kinds(transcript["tokens"])
+        ranges = [{**s, "text": " ".join(transcript["tokens"][s["start"]:s["end"]]),
+                   "speech_text": " ".join(transcript["tokens"][i] for i in range(s["start"], s["end"])
+                                            if kinds[i] == "speech")}
                   for s in value["ranges"]]
         result[key] = {**value, "ranges": ranges}
     payload = {"schema_version": 1, "recordings": result,

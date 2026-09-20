@@ -364,6 +364,8 @@ def join_quotes(docs: list[dict], key_map: dict) -> dict:
         if qid not in key_map:
             unknown.append(qid)
             continue
+        if d.get("review_status") == "incomplete":
+            continue
         if d.get("answer") not in ANSWERS:
             bad.append(qid)
             continue
@@ -385,7 +387,15 @@ def join_quotes(docs: list[dict], key_map: dict) -> dict:
 
 def do_import_quotes(args) -> int:
     key_map = json.loads(Path(args.key).read_text())
-    docs = docs_from(json.loads(Path(args.export).read_text()), "attribution")
+    raw = json.loads(Path(args.export).read_text())
+    if isinstance(raw, dict) and raw.get("spans"):
+        from pundits_speaker_spans import reconcile_quote_reviews
+        page = Path(getattr(args, "page", None) or Path(args.export).parent / "speaker_check.html")
+        if not page.exists():
+            raise SystemExit("Range-derived quote answers require --page pointing to the review page")
+        data = json.loads(re.search(r"^const D = (\{.*\});$", page.read_text(), re.M).group(1).replace("<\\/", "</"))
+        raw = reconcile_quote_reviews(raw, page, data.get("quote_rows", []))
+    docs = docs_from(raw, "attribution")
     res = join_quotes(docs, key_map)
     Path(args.out).write_text(json.dumps(res, indent=1, ensure_ascii=False) + "\n")
     print(f"wrote {args.out}: {sum(res['tally'].values())} answered of {len(key_map)} flagged; "
@@ -407,6 +417,7 @@ def main() -> int:
     q = sub.add_parser("import-quotes")
     for a in ("--export", "--key", "--out"):
         q.add_argument(a, required=True)
+    q.add_argument("--page", help="review page for deriving quote results from saved word ranges")
     s = sub.add_parser("import-spans")
     for a in ("--export", "--page", "--out"):
         s.add_argument(a, required=True)
@@ -541,7 +552,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 .span-actions{padding:10px;background:var(--surface2);border:1px solid var(--rule);border-radius:7px;margin:10px 0}
 .span-selection{font-size:.8rem;max-height:3.5em;overflow:auto;margin-bottom:8px;color:var(--ink2)}
 .span-transcript{font-size:.94rem;line-height:2.1;padding:16px;border:1px solid var(--rule2);border-radius:8px;max-height:440px;overflow:auto;user-select:text;margin:10px 0}
-.word.selected-word{outline:1px solid var(--accent);outline-offset:1px}
+.word.selected-word{background:var(--accentbg);outline:0}
 .span-transcript ::selection{background:var(--accent);color:var(--surface)}
 .span-boundaries{display:flex;gap:20px;flex-wrap:wrap;font-size:.78rem;margin-top:10px}
 .span-boundaries[hidden]{display:none}
@@ -553,6 +564,15 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 .range-extra>summary,.span-ranges>summary{cursor:pointer;color:var(--ink2)}
 .range-extra{border-top:1px solid var(--rule);padding:12px 0}
 .span-status{margin:10px 0}
+.caption-gap,.caption-time,.caption-turn{user-select:none;-webkit-user-select:none;color:var(--muted)}
+.caption-gap{display:inline-block;background:var(--surface2);border:1px solid var(--rule);border-radius:12px;padding:0 7px;font-size:.7rem;line-height:1.7;vertical-align:middle}
+.caption-time{display:block;margin:10px 0 2px;font-family:var(--mono);font-size:.72rem}
+.caption-time a{color:var(--accent);text-decoration:none}
+.caption-turn{font-size:.75rem;padding:0 6px}
+.quote-summary{border:1px solid var(--rule2);background:var(--surface2);border-radius:8px;padding:12px 14px;margin-top:12px}
+.quote-summary.pending{border-left:3px solid var(--warn)}
+.quote-summary.complete{border-left:3px solid var(--yes)}
+.quote-summary p{font-size:.8rem;color:var(--ink2);margin:5px 0 8px}
 [data-span-editor] button[disabled]{opacity:.5;cursor:not-allowed}
 .span-samples{display:block;margin:12px 0}
 .span-samples select{font:inherit;color:var(--ink);background:var(--surface);padding:5px}
@@ -590,7 +610,6 @@ const VENUE_DEF = {
  conversation:"Other live voices talk with the subject, whoever hosts: interviews either way round, panels, co-hosted shows, TV segments.",
  debate:"Organised opposing sides with at least one named opponent, usually with a moderator or turns.",
  speech:"A prepared talk to a live audience, with or without questions afterwards."};
-const ANSWERS = [["subject","The subject","s","y"],["other","Someone else","e","n"],["both","Both: it spans two speakers","b","n"],["unclear","Can't tell","u",""]];
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const el = id => document.getElementById(id);
 
@@ -608,7 +627,8 @@ let filter="todo", cur=recs.length?recs[0].key:null, focusQ=0;
 let labels={}, attrib={}, db=null, saver=null, writable=false;
 
 const askDone = r => {const l=labels[r.key]||{}; return !r.ask || (typeof l.subject_present==="boolean" && typeof l.political_content==="boolean" && D.venues.includes(l.venue));};
-const quotesDone = r => r.quotes.every(c=>!!(attrib[c.qid]||{}).answer);
+const quotesDone = r => r.quotes.every(c=>!!(attrib[c.qid]||{}).answer) &&
+ (!r.quotes.length || (!spanPending[r.key] && !spanErrors[r.key]));
 const complete = r => askDone(r) && quotesDone(r);
 function recState(r){
  if(complete(r)){
@@ -616,7 +636,7 @@ function recState(r){
   if(r.ask && !(l.subject_present && l.political_content)) return "rej";
   if(r.quotes.some(c=>["other","both"].includes((attrib[c.qid]||{}).answer))) return "rej";
   return "done";}
- return (labels[r.key]||r.quotes.some(c=>(attrib[c.qid]||{}).answer)) ? "part" : "todo";}
+ return (labels[r.key]||spanAnswers[r.key]?.ranges.length||r.quotes.some(c=>(attrib[c.qid]||{}).answer)) ? "part" : "todo";}
 // Count the questions, not the blocks: a fresh recording has three unanswered
 // questions and used to report "1 left", which reads as one click away from done.
 const askLeft = r => {if(!r.ask) return 0; const l=labels[r.key]||{};
@@ -667,13 +687,11 @@ function renderDetail(){
  const quotes = r.quotes.length ? `
   <div class="qblock">
    <div class="q"><label class="l">${r.ask?"4 · ":""}Who says these lines?<small>the judges credited them to the subject</small></label>
-    <div class="qhelp">These ARE the lines to check. A judge quoted each one as ${esc(r.person)}'s own words and scored it, so a wrong one scores ${esc(r.person)} on somebody else's sentence. The underlined words are the quote being checked. Mark speaker ranges in its surrounding passage, or use a quick answer for just the quote. Model drafts are not confirmed labels. If the transcript cannot settle it, play the moment.</div></div>
+    <div class="qhelp">Label the underlined quote words. You can also label the surrounding speech, but only the quote determines this review's result. The result updates and saves automatically.</div></div>
    ${r.quotes.map((c,i)=>`<div class="qitem" data-q="${i}" data-focus="${i===focusQ}">
      <div class="hd"><span>quote ${i+1} of ${r.quotes.length}</span>${c.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${c.t}s" target="_blank" rel="noopener">play from ${fmtT(c.t)}</a>`:""}</div>
      <div class="quote-exact"><b>Quote being checked</b><p>${esc(c.text)}</p></div>
      <div data-span-editor="${i}">Loading speaker-range editor…</div>
-     <div class="sub">Quick answer for this quote only</div>
-     <div class="opts">${ANSWERS.map(([v,lab,k,cls])=>opt(attrib,c.qid,"answer",v,lab,k,cls)).join("")}</div>
     </div>`).join("")}
   </div>` : "";
  el("detail").innerHTML=`
@@ -704,29 +722,17 @@ function step(d){const vis=visible(), order=vis.length?vis:recs; let i=order.fin
  if(i<0) i = d>0 ? -1 : order.length; const n=order[Math.min(Math.max(i+d,0),order.length-1)]; n&&select(n.key);}
 
 const queue={};
-function setField(store, id, f, v, quiet, fromRanges=false){
+function setField(store, id, f, v, quiet){
  if(!writable) return;
- const isQuote = store===attrib;
- const base = isQuote ? {qid:id, key:cur} : {key:id};
- const next={...(store[id]||{}), ...base, [f]:v, checked_by:"operator", updated_at:new Date().toISOString(),
-  ...(isQuote?{review_method:"assisted_range_editor"}:{})};
- const r=curRec();
- const beforeRanges=isQuote && f==="answer" && !fromRanges && transcriptCache[r.key] ? structuredClone(humanRanges(r)) : null;
+ const next={...(store[id]||{}), key:id, [f]:v, checked_by:"operator", updated_at:new Date().toISOString()};
  store[id]=next;
- if(beforeRanges){
-  const quote=r.quotes.find(c=>c.qid===id);
-  if(quote){(spanUndo[r.key] ||= []).push(beforeRanges);saveRanges(r,paintRanges(beforeRanges,quote.quote_start,quote.quote_end,
-    ["subject","other","unclear"].includes(v)?v:null));}
- }
- if(!quiet){ if(isQuote && f==="answer"){const nx=firstOpenQuote(r); focusQ = nx; } renderList(); renderDetail(); }
- const st=el("status"); st&&(st.textContent="Saving…", st.className="status");
- queue[id]=(queue[id]||Promise.resolve()).then(()=>saver.put(isQuote?"attribution":"labels", id, next)).then(()=>{
-   if(el("status")&&cur===(isQuote?next.key:id)) el("status").textContent = complete(curRec()) ? "All answered" : `${outstanding(curRec())} answer${outstanding(curRec())===1?"":"s"} left on this recording`;
+ if(!quiet){renderList();renderDetail();}
+ const st=el("status");st&&(st.textContent="Saving…",st.className="status");
+ queue[id]=(queue[id]||Promise.resolve()).then(()=>saver.put("labels",id,next)).then(()=>{
+  if(el("status")&&cur===id) el("status").textContent=complete(curRec())?"All answered":`${outstanding(curRec())} answers left on this recording`;
  }).catch(e=>{
-   if(e&&e.code==="invalid_argument") writable=false;
-   if(el("status")){el("status").textContent="Not saved: "+(e&&e.message||e)+". Reload the page and try again."; el("status").className="status err";}
+  if(el("status")){el("status").textContent="Not saved: "+(e&&e.message||e)+". Reload and try again.";el("status").className="status err";}
  });
- // Stay on the video until Next: the operator may still be marking surrounding words.
 }
 
 /*__SPAN_EDITOR__*/
@@ -739,10 +745,8 @@ document.addEventListener("keydown", e=>{
  if(k==="j"||k==="arrowdown"){step(1);e.preventDefault();return;}
  if(k==="k"||k==="arrowup"){step(-1);e.preventDefault();return;}
  if(k==="v"){const a=el("yt"); a&&window.open(a.href,"_blank","noopener");return;}
- if(k==="]"||k==="tab"){if(r.quotes.length){focusQ=(focusQ+1)%r.quotes.length; renderDetail(); e.preventDefault();}return;}
+ if(k==="]"){if(r.quotes.length){focusQ=(focusQ+1)%r.quotes.length; renderDetail(); e.preventDefault();}return;}
  if(k==="["){if(r.quotes.length){focusQ=(focusQ-1+r.quotes.length)%r.quotes.length; renderDetail(); e.preventDefault();}return;}
- const ans=ANSWERS.find(x=>x[2]===k);
- if(ans && r.quotes.length){ setField(attrib, r.quotes[focusQ].qid, "answer", ans[0]); return; }
  if(!r.ask) return;
  if(k==="y") setField(labels,r.key,"subject_present",true); else if(k==="n") setField(labels,r.key,"subject_present",false);
  else if(k==="p") setField(labels,r.key,"political_content",true); else if(k==="o") setField(labels,r.key,"political_content",false);
@@ -752,7 +756,7 @@ el("list").addEventListener("click", e=>{const n=e.target.closest(".item[data-k]
 el("list").addEventListener("keydown", e=>{if(e.key==="Enter"){const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);}});
 for(const [id,f] of [["f-todo","todo"],["f-all","all"],["f-done","done"]]) el(id).onclick=()=>{filter=f; for(const b of ["f-todo","f-all","f-done"]) el(b).setAttribute("aria-pressed", b===id); renderList();};
 el("legend").innerHTML = `<span class="dot done" style="display:inline-block;vertical-align:-1px"></span> verified · <span class="dot rej" style="display:inline-block;vertical-align:-1px"></span> excluded or a misattributed quote · <span class="dot part" style="display:inline-block;vertical-align:-1px"></span> partly answered`;
-el("keyhelp").innerHTML = "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>s</b> subject, <b>e</b> someone else, <b>b</b> both, <b>u</b> can't tell, <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
+el("keyhelp").innerHTML = "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
 
 // Two places answers can live, and the page picks by asking, never by guessing at
 // its own hostname. `pundits_verify_serve.py` answers api/answers; the published
@@ -772,6 +776,7 @@ const localStore = {
    body: JSON.stringify({kind:coll, id, value})});
   let j={}; try{ j = await res.json(); }catch(e){}
   if(!res.ok) throw new Error(j.error || ("the server answered "+res.status));
+  return j;
  }};
 const artifactStore = {
  where: "claude.ai",
