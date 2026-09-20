@@ -80,3 +80,22 @@ JavaScript errors or 390px overflow occur. The answer file remained byte-identic
 The full suite still has only the same three leaders-data failures listed above.
 The updated local server is intentionally left running on port 5001 for labelling;
 its process ID is recorded in /tmp/pundits-speaker-check-server.pid.
+
+## Caption corrections
+
+Select the misheard words in the same passage and choose Correct text. A compact
+inline editor shows the original and asks what was actually said. Save displays
+the replacement; a collapsed correction list exposes Edit and Restore original.
+Corrections retain raw token anchors and an append-only server history. A phrase
+with a changed word count is one selectable unit; it cannot shift later speaker
+ranges. The original judge quote stays visible, with a note when corrections
+overlap it. Speaker review still addresses the original passage. Corrected reading
+text can be exported for later ingestion; existing scores are not recalculated.
+No new model calls or public deployment are part of this feature.
+
+Validation: correction tests 4/4; the browser check passed editing with changed
+word counts, save/reload/restore, intact original quote text, and speaker marking
+after correction. The live operator-supplied correction was saved through the UI
+and survived reload; prior recording labels, speaker ranges and quote decisions
+were unchanged, as were source transcript bytes. Zero browser errors and no 390px
+overflow. The full suite retains the same three unrelated failures listed above.

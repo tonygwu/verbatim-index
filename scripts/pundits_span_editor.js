@@ -124,21 +124,24 @@ function quoteReview(recording,index){
 }
 function reviewSummary(recording,index){
  const state=quoteReview(recording,index);
+ const quote=recording.quotes[index],corrected=editsFor(recording).some(e=>e.start<quote.quote_end&&e.end>quote.quote_start);
  let title,detail;
  if(state.missing.length){title=`${state.missing.length} quote words still need review`;
   detail=`${state.reviewed} of ${state.total} quote words reviewed. Label the remaining underlined words. Surrounding speech does not change this result.`;}
  else if(!state.total){title="No readable quote words";detail="This quote contains only caption markers; it remains unfinished.";}
  else {title=state.answer==="subject"?`Quote spoken by ${recording.person}`:state.answer==="other"?"Quote spoken by someone else":state.answer==="both"?"Quote includes both speakers":"Quote reviewed — speaker uncertain";
   detail=state.unsure?`You marked ${state.unsure} quote words as unsure. This is saved as an uncertain review.`:"Calculated from your reviewed quote words and saved automatically. No second answer is needed.";}
- return `<div class="quote-summary ${state.answer?"complete":"pending"}" role="status"><strong>${esc(title)}</strong><p>${esc(detail)}</p>${state.missing.length?'<button type="button" class="opt" data-next-unreviewed>Review remaining quote words</button>':""}</div>`;
+ return `<div class="quote-summary ${state.answer?"complete":"pending"}" role="status"><strong>${esc(title)}</strong><p>${esc(detail)}</p>${corrected?'<p>You corrected words in this quote. The quote above and review counts refer to the original captions the judge used; the corrected reading appears in the passage.</p>':""}${state.missing.length?'<button type="button" class="opt" data-next-unreviewed>Review remaining quote words</button>':""}</div>`;
 }
 function spanToolbar(recording,index){
  const node=document.querySelector(`[data-span-editor="${index}"]`);if(!node)return;
  const id=recording.key+":"+index,selection=spanSelections[id],data=transcriptCache[recording.key];
- const text=selection ? speechText(data,...selection) : "Drag across words below, then choose who said them.";
- node.querySelector(".span-selection").textContent=selection?`Selected ${speechIndices(data,...selection).length} words: ${text}`:text;
+ const text=selection ? readingText(recording,...selection) : "Drag across words below to label the speaker or correct the text.";
+ const hasEdit=selection&&editsFor(recording).some(e=>e.start<selection[1]&&e.end>selection[0]);
+ node.querySelector(".span-selection").textContent=selection?`${hasEdit?"Selected text":`Selected ${speechIndices(data,...selection).length} words`}: ${text}`:text;
+ node.querySelector('[data-correct-text]').disabled=!selection||!writable||!!correctionPending[recording.key];
  node.querySelectorAll("[data-paint]").forEach(b=>b.disabled=!selection||!speechIndices(data,...selection).length||!writable);
- node.querySelectorAll("[data-w]").forEach(word=>word.classList.toggle("selected-word",!!selection&&+word.dataset.w>=selection[0]&&+word.dataset.w<selection[1]));
+ node.querySelectorAll("[data-w]").forEach(word=>word.classList.toggle("selected-word",!!selection&&+word.dataset.end>selection[0]&&+word.dataset.w<selection[1]));
  const sliders=node.querySelector(".span-boundaries");sliders.hidden=!selection;
  if(selection){
   const [windowLo,windowHi]=spanWindow(recording,index), speech=speechIndices(data,windowLo,windowHi);
@@ -158,10 +161,11 @@ function drawSpanEditor(recording,index){
  const scrollTop=root.querySelector(".span-transcript")?.scrollTop||0;
  const data=transcriptCache[recording.key];if(!data)return;
  const saved=spanAnswers[recording.key];
- if(saved&&(saved.text_sha256!==data.text_sha256||saved.token_count!==data.token_count)){
+ const corrected=correctionAnswers[recording.key];
+ if([saved,corrected].some(s=>s&&(s.text_sha256!==data.text_sha256||s.token_count!==data.token_count))){
   root.textContent="Saved markings refer to a different transcript. They have been preserved; resolve the changed transcript before editing.";return;
  }
- const id=recording.key+":"+index,[lo,hi]=spanWindow(recording,index),states=statesFor(recording);
+ const id=recording.key+":"+index,[lo,hi]=spanWindow(recording,index),states=statesFor(recording),edits=editsFor(recording);
  const quote=index>=0?recording.quotes[index]:null;
  const spoken=speechIndices(data,lo,hi);
  const markable=spoken.some(i=>states[i].draft&&["subject","other"].includes(states[i].speaker));
@@ -169,8 +173,11 @@ function drawSpanEditor(recording,index){
  const timestamps=new Map(data.times);
  let words="";
  for(let i=lo;i<hi;i++){
-  const state=states[i],token=data.tokens[i],isQuote=quote&&i>=quote.quote_start&&i<quote.quote_end;
-  const tip=state.speaker==="unknown"?"Unknown — no attribution":state.speaker==="conflict"?"Models disagree — review this text":
+  const edit=edits.find(e=>e.start<=i&&i<e.end),start=edit?.start??i,end=edit?.end??(i+1);
+  let state=states[i];
+  if(edit&&states.slice(start,end).some(s=>s.speaker!==state.speaker||s.draft!==state.draft))state={speaker:"conflict",draft:true};
+  const token=edit?.replacement??data.tokens[i],isQuote=quote&&start<quote.quote_end&&end>quote.quote_start;
+  const tip=state.speaker==="unknown"?"Unknown — no attribution":state.speaker==="conflict"?(edit?"This corrected phrase has mixed markings. Label it as a whole, or restore the original to label words separately.":"Models disagree — review this text"):
    `${state.draft?"Model suggestion (unconfirmed)":"Human reviewed"}: ${state.speaker==="subject"?recording.person:SPAN_NAMES[state.speaker]}`;
   const kind=data.token_kinds[i];
   if(kind==="timestamp"){
@@ -178,21 +185,23 @@ function drawSpanEditor(recording,index){
   }else if(kind==="turn") words+='<span class="caption-turn" contenteditable="false" aria-label="Caption speaker break"> / </span>';
   else if(kind!=="speech"){
    if(kind==="gap"&&(i===lo||data.token_kinds[i-1]!=="gap")) words+='<span class="caption-gap" contenteditable="false" title="Words missing or obscured in the captions; not part of speaker labeling">caption gap</span> ';
-  }else words+=`<span data-w="${i}" class="word ${state.speaker} ${state.draft?"draft":"reviewed"} ${isQuote?"evidence":""}" title="${esc(tip)}">${esc(token)} </span>`;
+  }else words+=`<span data-w="${start}" data-end="${end}" class="word ${state.speaker} ${state.draft?"draft":"reviewed"} ${isQuote?"evidence":""} ${edit?"corrected":""}" title="${esc(tip+(edit?'. Text corrected; original: '+edit.original:''))}">${esc(token)} </span>`;
+  if(edit)i=end-1;
 
  }
  const marked=humanRanges(recording).filter(range=>range.start<hi&&range.end>lo&&speechIndices(data,Math.max(lo,range.start),Math.min(hi,range.end)).length);
  root.innerHTML=`<div class="span-top"><b>Mark who is speaking</b><button type="button" class="opt" data-expand>${spanFull[id]?"Back to passage":"Expand to full transcript"}</button></div>
-  <p class="span-instructions">Select words, then choose who said them. Repeat for separate passages. Caption gaps and playback times are skipped automatically.</p>
+  <p class="span-instructions">Select words, then choose who said them or use Correct text for caption errors. Caption gaps and playback times are skipped automatically.</p>
   <div class="span-legend"><span class="subject reviewed">Subject · reviewed</span><span class="other reviewed">Other · reviewed</span><span class="subject draft">Dashed · model draft</span><span>Plain · not reviewed</span>${quote?'<span class="evidence">Underline · quote being checked</span>':""}</div>
   <p class="span-model">${known?"Model estimates cover "+known+" of these "+spoken.length+" words. Confirm or correct the dashed suggestions.":"No model suggestions for this passage. Label the words you can identify; use “Unsure” when you cannot identify the speaker."} ${states.slice(lo,hi).some(s=>s.speaker==="conflict")?"Models disagree on the dotted words; review those yourself.":""}</p>
   ${index<0&&!spanFull[id]?`<label class="span-samples">Passage <select data-sample>${(recording.excerpts||[]).map((e,i)=>`<option value="${i}" ${i===(spanSample[recording.key]||0)?"selected":""}>${Math.round(e.at*100)}% into recording</option>`).join("")}</select></label>`:""}
   <div class="span-actions"><div class="span-selection" aria-live="polite"></div><div class="opts">
    <button class="opt y" type="button" data-paint="subject">Mark as ${esc(recording.person)}</button>
    <button class="opt n" type="button" data-paint="other">Someone else</button><button class="opt" type="button" data-paint="unclear">Unsure</button>
-   <button class="opt" type="button" data-paint="">Clear human marks</button></div>
+   <button class="opt" type="button" data-paint="">Clear human marks</button><button class="opt" type="button" data-correct-text>Correct text</button></div>
    <div class="span-boundaries" hidden><label>Selection start <input type="range" data-edge="start" aria-label="Selection start word"></label><label>Selection end <input type="range" data-edge="end" aria-label="Selection end word"></label></div>
   </div>
+  ${correctionPanel(recording,index,lo,hi)}
   <div class="span-transcript" tabindex="0" role="region" aria-label="Transcript passage for speaker annotation">${words}</div>
   <div class="opts"><button type="button" class="opt" data-confirm ${!writable||!markable?"disabled":""}>Confirm suggested spans in ${spanFull[id]?"full transcript":"this passage"}</button>
    <button type="button" class="opt" data-undo ${!writable||!spanUndo[recording.key]?.length?"disabled":""}>Undo marking</button>
@@ -212,7 +221,7 @@ function drawSpanEditor(recording,index){
   const range=selection.getRangeAt(0);
   if(!area.contains(range.startContainer)||!area.contains(range.endContainer))return;
   const selected=[...area.querySelectorAll("[data-w]")].filter(word=>range.intersectsNode(word));
-  if(selected.length){delete spanEditing[id];spanSelections[id]=[+selected[0].dataset.w,+selected.at(-1).dataset.w+1];spanToolbar(recording,index);}
+  if(selected.length){delete spanEditing[id];spanSelections[id]=[+selected[0].dataset.w,+selected.at(-1).dataset.end];spanToolbar(recording,index);}
  };
  area.onmouseup=capture;area.onkeyup=capture;
  root.querySelectorAll("[data-paint]").forEach(button=>button.onclick=()=>markSelection(recording,index,button.dataset.paint||null));
@@ -220,13 +229,14 @@ function drawSpanEditor(recording,index){
   const selection=spanSelections[id];let edge=+input.value;
   if(input.dataset.edge==="start"){while(edge<selection[1]-1&&data.token_kinds[edge]!=="speech")edge++;selection[0]=edge;}
   else{while(edge>selection[0]+1&&data.token_kinds[edge-1]!=="speech")edge--;selection[1]=edge;}
+  spanSelections[id]=correctionBounds(recording,...selection);
   spanToolbar(recording,index);
  });
  root.querySelector("[data-confirm]").onclick=()=>confirmDrafts(recording,index);
  root.querySelector("[data-undo]").onclick=()=>{const ranges=spanUndo[recording.key]?.pop();if(ranges)saveRanges(recording,ranges);};
  root.querySelector("[data-retry]").onclick=()=>saveRanges(recording,humanRanges(recording));
  root.querySelectorAll("[data-select-span]").forEach(button=>button.onclick=()=>{
-  const range=button.dataset.selectSpan.split(",").map(Number);spanEditing[id]=[...range];
+  const original=button.dataset.selectSpan.split(",").map(Number),range=correctionBounds(recording,...original);spanEditing[id]=[...original];
   if(range[0]<lo||range[1]>hi){spanFull[id]=true;spanSelections[id]=range;drawSpanEditor(recording,index);}
   else{spanSelections[id]=range;spanToolbar(recording,index);}
  });
@@ -237,9 +247,10 @@ function drawSpanEditor(recording,index){
   const missing=quoteReview(recording,index).missing;if(!missing.length)return;
   const start=missing[0];let end=start+1;
   while(end<quote.quote_end&&(data.token_kinds[end]!=="speech"||missing.includes(end)))end++;
-  spanSelections[id]=[start,end];delete spanEditing[id];spanToolbar(recording,index);
-  root.querySelector(`[data-w="${start}"]`)?.scrollIntoView({block:"center",behavior:"smooth"});
+  spanSelections[id]=correctionBounds(recording,start,end);delete spanEditing[id];spanToolbar(recording,index);
+  root.querySelector(`[data-w="${spanSelections[id][0]}"]`)?.scrollIntoView({block:"center",behavior:"smooth"});
  };
+ bindCorrections(root,recording,index);
  spanToolbar(recording,index);updateSpanStatus(recording);
 }
 function mountSpanEditors(recording){

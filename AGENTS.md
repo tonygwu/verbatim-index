@@ -1460,6 +1460,16 @@ new grades incomparable with the corpus already graded.
   uses the same calculation (defaults to speaker_check.html beside the answer file).
   Context-only annotations cannot complete the quote, and a stale browser cannot
   override a range-derived result using the old manual answer endpoint.
+  **Caption corrections (2026-09-20):** select words and choose Correct text.
+  Replacements are overlays in `human_answers.json`'s `corrections` section with
+  original token bounds, source hash, revision and server-appended edit history.
+  A corrected phrase is selected as one anchored unit, even when word count changes;
+  speaker ranges never shift. Restore original reverses an edit without removing
+  history. Stale windows cannot overwrite a newer correction. Original captions and
+  grade evidence remain intact; grades are not recomputed by this UI. Export with
+  `scripts/pundits_text_corrections.py --answers <answers> --page <page> --out <private-output>`
+  for corrected reading text and provenance. Verify with
+  `test_pundits_text_corrections.py` and `check_pundits_span_ui.py`.
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a
   person verified, by the human venue label; quotes hide the judge and its speaker label in a

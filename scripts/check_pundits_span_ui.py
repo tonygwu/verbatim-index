@@ -51,6 +51,10 @@ def main():
                 for i,kind in enumerate(token_kinds(raw.split())):
                     if kind!='speech':assert editor.locator(f'[data-w="{i}"]').count()==0
                 assert editor.locator('.caption-gap').count()>0
+                page.keyboard.press('y')
+                page.wait_for_function('document.getElementById("status").textContent!=="Saving…"')
+                assert json.loads(answers.read_text())['labels']['p/a']['subject_present'] is True
+                editor.locator('.word').first.wait_for()
                 # Real mouse drag, not a call to the application's range functions.
                 first=editor.locator('[data-w="7"]'); last=editor.locator('[data-w="9"]')
                 first.scroll_into_view_if_needed();a=first.bounding_box();b=last.bounding_box()
@@ -120,6 +124,38 @@ def main():
                 page.wait_for_function('spanPending["p/a"]===0')
                 assert json.loads(answers.read_text())['attribution']['p:a:7']['answer']=='unclear'
                 page.screenshot(path='/tmp/pundits-span-after.png',full_page=True)
+                # Replace two caption words with a longer phrase, retaining original
+                # speaker offsets and original evidence text across save/reload/restore.
+                before_ranges=json.loads(answers.read_text())['spans']['p/a']['ranges']
+                before_quote=page.locator('.quote-exact').inner_text()
+                select_words(10,12)
+                editor.get_by_role('button',name='Correct text',exact=True).click()
+                editor.get_by_label('What was actually said?').fill('the abortion argument')
+                editor.get_by_role('button',name='Save correction',exact=True).click()
+                page.wait_for_function('correctionAnswers["p/a"]?.revision===1 && !correctionPending["p/a"]')
+                assert editor.locator('[data-w="10"]').inner_text().strip()=='the abortion argument'
+                assert editor.locator('[data-w="10"]').get_attribute('data-end')=='12'
+                assert json.loads(answers.read_text())['spans']['p/a']['ranges']==before_ranges
+                assert page.locator('.quote-exact').inner_text()==before_quote
+                page.screenshot(path='/tmp/pundits-text-corrected.png',full_page=True)
+                page.reload();page.wait_for_load_state('networkidle');page.locator('[data-k="p/a"]').click()
+                editor.locator('.word.corrected').wait_for()
+                assert editor.locator('.word.corrected').inner_text().strip()=='the abortion argument'
+                # Selecting even part of a replacement labels the entire anchored phrase.
+                editor.locator('[data-w="10"]').evaluate('''node=>{
+                    const r=document.createRange();r.selectNodeContents(node);
+                    const s=window.getSelection();s.removeAllRanges();s.addRange(r);
+                    node.closest('.span-transcript').dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+                }''')
+                editor.get_by_role('button',name='Someone else',exact=True).click()
+                page.wait_for_function('spanPending["p/a"]===0')
+                assert any(r['start']==10 and r['end']==12 and r['speaker']=='other'
+                           for r in json.loads(answers.read_text())['spans']['p/a']['ranges'])
+                editor.locator('.text-corrections summary').click()
+                editor.get_by_role('button',name='Restore original',exact=True).click()
+                page.wait_for_function('correctionAnswers["p/a"]?.revision===2 && !correctionPending["p/a"]')
+                assert editor.locator('.word.corrected').count()==0
+                assert len(json.loads(answers.read_text())['corrections']['p/a']['history'])==2
                 # Non-graded recording: no invented suggestions and optional full editor.
                 page.locator('[data-k="p/b"]').click()
                 page.get_by_text('Mark speaker ranges in this recording (optional)',exact=True).click()
@@ -130,7 +166,7 @@ def main():
                 assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
                 assert not errors, errors
                 browser.close()
-            print('PASS: real drag, disjoint spans, caption markers skipped, automatic atomic quote results, incomplete vs unsure, clear/undo, reload, full transcript and mobile layout; synthetic data only.')
+            print('PASS: real drag, disjoint spans, caption markers skipped, automatic quote results, correction save/reload/restore, stable speaker anchors, incomplete vs unsure, full transcript and mobile layout; synthetic data only.')
         finally:
             httpd.shutdown();httpd.server_close()
 

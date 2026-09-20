@@ -283,7 +283,8 @@ def build(args) -> int:
                        "transcript_index": transcript_index},
                       ensure_ascii=False).replace("</", "<\\/")
     page = TEMPLATE.replace("/*__DATA__*/null", data).replace(
-        "/*__SPAN_EDITOR__*/", Path(__file__).with_name("pundits_span_editor.js").read_text())
+        "/*__SPAN_EDITOR__*/", Path(__file__).with_name("pundits_span_editor.js").read_text()).replace(
+        "/*__TEXT_CORRECTIONS__*/", Path(__file__).with_name("pundits_text_corrections.js").read_text())
     write_atomic(Path(args.out), page)
     print(f"wrote {args.out}: {len(rows)} recordings to speaker-check, {len({r['slug'] for r in rows})} people; "
           f"{sum(len(r['quotes']) for r in quote_rows)} quotes to attribute across {len(quote_rows)} recordings; "
@@ -573,6 +574,11 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 .quote-summary.pending{border-left:3px solid var(--warn)}
 .quote-summary.complete{border-left:3px solid var(--yes)}
 .quote-summary p{font-size:.8rem;color:var(--ink2);margin:5px 0 8px}
+.correction-form{padding:14px;border:1px solid var(--accent);border-radius:8px;margin:10px 0;background:var(--surface2)}
+.correction-form textarea{display:block;width:100%;margin:7px 0 10px;font:inherit;color:var(--ink);background:var(--surface);padding:10px;box-sizing:border-box}
+.text-corrections{margin:12px 0;font-size:.82rem}.text-corrections summary{cursor:pointer;color:var(--accent)}
+.text-correction{padding:10px 0;border-bottom:1px solid var(--rule)}.text-correction del{color:var(--muted)}
+.word.corrected{box-shadow:inset 0 2px var(--accent);border-radius:2px}
 [data-span-editor] button[disabled]{opacity:.5;cursor:not-allowed}
 .span-samples{display:block;margin:12px 0}
 .span-samples select{font:inherit;color:var(--ink);background:var(--surface);padding:5px}
@@ -736,6 +742,7 @@ function setField(store, id, f, v, quiet){
 }
 
 /*__SPAN_EDITOR__*/
+/*__TEXT_CORRECTIONS__*/
 
 document.addEventListener("keydown", e=>{
  if(["TEXTAREA","INPUT","SELECT"].includes(e.target.tagName)||e.target.closest("[data-span-editor]")){ if(e.key==="Escape") e.target.blur(); return; }
@@ -794,7 +801,7 @@ renderList(); renderDetail();
  try{ local = await localStore.load(); }catch(e){ local=null; }
  if(local){
   saver=localStore; writable=true;
-  labels=local.labels; attrib=local.attribution; spanAnswers=local.spans||{};
+  labels=local.labels; attrib=local.attribution; spanAnswers=local.spans||{}; correctionAnswers=local.corrections||{};
   startAt(); renderList(); renderDetail();
   return;
  }

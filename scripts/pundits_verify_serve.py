@@ -48,10 +48,11 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
 from pundits_speaker_spans import sidecar_path, validate_annotation, token_kinds, reconcile_quote_reviews  # noqa: E402
+from pundits_text_corrections import update_corrections  # noqa: E402
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5001
-SECTIONS = ("labels", "attribution", "spans")
+SECTIONS = ("labels", "attribution", "spans", "corrections")
 MAX_BODY = 256 * 1024
 DATA_LINE = re.compile(r"^const D = (\{.*\});$", re.M)
 
@@ -71,7 +72,8 @@ def page_ids(page: str) -> dict[str, set[str]]:
     qids = {c["qid"] for r in data.get("quote_rows", []) for c in r.get("quotes", []) if c.get("qid")}
     if not keys and not qids:
         raise SystemExit("REFUSING: the page carries no recordings and no quotes")
-    return {"labels": keys, "attribution": qids, "spans": set(data.get("transcript_index", {}))}
+    return {"labels": keys, "attribution": qids, "spans": set(data.get("transcript_index", {})),
+            "corrections": set(data.get("transcript_index", {}))}
 
 
 def load_answers(path: Path) -> dict:
@@ -156,6 +158,12 @@ def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, ans
                 except (OSError, ValueError) as exc:
                     return self._json(400, {"error": str(exc)})
             with lock:
+                if kind == "corrections":
+                    try:
+                        transcript = json.loads(sidecar_path(page_path, ident).read_text())
+                        value = update_corrections(value, answers["corrections"].get(ident), transcript)
+                    except (OSError, ValueError) as exc:
+                        return self._json(409, {"error": str(exc)})
                 if kind == "attribution" and quote_recordings.get(ident) in answers["spans"]:
                     return self._json(409, {"error": "Quote results now follow your word markings. Reload the page to continue."})
                 updated = {**answers, kind: {**answers[kind], ident: value}}
@@ -167,7 +175,8 @@ def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, ans
                 answers.update(updated)
                 counts = {s: len(answers[s]) for s in SECTIONS}
                 reviews = dict(answers["attribution"])
-            return self._json(200, {"ok": True, "saved": counts, "attribution": reviews})
+            return self._json(200, {"ok": True, "saved": counts, "attribution": reviews,
+                                    **({"correction": value} if kind == "corrections" else {})})
 
     return Handler
 
