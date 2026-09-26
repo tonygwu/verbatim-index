@@ -155,3 +155,59 @@ Serialised, repo-0 only, from the plan's P4 revision:
 Step 4 is an addition to the plan. The screen did not exist when the plan was
 written, and running it before step 5 is what makes the seven's identity problem
 cheap instead of judge-priced.
+
+## HANDOFF 2026-09-25: steps 5 and 6a are done; next is the verifier-mix diagnostic
+
+Pinned: public `main` at the commit that adds this section, data `main` at
+`7166d6c5`, both pushed. Nothing is running.
+
+**Done.** Extraction and verification ran for all seven, committed in data as
+`7166d6c5`: 82 transcripts, 260 records, 163 accepted, 0 failures in either
+stage. Per-person counts are in that commit message.
+
+**The finding that sets the next action.** Acceptance depends on which model
+verifies, and the seven were verified by a different model from the rest:
+
+```
+existing 50   gemini 1857 verified   620 accepted  33.4%
+              fable   145 verified    79 accepted  54.5%
+the seven     fable   246 verified   156 accepted  63.4%
+              astra    14 verified     7 accepted  50.0%
+```
+
+The router excludes the extractor's harness; extraction ran on astra, and fable
+won on measured quota because Antigravity reports no usage. So the seven's rate
+is ordinary for fable, not evidence they predict better. Predictions has no
+calibration stage to absorb this.
+
+**Next action.** Add a by-verifier-harness acceptance diagnostic to
+`scripts/aggregate_predictions.py`, beside `acceptance_by_contract_pair()`
+(which groups reviewed records by extraction and verification contract ids
+only, so it cannot see this). Test first: a fixture with two verifier harnesses
+at different acceptance rates must fail before the change and pass after, and
+the harness must be read from `verification.harness` on each record, raising if
+a verified record lacks it rather than bucketing it as unknown. Re-verifying on
+one harness was rejected: it needs `--force`, which the plan forbids, and costs
+about 190 calls to change a number whose direction is already known.
+
+**Whether the page shows it is a separate operator decision.** Diagnostics only
+is free and changes nothing published. Showing it on the page makes the
+confound visible to readers but changes the rendered predictions page.
+
+**After that, P4 continues:** `market_consensus.py --leaders <the seven>` (spends
+quota: its matcher is a model), `aggregate_predictions.py`,
+`score_predictions.py --trend`, build, deploy. The deploy is still gated on two
+open decisions: whether a zero-record person is a row (now five of the existing
+50, none of the seven), and the wording of the retired investor rule.
+
+**Loose ends.** `predictions/_inputs/` (25 MB) and `_raw/responses/` are
+untracked with no ignore rule, the shape `_markets/` had before it was swept
+into a commit. `.agents/` in the public repo is not mine.
+
+Verify this state:
+
+```
+git -C data log --oneline -1          # 7166d6c5 The seven investors' predictions...
+git -C data status --short --branch   # in sync; only _inputs/ and _raw/responses/ untracked
+ps -Ao args= | grep -E 'extract_predictions|market_consensus' | grep -v grep   # nothing
+```
