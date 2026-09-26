@@ -211,3 +211,24 @@ git -C data log --oneline -1          # 7166d6c5 The seven investors' prediction
 git -C data status --short --branch   # in sync; only _inputs/ and _raw/responses/ untracked
 ps -Ao args= | grep -E 'extract_predictions|market_consensus' | grep -v grep   # nothing
 ```
+
+### Update 2026-09-25: diagnostic done (0f7fad9)
+
+`acceptance_by_harness_pair()` in `scripts/aggregate_predictions.py` now writes
+`verifier_acceptance_by_harness_pair` into each leader and the corpus in
+`index.json`. It is diagnostics only; the predictions page does not render it.
+Measured on the corpus in memory, before any index rebuild:
+
+```
+existing 50  astra -> fable    54.5%  (79/145)
+             astra -> gemini   32.9%  (584/1778)
+             fable -> gemini   45.6%  (36/79)
+the seven    astra -> fable    63.4%  (156/246)
+             fable -> astra    50.0%  (7/14)
+```
+
+On the same harness pair the gap is 8.9 points, not the 28.5 the pooled rates
+suggested. `test_log_bloat.py` fails with "163 of 862 accepted records lack
+consensus status": those are the seven's accepted records, and step 2 clears it.
+
+Next action: `market_consensus.py --leaders <the seven>` (spends quota).
