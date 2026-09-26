@@ -135,6 +135,41 @@ def main() -> int:
               cov["extract"] == {"excluded": 1, "failed": 1, "ok": 3} and cov["verify"] == {"not_run": 3, "nothing_to_verify": 1, "ok": 1}
               and cov["by_harness"]["extract"] == {"astra": 1, "fable": 1, "gemini": 1} and cov["cap_hit_transcripts"] == 1
               and cov["ungrounded_candidates_total"] == 1, json.dumps(cov))
+        check("HARNESS: the index reports acceptance per extractor and verifier harness",
+              c.get("verifier_acceptance_by_harness_pair") == [{"extraction_harness": "fable", "verification_harness": "astra",
+                                                               "reviewed": 3, "accepted": 2, "rejected": 1, "acceptance_rate": round(2 / 3, 4)}]
+              and ada.get("verifier_acceptance_by_harness_pair") == c.get("verifier_acceptance_by_harness_pair")
+              and alan.get("verifier_acceptance_by_harness_pair") == [],
+              json.dumps(c.get("verifier_acceptance_by_harness_pair")))
+        mix = []
+        for i, (vh, acc) in enumerate((("fable", True), ("fable", True), ("fable", False), ("gemini", True), ("gemini", False),
+                                       ("gemini", False), ("gemini", False))):
+            r = record(L, "ada", "s1", "by 2030 most code will be written by AI I would say", acc)
+            r["verification"]["harness"] = vh
+            r["extraction"]["harness"] = "astra"
+            mix.append(r)
+        pending = record(L, "ada", "s1", "by 2030 most code will be written by AI I would say", None)
+        disq = copy.deepcopy(mix[0])
+        disq["extraction"]["qualifies"] = False
+        rows = A.acceptance_by_harness_pair(mix + [pending, disq]) if hasattr(A, "acceptance_by_harness_pair") else None
+        check("HARNESS: two verifier harnesses at different rates stay separate; pending and disqualified are left out",
+              rows == [{"extraction_harness": "astra", "verification_harness": "fable", "reviewed": 3, "accepted": 2, "rejected": 1,
+                        "acceptance_rate": round(2 / 3, 4)},
+                       {"extraction_harness": "astra", "verification_harness": "gemini", "reviewed": 4, "accepted": 1, "rejected": 3,
+                        "acceptance_rate": 0.25}], json.dumps(rows))
+        for label, mutate in (("missing", lambda v: v.pop("harness")), ("empty", lambda v: v.update(harness="")),
+                              ("None", lambda v: v.update(harness=None))):
+            bad = copy.deepcopy(mix[0])
+            mutate(bad["verification"])
+            try:
+                A.acceptance_by_harness_pair([bad])
+                raised = ""
+            except ValueError as exc:
+                raised = str(exc)
+            except AttributeError:
+                raised = ""
+            check(f"HARNESS: a verified record with a {label} verification.harness raises, naming the record",
+                  "ada/s1" in raised and "verification.harness" in raised, raised or "did not raise ValueError")
         check("NEUTRAL: no evaluative key anywhere", A.forbidden_keys(idx) == [], str(A.forbidden_keys(idx)))
         check("NEUTRAL: an injected evaluative key is refused", A.forbidden_keys({"leaders": [{"accuracy_pct": 1}]}) == ["$.leaders[0].accuracy_pct"])
         idx2 = A.build_index(pr, roster, td / "tx")

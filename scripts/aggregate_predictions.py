@@ -50,6 +50,7 @@ def summarise_records(recs: list[dict]) -> dict:
         "extractor_disqualified": sum(1 for r in recs if not r["extraction"]["qualifies"]),
         "agreement_rate": _rate([r for r in recs if r["verification"]["agreement"] is not None], lambda r: r["verification"]["agreement"]),
         "verifier_acceptance_by_contract_pair": acceptance_by_contract_pair(recs),
+        "verifier_acceptance_by_harness_pair": acceptance_by_harness_pair(recs),
         "by_horizon": _counter(r["prediction"]["horizon"] for r in acc),
         "by_confidence_type": _counter(r["confidence"]["type"] for r in acc),
         "by_category": _counter(r["prediction"]["category"] for r in acc),
@@ -86,6 +87,33 @@ def acceptance_by_contract_pair(recs: list[dict]) -> list[dict]:
          "rejected": sum(not r["accepted"] for r in rows),
          "acceptance_rate": _rate(rows, lambda r: r["accepted"])}
         for (x, v, xp, vp), rows in sorted(groups.items())
+    ]
+
+
+def acceptance_by_harness_pair(recs: list[dict]) -> list[dict]:
+    """Reviewed extractor proposals only, split by the harness on each side.
+
+    The verifier harness moves the acceptance rate, and the router never lets a
+    harness verify its own extraction, so a pooled rate mixes verifier harnesses
+    in whatever proportion quota routed them. Both sides are keyed because one
+    verifier can review proposals from more than one extractor. A reviewed record
+    with no harness raises rather than landing in an "unknown" row.
+    """
+    groups = defaultdict(list)
+    for r in recs:
+        x, v = r["extraction"], r["verification"]
+        if not x["qualifies"] or v["status"] != "ok":
+            continue
+        for side, block in (("extraction", x), ("verification", v)):
+            if not block.get("harness"):
+                raise ValueError(f"{r['transcript_id']} {r['prediction_id']}: reviewed record has no {side}.harness")
+        groups[(x["harness"], v["harness"])].append(r)
+    return [
+        {"extraction_harness": xh, "verification_harness": vh,
+         "reviewed": len(rows), "accepted": sum(r["accepted"] for r in rows),
+         "rejected": sum(not r["accepted"] for r in rows),
+         "acceptance_rate": _rate(rows, lambda r: r["accepted"])}
+        for (xh, vh), rows in sorted(groups.items())
     ]
 
 
