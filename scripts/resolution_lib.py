@@ -300,6 +300,27 @@ Answer with one JSON object and nothing else:
 """
 
 
+# Appended to PRIOR_TASK for a TREND record only, so every other prior prompt is
+# byte-identical to the one the existing priors were priced with. It states the
+# resolver's rule 7 from the prior's side. Without it the two stages price
+# different events: FOUND 2026-09-27, a 2021 claim that genome sequencing would
+# fall to ten cents was priced at p=0.02 for the endpoint and resolved "occurred"
+# on the direction, paying +5.64 points. `test_prior_trend_alignment.py`.
+PRIOR_TREND_RULE = """
+THIS RECORD IS JUDGED OVER A TREND WINDOW. PRICE THE DIRECTION, NOT THE ENDPOINT.
+The speaker named no closing date. This pipeline judges the claim over the window
+from the statement date to the deadline shown, and the question it will be judged
+on is: over that window, does the DIRECTION the speaker claimed hold? A claim that
+a cost "will fall to ten cents" is judged on whether the cost falls meaningfully
+across the window, not whether the literal endpoint is reached inside it. A claim
+that a margin "will only continue to go up" is judged on whether it is
+meaningfully higher across the window, and one weak quarter does not decide it.
+So p is the probability, seen from the statement date, that the claimed direction
+holds meaningfully over the whole window. Where the direction and the endpoint are
+the same thing, price that thing.
+"""
+
+
 def build_prior_prompt(rec: dict, deadline: dt.date) -> str:
     """Blind by construction: it reads `prompt_facts`, which cannot see a resolution.
 
@@ -307,7 +328,8 @@ def build_prior_prompt(rec: dict, deadline: dt.date) -> str:
     invites it to reason forward to what it knows happened since.
     """
     f = prompt_facts(rec, deadline)
-    return (f"{PRIOR_TASK}\n{'=' * 70}\n{_block(f)}{'=' * 70}\n\n"
+    task = PRIOR_TASK + (PRIOR_TREND_RULE if str(rec.get("_basis") or "").startswith("trend") else "")
+    return (f"{task}\n{'=' * 70}\n{_block(f)}{'=' * 70}\n\n"
             f"Stand on {f['statement_date']}. Answer with the JSON object now.\n")
 
 
