@@ -137,7 +137,7 @@ def summarise_meta(metas: list[dict]) -> dict:
     }
 
 
-def build_index(pred_root: Path, roster: dict, transcripts_root: Path | None,
+def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Path] | None,
                 roster_path: Path | None = None) -> dict:
     files = sorted(p for p in pred_root.glob("*/*.jsonl") if not p.parent.name.startswith("_"))
     all_recs: list[dict] = []
@@ -163,15 +163,24 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | None,
             if r["consensus"].get("matcher"):
                 contracts_m.add(r["consensus"]["matcher"]["contract_id"])
     metas = []
+    meta_sids: dict[str, list[tuple[str, dict]]] = {}
     for mp in sorted(p for p in pred_root.glob("*/*.meta.json") if not p.parent.name.startswith("_")):
         m = json.loads(mp.read_text())
         metas.append(m)
         metas_per_slug.setdefault(mp.parent.name, []).append(m)
+        meta_sids.setdefault(mp.parent.name, []).append((mp.name[: -len(".meta.json")], m))
 
-    on_disk: dict[str, int] = {}
-    if transcripts_root and transcripts_root.exists():
-        for p in transcripts_root.glob("*/*.json"):
-            on_disk[p.parent.name] = on_disk.get(p.parent.name, 0) + 1
+    # Extraction reads every transcript root (transcripts_open and
+    # transcripts_web), so coverage counts all of them. A root that is named and
+    # missing raises: counting it as zero is how "22 of 15" reached the page.
+    roots = [] if transcripts_root is None else (
+        [transcripts_root] if isinstance(transcripts_root, Path) else list(transcripts_root))
+    in_corpus: set[tuple[str, str]] = set()
+    for root in roots:
+        if not root.is_dir():
+            raise FileNotFoundError(f"transcript root {root} does not exist")
+        in_corpus.update((p.parent.name, p.stem) for p in root.glob("*/*.json"))
+    on_disk = Counter(slug for slug, _ in in_corpus)
 
     leaders = []
     for slug in sorted(set(roster) | set(per_slug) | set(metas_per_slug)):
@@ -183,6 +192,14 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | None,
             "sector": entry.get("sector"), "on_roster": slug in roster,
             "transcripts_on_disk": on_disk.get(slug, 0),
             "transcripts_extracted": sum(1 for m in ms if (m.get("extract") or {}).get("status") == "ok"),
+            # A withdrawn transcript keeps its meta; these two keep it out of
+            # "extraction ran on X of Y" without hiding that it exists.
+            "transcripts_extracted_in_corpus": (sum(1 for sid, m in meta_sids.get(slug, [])
+                                                    if (slug, sid) in in_corpus
+                                                    and (m.get("extract") or {}).get("status") == "ok")
+                                                if roots else None),
+            "transcripts_withdrawn_with_meta": (sum(1 for sid, _ in meta_sids.get(slug, []) if (slug, sid) not in in_corpus)
+                                                if roots else None),
             "transcripts_excluded": sum(1 for m in ms if (m.get("extract") or {}).get("status") == "excluded"),
             "transcripts_extract_failed": sum(1 for m in ms if (m.get("extract") or {}).get("status") == "failed"),
             "transcripts_verified": sum(1 for m in ms if (m.get("verify") or {}).get("status") in ("ok", "nothing_to_verify")),
@@ -245,7 +262,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--predictions", default="data/predictions")
     ap.add_argument("--roster", default="data/roster/final.json")
-    ap.add_argument("--transcripts", default="data/transcripts_open")
+    ap.add_argument("--transcripts", action="append", default=None,
+                    help="a transcript root, repeatable; default data/transcripts_open and data/transcripts_web")
     ap.add_argument("--out", default=None, help="default <predictions>/index.json")
     args = ap.parse_args(argv)
     from data_clone_workflow import guard_aggregate
@@ -256,7 +274,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no predictions tree at {pred_root}", file=sys.stderr)
         return 2
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
-    index = build_index(pred_root, roster, Path(args.transcripts),
+    transcripts = [Path(t) for t in (args.transcripts or ["data/transcripts_open", "data/transcripts_web"])]
+    index = build_index(pred_root, roster, transcripts,
                         Path(args.roster))
     bad = forbidden_keys(index)
     if bad:

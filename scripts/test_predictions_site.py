@@ -157,6 +157,16 @@ def main() -> int:
               isinstance(data, list) and isinstance(src, dict) and sorted(pred) == ["ada", "alan"],
               f"{sorted(pred)}")
 
+        # COVERAGE. The drawer says "extraction ran on X of Y of their
+        # transcripts". X counted every meta, withdrawn transcripts included,
+        # while Y counted one transcript root, so the live page printed 22 of 15.
+        idx = json.loads(index.read_text())
+        lead = next(l for l in idx["leaders"] if l["slug"] == "ada")
+        lead.update(transcripts_on_disk=15, transcripts_extracted=22, transcripts_extracted_in_corpus=15)
+        row = next(r for r in B.person_rows(idx, {}, {}, {}) if r["slug"] == "ada")
+        check("COVERAGE: the drawer's numerator counts only extracted transcripts still in the corpus",
+              (row["tx_succeeded"], row["tx_attempted"]) == (15, 15), f"{row['tx_succeeded']} of {row['tx_attempted']}")
+
         # ------------------------------------------------------------------
         # PAYLOAD. The records were inline until 2026-09-17, which made this
         # page 4.7 MB. The board at verbatim-index carried its evidence the

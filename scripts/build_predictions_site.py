@@ -1001,7 +1001,7 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
             "h_explicit": l["by_horizon"].get("explicit", 0), "h_inferable": l["by_horizon"].get("inferable", 0), "h_none": l["by_horizon"].get("none", 0),
             "p_explicit": l["explicit_probability"], "p_qual": l["qualitative_confidence"],
             "transcripts": l["transcripts_with_accepted"], "earliest": l["earliest_statement_date"],
-            "tx_attempted": l["transcripts_on_disk"] or None, "tx_succeeded": l["transcripts_extracted"],
+            "tx_attempted": l["transcripts_on_disk"] or None, "tx_succeeded": l["transcripts_extracted_in_corpus"],
             "by_category": l["by_category"], "by_type": l["by_prediction_type"],
         })
     rows.sort(key=lambda r: r["name"])
@@ -1358,6 +1358,8 @@ def main(argv: list[str] | None = None) -> int:
     for k in ("generated_at_utc", "run_ids_seen", "contracts_seen", "leaders", "corpus", "coverage", "files_read", "records_read"):
         if k not in index:
             raise SystemExit(f"index.json lacks {k}; re-run aggregate_predictions.py")
+    if any("transcripts_extracted_in_corpus" not in l for l in index["leaders"]):
+        raise SystemExit("index.json predates transcripts_extracted_in_corpus; re-run aggregate_predictions.py")
     check_og_card(index)
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
     loaded = load_records(Path(args.predictions))

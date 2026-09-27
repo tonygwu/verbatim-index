@@ -170,6 +170,37 @@ def main() -> int:
                 raised = ""
             check(f"HARNESS: a verified record with a {label} verification.harness raises, naming the record",
                   "ada/s1" in raised and "verification.harness" in raised, raised or "did not raise ValueError")
+        # Extraction reads transcripts_web as well as transcripts_open, and a
+        # withdrawn transcript keeps its meta. Counting one root while counting
+        # every meta printed "extraction ran on 22 of 15 of their transcripts".
+        tr = td / "roots"
+        for root, sids in (("open", ["w1"]), ("web", ["w2", "w4"])):
+            (tr / root / "bo").mkdir(parents=True)
+            for sid in sids:
+                (tr / root / "bo" / f"{sid}.json").write_text("{}")
+        (pr / "bo").mkdir()
+        for sid in ("w1", "w2", "w3"):  # w3 is in no root: withdrawn, meta kept
+            (pr / "bo" / f"{sid}.meta.json").write_text(json.dumps({"schema_version": 1, "transcript_id": f"bo/{sid}",
+                                                                   "extract": {"status": "ok", "harness": "fable"}}))
+        try:
+            bo = {l["slug"]: l for l in A.build_index(pr, roster, [tr / "open", tr / "web"])["leaders"]}["bo"]
+        except Exception as exc:  # noqa: BLE001
+            bo = {"error": repr(exc)}
+        check("COVERAGE: every transcript root is counted; a withdrawn transcript's meta is not counted as in the corpus",
+              bo.get("transcripts_on_disk") == 3 and bo.get("transcripts_extracted") == 3
+              and bo.get("transcripts_extracted_in_corpus") == 2 and bo.get("transcripts_withdrawn_with_meta") == 1, json.dumps(bo)[:400])
+        try:
+            A.build_index(pr, roster, [tr / "open", tr / "no-such-root"])
+            missing = "did not raise"
+        except FileNotFoundError as exc:
+            missing = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            missing = f"wrong error {exc!r}"
+        check("COVERAGE: a named transcript root that does not exist raises instead of counting zero",
+              "no-such-root" in missing, missing)
+        for sid in ("w1", "w2", "w3"):
+            (pr / "bo" / f"{sid}.meta.json").unlink()
+        (pr / "bo").rmdir()
         check("NEUTRAL: no evaluative key anywhere", A.forbidden_keys(idx) == [], str(A.forbidden_keys(idx)))
         check("NEUTRAL: an injected evaluative key is refused", A.forbidden_keys({"leaders": [{"accuracy_pct": 1}]}) == ["$.leaders[0].accuracy_pct"])
         idx2 = A.build_index(pr, roster, td / "tx")

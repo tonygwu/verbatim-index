@@ -13,7 +13,7 @@ if [ "$REFRESH" -eq 1 ]; then
   . scripts/daemon_guard.sh
   require_daemon_clone || exit 1
   $PY scripts/aggregate_predictions.py --predictions "${PRODUCTION_DATA}/predictions" --roster "${PRODUCTION_DATA}/roster/final.json" \
-      --transcripts "${PRODUCTION_DATA}/transcripts_open" --out "${PRODUCTION_DATA}/predictions/index.json"
+      --transcripts "${PRODUCTION_DATA}/transcripts_open" --transcripts "${PRODUCTION_DATA}/transcripts_web" --out "${PRODUCTION_DATA}/predictions/index.json"
 fi
 
 PUBLICATION_BEFORE="$(publication_fingerprint)"
