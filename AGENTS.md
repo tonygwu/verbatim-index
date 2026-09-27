@@ -3,6 +3,22 @@
 `CLAUDE.md` is a symlink to this file. One working agreement, whichever
 tool reads it.
 
+The project skills follow the same rule. `.agents/skills/` is the one real
+directory, which Codex reads, and `.claude/skills` is a symlink to it, which
+Claude Code reads. Edit skills under `.agents/skills/`. Code that names a
+`.claude/skills/...` path still works through the link, and every contract hash
+covers file bytes and names, never the directory, so the move on 2026-09-27
+changed no contract ID. Before that date each tool had its own copy, and the
+Codex copy was an untracked import in which a blind "Claude" to "Codex"
+rewrite had turned a measured result, "GPT-4o against Claude at phi=0.588",
+into a false one. Two copies drift; do not recreate one.
+
+**A clone that still holds an untracked `.agents/` directory must delete it
+before it pulls this change**, or `git pull` refuses with "untracked working
+tree files would be overwritten". On 2026-09-27 that was repo-2 and repo-3.
+Their copies hold nothing the tracked files lack: they match byte for byte
+except for the corrupted line above. `rm -rf .agents && git pull`.
+
 Several Claude Code agents work this project at once, one per clone, under
 `~/Code/misc/verbatim-index/repo-N`. Git is the only channel between them.
 The `agent-fleet-git` skill governs how you commit; this file records what is
