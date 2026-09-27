@@ -280,13 +280,25 @@ bash scripts/deploy_predictions.sh --production-data "$(cd data && pwd -P)" --da
    honest but gives investors no Score column.
 3. **The deploy itself.** The operator runs it, or tells the agent to run it.
 
-### Found, and not introduced tonight
+### Found tonight, and what happened to it
 
-- The drawer says "extraction ran on 22 of 15 of their transcripts" for more
-  than 20 of the existing 50, and the live page says the same.
-  `transcripts_on_disk` counts `transcripts_open` only, while extraction also
-  reads `transcripts_web`. The seven show no coverage phrase at all, because
-  their `transcripts_on_disk` is 0 and `build_predictions_site.py` maps 0 to
-  None, which hides it (checked in the browser on Cathie Wood's drawer).
+- **FIXED in public `a31dc8e`, data `12d3df0a`.** The drawer said "extraction
+  ran on 22 of 15 of their transcripts" for more than 20 of the 50, and the
+  live page still says so until the next deploy. `transcripts_on_disk` counted
+  `transcripts_open` only, and the numerator counted withdrawn transcripts'
+  meta files. Both roots are counted now, and withdrawn ones are reported as
+  `transcripts_withdrawn_with_meta` (alexandr-wang 2, andy-jassy 4,
+  arvind-krishna 1, none with an accepted prediction). Rendered: Sam Altman
+  22 of 22, Alexandr Wang 11 of 11, Cathie Wood 13 of 13.
+- **NOT DONE: 9 Demis Hassabis web transcripts were never extracted.** The fix
+  made them visible: his drawer now reads 13 of 22. They arrived with the
+  round-2 supplemental corpus (data `9f79b419`) and have no meta file. Extracting
+  them spends quota, and he is on the leaders board, outside P4, so the operator
+  decides. They are `web-achievement-org-e530f53c`, `web-cbsnews-com-220f10f0`,
+  `web-possible-fm-f38d9586`, `web-singjupost-com-919fc443`,
+  `web-soci-org-53331963`, `web-theguardian-com-7cc1a21c`,
+  `web-theverge-com-6ae7ff47`, `web-wired-com-e067a388` and
+  `web-yahoo-com-9f29dd43`.
 - The deploy log prints "about to publish 57 people" while the page shows 52.
-  The log counts the index and the page counts people with something past due.
+  The log counts the index, and the page counts people with something past due.
+  Left as it is: the log is not published.
