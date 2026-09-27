@@ -232,3 +232,59 @@ suggested. `test_log_bloat.py` fails with "163 of 862 accepted records lack
 consensus status": those are the seven's accepted records, and step 2 clears it.
 
 Next action: `market_consensus.py --leaders <the seven>` (spends quota).
+
+## HANDOFF 2026-09-27: everything but the deploy is done
+
+P4 now stops at one command, the real deploy, which waits for the operator.
+Every data step is committed and pushed in `data/`.
+
+| step | result | commit |
+|---|---|---|
+| market consensus, `--leaders <the seven>`, no `--force` | attempted 163: no_match 161, unavailable 1, failed 1 (`cli_nonzero_exit`); the retry of the failed one came back unavailable. End state: no_match 161, unavailable 2, nothing failed or unsearched | data `25a50987` |
+| `aggregate_predictions.py` | files 925, records 2278, accepted 862, people 57. None of the existing 50 entries changed apart from the new harness key. Freshness against disk is equal on all three checks | data `5a846d1a` |
+| `score_predictions.py --trend`, same run dir, `--as-of 2026-09-16` | people 45 -> 52, ranked 28 -> 28, scored 189 -> 189. Existing people changed 0 of 45 and existing predictions 0 of 377. The seven carry 40 past-due predictions with no resolution, so all seven are unranked | data `5dc0b7ff` |
+| social card | redrawn: 699 -> 862 predictions, 843 -> 925 transcripts | public `83dad2e` |
+| page build, run locally | 52 rows (the live page has 45), all seven present, 200,822 bytes; headless Chromium showed 0 page errors and drawers fetched with 200 | not committed (build artifact) |
+| `deploy_predictions.sh --dry-run` | exit 0, "current: index matches disk", "published nothing" | none |
+| leaders board audit | a fresh `aggregate.py` plus `build_site.py`, diffed against the LIVE verbatim-index.tonygwu.com, differs only on the 2 `__RUNDATE__` lines; all 50 `audit/<slug>.json` files are byte-identical | none |
+
+To publish, from repo-0:
+
+```
+bash scripts/deploy_predictions.sh --production-data "$(cd data && pwd -P)" --data-revision "$(git -C data rev-parse HEAD)" --dry-run
+bash scripts/deploy_predictions.sh --production-data "$(cd data && pwd -P)" --data-revision "$(git -C data rev-parse HEAD)"
+```
+
+### The two open decisions no longer block the deploy
+
+- **A person with zero records:** none of the seven has zero. Accepted counts
+  run from Bill Gurley 7 to Cathie Wood 49. The page already hides anyone with
+  nothing past due (`MIN_PAST_DUE_TO_LIST = 1`); today that is Fei-Fei Li and
+  Ilya Sutskever.
+- **Wording of the retired investor rule:** it lives only in
+  `data/roster/final.json`, under `tie_break_rules` and the scoping note
+  `investor_rule_scoped_2026_09_18`. Neither page renders either one, so the
+  wording changes no published byte.
+
+### Decisions still open, each with its cost
+
+1. **Headline copy.** The page and the social title say "What 52 tech leaders
+   predicted in public". Seven of the 52 are investors. Keeping it costs
+   accuracy for those seven rows. Changing it to "people" or "technology leaders
+   and investors" is a one-line edit to `SOCIAL_TITLE` and the masthead in
+   `build_predictions_site.py`. Recommendation: change it before the deploy,
+   because the headline is the first thing a reader sees.
+2. **Scoring the seven.** They show counts, not scores. Scoring them needs
+   resolutions and priors for their 40 past-due predictions, which is the
+   phase-2 pipeline and spends quota. Without it they stay unranked, which is
+   honest but gives investors no Score column.
+3. **The deploy itself.** The operator runs it, or tells the agent to run it.
+
+### Found, and not introduced tonight
+
+- The drawer says "extraction ran on 22 of 15 of their transcripts" for more
+  than 20 of the existing 50, and the live page says the same.
+  `transcripts_on_disk` counts `transcripts_open` only, while extraction also
+  reads `transcripts_web`. For the seven it reads 13 of 0.
+- The deploy log prints "about to publish 57 people" while the page shows 52.
+  The log counts the index and the page counts people with something past due.
