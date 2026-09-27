@@ -302,3 +302,20 @@ bash scripts/deploy_predictions.sh --production-data "$(cd data && pwd -P)" --da
 - The deploy log prints "about to publish 57 people" while the page shows 52.
   The log counts the index, and the page counts people with something past due.
   Left as it is: the log is not published.
+
+## P4 DONE 2026-09-27: deployed with operator approval
+
+`deploy_predictions.sh` from data `12d3df0a`, with the operator's approval in
+session. Wrangler version `d577604c-0c94-4ef3-a59f-e82cec365c17`. Verified
+against the live site, not from the deploy output:
+
+```
+live page == local render (byte-identical), People 52
+drawer files live: 55 match local: 55 problems: []
+og.png live == committed
+verbatim-index unchanged since before deploy
+```
+
+Still open, none blocking: the "What 52 tech leaders" headline now covers seven
+investors; scoring the seven needs resolutions and priors; nine Demis Hassabis
+web transcripts have never been extracted.
