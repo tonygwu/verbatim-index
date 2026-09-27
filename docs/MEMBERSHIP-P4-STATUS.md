@@ -285,6 +285,8 @@ bash scripts/deploy_predictions.sh --production-data "$(cd data && pwd -P)" --da
 - The drawer says "extraction ran on 22 of 15 of their transcripts" for more
   than 20 of the existing 50, and the live page says the same.
   `transcripts_on_disk` counts `transcripts_open` only, while extraction also
-  reads `transcripts_web`. For the seven it reads 13 of 0.
+  reads `transcripts_web`. The seven show no coverage phrase at all, because
+  their `transcripts_on_disk` is 0 and `build_predictions_site.py` maps 0 to
+  None, which hides it (checked in the browser on Cathie Wood's drawer).
 - The deploy log prints "about to publish 57 people" while the page shows 52.
   The log counts the index and the page counts people with something past due.
