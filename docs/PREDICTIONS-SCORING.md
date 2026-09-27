@@ -109,3 +109,30 @@ matches across all 475 records, so `p` comes from an assessor in essentially eve
 case. And the 26 broken criteria in `PREDICTIONS-CRITERIA-AGREEMENT.md` must be
 repaired first, because 18 of them cannot be resolved either way and 8 would
 resolve to the opposite answer.
+
+## Medium specificity is eligible, decided 2026-09-27
+
+The operator widened the eligibility rule from `specificity == "high"` to high or
+medium. The rule lives in one constant, `ELIGIBLE_SPECIFICITY` in
+`scripts/phase2_resolvability.py`, which both the funnel and
+`resolve_predictions.select()` read. LOW stays out, a missing value is not read as
+medium, and the lead-time floor and the coherent-window check still apply to a
+medium record. Proof: `.venv/bin/python scripts/test_eligibility_specificity.py`.
+
+What prompted it: Bill Gurley's "I do think you'll see some dead unicorns this
+year" (SXSW, 2015-03-20) is a dated, falsifiable call that the extractor rated
+medium because "some" names no count. Under the old rule it could never score.
+
+MEASURED before the change, with `select()` over production data `12d3df0a` at
+as-of 2026-09-16 and `--trend`, 417 past-due predictions:
+
+```
+already resolved AND priored, blocked only by the rule    33   (other leaders)
+the seven investors' 40 unresolved, eligible after        34   (6 stay out on lead time or window)
+other leaders, eligible after, still unresolved           11   (5 of them newly eligible)
+```
+
+The cost is latitude in the criterion. "Some unicorns will die" can be settled,
+but a resolver must choose how many is "some" and what "die" means. That choice
+is visible in each resolution's reasoning, and a criterion that cannot be settled
+comes back `criterion_ambiguous` and is excluded rather than scored as a miss.

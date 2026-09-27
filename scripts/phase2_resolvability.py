@@ -63,6 +63,16 @@ ROOT = pathlib.Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
 # days hit at 0.75, well short of the 0.82 of the set below the old floor, so
 # they behave more like forecasts than like announcements.
 MIN_LEAD_DAYS = 60
+
+# The specificity levels a scored prediction may carry. The operator widened this
+# from high alone to high and medium on 2026-09-27. A medium prediction names its
+# outcome well enough to resolve, but leaves some latitude, such as "some" rather
+# than a count. The resolver can still return `criterion_ambiguous` when that
+# latitude is too wide to settle, and such a record is excluded rather than scored
+# as a miss. LOW stays out. `resolve_predictions.select()` and the funnel below
+# both read this one constant.
+ELIGIBLE_SPECIFICITY = ("high", "medium")
+SPECIFICITY_LABEL = " or ".join(ELIGIBLE_SPECIFICITY)
 DAYS = {"year": 365.25, "month": 30.44, "week": 7.0, "day": 1.0}
 
 # A word that stands for a count. These are JUDGEMENT CALLS, printed in the report so a
@@ -361,8 +371,8 @@ def funnel(rows, cutoff: dt.date, min_lead: int):
                  [r for r in past
                   if not (iso((r.get("source") or {}).get("statement_date"))
                           and r["_deadline"] < iso((r.get("source") or {}).get("statement_date")))])
-    spec = stage("specificity high",
-                 [r for r in sane if r["prediction"].get("specificity") == "high"])
+    spec = stage(f"specificity {SPECIFICITY_LABEL}",
+                 [r for r in sane if r["prediction"].get("specificity") in ELIGIBLE_SPECIFICITY])
     stage(f"lead time >= {min_lead} days",
           [r for r in spec if lead_days(r) is not None and lead_days(r) >= min_lead])
     return stages
@@ -427,7 +437,7 @@ def main() -> int:
         print(f"  {v:5d}  {k}")
 
     print(f"\nPER-LEADER COVERAGE (floor {args.min_per_leader})")
-    for name, kept in (("past due", past), (f"past due, high specificity, lead >= {args.min_lead_days}d", scorable)):
+    for name, kept in (("past due", past), (f"past due, specificity {SPECIFICITY_LABEL}, lead >= {args.min_lead_days}d", scorable)):
         per = collections.Counter(r["leader_slug"] for r in kept)
         enough = sorted((v, k) for k, v in per.items() if v >= args.min_per_leader)
         print(f"  {name}: {len(per)} leaders have at least one; "

@@ -52,14 +52,14 @@ def main() -> int:
     rows = [
         # --- stated deadlines, all three schema forms ---
         rec("ada", "2020-01-01", "2019-01-01"),                        # scorable, 365 days lead
-        rec("ada", "2020-06-01", "2019-01-01"),                        # scorable, 517 days lead
+        rec("ada", "2020-06-01", "2019-01-01", spec="medium"),         # MEDIUM is scorable since 2026-09-27
         rec("ada", "2020", "2019-01-01"),                              # BARE YEAR -> 2020-12-31, scorable
         rec("ada", "2020-06", "2019-01-01"),                           # YEAR-MONTH -> 2020-06-30, scorable
         rec("ada", "2099-01-01", "2019-01-01"),                        # future, dropped
         rec("ada", "not-a-date", "2019-01-01"),                        # malformed, dropped and counted apart
         rec("ada", None, "2019-01-01", horizon="none", text=None),     # open-ended, dropped
         rec("bob", "2018-01-01", "2019-01-01"),                        # target BEFORE the statement
-        rec("bob", "2020-01-01", "2019-01-01", spec="medium"),         # low specificity, dropped
+        rec("bob", "2020-01-01", "2019-01-01", spec="low"),            # low specificity, dropped
         rec("bob", "2020-01-01", "2019-01-01", control="own"),         # a commitment: KEPT, and reported as own
         rec("bob", "2019-03-01", "2019-01-01"),                        # 59 days lead: an announcement, dropped
         rec("bob", "2020-01-01", "2019-01-01", prob=0.7),              # scorable, and Brier-scorable
@@ -94,7 +94,7 @@ def main() -> int:
                 ("13  carry a deadline", "bare-year and year-month dates are read, and 3 deadlines are derived"),
                 ("11  deadline on or before", "the 2099 target and the 15-year derivation are not past due"),
                 ("10  deadline not BEFORE the statement date", "bob's 2018-target-from-a-2019-statement drops"),
-                ("9  specificity high", "the medium-specificity record drops"),
+                ("9  specificity high or medium", "the low-specificity record drops and the medium one stays"),
                 # The floor moved from 180 to 60 on 2026-09-15. The fixture's 59-day
                 # record is still BELOW it, so the intent of this case survives the
                 # change: an announcement made two months before its own deadline

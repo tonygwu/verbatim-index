@@ -93,17 +93,19 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False) -> lis
             "basis": r["_basis"],
             "deadline_before_statement": bool(said and r["_deadline"] < said),
             "specificity_high": r["prediction"].get("specificity") == "high",
+            "specificity_ok": r["prediction"].get("specificity") in P2.ELIGIBLE_SPECIFICITY,
             "lead_days": lead,
             "lead_ok": lead is not None and lead >= min_lead,
         }
         # The three together are the operator's eligibility rule: a real forecast
-        # is specific, reaches at least six months out, and has a coherent window.
+        # is specific enough (P2.ELIGIBLE_SPECIFICITY, high or medium since
+        # 2026-09-27), reaches at least min_lead days out, and has a coherent window.
         is_trend = str(r.get("_basis") or "").startswith("trend")
         r["_flags"]["trend"] = is_trend
         # A trend window IS the elapsed time, so the lead-time floor is already
         # satisfied by construction and specificity is not what makes it testable.
         r["_flags"]["eligible"] = (is_trend or
-                                   (r["_flags"]["specificity_high"] and r["_flags"]["lead_ok"]
+                                   (r["_flags"]["specificity_ok"] and r["_flags"]["lead_ok"]
                                     and not r["_flags"]["deadline_before_statement"]))
         out.append(r)
     out.sort(key=lambda r: (r["leader_slug"], r["prediction_id"]))
