@@ -19,8 +19,10 @@ WHAT COUNTS TOWARD THE PUBLISHED FIGURE
   - resolved to occurred or not_occurred, so "unresolvable" is excluded rather
     than scored as a miss,
   - carries a prior,
-  - clears the eligibility rule: specificity high, at least six months of lead
-    time, and a deadline that does not precede the statement.
+  - clears the eligibility rule: specificity high or medium
+    (`phase2_resolvability.ELIGIBLE_SPECIFICITY`, widened from high alone on
+    2026-09-27), at least `MIN_LEAD_DAYS` of lead time, and a deadline that does
+    not precede the statement.
 Everything else is loaded, counted and reported, never silently dropped. A
 person below `MIN_SCORED_TO_RANK` keeps their number in this file and does not
 get a published one, which is how `MIN_TRANSCRIPTS_TO_RANK` already works on the
@@ -205,9 +207,29 @@ def _reading(gap: float, n: int) -> str:
             f"assessor as well as the speakers, and the overall mean is NOT a neutral zero")
 
 
+def load_across(runs: list[Path], loader) -> dict[str, dict]:
+    """One loader applied to every run, merged by prediction_id.
+
+    A prediction present in two runs is REFUSED, naming both, because letting the
+    later run win would settle an outcome by argument order. Within one run the
+    loaders already raise on a duplicate.
+    """
+    out: dict[str, dict] = {}
+    seen: dict[str, Path] = {}
+    for run in runs:
+        for pid, obj in loader(run).items():
+            if pid in out:
+                raise SystemExit(f"prediction {pid} has sidecars in two runs: {seen[pid]} and {run}; "
+                                 f"remove one before scoring")
+            out[pid], seen[pid] = obj, run
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--run", type=Path, required=True, help="the experiment run directory")
+    ap.add_argument("--run", type=Path, action="append", required=True,
+                    help="an experiment run directory; repeat it to read several runs as one. "
+                         "A prediction with sidecars in two runs is refused")
     ap.add_argument("--predictions", type=Path, action="append", default=None,
                     help="a corpus directory; repeat it to score several corpora together")
     ap.add_argument("--index", type=Path, default=Path("data/predictions/index.json"))
@@ -225,10 +247,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend)
-    repairs = R.load_repairs(args.run)
+    repairs = load_across(args.run, R.load_repairs)
     applied, unrepairable = R.apply_repairs(rows, repairs)
-    resolutions = R.load_sidecars(args.run, "resolve")
-    priors = R.load_sidecars(args.run, "prior")
+    resolutions = load_across(args.run, lambda run: R.load_sidecars(run, "resolve"))
+    priors = load_across(args.run, lambda run: R.load_sidecars(run, "prior"))
 
     joined, why = join(rows, resolutions, priors)
     index = json.loads(args.index.read_text())
@@ -244,7 +266,8 @@ def main(argv: list[str] | None = None) -> int:
     doc = {
         "generated_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "as_of": args.as_of,
-        "run_dir": str(args.run),
+        "run_dir": str(args.run[0]),
+        "run_dirs": [str(r) for r in args.run],
         "rule": {
             "clamp": PS.CLAMP,
             "min_scored_to_rank": MIN_SCORED_TO_RANK,
@@ -274,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         "leaders": leaders,
         "predictions": joined,
     }
-    out = args.out or (args.run / "scores.json")
+    out = args.out or (args.run[0] / "scores.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
 
