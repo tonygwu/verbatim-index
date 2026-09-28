@@ -238,7 +238,19 @@ def run(args) -> int:
     arms = args.arms.split(",")
     if set(arms) - set(ARMS):
         raise SystemExit(f"REFUSING: unknown arm(s) {sorted(set(arms) - set(ARMS))}")
-    keys = args.keys.split(",")
+    keys = args.keys.split(",") if args.keys else []
+    cells = None
+    if args.retry_infra_of:
+        # Exactly the cells an earlier run lost to infrastructure, with their repeat
+        # numbers, so `merge` can put each result back where the failure was.
+        prior = json.loads(Path(args.retry_infra_of).read_text())
+        cells = sorted((r["arm"], r["key"], r["repeat"]) for r in prior if failure_label(r) in INFRA_LABELS)
+        if not cells:
+            raise SystemExit("nothing to retry: no infrastructure failure in " + args.retry_infra_of)
+        keys = sorted({k for _, k, _ in cells})
+        arms = sorted({a for a, _, _ in cells})
+    elif not keys:
+        raise SystemExit("REFUSING: name --keys, or --retry-infra-of an earlier results.json")
     jobs, prompts = [], {}
     for key in keys:
         side = json.loads(sidecar_path(page, key).read_text())
@@ -246,12 +258,14 @@ def run(args) -> int:
         if hashlib.sha256(rec["text"].encode()).hexdigest() != side["text_sha256"]:
             raise SystemExit(f"REFUSING: {key} transcript differs from the one the page was built on")
         prompts[key] = build_prompt(rec, roster[key.split("/")[0]], side["tokens"])
-        jobs += [(arm, key, r) for r in range(args.repeats) for arm in arms]
+        jobs += [(arm, key, r) for r in range(args.repeats) for arm in arms] if cells is None else \
+            [c for c in cells if c[1] == key]
     accounts = {"claude": str(Path(args.claude_config_dir).expanduser()),
                 "codex": str(Path(args.codex_home).expanduser()), "gemini": str(Path(args.gemini_home).expanduser())}
     scratch = Path(args.scratch)
     out.mkdir(parents=True, exist_ok=True)
     manifest = {"schema_version": 1, "started_at_utc": utc(), "arms": {a: ARMS[a] for a in arms}, "keys": keys,
+                "retry_infra_of": args.retry_infra_of, "cells": [list(c) for c in cells] if cells else None,
                 "repeats": args.repeats, "max_attempts": MAX_ATTEMPTS, "timeout_s": TIMEOUT,
                 "accounts": accounts, "sandbox_denies": str(DENIED_ROOT),
                 "code_revision": subprocess.check_output(["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip(),
@@ -273,6 +287,10 @@ def run(args) -> int:
             t0 = time.time()
             try:
                 text, tel = call_arm(arm, prompts[key], work, raw, accounts)
+            except subprocess.TimeoutExpired:
+                rec["errors"].append({"attempt": attempt, "error": f"{G.E_TIMEOUT}: no answer within {TIMEOUT} s",
+                                      "seconds": round(time.time() - t0)})
+                continue
             except Exception as exc:  # noqa: BLE001 - every failure is recorded with its taxonomy label
                 rec["errors"].append({"attempt": attempt, "error": str(exc)[:500], "seconds": round(time.time() - t0)})
                 continue
@@ -318,7 +336,14 @@ def failure_label(r: dict) -> str | None:
         return None
     if r["outcome"] == "unparseable":
         return "unparseable"
-    return r["errors"][-1]["error"].split(":", 1)[0] if r.get("errors") else r["outcome"]
+    if not r.get("errors"):
+        return r["outcome"]
+    last = r["errors"][-1]
+    # Runs before 2026-09-28 stored subprocess.TimeoutExpired's own text, which names
+    # no taxonomy label; the attempt ran exactly TIMEOUT seconds.
+    if last["error"].startswith("Command '") and last.get("seconds", 0) >= TIMEOUT:
+        return G.E_TIMEOUT
+    return last["error"].split(":", 1)[0]
 
 
 def merge(args) -> int:
@@ -461,8 +486,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
-    for a in ("--data", "--page", "--keys", "--out"):
+    for a in ("--data", "--page", "--out"):
         r.add_argument(a, required=True)
+    r.add_argument("--keys", help="comma-separated slug/source_id recordings")
+    r.add_argument("--retry-infra-of", help="an earlier results.json: rerun exactly its infrastructure failures")
     r.add_argument("--arms", default="fable,opus,astra,gemini")
     r.add_argument("--repeats", type=int, default=1)
     r.add_argument("--workers", type=int, default=4)

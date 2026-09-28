@@ -68,6 +68,12 @@ def main() -> int:
             ok = True
         check(f"{label} is refused", ok)
 
+    check("a timeout recorded as Python's own text is read as cli_timeout",
+          P.failure_label({"outcome": "failed", "errors": [{"error": "Command '['claude', '-p']' timed out",
+                                                              "seconds": P.TIMEOUT}]}) == "cli_timeout")
+    check("a labelled error is read by its label", P.failure_label(
+        {"outcome": "failed", "errors": [{"error": "auth_or_quota: session limit", "seconds": 3}]}) == "auth_or_quota")
+
     print("\n[SCORE]")
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
