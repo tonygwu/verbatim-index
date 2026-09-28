@@ -229,6 +229,27 @@ def suspect_quotes(grades_dir: Path, transcripts_dir: Path, roster: dict) -> tup
     return rows, key_map, report
 
 
+PAGE_TITLE = "Pundit Speaker Check"
+PAGE_SUBTITLE = "Confirm who is speaking before a recording is graded. Each answer saves the moment you pick it."
+
+
+def render_page(data: str, title: str = PAGE_TITLE, subtitle: str = PAGE_SUBTITLE) -> str:
+    """The page with its data, its words and its two embedded scripts filled in.
+
+    `speaker_audit_page.py` renders the same page for the leaders and predictions
+    boards, so the words are parameters and every placeholder must be filled exactly.
+    """
+    page = TEMPLATE
+    for mark, value in (("/*__DATA__*/null", data), ("/*__TITLE__*/", html.escape(title)),
+                        ("/*__SUBTITLE__*/", html.escape(subtitle)),
+                        ("/*__SPAN_EDITOR__*/", Path(__file__).with_name("pundits_span_editor.js").read_text()),
+                        ("/*__TEXT_CORRECTIONS__*/", Path(__file__).with_name("pundits_text_corrections.js").read_text())):
+        if mark not in page:
+            raise SystemExit(f"REFUSING: template placeholder {mark} is missing")
+        page = page.replace(mark, value)
+    return page
+
+
 def build(args) -> int:
     checklist = json.loads(Path(args.checklist).read_text())
     roster = {p["slug"]: p for p in json.loads(Path(args.roster).read_text())["roster"]}
@@ -282,9 +303,7 @@ def build(args) -> int:
     data = json.dumps({"rows": rows, "quote_rows": quote_rows, "venues": VENUES,
                        "transcript_index": transcript_index},
                       ensure_ascii=False).replace("</", "<\\/")
-    page = TEMPLATE.replace("/*__DATA__*/null", data).replace(
-        "/*__SPAN_EDITOR__*/", Path(__file__).with_name("pundits_span_editor.js").read_text()).replace(
-        "/*__TEXT_CORRECTIONS__*/", Path(__file__).with_name("pundits_text_corrections.js").read_text())
+    page = render_page(data)
     write_atomic(Path(args.out), page)
     print(f"wrote {args.out}: {len(rows)} recordings to speaker-check, {len({r['slug'] for r in rows})} people; "
           f"{sum(len(r['quotes']) for r in quote_rows)} quotes to attribute across {len(quote_rows)} recordings; "
@@ -431,7 +450,7 @@ def main() -> int:
     return {"build": build, "import": do_import, "import-quotes": do_import_quotes}[args.cmd](args)
 
 
-TEMPLATE = r"""<title>Pundit Speaker Check</title>
+TEMPLATE = r"""<title>/*__TITLE__*/</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -588,8 +607,8 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 <div class="app">
  <header>
   <div>
-   <h1>Pundit Speaker Check</h1>
-   <div class="sub">Confirm who is speaking before a recording is graded. Each answer saves the moment you pick it.</div>
+   <h1>/*__TITLE__*/</h1>
+   <div class="sub">/*__SUBTITLE__*/</div>
   </div>
   <div class="meter"><span id="count"></span><span class="bar"><i id="bar"></i></span></div>
  </header>
@@ -629,6 +648,8 @@ for(const r of (D.quote_rows||[])){
  x.quotes = r.quotes; if(!x.title) Object.assign(x, {title:r.title, channel:r.channel, upload:r.upload, video_id:r.video_id, duration:r.duration, forms:r.forms, person:r.person, role:r.role});
 }
 const recs = Object.values(REC).sort((a,b)=>(a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
+// A page with no recording-level questions (speaker_audit_page.py) is only quotes.
+const QUOTE_ONLY = !D.rows.length;
 let filter="todo", cur=recs.length?recs[0].key:null, focusQ=0;
 let labels={}, attrib={}, db=null, saver=null, writable=false;
 
@@ -660,11 +681,13 @@ const curRec = () => REC[cur];
 function renderList(){
  const vis=visible(), groups={}, per={};
  for(const r of vis)(groups[r.person] ||= []).push(r);
- for(const r of recs){const p=(per[r.person] ||= {n:0,ok:0,q:0}); p.n++; if(r.ask&&recState(r)==="done") p.ok++; p.q+=r.quotes.length;}
+ for(const r of recs){const p=(per[r.person] ||= {n:0,ok:0,q:0,qa:0}); p.n++; if(r.ask&&recState(r)==="done") p.ok++; p.q+=r.quotes.length; p.qa+=r.quotes.filter(c=>(attrib[c.qid]||{}).answer).length;}
  let h="";
  for(const [person,rs] of Object.entries(groups)){
   const p=per[person];
-  h+=`<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=5?"ok":""}" title="recordings verified so far (subject present and political); 5 are needed to rank">${p.ok} verified of ${p.n}${p.q?` · ${p.q} quotes`:""}</span></div>`;
+  h+= QUOTE_ONLY
+   ? `<div class="grp"><b>${esc(person)}</b><span class="${p.qa===p.q?"ok":""}" title="quotes with a saved answer">${p.qa} of ${p.q} quotes answered</span></div>`
+   : `<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=5?"ok":""}" title="recordings verified so far (subject present and political); 5 are needed to rank">${p.ok} verified of ${p.n}${p.q?` · ${p.q} quotes`:""}</span></div>`;
   for(const r of rs){
    const left=outstanding(r);
    h+=`<div class="item" tabindex="0" data-k="${esc(r.key)}" aria-current="${r.key===cur}"><span class="dot ${recState(r)}"></span><span class="t">${esc(r.title)}${r.quotes.length?` <span class="turn">· ${r.quotes.length} quote${r.quotes.length>1?"s":""}</span>`:""}</span></div>`;}
@@ -763,7 +786,9 @@ el("list").addEventListener("click", e=>{const n=e.target.closest(".item[data-k]
 el("list").addEventListener("keydown", e=>{if(e.key==="Enter"){const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);}});
 for(const [id,f] of [["f-todo","todo"],["f-all","all"],["f-done","done"]]) el(id).onclick=()=>{filter=f; for(const b of ["f-todo","f-all","f-done"]) el(b).setAttribute("aria-pressed", b===id); renderList();};
 el("legend").innerHTML = `<span class="dot done" style="display:inline-block;vertical-align:-1px"></span> verified · <span class="dot rej" style="display:inline-block;vertical-align:-1px"></span> excluded or a misattributed quote · <span class="dot part" style="display:inline-block;vertical-align:-1px"></span> partly answered`;
-el("keyhelp").innerHTML = "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
+el("keyhelp").innerHTML = QUOTE_ONLY
+ ? "Keys: <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video"
+ : "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
 
 // Two places answers can live, and the page picks by asking, never by guessing at
 // its own hostname. `pundits_verify_serve.py` answers api/answers; the published

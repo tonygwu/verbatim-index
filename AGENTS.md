@@ -1486,6 +1486,18 @@ new grades incomparable with the corpus already graded.
   `scripts/pundits_text_corrections.py --answers <answers> --page <page> --out <private-output>`
   for corrected reading text and provenance. Verify with
   `test_pundits_text_corrections.py` and `check_pundits_span_ui.py`.
+- Speaker check for the leaders and predictions boards: `scripts/speaker_audit_page.py build
+  --study leaders|predictions --data ../data --keys slug/sid,... --reasons FILE --out PAGE`. It
+  reuses the pundits page, `pundits_verify_serve.py` and `import-quotes` unchanged, and only
+  chooses the quotes: for leaders, the evidence quotes the judges cited, located in
+  `transcripts_open` and capped per recording with the judges taking turns, most suspect judge
+  first; for predictions, every ACCEPTED prediction, placed by its exact character offsets. The
+  review is blind: sidecars carry no model suggestion, and every judge, extractor and verifier
+  claim stays in `quote_key.json`. `manifest.json` pins the data revision, each input's sha256,
+  why each recording was chosen and what the cap cut. Write the page into a private data
+  checkout and serve it locally, like the pundits page. The first session, 2026-09-27, is under
+  `predictions/_experiments/speaker-audit-20260927/` on repo-3's private branch. Proof:
+  `scripts/test_speaker_audit_page.py`; drive the page in a browser after any JS change.
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a
   person verified, by the human venue label; quotes hide the judge and its speaker label in a
