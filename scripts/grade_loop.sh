@@ -253,6 +253,27 @@ while true; do
     say "  leaderboard re-rendered from $(count_grades) grades"
   fi
 
+  # 6. Who spoke: Astra segments each NEW transcript into speaker turns, and a
+  #    check-only pass flags quotes the boards credit to someone who did not say
+  #    them. See scripts/speaker_turns.py for why it is pinned to Astra, why it
+  #    covers only transcripts fetched on or after its cutoff, and why it changes
+  #    no number. Leaders only: pundits has the operator's own speaker labels.
+  #    Runs after the render so a slow Astra call never delays the board, and
+  #    each half names its own failure: a silent stage is how the stale-board
+  #    bug above hid for 13 hours.
+  if [ "$STUDY" = "leaders" ]; then
+    if ! $PY scripts/speaker_turns.py segment --data $DATA \
+         >> $DATA/logs/speaker_turns.log 2>>$DATA/logs/grade_loop.err; then
+      say "  SPEAKER SEGMENT FAILED; see $DATA/logs/grade_loop.err"
+    fi
+    if $PY scripts/speaker_turns.py check --data $DATA --out $DATA/logs/speaker_check.json \
+         > $DATA/logs/speaker_check.txt 2>>$DATA/logs/grade_loop.err; then
+      say "  $(head -n 1 $DATA/logs/speaker_check.txt)"
+    else
+      say "  SPEAKER CHECK FAILED; see $DATA/logs/grade_loop.err"
+    fi
+  fi
+
   g1=$(count_grades)
   gained=$(( g1 - g0 ))
   say "cycle ${cycle} done: +${gained} grades (total ${g1})"

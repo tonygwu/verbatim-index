@@ -56,14 +56,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import grade as G  # noqa: E402
 from atomicio import write_atomic  # noqa: E402
 from pundits_speaker_spans import quote_review, sidecar_path, token_kinds  # noqa: E402
+# One prompt and one parser for the experiment and the production step, so what was
+# measured is what runs. speaker_turns pins the prompt by hash.
+from speaker_turns import (FIRST_WORDS, MARK_EVERY, PROMPT, SEARCH_AHEAD, SPEAKERS,  # noqa: E402,F401
+                           build_prompt, labels_from, marked_text, norm, parse_turns, resolve)
 
 REPO = Path(__file__).resolve().parent.parent
 #: The container of every clone and every data checkout; the P3 sandbox denies it.
 DENIED_ROOT = REPO.parent.resolve()
-MARK_EVERY = 10
-FIRST_WORDS = 5
-SEARCH_AHEAD = 40
-SPEAKERS = ("subject", "other", "unclear")
 ARMS = {
     "fable": {"kind": "claude", "model": "claude-fable-5-1", "effort": "max"},
     "opus": {"kind": "claude", "model": "claude-opus-5-5", "effort": "max"},
@@ -81,55 +81,8 @@ MAX_ATTEMPTS = 2
 TIMEOUT = 2400
 INFRA_LABELS = {G.E_AUTH, G.E_TRANSIENT}
 
-PROMPT = """You are labelling who is speaking in a transcript. It is a YouTube caption track for one recording. Captions carry no speaker labels, so you must infer from the words and context who is talking.
-
-The named subject is {name} ({role}).
-
-Recording metadata:
-- Title: {title}
-- Channel: {channel}
-- Uploaded: {upload}
-- Description: {description}
-
-Task: divide the WHOLE transcript into consecutive speaker turns, from the first word to the last. Give each turn one speaker:
-- "subject" when {name} is speaking,
-- "other" when anyone else is speaking: a host, interviewer, co-guest, audience member, announcer, narrator, or a clip being played,
-- "unclear" when you cannot tell who is speaking.
-When a turn is "other" and you can tell who it is, put their name or role in "who".
-
-The transcript below has a position marker such as ⟨120⟩ immediately before word 120, every {every} words. Words are counted from 0, and timestamp marks such as [00:01:02] count as words. Markers are not part of what was said. For each turn report:
-- "marker": the number of the nearest marker at or before the turn's first word,
-- "first_words": the turn's first {first} words exactly as they appear in the transcript, without markers,
-- "speaker": "subject", "other" or "unclear",
-- "who": optional, for "other".
-A turn lasts until the next turn starts. Start a new turn only where the speaker changes.
-
-Use only this text. Do not look anything up, and do not use any tool.
-
-Return ONLY a JSON object, with no other text: {{"turns": [{{"marker": 0, "first_words": "...", "speaker": "other", "who": "host"}}]}}
-
-TRANSCRIPT:
-{text}
-"""
-
-
 def utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def marked_text(tokens: list[str]) -> str:
-    return " ".join((f"⟨{i}⟩ " if i % MARK_EVERY == 0 else "") + t for i, t in enumerate(tokens))
-
-
-def norm(word: str) -> str:
-    return re.sub(r"[^\w']", "", word.lower())
-
-
-def build_prompt(rec: dict, person: dict, tokens: list[str]) -> str:
-    return PROMPT.format(name=person["name"], role=person.get("role") or "", every=MARK_EVERY, first=FIRST_WORDS,
-                         title=rec.get("yt_title") or rec.get("declared_title") or "",
-                         channel=rec.get("yt_channel") or "", upload=rec.get("yt_upload_date") or "",
-                         description=(rec.get("yt_description") or "")[:700], text=marked_text(tokens))
 
 
 def call_claude(prompt: str, model: str, config_dir: str, workdir: Path, raw: Path) -> tuple[str, dict]:
@@ -179,54 +132,6 @@ def call_arm(arm: str, prompt: str, workdir: Path, raw: Path, accounts: dict) ->
                               wrapper=G.sandbox_wrapper(DENIED_ROOT))
     write_atomic(raw, json.dumps({"response": text, "telemetry": tel}, ensure_ascii=False) + "\n")
     return text, tel
-
-
-def parse_turns(text: str) -> list[dict]:
-    """The turns list out of a response. A response that is not that JSON raises."""
-    s = text.strip()
-    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", s, re.S)
-    if m:
-        s = m.group(1)
-    obj = json.loads(s[s.index("{"): s.rindex("}") + 1])
-    turns = obj["turns"]
-    if not isinstance(turns, list) or not turns:
-        raise ValueError("turns is not a non-empty list")
-    for t in turns:
-        if t.get("speaker") not in SPEAKERS or not isinstance(t.get("marker"), int):
-            raise ValueError(f"malformed turn {json.dumps(t)[:200]}")
-    return turns
-
-
-def resolve(turns: list[dict], tokens: list[str]) -> tuple[list[dict], dict]:
-    """Turns as end-exclusive word ranges, and how each start was fixed."""
-    # Timestamp and turn marks are not words a speaker said, and the model is asked to
-    # quote first words without markers, so they never take part in a match.
-    normed = ["" if re.fullmatch(r"\[\d{2}:\d{2}:\d{2}\]|>{2,}", t) else norm(t) for t in tokens]
-    starts, how = [], {"by_words": 0, "start_from_marker_only": 0}
-    for t in turns:
-        m = max(0, min(t["marker"], len(tokens) - 1))
-        # Models copy a timestamp into first_words despite the instruction (seen in the
-        # pilot on all three arms), so marks are dropped from both sides of the match.
-        want = [w for w in (norm(x) for x in str(t.get("first_words") or "").split()
-                            if not re.fullmatch(r"\[\d{2}:\d{2}:\d{2}\]|>{2,}", x)) if w][:FIRST_WORDS]
-        found = None
-        if want:
-            for i in range(m, min(len(tokens), m + SEARCH_AHEAD)):
-                if not normed[i]:
-                    continue
-                got = [w for w in normed[i:i + len(want) + 3] if w][:len(want)]
-                if got == want:
-                    found = i
-                    break
-        how["by_words" if found is not None else "start_from_marker_only"] += 1
-        starts.append((found if found is not None else m, t["speaker"], t.get("who")))
-    starts.sort(key=lambda x: x[0])
-    ranges = []
-    for k, (a, spk, who) in enumerate(starts):
-        b = starts[k + 1][0] if k + 1 < len(starts) else len(tokens)
-        if b > a:
-            ranges.append({"start": a, "end": b, "speaker": spk, "who": who})
-    return ranges, how
 
 
 def run(args) -> int:
@@ -320,14 +225,6 @@ def run(args) -> int:
         tally[r["arm"]][r["outcome"]] += 1
     print(json.dumps({"attempted": len(jobs), "by_arm_outcome": tally}))
     return 0
-
-
-def labels_from(ranges: list[dict], n: int) -> list[str | None]:
-    lab = [None] * n
-    for r in ranges:
-        for i in range(r["start"], r["end"]):
-            lab[i] = r["speaker"]
-    return lab
 
 
 def failure_label(r: dict) -> str | None:

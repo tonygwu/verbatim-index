@@ -16,6 +16,7 @@
   {"glob": "transcripts_blind/**", "class": "owner"},
   {"glob": "transcripts_hs/**", "class": "owner"},
   {"glob": "grades/**", "class": "owner"},
+  {"glob": "speaker_turns/**", "class": "owner"},
   {"glob": "logs/**", "class": "owner"},
   {"glob": "sources/**", "class": "owner"},
   {"glob": "roster/**", "class": "owner"},

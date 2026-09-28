@@ -20,9 +20,10 @@ Newest first.
   corrections, at most 3 are recoverable from text: "Grock" to "Grok", "dial" to
   "dial-up", perhaps "but definitely" to "but I definitely". The other 2 restore
   words the captions DROPPED ("Wow." to "Wow. That's crazy."), which only the audio
-  holds, so no text-only model can be expected to make them. Nor is segmentation
-  itself adopted yet: it is a probe, and whether it replaces the judges' implicit
-  turn-finding is its own decision.
+  holds, so no text-only model can be expected to make them. Segmentation itself
+  was adopted on 2026-09-28 as `scripts/speaker_turns.py`, pinned to Astra, check
+  only and for new transcripts only; the correction task would extend that call,
+  and its prompt is pinned by hash, so the extension is a new measured prompt.
 
   Three constraints, whichever way it is built:
   1. Corrections are OVERLAYS keyed to the original token offsets, in the shape

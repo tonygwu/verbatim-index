@@ -1566,6 +1566,20 @@ new grades incomparable with the corpus already graded.
   `scripts/pundits_text_corrections.py --answers <answers> --page <page> --out <private-output>`
   for corrected reading text and provenance. Verify with
   `test_pundits_text_corrections.py` and `check_pundits_span_ui.py`.
+- The "who spoke" step: `scripts/speaker_turns.py`, run by `grade_loop.sh` as stage 6 for
+  leaders. Decided 2026-09-28 by the operator from the segmentation experiment above: it
+  is HARD-PINNED to Astra (`gpt-6-astra`, max effort, P3 sandbox, no fallback model), it
+  is CHECK-ONLY (no grade, score or prediction changes), and it covers only transcripts
+  whose `fetched_at_utc` is at or after `SEGMENT_SINCE_UTC`, so the existing corpus is
+  not backfilled. `segment` writes `speaker_turns/<slug>/<sid>.json` beside the corpus:
+  a second model failure is written as final, an infrastructure failure writes nothing
+  and is retried next cycle. `check` writes `logs/speaker_check.json` and prints REVIEW
+  lines for published prediction quotes, judge evidence quotes and judge shares that
+  Astra's turns contradict. The prompt is pinned by `PROMPT_TEMPLATE_SHA256`; changing
+  it means re-measuring against the operator's labels first. `speaker_turns/**` is an
+  owner path in `data-repo-templates/leaders/ownership.json`; repo-0 must add the same
+  rule to the data repository's own `ownership.json` before its first push of turns.
+  Proof: `.venv/bin/python scripts/test_speaker_turns.py`.
 - Speaker check for the leaders and predictions boards: `scripts/speaker_audit_page.py build
   --study leaders|predictions --data ../data --keys slug/sid,... --reasons FILE --out PAGE`. It
   reuses the pundits page, `pundits_verify_serve.py` and `import-quotes` unchanged, and only
