@@ -108,7 +108,15 @@ def test_daemon_guard(tmp: Path) -> None:
         root = tmp / name
         (root / "scripts").mkdir(parents=True)
         (root / "scripts" / "daemon_guard.sh").write_text(guard)
+        # The guard asks data_clone_workflow.daemon_role_error() for the role.
+        (root / "scripts" / "data_clone_workflow.py").write_text(
+            (REPO / "scripts" / "data_clone_workflow.py").read_text())
+        (root / ".venv" / "bin").mkdir(parents=True)
+        (root / ".venv" / "bin" / "python").symlink_to(sys.executable)
         (root / "data").mkdir()
+        # The daemon checkout carries verbatim.role=daemon since plan phase P4b.
+        subprocess.run(["git", "init", "-q", str(root / "data")], check=True)
+        subprocess.run(["git", "-C", str(root / "data"), "config", "verbatim.role", "daemon"], check=True)
 
     r = run_guard(tmp / "repo-0")
     check("with no marker at all it refuses", r.returncode != 0, f"rc={r.returncode}")

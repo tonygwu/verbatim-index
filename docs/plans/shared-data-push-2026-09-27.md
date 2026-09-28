@@ -238,7 +238,7 @@ required changes are folded in above (each marked "Review item N").
 | P2 contributor push | done in code: `data_sync.py push` | see git log |
 | P3 daemon mode | done in code: `data_sync.py push --daemon`, `data_sync.py pull` | see git log |
 | P4a hook, adopt-main, contributor guard | done in code | see git log |
-| P4b role=daemon required | waits for role=daemon on repo-0 `data` and repo-3 `.data-clones/pundits` (review item 2) | |
+| P4b role=daemon required | done: role=daemon set on repo-0 `data` and repo-3 `.data-clones/pundits` first (operator-approved 2026-09-27), then the code | see git log |
 | P5 predictions deploy from origin/main | done in code. The FIRST real deploy after it needs `--first-revision-deploy` once, because the live page carries no revision.json yet; every later deploy checks it | see git log |
 | P6 docs and migration | not started | |
 

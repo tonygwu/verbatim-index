@@ -29,6 +29,9 @@ spec.loader.exec_module(ws)
 
 def tree(root: Path, owner: str) -> None:
     (root / "data").mkdir(parents=True)
+    # The daemon checkout carries verbatim.role=daemon since plan phase P4b.
+    subprocess.run(["git", "init", "-q", str(root / "data")], check=True)
+    subprocess.run(["git", "-C", str(root / "data"), "config", "verbatim.role", "daemon"], check=True)
     (root / "data" / ".daemon-clone").write_text(owner + "\n")
     for shelf in ("transcripts", "transcripts_hs"):
         (root / "data" / shelf / "x").mkdir(parents=True)

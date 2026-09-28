@@ -53,6 +53,8 @@ def main():
         run('git', 'clone', '--bare', live, remote)
         git(live, 'remote', 'add', 'origin', str(remote))
         (live / '.daemon-clone').write_text('repo-0\n')
+        # The daemon checkout carries verbatim.role=daemon since plan phase P4b.
+        git(live, 'config', 'verbatim.role', 'daemon')
         (live / 'input.txt').write_text('uncommitted production edit\n')
         owned = 'predictions/_experiments/owned-run'
         (live / owned).mkdir(parents=True)

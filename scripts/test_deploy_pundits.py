@@ -55,6 +55,8 @@ def data_checkout(path: Path, origin: str, study: str | None, grade_files: int, 
         (path / ".study").write_text(study + "\n")
     (path / ".gitignore").write_text(".daemon-clone\n")
     (path / ".daemon-clone").write_text("repo-9\n")
+    # The daemon checkout carries verbatim.role=daemon since plan phase P4b.
+    git(path, "config", "verbatim.role", "daemon")
     dims = [d["key"] for d in json.loads((REPO / "profiles/pundits.json").read_text())["scoring"]["dimensions"]]
     results = {"leaders": [{"rank": 1, "slug": "p1", "name": "Pat Undit", "role": "host", "status": "scored",
                             "n_transcripts": 6, "confidence": "high",

@@ -98,6 +98,8 @@ def checkout(path: Path, origin: str, slug: str, name: str, study: str | None) -
     if study:
         (path / ".study").write_text(study + "\n")
     (path / ".daemon-clone").write_text("repo-9\n")
+    # The daemon checkout carries verbatim.role=daemon since plan phase P4b.
+    git(path, "config", "verbatim.role", "daemon")
     write_json(path / "roster/final.json",
                {"roster": [{"slug": slug, "name": name, "company": "Acme Show", "role": "host", "sector": "s"}]})
     rec = {"leader_slug": slug, "source_id": "a", "text": "we talked about many things today " * 40,
@@ -121,9 +123,13 @@ def public_clone(parent: Path, links: dict[str, Path], name: str = "repo-9") -> 
     (pub / "scripts").mkdir(parents=True)
     git(pub, "init", "-q", "-b", "main")
     shutil.copytree(REPO / "profiles", pub / "profiles") if (REPO / "profiles").is_dir() else None
-    for name in ("daemon_guard.sh", "study_env.sh", "run_marker.sh"):
+    # data_clone_workflow.py because daemon_guard.sh asks its daemon_role_error()
+    # for the role (plan phase P4b), and it resolves the study through profiles/.
+    for name in ("daemon_guard.sh", "study_env.sh", "run_marker.sh", "data_clone_workflow.py", "study_profile.py"):
         if (REPO / "scripts" / name).exists():
             shutil.copy2(REPO / "scripts" / name, pub / "scripts" / name)
+    (pub / ".venv" / "bin").mkdir(parents=True)
+    (pub / ".venv" / "bin" / "python").symlink_to(sys.executable)
     for link, target in links.items():
         (pub / link).symlink_to(target, target_is_directory=True)
     return pub

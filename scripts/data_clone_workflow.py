@@ -55,6 +55,19 @@ def production_path(repo: Path, study: str = 'leaders') -> Path:
     return (repo.parent / 'data').resolve()
 
 
+def daemon_role_error(data: Path) -> str | None:
+    """THE predicate for production work, used by every production guard and by
+    daemon_guard.sh through the CLI. It asks for the daemon role explicitly,
+    rather than for "not an experiment", so a checkout with no role, or a
+    contributor's, can never run a loop, a withdrawal or an owner-mode publish.
+    Plan: docs/plans/shared-data-push-2026-09-27.md, phase P4b."""
+    who = role(data)
+    if who != 'daemon':
+        return (f'{data} has verbatim.role {who or "unset"}; production jobs need verbatim.role=daemon '
+                f'(the daemon clone sets it once: git -C <its data> config verbatim.role daemon)')
+    return None
+
+
 def owner_error(repo: Path, study: str = 'leaders') -> str | None:
     import study_profile as SP
     try:
@@ -62,8 +75,9 @@ def owner_error(repo: Path, study: str = 'leaders') -> str | None:
         SP.check_path(data, study)
     except RuntimeError as exc:
         return str(exc)
-    if role(data) == 'experiment':
-        return 'experiment data cannot run production jobs, even with a copied .daemon-clone marker'
+    why = daemon_role_error(data)
+    if why:
+        return why
     marker = data / '.daemon-clone'
     if not marker.is_file():
         return f'{marker} is missing; it must name the production owner'
@@ -80,8 +94,11 @@ def publication_source(repo: Path, source: Path | None, revision: str | None,
         raise RuntimeError('explicit --production-data and --data-revision are required')
     source = source.resolve()
     live = production_path(repo, study)
-    if source != live or role(source) == 'experiment':
+    if source != live:
         raise RuntimeError(f'production source must be {live}; got {source}')
+    why = daemon_role_error(source)
+    if why:
+        raise RuntimeError(f'production source {why}')
     SP.check_path(source, study)
     marker = source / '.daemon-clone'
     if not marker.is_file() or not marker.read_text().strip():
@@ -306,8 +323,9 @@ def setup(repo: Path, source: Path, revision: str, branch: str,
     if not branch.startswith('codex/'):
         raise RuntimeError('use an owned codex/ branch, never private main')
     git(repo, 'check-ref-format', '--branch', branch)
-    if role(source) == 'experiment':
-        raise RuntimeError('source must be the live production checkout, not an experiment')
+    why = daemon_role_error(source)
+    if why:
+        raise RuntimeError(f'source must be the live production checkout: {why}')
     marker = source / '.daemon-clone'
     if not marker.is_file() or not marker.read_text().strip():
         raise RuntimeError('source has no production owner marker')
@@ -685,6 +703,8 @@ def main() -> int:
     u.add_argument('--production-data', type=Path, required=True)
     u.add_argument('--data-revision', required=True)
     u.add_argument('--public-revision', required=True)
+    dr = sub.add_parser('daemon-role', help='exit 1, naming why, unless this checkout has role daemon')
+    dr.add_argument('--data', type=Path, required=True)
     lv = sub.add_parser('live-revision')
     lv.add_argument('--production-data', type=Path, required=True)
     lv.add_argument('--data-revision', required=True)
@@ -697,6 +717,10 @@ def main() -> int:
             print(new_run(REPO, args.name, args.extractor, args.verifier, args.astra_model))
         elif args.command == 'consumers':
             print(json.dumps(active_consumers(REPO), indent=2))
+        elif args.command == 'daemon-role':
+            why = daemon_role_error(args.data)
+            if why:
+                raise RuntimeError(why)
         elif args.command == 'origin-unmoved':
             origin_unmoved(REPO, args.production_data.resolve(), args.data_revision, args.public_revision)
         elif args.command == 'live-revision':

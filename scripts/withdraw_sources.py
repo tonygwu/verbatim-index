@@ -51,13 +51,14 @@ def study_data(root: Path, study: str) -> Path:
 
 def require_daemon_clone(root: Path, study: str = "leaders") -> str | None:
     """None if this clone owns the study's data, else the reason it does not."""
-    from data_clone_workflow import role
+    from data_clone_workflow import daemon_role_error
     try:
         data = study_data(root, study)
     except RuntimeError as exc:
         return str(exc)
-    if role(data.resolve()) == "experiment":
-        return "experiment data cannot perform production withdrawals"
+    why = daemon_role_error(data.resolve())
+    if why:
+        return why
     marker = data / ".daemon-clone"
     if not marker.exists():
         return f"{marker} is missing; it must name the clone that owns data/"

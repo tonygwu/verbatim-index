@@ -33,8 +33,12 @@ require_daemon_clone() {
       return 1
     fi
   fi
-  if [ "$(git -C "$data" config --local --get verbatim.role 2>/dev/null || true)" = "experiment" ]; then
-    echo "REFUSING TO START: experiment data cannot run production jobs." >&2
+  # The one predicate every production guard uses (review item 2 of
+  # docs/plans/shared-data-push-2026-09-27.md): an explicit role=daemon, never
+  # merely "not an experiment".
+  local why
+  if ! why="$("${PY:-.venv/bin/python}" scripts/data_clone_workflow.py daemon-role --data "$data" 2>&1)"; then
+    echo "REFUSING TO START: ${why#REFUSING: }" >&2
     return 1
   fi
   here="$(basename "$(pwd -P)")"
