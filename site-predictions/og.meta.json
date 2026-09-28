@@ -1,8 +1,8 @@
 {
  "site": "predictions",
  "counts": {
-  "predictions": 862,
-  "transcripts_scanned": 925,
+  "predictions": 976,
+  "transcripts_scanned": 1029,
   "pct_dated": 96
  },
  "drawn_by": "scripts/build_og_card.py",
