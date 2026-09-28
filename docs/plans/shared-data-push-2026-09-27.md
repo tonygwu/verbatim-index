@@ -233,7 +233,7 @@ required changes are folded in above (each marked "Review item N").
 
 | Phase | State | Commit |
 |---|---|---|
-| P0 deterministic derived files | landed in code, data side pending | see git log |
+| P0 deterministic derived files | done: code 020cd25, data a5525e31 (index, scoring.json, scores regenerated from repo-0 on 2026-09-27; content byte-equal apart from bookkeeping keys, score line unchanged; predictions site deployed) | see git log |
 | P1-P6 | not started | |
 
 ### What P0 changes for the next predictions deploy
