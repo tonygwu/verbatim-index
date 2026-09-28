@@ -70,11 +70,16 @@ ARMS = {
     "astra": {"kind": "astra", "model": "gpt-6-astra", "effort": "max"},
     "gemini": {"kind": "gemini", "model": G.GEMINI_MODEL, "effort": "high (in the model name)"},
 }
-# Written down before the run, per arm: one retry after an infrastructure failure.
+# Written down before the run, per arm: one retry after any failure. A call that
+# fails both attempts is the MODEL's failure and counts as wrong for every word and
+# quote the person labelled in that recording (operator's rule, 2026-09-28), unless
+# its last error is infrastructure (INFRA_LABELS), which says nothing about the model
+# and removes that recording from every arm instead.
 # Gemini's own harness also retries transients inside the call; its attempt count
 # is recorded in telemetry, and that asymmetry is reported as a named confound.
 MAX_ATTEMPTS = 2
 TIMEOUT = 2400
+INFRA_LABELS = {G.E_AUTH, G.E_TRANSIENT}
 
 PROMPT = """You are labelling who is speaking in a transcript. It is a YouTube caption track for one recording. Captions carry no speaker labels, so you must infer from the words and context who is talking.
 
@@ -281,7 +286,7 @@ def run(args) -> int:
                 rec["response_head"] = text[:500]
             break
         else:
-            rec["outcome"] = "excluded_infra"
+            rec["outcome"] = "failed"
         with lock:
             results.append(rec)
             print(f"{utc()} {tag}: {rec['outcome']} after {rec['attempts']} attempt(s)"
@@ -307,6 +312,15 @@ def labels_from(ranges: list[dict], n: int) -> list[str | None]:
     return lab
 
 
+def failure_label(r: dict) -> str | None:
+    """None for a parsed run; otherwise the taxonomy label of what finally failed."""
+    if r["outcome"] == "parsed":
+        return None
+    if r["outcome"] == "unparseable":
+        return "unparseable"
+    return r["errors"][-1]["error"].split(":", 1)[0] if r.get("errors") else r["outcome"]
+
+
 def score(args) -> int:
     run_dir, page = Path(args.run), Path(args.page)
     results = json.loads((run_dir / "results.json").read_text())
@@ -317,11 +331,14 @@ def score(args) -> int:
     report = {"answers_sha256": hashlib.sha256(Path(args.answers).read_bytes()).hexdigest(), "scored_at_utc": utc(),
               "arms": {}, "per_run": [], "not_scored": []}
     keys = sorted({r["key"] for r in results} & set(answers.get("spans", {})))
-    # Symmetric: a recording is scored only if EVERY arm has every repeat parsed for it.
+    # A recording is scored only when every arm has every repeat in. A model failure
+    # counts against that arm alone; an infrastructure failure removes the recording
+    # from EVERY arm, so no arm is scored on words another arm never had the chance at.
     arms = sorted({r["arm"] for r in results})
     for key in keys:
         runs = [r for r in results if r["key"] == key]
-        bad = [f"{r['arm']} r{r['repeat']}: {r['outcome']}" for r in runs if r["outcome"] != "parsed"]
+        bad = [f"{r['arm']} r{r['repeat']}: infrastructure ({failure_label(r)})" for r in runs
+               if failure_label(r) in INFRA_LABELS]
         # A run still in progress, or never started, is missing, not absent from the design.
         have = {(r["arm"], r["repeat"]) for r in runs}
         bad += [f"{a} r{i}: not yet run" for a in manifest["arms"] for i in range(manifest["repeats"])
@@ -334,7 +351,8 @@ def score(args) -> int:
         human_ann = answers["spans"][key]
         human = labels_from(human_ann["ranges"], len(toks))
         for r in runs:
-            ranges, how = resolve(r["turns"], toks)
+            failed = failure_label(r)
+            ranges, how = resolve(r["turns"], toks) if failed is None else ([], None)
             model = labels_from(ranges, len(toks))
             cmp_ = [(human[i], model[i]) for i in range(len(toks))
                     if kinds[i] == "speech" and human[i] in ("subject", "other")]
@@ -349,7 +367,7 @@ def score(args) -> int:
                       for s in ("subject", "other") for n_s in [sum(1 for h, _ in cmp_ if h == s)]}
             all_subject = round(sum(1 for h, _ in cmp_ if h == "subject") / len(cmp_), 4) if cmp_ else None
             speech = [i for i in range(len(toks)) if kinds[i] == "speech"]
-            share = sum(1 for i in speech if model[i] == "subject") / len(speech)
+            share = None if failed else sum(1 for i in speech if model[i] == "subject") / len(speech)
             ann = {"key": key, "text_sha256": side["text_sha256"], "token_count": side["token_count"],
                    "checked_by": "model", "ranges": [{"start": x["start"], "end": x["end"], "speaker": x["speaker"],
                                                       "origin": "human"} for x in ranges]}
@@ -358,11 +376,13 @@ def score(args) -> int:
                 h = (answers["attribution"].get(q["qid"]) or {}).get("answer")
                 if not h:
                     continue
-                qres.append({"qid": q["qid"], "human": h, "model": quote_review(q, side, ann)["answer"]})
+                qres.append({"qid": q["qid"], "human": h,
+                             "model": "failed" if failed else quote_review(q, side, ann)["answer"]})
             row = {"arm": r["arm"], "key": key, "repeat": r["repeat"], "words_compared": len(cmp_),
                    "word_accuracy": round(correct / len(cmp_), 4) if cmp_ else None, "recall": recall,
                    "baseline_all_subject": all_subject, "confusion": conf,
-                   "turns": len(r["turns"]), "starts": how, "model_subject_share_pct": round(100 * share, 1),
+                   "failed": failed, "turns": len(r.get("turns") or []), "starts": how,
+                   "model_subject_share_pct": None if share is None else round(100 * share, 1),
                    "quotes": qres, "quotes_agree": sum(1 for q in qres if q["human"] == q["model"]),
                    "served_model": (r.get("telemetry") or {}).get("served_model"),
                    "web_search_queries": (r.get("telemetry") or {}).get("web_search_queries")}
@@ -373,18 +393,25 @@ def score(args) -> int:
         ok = sum(round(x["word_accuracy"] * x["words_compared"]) for x in rows if x["word_accuracy"] is not None)
         per = {sp: [sum(v for k, v in x["confusion"].items() if k.startswith(sp + "->")) for x in rows] for sp in ("subject", "other")}
         hit = {sp: [x["confusion"].get(f"{sp}->{sp}", 0) for x in rows] for sp in ("subject", "other")}
+        done = [x for x in rows if not x["failed"]]
+        n_done = sum(x["words_compared"] for x in done)
+        ok_done = sum(round(x["word_accuracy"] * x["words_compared"]) for x in done if x["word_accuracy"] is not None)
         report["arms"][arm] = {"runs_scored": len(rows), "words_compared": n,
+                               # Headline: a failed run scores 0 on every word it was asked about.
                                "word_accuracy": round(ok / n, 4) if n else None,
+                               "word_accuracy_completed_runs": round(ok_done / n_done, 4) if n_done else None,
+                               "failed_runs": [f"{x['key']} r{x['repeat']}: {x['failed']}" for x in rows if x["failed"]],
                                "subject_recall": round(sum(hit["subject"]) / sum(per["subject"]), 4) if sum(per["subject"]) else None,
                                "other_recall": round(sum(hit["other"]) / sum(per["other"]), 4) if sum(per["other"]) else None,
                                "baseline_all_subject": round(sum(per["subject"]) / n, 4) if n else None,
                                "quotes_agree": f"{sum(x['quotes_agree'] for x in rows)}/{sum(len(x['quotes']) for x in rows)}",
-                               "excluded": [f"{r['key']} r{r['repeat']}: {r['outcome']}" for r in results
-                                            if r["arm"] == arm and r["outcome"] != "parsed"]}
+                               "excluded_infra": [f"{r['key']} r{r['repeat']}: {failure_label(r)}" for r in results
+                                                  if r["arm"] == arm and failure_label(r) in INFRA_LABELS]}
     write_atomic(Path(args.report or run_dir / "score.json"), json.dumps(report, indent=1, ensure_ascii=False) + "\n")
     print(json.dumps(report["arms"], indent=1))
     for x in report["per_run"]:
-        print(f"{x['arm']:7} {x['key'][:40]:40} r{x['repeat']} acc={x['word_accuracy']} n={x['words_compared']} "
+        print(f"{x['arm']:7} {x['key'][:40]:40} r{x['repeat']} {'FAILED ' + x['failed'] + ' ' if x['failed'] else ''}"
+              f"acc={x['word_accuracy']} n={x['words_compared']} "
               f"quotes {x['quotes_agree']}/{len(x['quotes'])} share={x['model_subject_share_pct']} "
               f"turns={x['turns']} starts={x['starts']} {x['confusion']}")
     if report["not_scored"]:

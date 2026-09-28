@@ -6,7 +6,8 @@ is fixed by its first words rather than its marker, that a start the words canno
 fix is counted rather than hidden, that a malformed response is refused, that the
 score compares only words the person labelled as subject or other, that quote
 answers come from the same `quote_review` the page uses, and that a recording is
-dropped from EVERY arm when any arm failed on it.
+counted against that arm alone when the model failed, and dropped from EVERY arm
+only when the infrastructure failed.
 """
 from __future__ import annotations
 
@@ -108,12 +109,26 @@ def main() -> int:
               and rep["arms"]["a2"]["other_recall"] == 1.0 and rep["arms"]["a2"]["subject_recall"] == 0.5)
         check("a late boundary costs exactly the words it misplaced, and the quote becomes 'both'",
               rows["a2"]["confusion"].get("subject->other") == 5 and rows["a2"]["quotes"][0]["model"] == "both")
-        results[1]["outcome"] = "excluded_infra"
+        # Operator's rule, 2026-09-28: a model that fails both attempts is dinged, and
+        # only an infrastructure failure removes the recording, from every arm.
+        results[1] = {"arm": "a2", "key": key, "repeat": 0, "outcome": "failed",
+                      "errors": [{"attempt": 1, "error": "empty_response: x"}, {"attempt": 2, "error": "empty_response: y"}]}
         (run / "results.json").write_text(json.dumps(results))
         P.score(SimpleNamespace(run=str(run), answers=str(td / "answers.json"), page=str(page), report=None))
         rep = json.loads((run / "score.json").read_text())
-        check("a recording one arm failed on is scored for NO arm, and the exclusion is reported",
-              rep["per_run"] == [] and rep["not_scored"] and rep["arms"]["a2"]["excluded"])
+        rows = {r["arm"]: r for r in rep["per_run"]}
+        check("a model failure scores 0 on every labelled word and disagrees on every quote, for that arm only",
+              rows["a2"]["word_accuracy"] == 0.0 and rows["a2"]["words_compared"] == 15
+              and rows["a2"]["quotes"][0]["model"] == "failed" and rows["a1"]["word_accuracy"] == 1.0)
+        check("the failure is named, and completed-runs accuracy is reported beside the headline",
+              rep["arms"]["a2"]["failed_runs"] == ["p/a r0: empty_response"]
+              and rep["arms"]["a2"]["word_accuracy_completed_runs"] is None and not rep["not_scored"])
+        results[1]["errors"][-1]["error"] = "auth_or_quota: weekly limit"
+        (run / "results.json").write_text(json.dumps(results))
+        P.score(SimpleNamespace(run=str(run), answers=str(td / "answers.json"), page=str(page), report=None))
+        rep = json.loads((run / "score.json").read_text())
+        check("an infrastructure failure removes the recording from EVERY arm, and says so",
+              rep["per_run"] == [] and rep["arms"]["a2"]["excluded_infra"] == ["p/a r0: auth_or_quota"])
         (run / "results.json").write_text(json.dumps(results[:1]))
         P.score(SimpleNamespace(run=str(run), answers=str(td / "answers.json"), page=str(page), report=None))
         rep = json.loads((run / "score.json").read_text())
