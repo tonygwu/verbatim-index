@@ -3,6 +3,49 @@
 Work deliberately deferred, with the reason and the condition that brings it back.
 Newest first.
 
+## Speaker segmentation and caption text
+
+- **Let the speaker-segmentation call also correct obvious caption errors.**
+  Filed 2026-09-28 at the operator's request. `scripts/speaker_segment_probe.py`
+  asks a model to split a whole transcript into speaker turns, and the first
+  speaker-check session (`predictions/_experiments/speaker-audit-20260927/` on
+  repo-3's private data branch) scores it against the operator's word ranges.
+  While labelling, the operator also used the page's "Correct text" and saved 5
+  corrections. The idea is to have the SAME call that finds the turns also return
+  caption corrections, rather than a second pass over the raw YouTube text: one
+  read of the recording serves both, and knowing who is speaking helps with the
+  commonest fixable error, a misheard name ("Grock" for "Grok").
+
+  Why it waits. There is too little ground truth to score it. Of the 5
+  corrections, at most 3 are recoverable from text: "Grock" to "Grok", "dial" to
+  "dial-up", perhaps "but definitely" to "but I definitely". The other 2 restore
+  words the captions DROPPED ("Wow." to "Wow. That's crazy."), which only the audio
+  holds, so no text-only model can be expected to make them. Nor is segmentation
+  itself adopted yet: it is a probe, and whether it replaces the judges' implicit
+  turn-finding is its own decision.
+
+  Three constraints, whichever way it is built:
+  1. Corrections are OVERLAYS keyed to the original token offsets, in the shape
+     `pundits_text_corrections.py` already stores (`start`, `end`, `original`,
+     `replacement`). The original text stays the source of truth. The operator's
+     word ranges, the judges' evidence quotes and every published prediction's
+     `quote_char_start` point into it, and an in-place rewrite would break all
+     three.
+  2. Measure that the second job does not degrade the first. The 2026-09-28
+     segmentation-only runs are the baseline: same recordings, same scorer, turns
+     with and without the correction task.
+  3. Score corrections both ways: how many of the operator's text-recoverable
+     corrections a model finds, and how many of its own edits are wrong. The second
+     needs negatives, so it needs the convention below.
+
+  The condition that brings it back: at least 50 operator corrections across at
+  least 10 recordings, made under the convention that every caption error noticed
+  in a reviewed passage is corrected, so that a reviewed word left alone counts as
+  correct. Both numbers are a judgement, not a measurement: enough corrections that
+  one model finding 3 more than another is not noise, spread over enough
+  recordings that one speaker's accent or one caption track does not dominate.
+  Count them with `pundits_text_corrections.py` over the answers files.
+
 ## Board membership (P1, P2 and most of P3 shipped 2026-09-18)
 
 Reviewed 2026-09-17 against `docs/plans/board-membership-2026-09-16.md`, at
