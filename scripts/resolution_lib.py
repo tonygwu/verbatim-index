@@ -421,6 +421,10 @@ def resolution_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, h
         "leader_slug": rec["leader_slug"],
         "transcript_id": rec["transcript_id"],
         "stage": "resolve",
+        # The date this was resolved against. A statement-date override makes a
+        # sidecar built under the old date stale, and the scorer drops it by this.
+        "statement_date": (rec.get("source") or {}).get("statement_date"),
+        "statement_date_basis": (rec.get("source") or {}).get("statement_date_basis"),
         # A missing deadline SAYS so. The repair stage runs over records the funnel
         # could not date, and a placeholder date there would be read as a real one.
         "deadline": deadline.isoformat() if deadline else "(no closing date this pipeline could read)",
@@ -447,6 +451,9 @@ def prior_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, harnes
         "leader_slug": rec["leader_slug"],
         "transcript_id": rec["transcript_id"],
         "stage": "prior",
+        # The date this was priced at; see resolution_record.
+        "statement_date": (rec.get("source") or {}).get("statement_date"),
+        "statement_date_basis": (rec.get("source") or {}).get("statement_date_basis"),
         # A missing deadline SAYS so. The repair stage runs over records the funnel
         # could not date, and a placeholder date there would be read as a real one.
         "deadline": deadline.isoformat() if deadline else "(no closing date this pipeline could read)",

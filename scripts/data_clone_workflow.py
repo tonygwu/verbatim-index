@@ -507,7 +507,9 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # config written before it behaves, so an old config keeps its exact output.
 # `restatements` names a restatement manifest (predictions/restatements.json in
 # production), relative to the data root like every other path here.
-OPTIONAL_CONFIG_KEYS = ("restatements",)
+# `date_overrides` names the statement-date override file
+# (predictions_lib.DATE_OVERRIDES_FILE in production), relative to the data root.
+OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides")
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
 
 
@@ -573,6 +575,8 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
                          f"and optionally {list(OPTIONAL_CONFIG_KEYS)}")
     if "restatements" in cfg and not (isinstance(cfg["restatements"], str) and cfg["restatements"]):
         raise SystemExit(f"{path}: restatements must be a path relative to the data root")
+    if "date_overrides" in cfg and not (isinstance(cfg["date_overrides"], str) and cfg["date_overrides"]):
+        raise SystemExit(f"{path}: date_overrides must be a path relative to the data root")
     if not isinstance(cfg["trend"], bool) or not isinstance(cfg["min_lead_days"], int) \
             or not cfg["predictions"] or not cfg["runs"]:
         raise SystemExit(f"{path}: trend must be a boolean, min_lead_days an integer, and predictions "
@@ -598,6 +602,8 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
     if "restatements" in settings:
         # Only when a manifest is named, so a config without one hashes exactly as before.
         h.update(f"restatements {hashlib.sha256((root / settings['restatements']).read_bytes()).hexdigest()}\n".encode())
+    if "date_overrides" in settings:
+        h.update(f"date_overrides {hashlib.sha256((root / settings['date_overrides']).read_bytes()).hexdigest()}\n".encode())
     for run in settings["runs"]:
         for sub in SIDECAR_DIRS:
             for f in sorted((root / run / sub).glob("*/*.json")):

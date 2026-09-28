@@ -219,12 +219,16 @@ def paths_for(out: Path, slug: str, sid: str) -> tuple[Path, Path]:
     return out / slug / f"{sid}.jsonl", out / slug / f"{sid}.meta.json"
 
 
-def read_transcript(rec_path: Path, tid: str) -> dict:
+def read_transcript(rec_path: Path, tid: str, date_overrides: dict | None = None) -> dict:
     """Load the transcript, or fail with a label that names what is missing.
 
     repo-0 retires recordings while a pass runs, so a file listed at launch can
     be gone by the time a worker reaches it. That is a withdrawn transcript, not
     a model or CLI failure, and the taxonomy must say so.
+
+    A sourced statement-date override is applied HERE, the one place both stages
+    read a transcript, so the prompt header, the input hash and every record agree
+    on the date. See `predictions_lib.apply_statement_date_override`.
     """
     try:
         rec = json.loads(rec_path.read_text())
@@ -233,7 +237,7 @@ def read_transcript(rec_path: Path, tid: str) -> dict:
     if (rec["leader_slug"], rec["source_id"]) != tuple(tid.split("/", 1)):
         raise RuntimeError(f"{L.E_TRANSCRIPT_MISSING}: {rec_path} holds "
                            f"{rec['leader_slug']}/{rec['source_id']}, not {tid}")
-    return rec
+    return L.apply_statement_date_override(rec, date_overrides)
 
 
 def read_meta(meta_path: Path) -> dict:
@@ -361,7 +365,7 @@ def extract_one(job: dict) -> dict:
     cached = meta["extract"].get("status") == "ok" and not args.force
     if cached and meta["extract"].get("contract_id") != job["contract"]["contract_id"]:
         return cache_failure(base, f"{tid}: extraction contract changed")
-    rec = read_transcript(rec_path, tid)
+    rec = read_transcript(rec_path, tid, job.get("date_overrides"))
 
     workdir = job["workroot"] / f"{slug}-{sid}__extract__{job['run_id']}"
     prompt = L.build_extraction_prompt(rec, job["roster"].get(slug), job["spec"], job["schema_text"])
@@ -473,7 +477,7 @@ def verify_one(job: dict) -> dict:
     base = {"id": tid, "stage": "verify", "run": job["run_id"]}
     if meta["extract"].get("status") != "ok":
         return {**base, "status": "skipped", "reason": f"extract status {meta['extract'].get('status')}"}
-    rec = read_transcript(rec_path, tid)
+    rec = read_transcript(rec_path, tid, job.get("date_overrides"))
     records = L.parse_lines(jsonl_path.read_text(), str(jsonl_path))
     source_inputs = {"transcript": rec, "roster_entry": job["roster"].get(slug)}
     expected_extract = job["release"]["contracts"]["extract"]
@@ -640,7 +644,24 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--gemini-model", default=GEMINI_MODEL)
     ap.add_argument("--skill-dir", default=str(L.SKILL))
+    ap.add_argument("--date-overrides", default=None,
+                    help=f"reviewed statement-date override file; default <data>/{L.DATE_OVERRIDES_FILE} when it exists")
     return ap
+
+
+def resolve_date_overrides(arg: str | None, extra_roots: list[Path]) -> tuple[Path | None, dict]:
+    """(path, overrides). An explicit file must exist; the production default is used when present.
+
+    Every entry is checked against the transcripts before any call, so an unknown
+    transcript, a malformed date or a date after the upload stops the run here.
+    """
+    path = Path(arg) if arg else L.data_root() / L.DATE_OVERRIDES_FILE
+    if not path.exists():
+        if arg:
+            raise SystemExit(f"--date-overrides {arg} does not exist")
+        return None, {}
+    roots = [L.data_root() / d for d in L.TRANSCRIPT_DIRS] + list(extra_roots)
+    return path, L.load_statement_date_overrides(path, roots)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -677,6 +698,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit_per_leader is not None:
         paths = apply_per_leader_limit(paths, args.limit_per_leader, lambda p: p.parent.name)
 
+    ov_path, date_overrides = resolve_date_overrides(args.date_overrides, [Path(args.transcripts)])
+    in_run = sorted({L.transcript_id_from_path(p) for p in paths} & set(date_overrides))
+    ov_record = None if ov_path is None else {
+        "file": str(ov_path), "sha256": L.date_overrides_digest(ov_path), "entries": sorted(date_overrides),
+        "applied_in_this_run": in_run, "not_in_this_run": sorted(set(date_overrides) - set(in_run))}
+    log(f"date overrides: {ov_path or 'none'}" + ("" if ov_record is None else
+        f" ({len(date_overrides)} entries; applied in this run {in_run}; "
+        f"not in this run {len(ov_record['not_in_this_run'])})"))
+
     run_id = f"{L.utc_now().replace(':', '').replace('-', '')}-{args.stage}-{secrets.token_hex(4)}"
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "predict-work"
     contracts = {"extract": L.extraction_contract(skill), "verify": L.verification_contract(skill)}
@@ -699,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs = [{"args": args, "path": str(p), "out": out, "roster": roster, "exclusions": exclusions,
                  "router": router, "run_id": run_id, "workroot": workroot, "contract": contracts[stage],
                  "release": release, "code_revision": code_revision, "input_data_revision": input_data_revision,
+                 "date_overrides": date_overrides,
                  "extraction_spec": specs["extract"],
                  "extraction_schema_text": json.dumps(schemas["extract"], indent=1),
                  "spec": specs[stage], "schema": schemas[stage],
@@ -725,6 +756,7 @@ def main(argv: list[str] | None = None) -> int:
                     "policy_release": release, "code_revision": code_revision, "input_data_revision": input_data_revision,
                     "extraction_contract": contracts["extract"], "verification_contract": contracts["verify"],
                     "transcripts": len(paths), "summaries": summaries, "results": results,
+                    "date_overrides": ov_record,
                     "router_accounts": [a[0] for a in router.accounts] if router else None,
                     "finished_at_utc": L.utc_now()}
         L.write_prediction_file(out / "_runs" / f"{run_id}.json", json.dumps(manifest, indent=1, sort_keys=True, ensure_ascii=False))

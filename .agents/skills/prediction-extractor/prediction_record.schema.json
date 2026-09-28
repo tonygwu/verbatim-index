@@ -32,7 +32,21 @@
         "venue": {"type": ["string", "null"]},
         "kind": {"type": ["string", "null"]},
         "statement_date": {"type": ["string", "null"], "description": "YYYY-MM-DD, or null when the record carries no date."},
-        "statement_date_basis": {"enum": ["youtube_upload_date", "stated_in_page", "publication_date", "unknown"], "description": "How the statement date is known. youtube_upload_date is an UPPER bound on the recording date. stated_in_page and publication_date belong to a source that is not a YouTube recording, such as an earnings-call transcript, a shareholder letter or written testimony: the first is a date the page states about itself, the second is the date it was published. Neither is an upper bound in the YouTube sense, so a horizon computed from them is tighter. unknown is a source that admits no date at all, and such a record carries no horizon. declared_year is never used: it is a hardcoded constant in the corpus."},
+        "statement_date_basis": {"enum": ["youtube_upload_date", "stated_in_page", "publication_date", "sourced_override", "unknown"], "description": "How the statement date is known. sourced_override is a date of speech taken from the reviewed override file (predictions_lib.DATE_OVERRIDES_FILE), with its evidence in statement_date_override; it replaces an upload date that post-dates the recording. youtube_upload_date is an UPPER bound on the recording date. stated_in_page and publication_date belong to a source that is not a YouTube recording, such as an earnings-call transcript, a shareholder letter or written testimony: the first is a date the page states about itself, the second is the date it was published. Neither is an upper bound in the YouTube sense, so a horizon computed from them is tighter. unknown is a source that admits no date at all, and such a record carries no horizon. declared_year is never used: it is a hardcoded constant in the corpus."},
+        "statement_date_override": {
+          "type": "object", "additionalProperties": false,
+          "required": ["basis", "source_url", "verbatim_evidence", "confirmed_by", "confirmed_at_utc", "replaced_date", "replaced_basis"],
+          "description": "Present exactly when statement_date_basis is sourced_override: why the date is what it is, who confirmed it, and the transcript's own date it replaced.",
+          "properties": {
+            "basis": {"type": "string", "minLength": 1},
+            "source_url": {"type": "string", "minLength": 1},
+            "verbatim_evidence": {"type": "string", "minLength": 1},
+            "confirmed_by": {"type": "string", "minLength": 1},
+            "confirmed_at_utc": {"type": "string", "minLength": 1},
+            "replaced_date": {"type": ["string", "null"]},
+            "replaced_basis": {"enum": ["youtube_upload_date", "publication_date", "unknown"]}
+          }
+        },
         "quote": {"type": "string", "minLength": 1, "description": "The span as the model wrote it."},
         "quote_original": {"type": "string", "minLength": 1, "description": "text[quote_char_start:quote_char_end] from the original transcript. May contain a [hh:mm:ss] mark."},
         "quote_char_start": {"type": "integer", "minimum": 0},

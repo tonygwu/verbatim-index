@@ -65,7 +65,9 @@ check("no duplicate entries", len(enum), len(set(enum)))
 # The schema must not be LOOSER than the code either. A basis the schema allows
 # but derive_statement_date rejects would pass validation and then raise at read
 # time, which is worse than failing at the gate.
-allowed_by_code = set(L.DECLARED_DATE_BASES) | {"youtube_upload_date", "unknown"}
+# `sourced_override` is produced by derive_statement_date from the reviewed
+# override file (test_statement_date_override.py), never declared by a transcript.
+allowed_by_code = set(L.DECLARED_DATE_BASES) | {"youtube_upload_date", "unknown", L.OVERRIDE_DATE_BASIS}
 extra = sorted(b for b in enum if b not in allowed_by_code)
 check("schema admits nothing the code refuses", extra, [])
 

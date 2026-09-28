@@ -60,7 +60,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import phase2_resolvability as P2  # noqa: E402
 import prediction_score as PS  # noqa: E402
 import resolution_lib as R  # noqa: E402
-from resolve_predictions import select  # noqa: E402
+import predictions_lib as L  # noqa: E402
+from resolve_predictions import date_overrides_for, select  # noqa: E402
 from data_clone_workflow import (  # noqa: E402
     load_scoring_config as load_config, scoring_rel as rel, score_inputs_sha256, scores_staleness,
 )
@@ -254,6 +255,29 @@ def _reading(gap: float, n: int) -> str:
             f"assessor as well as the speakers, and the overall mean is NOT a neutral zero")
 
 
+def drop_stale_sidecars(sidecars: dict[str, dict], date_overrides: dict, superseded_ids: set, live_ids: set,
+                        run: str, stage: str, dropped: list) -> dict[str, dict]:
+    """Sidecars built under a date an override replaced, removed and named.
+
+    A resolution or prior of an overridden transcript counts only if it records
+    the override's date, which only a run over the re-extracted record does. One
+    written before the override priced a claim dated by the upload, so it is
+    stale, and it must not collide with, or stand in for, the fresh one. A
+    sidecar of a superseded prediction that no live record replaced goes too.
+    """
+    out = {}
+    for pid, obj in sidecars.items():
+        ov = date_overrides.get(obj.get("transcript_id"))
+        orphan = pid in superseded_ids and pid not in live_ids
+        if orphan or (ov is not None and obj.get("statement_date") != ov["statement_date"]):
+            dropped.append({"prediction_id": pid, "stage": stage, "run": run,
+                            "transcript_id": obj.get("transcript_id"),
+                            "sidecar_statement_date": obj.get("statement_date")})
+            continue
+        out[pid] = obj
+    return out
+
+
 def load_across(runs: list[Path], loader, drop: "set[tuple[Path, str]] | None" = None,
                 dropped: "dict | None" = None) -> dict[str, dict]:
     """One loader applied to every run, merged by prediction_id.
@@ -444,10 +468,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--restatements", type=Path, default=None,
                     help="a restatement manifest; each cluster scores once, as its specific_member")
+    ap.add_argument("--date-overrides", type=Path, default=None,
+                    help=f"reviewed statement-date override file; default <data>/{L.DATE_OVERRIDES_FILE} when it exists")
     args = ap.parse_args(argv)
     flags = {"--run": args.run, "--predictions": args.predictions, "--index": args.index, "--as-of": args.as_of,
              "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out,
-             "--restatements": args.restatements}
+             "--restatements": args.restatements, "--date-overrides": args.date_overrides}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -459,6 +485,14 @@ def main(argv: list[str] | None = None) -> int:
         args.as_of, args.min_lead_days, args.trend = cfg["as_of"], cfg["min_lead_days"], cfg["trend"]
         args.out = root / cfg["out"]
         args.restatements = root / cfg["restatements"] if "restatements" in cfg else None
+        # A committed config names its override file, so staleness hashing covers
+        # it. One that is silent while the production file exists is refused
+        # rather than scored as if the overrides were not there.
+        if "date_overrides" in cfg:
+            args.date_overrides = root / cfg["date_overrides"]
+        elif (root / L.DATE_OVERRIDES_FILE).exists():
+            raise SystemExit(f"{args.config} names no date_overrides, but {root / L.DATE_OVERRIDES_FILE} exists; "
+                             f'add "date_overrides": "{L.DATE_OVERRIDES_FILE}" so the scores read it')
     else:
         if not args.run or args.as_of is None:
             raise SystemExit("pass --config, or at least one --run and --as-of")
@@ -473,20 +507,41 @@ def main(argv: list[str] | None = None) -> int:
     if args.restatements is not None:
         # Only when named, so a scoring run without a manifest writes exactly what it did before.
         settings["restatements"] = rel(args.restatements, root)
+    ov_path, date_overrides = date_overrides_for(args.date_overrides, args.predictions)
+    if ov_path is not None:
+        # Only when used, so a scores.json computed without overrides is unchanged.
+        settings["date_overrides"] = rel(ov_path, root)
 
     try:
         cutoff = dt.date.fromisoformat(args.as_of)
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
+    # Statement-date overrides first: which records the override superseded must
+    # be known before any sidecar is read, so stale sidecars are dropped before
+    # the duplicate and window checks below. See drop_stale_sidecars.
+    ov_in = date_overrides if ov_path is not None else None
+    superseded: list[dict] = []
+    loaded = P2.load(args.predictions, date_overrides=ov_in, superseded=superseded)
+    live_ids = {r["prediction_id"] for r in loaded}
+    live_tids = {r["transcript_id"] for r in loaded}
+    sup_ids = {s["prediction_id"] for s in superseded}
+    stale: list[dict] = []
+
+    def fresh(loader, stage):
+        if ov_path is None:
+            return loader
+        return lambda run: drop_stale_sidecars(loader(run), date_overrides, sup_ids, live_ids,
+                                                     rel(run, root), stage, stale)
+
     manifest = read_restatements(args.restatements, root, args.run) if args.restatements is not None else None
     dropped: dict = {}
-    resolutions = load_across(args.run, lambda run: R.load_sidecars(run, "resolve"),
+    resolutions = load_across(args.run, fresh(lambda run: R.load_sidecars(run, "resolve"), "resolve"),
                               drop=superseded_keys(manifest, root) if manifest else None, dropped=dropped)
-    priors = load_across(args.run, lambda run: R.load_sidecars(run, "prior"))
+    priors = load_across(args.run, fresh(lambda run: R.load_sidecars(run, "prior"), "prior"))
     restated: dict[str, str] = {}
     if manifest is not None:
-        check_restatement_records(manifest, {r["prediction_id"]: r for r in P2.load(args.predictions)})
+        check_restatement_records(manifest, {r["prediction_id"]: r for r in loaded})
         check_specific_sidecars(manifest, resolutions, priors, root)
         restated = {m: c["specific_member"] for c in manifest["clusters"]
                     for m in c["members"] if m != c["specific_member"]}
@@ -501,8 +556,9 @@ def main(argv: list[str] | None = None) -> int:
                              f"{pid} prior {priors[pid].get('deadline')} resolution "
                              f"{resolutions[pid].get('deadline')}" for pid in split))
     # Resolved trend records keep the window their resolution judged; see select().
-    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend, resolutions=resolutions)
-    repairs = load_across(args.run, R.load_repairs)
+    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend, resolutions=resolutions,
+                  date_overrides=ov_in)
+    repairs = load_across(args.run, fresh(R.load_repairs, "criteria_repair"))
     applied, unrepairable = R.apply_repairs(rows, repairs)
 
     joined, why = join(rows, resolutions, priors, restated)
@@ -556,6 +612,16 @@ def main(argv: list[str] | None = None) -> int:
         doc["restatements"] = restatement_report(
             manifest, settings["restatements"], hashlib.sha256(args.restatements.read_bytes()).hexdigest(),
             joined, resolutions, dropped, root)
+    if ov_path is not None:
+        doc["date_overrides"] = {
+            "file": settings["date_overrides"],
+            "entries": sorted(date_overrides),
+            "superseded_records": sorted(superseded, key=lambda s: (s["transcript_id"], s["prediction_id"] or "")),
+            "stale_sidecars_dropped": sorted(stale, key=lambda s: (s["prediction_id"], s["stage"], s["run"])),
+            # Loaded, checked, and matching no record in any corpus read: reported, never silent.
+            "entries_without_records": sorted(set(date_overrides) - live_tids
+                                              - {s["transcript_id"] for s in superseded}),
+        }
     out = args.out or (args.run[0] / "scores.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
@@ -573,6 +639,12 @@ def main(argv: list[str] | None = None) -> int:
               f"as restated, {len(rs['superseded_resolutions'])} resolution sidecars superseded")
         for x in rs["superseded_resolutions"]:
             print(f"  superseded: {x['prediction_id']} in {x['run']} ({x['outcome']}) by {x['cluster_id']}")
+    if ov_path is not None:
+        o = doc["date_overrides"]
+        print(f"date overrides: {o['file']} ({len(o['entries'])} entries); superseded records "
+              f"{[s['prediction_id'] for s in o['superseded_records']]}; stale sidecars dropped "
+              f"{[(s['prediction_id'], s['stage'], s['run']) for s in o['stale_sidecars_dropped']]}; "
+              f"entries without records {o['entries_without_records']}")
     if nosrc:
         print(f"WARNING: {nosrc} decided outcomes cite no source")
     cal = doc["calibration"]

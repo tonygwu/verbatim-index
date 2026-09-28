@@ -350,11 +350,15 @@ def dedupe_overlapping(cands: list[dict]) -> tuple[list[dict], list[dict]]:
 #   stated_in_page    the source itself states when the words were spoken; exact
 #   publication_date  the date the source was published; an UPPER BOUND on speech
 #   youtube_upload_date  the upload date; an upper bound. Derived, never declared.
+# A fourth basis, `sourced_override` (OVERRIDE_DATE_BASIS below), is never declared
+# by a transcript either: it comes from the reviewed override file.
 DECLARED_DATE_BASES = {"stated_in_page", "publication_date"}
 
 
-def derive_statement_date(rec: dict) -> tuple[str | None, str]:
-    """(YYYY-MM-DD, basis). declared_year is never consulted.
+def own_statement_date(rec: dict) -> tuple[str | None, str]:
+    """(YYYY-MM-DD, basis) from the transcript alone, ignoring any override.
+
+    declared_year is never consulted.
 
     A transcript may DECLARE `statement_date` with a `statement_date_basis`, for
     a source that is not a YouTube recording and has no upload date. Otherwise
@@ -400,6 +404,163 @@ def derive_statement_date(rec: dict) -> tuple[str | None, str]:
     except ValueError as exc:
         raise PredictionError(f"statement_date: yt_upload_date {raw!r} is not a real date: {exc}") from exc
     return d.strftime("%Y-%m-%d"), "youtube_upload_date"
+
+
+
+# ---------------------------------------------------------------------------
+# Sourced statement-date overrides (VP-16)
+# ---------------------------------------------------------------------------
+#
+# An upload date is an UPPER bound on when the words were said, and on an old
+# recording it is decades late. FOUND 2026-09-27: 13 past-due records carried a
+# deadline computed from an upload date, 11 of them resolved
+# `deadline_incoherent`. Netscape's 1996-10-16 keynote, uploaded 2013-07-05,
+# became "Netscape will create a network of online marketplaces by approximately
+# September 2013": the extractor read "the next couple months" against the date it
+# was given. So the correction cannot be a date swap on the finished record. The
+# claim text and the target date embed the wrong year, and the transcript must be
+# re-extracted under the true date.
+#
+# The override is keyed by TRANSCRIPT, because the date is a property of the
+# recording and every prediction from it inherits the date. It is applied at ONE
+# point, `apply_statement_date_override`, when a transcript is read for
+# extraction, so the prompt header, the record, the funnel's deadline and both
+# Phase 2 prompts all read the same date. The transcript file itself is never
+# rewritten: it is the fetcher's faithful record of what YouTube reported, and it
+# belongs to the daemon clone.
+
+OVERRIDE_DATE_BASIS = "sourced_override"
+# Relative to the data root. Production keeps the reviewed file here; an
+# experiment passes its own with --date-overrides.
+DATE_OVERRIDES_FILE = Path("sources") / "statement_date_overrides.json"
+TRANSCRIPT_DIRS = ("transcripts_open", "transcripts_web")
+OVERRIDE_REQUIRED = ("statement_date", "basis", "source_url", "verbatim_evidence", "confirmed_by", "confirmed_at_utc")
+OVERRIDE_OPTIONAL = ("internal_evidence", "confidence", "confirmation_note", "researched_by", "speaker_check")
+_UTC_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+
+def _strict_date(value, where: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise PredictionError(f"statement_date_override: {where}: statement_date {value!r} is not YYYY-MM-DD")
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise PredictionError(f"statement_date_override: {where}: statement_date {value!r} is not a real date: {exc}") from exc
+    return value
+
+
+def check_override_entry(tid: str, entry) -> dict:
+    """Refuse an entry that cannot vouch for itself. Returns a copy."""
+    if not isinstance(tid, str) or not re.fullmatch(r"[^/\s]+/[^/\s]+", tid):
+        raise PredictionError(f"statement_date_override: key {tid!r} is not a transcript id of the form slug/source")
+    if not isinstance(entry, dict):
+        raise PredictionError(f"statement_date_override: {tid}: entry is {type(entry).__name__}, not an object")
+    missing = [k for k in OVERRIDE_REQUIRED if k not in entry]
+    unknown = sorted(set(entry) - set(OVERRIDE_REQUIRED) - set(OVERRIDE_OPTIONAL))
+    if missing or unknown:
+        raise PredictionError(f"statement_date_override: {tid}: missing {missing}, unknown {unknown}; an entry "
+                              f"carries {list(OVERRIDE_REQUIRED)} and optionally {list(OVERRIDE_OPTIONAL)}")
+    _strict_date(entry["statement_date"], tid)
+    for k in ("basis", "source_url", "verbatim_evidence", "confirmed_by"):
+        if not isinstance(entry[k], str) or not entry[k].strip():
+            raise PredictionError(f"statement_date_override: {tid}: {k} is empty")
+    if not re.match(r"https?://", entry["source_url"]):
+        raise PredictionError(f"statement_date_override: {tid}: source_url {entry['source_url']!r} is not http(s)")
+    if not isinstance(entry["confirmed_at_utc"], str) or not _UTC_STAMP.fullmatch(entry["confirmed_at_utc"]):
+        raise PredictionError(f"statement_date_override: {tid}: confirmed_at_utc {entry['confirmed_at_utc']!r} "
+                              f"is not YYYY-MM-DDTHH:MM:SSZ")
+    return dict(entry)
+
+
+def check_override_against_transcript(tid: str, date: str, rec: dict) -> tuple[str | None, str]:
+    """(own date, own basis) of the transcript, after refusing an override it contradicts.
+
+    An upload or a publication cannot precede the speech, so an override dated
+    AFTER the transcript's own date is refused. A page that STATES its own date is
+    not overridden at all: its date is a fact about the words, not a bound.
+    """
+    own_date, own_basis = own_statement_date(rec)
+    if own_basis == "stated_in_page":
+        raise PredictionError(f"statement_date_override: {tid}: the source states its own date "
+                              f"({own_date}, stated_in_page); an override may not contradict it")
+    if own_date is not None and date > own_date:
+        raise PredictionError(f"statement_date_override: {tid}: override date {date} is after the "
+                              f"{own_basis} {own_date}; a recording cannot be published before it is spoken")
+    return own_date, own_basis
+
+
+def load_statement_date_overrides(path, transcript_roots) -> dict[str, dict]:
+    """{transcript_id: entry} from a reviewed override file, or raise.
+
+    Every entry must name a transcript present under one of `transcript_roots`
+    and must not post-date that transcript's own date. Nothing is skipped: an
+    entry that cannot be applied stops the run, naming it.
+    """
+    path = Path(path)
+    doc = json.loads(path.read_text())
+    if not isinstance(doc, dict) or doc.get("schema_version") != 1 or not isinstance(doc.get("overrides"), dict) \
+            or set(doc) - {"schema_version", "overrides", "notes"}:
+        raise PredictionError(f"statement_date_override: {path} must be "
+                              f'{{"schema_version": 1, "overrides": {{transcript_id: entry}}}} (optional "notes")')
+    roots = [Path(r) for r in transcript_roots]
+    out: dict[str, dict] = {}
+    for tid, entry in doc["overrides"].items():
+        e = check_override_entry(tid, entry)
+        slug, sid = tid.split("/", 1)
+        hits = [r / slug / f"{sid}.json" for r in roots if (r / slug / f"{sid}.json").is_file()]
+        if not hits:
+            raise PredictionError(f"statement_date_override: {tid}: unknown transcript; not under any of "
+                                  f"{[str(r) for r in roots]}")
+        for h in hits:
+            check_override_against_transcript(tid, e["statement_date"], json.loads(h.read_text()))
+        out[tid] = e
+    return out
+
+
+def date_overrides_digest(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def apply_statement_date_override(rec: dict, overrides: dict | None) -> dict:
+    """The transcript as the predictions pipeline must read it. The single point of entry.
+
+    A transcript with no entry is returned as the SAME object, so every existing
+    record, prompt and hash is unchanged.
+    """
+    if not overrides:
+        return rec
+    tid = f"{rec.get('leader_slug')}/{rec.get('source_id')}"
+    entry = overrides.get(tid)
+    if entry is None:
+        return rec
+    check_override_against_transcript(tid, _strict_date(entry["statement_date"], tid), rec)
+    return {**rec, "statement_date_override": dict(entry)}
+
+
+def derive_statement_date(rec: dict) -> tuple[str | None, str]:
+    """(YYYY-MM-DD, basis). An applied override wins; otherwise the transcript's own date.
+
+    The override is re-checked here as well as at load, so a record can never
+    carry a date later than its own upload whichever path built it.
+    """
+    ov = rec.get("statement_date_override")
+    if ov is None:
+        return own_statement_date(rec)
+    tid = f"{rec.get('leader_slug')}/{rec.get('source_id')}"
+    date = _strict_date((ov or {}).get("statement_date"), tid)
+    check_override_against_transcript(tid, date, rec)
+    return date, OVERRIDE_DATE_BASIS
+
+
+def override_block(rec: dict) -> dict | None:
+    """What a record carries about its override: the evidence, and what it replaced."""
+    ov = rec.get("statement_date_override")
+    if ov is None:
+        return None
+    own_date, own_basis = own_statement_date(rec)
+    return {"basis": ov["basis"], "source_url": ov["source_url"], "verbatim_evidence": ov["verbatim_evidence"],
+            "confirmed_by": ov["confirmed_by"], "confirmed_at_utc": ov["confirmed_at_utc"],
+            "replaced_date": own_date, "replaced_basis": own_basis}
 
 
 DATE_ONLY_RULE = ("cutoff is 00:00:00 UTC at the start of the publication date, so every observation "
@@ -590,7 +751,14 @@ def speaker_header(rec: dict, roster_entry: dict | None) -> str:
     company = (roster_entry or {}).get("company") or "unknown"
     sector = (roster_entry or {}).get("sector") or "unknown"
     date, basis = derive_statement_date(rec)
-    if date:
+    if basis == OVERRIDE_DATE_BASIS:
+        blk = override_block(rec)
+        own = {"youtube_upload_date": "YouTube upload date", "publication_date": "publication date"}
+        later = (f"The {own.get(blk['replaced_basis'], blk['replaced_basis'])}, {blk['replaced_date']}, is later and is NOT when "
+                 f"the words were said" if blk["replaced_date"] else "The source carries no date of its own")
+        date_line = (f"Statement date: {date} (the date of the recording, from a sourced correction: "
+                     f"{blk['basis']}. {later})")
+    elif date:
         date_line = f"Statement date: {date} (YouTube upload date; the recording is no later than this)"
     else:
         date_line = "Statement date: unknown"
@@ -873,6 +1041,7 @@ def make_record(rec: dict, roster_entry: dict | None, cand: dict, loc: dict, pro
             "title": rec.get("yt_title") or rec.get("declared_title"),
             "venue": rec.get("declared_venue"), "kind": rec.get("declared_kind"),
             "statement_date": date, "statement_date_basis": basis,
+            **({"statement_date_override": override_block(rec)} if basis == OVERRIDE_DATE_BASIS else {}),
             "quote": cand["quote"], "quote_original": text[start:end],
             "quote_char_start": start, "quote_char_end": end,
             "quote_word_count": quote_word_count(text[start:end]),

@@ -44,6 +44,8 @@ import sys
 
 ROOT = pathlib.Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
                                    capture_output=True, text=True, check=True).stdout.strip())
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import predictions_lib as L  # noqa: E402
 
 # SIXTY DAYS: the operator's call on 2026-09-15, replacing the 180 they set on
 # 2026-09-14. The floor exists to keep an announcement from counting as a
@@ -250,7 +252,27 @@ def trend_window(rec, cutoff: dt.date, min_years: float = MIN_TREND_YEARS):
     return cutoff, f"trend over {years:.1f}y since the statement"
 
 
-def load(pred_dir):
+def superseded_by_override(r: dict, date_overrides: dict) -> str | None:
+    """Why a record no longer counts under the override file, or None when it does.
+
+    A record from an overridden transcript must carry the override's date under
+    the override basis, which only a re-extraction produces. A record extracted
+    under the upload date is stale: its claim text and deadline embed the wrong
+    year. A record carrying an override the file no longer holds is stale too.
+    """
+    src = r.get("source") or {}
+    ov = date_overrides.get(r.get("transcript_id"))
+    if ov is not None:
+        if src.get("statement_date_basis") != L.OVERRIDE_DATE_BASIS or src.get("statement_date") != ov["statement_date"]:
+            return (f"extracted under {src.get('statement_date_basis')} {src.get('statement_date')}; "
+                    f"the override says {ov['statement_date']}")
+        return None
+    if src.get("statement_date_basis") == L.OVERRIDE_DATE_BASIS:
+        return "carries a statement-date override the override file no longer holds"
+    return None
+
+
+def load(pred_dir, date_overrides: "dict | None" = None, superseded: "list | None" = None):
     """Accepted predictions from one corpus directory, or several.
 
     Several, because the corpus is no longer one source. repo-1's supplemental
@@ -262,6 +284,13 @@ def load(pred_dir):
     A prediction_id appearing in TWO corpora is a duplicate and raises. The id
     hashes the transcript and the quote, so a genuine collision means the same
     words were extracted twice, which would double-count that person.
+
+    With `date_overrides` (predictions_lib.load_statement_date_overrides), a
+    record extracted under a date the override replaced is SUPERSEDED before the
+    duplicate check: it is left out, appended to `superseded` with the reason, and
+    announced on stderr. So a re-extraction that kept the same prediction_id does
+    not collide with the stale record, and one that got a new id does not sit
+    beside it. Without the file, nothing changes.
     """
     dirs = [pathlib.Path(pred_dir)] if isinstance(pred_dir, (str, pathlib.Path)) else [pathlib.Path(d) for d in pred_dir]
     rows = []
@@ -280,6 +309,18 @@ def load(pred_dir):
                     continue
                 r = json.loads(line)
                 if not r.get("accepted"):
+                    continue
+                why = superseded_by_override(r, date_overrides) if date_overrides is not None else None
+                if why:
+                    gone = {"prediction_id": r.get("prediction_id"), "transcript_id": r.get("transcript_id"),
+                            "leader_slug": r.get("leader_slug"), "corpus": str(d),
+                            "statement_date": (r.get("source") or {}).get("statement_date"),
+                            "override_date": (date_overrides.get(r.get("transcript_id")) or {}).get("statement_date"),
+                            "reason": why}
+                    print(f"superseded by statement-date override: {gone['transcript_id']} "
+                          f"{gone['prediction_id']}: {why}", file=sys.stderr)
+                    if superseded is not None:
+                        superseded.append(gone)
                     continue
                 # Only a REAL id can be a duplicate. A record without one cannot be
                 # deduped at all, and treating a missing key as a collision would

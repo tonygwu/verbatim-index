@@ -73,7 +73,8 @@ def utc_now() -> str:
 # ---------------------------------------------------------------------------
 
 def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
-           resolutions: dict | None = None) -> list[dict]:
+           resolutions: dict | None = None,
+           date_overrides: "dict | None" = None, superseded: "list | None" = None) -> list[dict]:
     """Past-due accepted predictions, each carrying the funnel's deadline and flags.
 
     The deadline comes from `phase2_resolvability`, never from a second parser
@@ -87,7 +88,7 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
     or scores it over a window that grew. An unresolved trend record still runs
     to `cutoff`, and a dated record is untouched.
     """
-    rows = P2.load(pred_dir)
+    rows = P2.load(pred_dir, date_overrides=date_overrides, superseded=superseded)
     # The trend window is opt-in and dated by the caller's cutoff, never the clock.
     P2.attach_deadlines(rows, derive=True, trend_cutoff=(cutoff if trend else None))
     for r in rows:
@@ -260,7 +261,26 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--workdir", default=None)
     ap.add_argument("--errors", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true", help="print the selection and one prompt, spend nothing")
+    ap.add_argument("--date-overrides", type=Path, default=None,
+                    help=f"reviewed statement-date override file; default <data>/{L.DATE_OVERRIDES_FILE} "
+                         f"beside the first --predictions when it exists")
     return ap
+
+
+def date_overrides_for(arg: "Path | None", predictions: list[Path]) -> "tuple[Path | None, dict]":
+    """(path, overrides) for the corpus at `predictions`. Shared by resolve and score.
+
+    The data root is the parent of the first predictions directory. An explicit
+    file must exist; the production default is read whenever it exists, so a
+    committed override is never silently ignored.
+    """
+    root = Path(predictions[0]).resolve().parent
+    path = arg if arg is not None else root / L.DATE_OVERRIDES_FILE
+    if not Path(path).exists():
+        if arg is not None:
+            raise SystemExit(f"--date-overrides {arg} does not exist")
+        return None, {}
+    return Path(path), L.load_statement_date_overrides(path, [root / d for d in L.TRANSCRIPT_DIRS])
 
 
 def accounts_for(args) -> list[str]:
@@ -295,8 +315,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
     out_root = Path(args.out)
+    ov_path, date_overrides = date_overrides_for(args.date_overrides, args.predictions)
+    log(f"date overrides: {ov_path or 'none'} ({len(date_overrides)} entries)")
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
-                  resolutions=R.load_sidecars(out_root, "resolve"))
+                  resolutions=R.load_sidecars(out_root, "resolve"),
+                  date_overrides=date_overrides if ov_path else None)
     if args.slug:
         rows = [r for r in rows if r["leader_slug"] in set(args.slug)]
     if args.eligible_only:

@@ -110,6 +110,11 @@ def check_record(rec: dict, text: str, file: Path, n: int, exclusions: dict, sch
         fail(out, file, n, "statement_date", f"statement_date {sd!r} with basis {basis!r}")
     if sd is not None and not L.target_date_valid(sd) or (sd is not None and len(sd) != 10):
         fail(out, file, n, "statement_date", f"{sd!r} is not YYYY-MM-DD")
+    # A sourced override and its evidence travel together: a record may not claim
+    # the override basis without saying why, nor carry evidence under another basis.
+    if (basis == L.OVERRIDE_DATE_BASIS) != ("statement_date_override" in src):
+        fail(out, file, n, "statement_date",
+             f"basis {basis!r} with{'out' if 'statement_date_override' not in src else ''} a statement_date_override block")
     p = rec["prediction"]
     if not L.target_date_valid(p["target_date"]):
         fail(out, file, n, "target_date", f"{p['target_date']!r} is not YYYY, YYYY-MM or YYYY-MM-DD")
