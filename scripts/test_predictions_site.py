@@ -718,6 +718,29 @@ def main() -> int:
         po = run("--scores", str(odd), out_name="odd.html")
         check("BUCKETS: a not-scored reason the page does not know refuses the render, naming it",
               po.returncode != 0 and "mystery_reason" in (po.stdout + po.stderr), (po.stdout + po.stderr)[-300:])
+        # The scorer names `no_resolution` before it checks eligibility, so an unresolved
+        # row can be one that will NEVER be resolved (lead under the floor). Found
+        # 2026-09-28: 33 such rows read "Awaiting check" on the integrated board.
+        for elig, want, tag in ((False, "not_testable", "inel"), (True, "awaiting", "elig")):
+            ndoc = json.loads(scores.read_text())
+            ndoc["predictions"][1].update(not_scored_because="no_resolution", outcome=None,
+                                          flags={"eligible": elig})
+            ndoc["corpus"]["unresolvable_reasons"].pop("criterion_ambiguous", None)
+            (td / f"nores-{tag}.json").write_text(json.dumps(ndoc))
+            pn = run("--scores", str(td / f"nores-{tag}.json"), out_name=f"nores-{tag}.html")
+            got = ({r["slug"]: r for r in embedded((td / "site" / f"nores-{tag}.html").read_text(), "DATA")}
+                   .get("ada", {}).get("buckets") if pn.returncode == 0 else (pn.stdout + pn.stderr)[-200:])
+            check(f"BUCKETS: an unresolved row with eligible={elig} counts as {want}",
+                  isinstance(got, dict) and got.get(want) == 1 and "awaiting" not in got if not elig
+                  else isinstance(got, dict) and got.get(want) == 1, str(got))
+        ndoc = json.loads(scores.read_text())
+        ndoc["predictions"][1].update(not_scored_because="no_resolution", outcome=None)
+        ndoc["predictions"][1].pop("flags", None)
+        ndoc["corpus"]["unresolvable_reasons"].pop("criterion_ambiguous", None)
+        (td / "nores-noflags.json").write_text(json.dumps(ndoc))
+        pn = run("--scores", str(td / "nores-noflags.json"), out_name="nores-noflags.html")
+        check("BUCKETS: an unresolved row with no eligibility flag refuses the render, never guesses",
+              pn.returncode != 0 and "eligib" in (pn.stdout + pn.stderr), (pn.stdout + pn.stderr)[-300:])
         stray_row = td / "strayrow.json"
         sdoc = json.loads(scores.read_text())
         sdoc["predictions"].append(dict(sdoc["predictions"][1], prediction_id="not-a-page-record"))

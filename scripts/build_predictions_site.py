@@ -1547,7 +1547,16 @@ def prediction_buckets(by_slug: dict[str, list[dict]], scores_doc: dict) -> tupl
                 if row["scored"]:
                     b["scored"] += 1
                 elif why in ("no_resolution", "no_prior"):
-                    b["awaiting"] += 1
+                    # The scorer names a missing resolution before it checks
+                    # eligibility, so an unresolved row may be one that is never
+                    # resolved (lead under the floor): that is Not testable, not
+                    # Awaiting check. The flag is read, never assumed.
+                    elig = (row.get("flags") or {}).get("eligible")
+                    if not isinstance(elig, bool):
+                        raise SystemExit(f"REFUSING: {slug}'s prediction {r['prediction_id']} is unresolved and "
+                                         f"scores.json carries no eligibility flag for it, so the page cannot "
+                                         f"say whether it is awaiting a check or not testable")
+                    b["awaiting" if elig else "not_testable"] += 1
                 elif why == "not_eligible":
                     b["not_testable"] += 1
                 elif isinstance(why, str) and why.startswith("unresolvable:"):
