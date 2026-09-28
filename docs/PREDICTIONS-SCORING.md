@@ -189,6 +189,7 @@ naming the person. Only lines above zero are shown, in this order:
 | Awaiting check | `not_scored_because` is `no_resolution` or `no_prior`; also a record past due at `as_of` that scores.json lacks, which the builder counts and prints |
 | Not testable | `not_scored_because` is `not_eligible` |
 | Couldn't check | `not_scored_because` is `unresolvable:<reason>`; the reasons are split on hover and in the column's help |
+| Restated | a non-specific member of a restatement cluster in scores.json's `restatements` block, past due or not |
 
 A not-scored reason with no bucket, or a scores.json row that is no record on
 the page, refuses the render.
@@ -196,3 +197,46 @@ the page, refuses the render.
 Proof: `.venv/bin/python scripts/test_predictions_site.py`. Browser check,
 which needs Playwright and a rendered site directory:
 `python scripts/check_predictions_site_ui.py --site <dir> --absent "<names>" --shots <dir>`.
+
+## Restatements score once, decided 2026-09-28
+
+Operator decisions (data run `restatements-20260928/DECISIONS.md`): a person who
+says the same thing on several days made ONE prediction. A moved deadline, a
+changed threshold or a contradiction is not a restatement, so a missed first call
+is never hidden by a later one. The merged prediction is dated at the EARLIEST
+member whose own wording is specific enough to imply the merged criterion, its
+`specific_member`; earlier, vaguer members are context only.
+
+**The manifest.** `scripts/build_restatement_manifest.py` turns a reviewed
+`clusters.json` into a manifest of clusters, each with its `members` and its
+`specific_member`. Only `clusters` become clusters; a cluster that holds every id
+of a `moved_goalpost`, `uncertain` or `judged_distinct` group is refused. In
+production it would live at `predictions/restatements.json` and be named by the
+optional `restatements` key of `predictions/scoring.json`. A config without the
+key scores byte-identically to one written before the key existed.
+
+**The scorer** (`score_predictions.py --restatements`). The specific member scores
+with its own resolution, prior and statement date, so its own lead time decides
+eligibility. Every other past-due member stays a row, `not_scored_because`
+`restated:<specific_member>`, with its own verdict kept under `own_outcome` and
+`own_p` and left out of every outcome count. The corpus and each person carry a
+`restated` count, and the reasons still add up to `past_due`. It refuses an
+unknown prediction id, a member in two clusters, members of different people, and
+a specific member with no resolution or no prior while another member has one.
+
+**A fresh resolution.** A cluster may carry `resolution: {run, supersedes, why}`:
+the specific member's resolution is the one in `run`, and each named
+`{run, prediction_id}` sidecar is left out and reported in scores.json under
+`restatements.superseded_resolutions`. That is the only way one prediction may
+have a resolution in two runs. A superseded sidecar that is not on disk is
+refused, and a prior priced over a different window than the fresh resolution is
+still refused.
+
+**The page.** A restated record carries `restated_by`, is not a card of its own,
+and is listed under its specific member as "Also said on <date>: <quote>". The
+Predictions column counts it as Restated, and the prose counts each past-due
+prediction once. A cluster only partly on the page, or a row whose
+`restated:<id>` disagrees with the block, refuses the render.
+
+Proof: `scripts/test_restatements_scoring.py`, `scripts/test_build_restatement_manifest.py`,
+and the RESTATED checks in `scripts/test_predictions_site.py`.

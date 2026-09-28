@@ -35,7 +35,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -686,8 +688,9 @@ def main() -> int:
               pm.returncode != 0 and scored_pid in (pm.stdout + pm.stderr), (pm.stdout + pm.stderr)[-300:])
 
         # ---- task 7: the Predictions column says where each prediction stands ----
-        want_labels = ["Scored", "Not yet due", "No deadline", "Awaiting check", "Not testable", "Couldn't check"]
-        check("BUCKETS: six buckets in a fixed order with short plain labels",
+        want_labels = ["Scored", "Not yet due", "No deadline", "Awaiting check", "Not testable", "Couldn't check",
+                       "Restated"]
+        check("BUCKETS: seven buckets in a fixed order with short plain labels",
               [lab for _, lab in getattr(B, "BUCKETS", ())] == want_labels, str(getattr(B, "BUCKETS", None)))
         dd = {r["slug"]: r for r in embedded(h2, "DATA")}
         check("BUCKETS: derived per person from the records and scores.json",
@@ -727,6 +730,97 @@ def main() -> int:
         check("BUCKETS: the (?) help names every bucket and the scoring as-of date",
               all(lab.replace("'", "&#39;") in h2 or lab in h2 for lab in want_labels)
               and "as of 2026-09-14" in h2)
+
+        # ---- 2026-09-28: a restated prediction is shown ONCE ----
+        # scores.json carries the scorer's `restatements` block. Ada said the "by
+        # 2030" claim in two recordings (s1 and s3). The cluster's specific member
+        # is the scored record; the other is restated, and the scorer listed it
+        # with `restated:<specific>`.
+        spec_pid = scored_pid
+        spec_quote = pred["ada"][0]["quote"]
+        twin = next(r for r in pred["ada"][1:] if r["quote"] == spec_quote and r["prediction_id"] != spec_pid)
+        rdoc = json.loads(scores.read_text())
+        rdoc["restatements"] = {"manifest": "predictions/restatements.json", "manifest_sha256": "0" * 64,
+                                "clusters": [{"cluster_id": "ada/code-by-2030", "leader_slug": "ada",
+                                              "specific_member": spec_pid,
+                                              "members": [spec_pid, twin["prediction_id"]]}],
+                                "superseded_resolutions": [], "restated_rows": 1}
+        rdoc["predictions"].append({"prediction_id": twin["prediction_id"], "leader_slug": "ada", "outcome": None,
+                                    "scored": False, "unresolvable_reason": None, "resolution_reasoning": None,
+                                    "sources": [], "p": None, "reference_class": None, "points": None,
+                                    "not_scored_because": f"restated:{spec_pid}", "restated_by": spec_pid})
+        rdoc["corpus"]["restated"] = 1
+        for l in rdoc["leaders"]:
+            l["restated"] = 1 if l["slug"] == "ada" else 0
+        rsc = td / "restated.json"
+        rsc.write_text(json.dumps(rdoc))
+        prs = run("--scores", str(rsc), out_name="rs.html")
+        check("RESTATED: the builder accepts a scores file with restatements", prs.returncode == 0,
+              (prs.stdout + prs.stderr)[-600:])
+        hr = (td / "site" / "rs.html").read_text() if prs.returncode == 0 else ""
+        if os.environ.get("VI_KEEP_RESTATED_SITE") and prs.returncode == 0:
+            keep = Path(os.environ["VI_KEEP_RESTATED_SITE"])
+            shutil.copytree(td / "site", keep, dirs_exist_ok=True)
+        precs = records(td / "site" / "rs.html") if prs.returncode == 0 else {}
+        dr = {r["slug"]: r for r in embedded(hr, "DATA")} if hr else {}
+        check("RESTATED: a seventh bucket, Restated, last",
+              [lab for _, lab in getattr(B, "BUCKETS", ())][-1:] == ["Restated"] and len(getattr(B, "BUCKETS", ())) == 7,
+              str(getattr(B, "BUCKETS", None)))
+        check("RESTATED: the restated member is counted as Restated, and the lines still add up to the total",
+              dr.get("ada", {}).get("buckets") == {"scored": 1, "unresolvable": 1, "not_due": 1, "restated": 1}
+              and sum(dr["ada"]["buckets"].values()) == dr["ada"]["accepted"], str(dr.get("ada", {}).get("buckets")))
+        ada_recs = {r["prediction_id"]: r for r in precs.get("ada", [])}
+        check("RESTATED: every record still reaches the drawer; the restated one names its specific member",
+              len(ada_recs) == 4 and ada_recs.get(twin["prediction_id"], {}).get("restated_by") == spec_pid
+              and "restated_by" not in ada_recs.get(spec_pid, {"restated_by": 1}), str({k: v.get("restated_by") for k, v in ada_recs.items()}))
+        check("RESTATED: the drawer lists a restated record once, under its specific member, as 'Also said on'",
+              "Also said on" in hr and "!r.restated_by" in hr and "x.restated_by === r.prediction_id" in hr, "")
+        check("RESTATED: the drawer header says how many statements fold under another",
+              "restates another prediction and is shown under the prediction it repeats." in hr
+              and "restate another prediction and are shown under the prediction they repeat." in hr, "")
+        check("RESTATED: the Predictions help explains the Restated line",
+              "<b>Restated</b>" in hr and "scored once" in hr, "")
+        th_r = re.search(r'<p class="thesis">(.*?)</p>', hr, re.S)
+        check("RESTATED: the intro counts a past-due event once, not once per statement",
+              bool(th_r) and "8 of 8 past-due predictions" in th_r.group(1), th_r.group(1)[:500] if th_r else "")
+
+        def refuses(label, mutate, needle):
+            doc = json.loads(rsc.read_text())
+            mutate(doc)
+            f = td / f"rs-bad-{abs(hash(label))}.json"
+            f.write_text(json.dumps(doc))
+            p = run("--scores", str(f), out_name=f"rsb-{abs(hash(label))}.html")
+            check(label, p.returncode != 0 and needle in (p.stdout + p.stderr), (p.stdout + p.stderr)[-400:])
+
+        # A cluster's fresh resolution supersedes an older sidecar in another run. The
+        # page reads the sidecars to name the models, so it must apply the same
+        # supersession the scorer applied, or it refuses one prediction in two runs.
+        run2 = td / "run-fresh"
+        (run2 / "resolutions" / "ada").mkdir(parents=True)
+        (run2 / "resolutions" / "ada" / f"{spec_pid}.json").write_text(json.dumps(
+            {"prediction_id": spec_pid, "leader_slug": "ada", "stage": "resolve", "outcome": "occurred",
+             "harness": "astra", "telemetry": {"requested_model": "gpt-6-astra", "served_model": "gpt-6-astra"}}))
+        sdoc2 = json.loads(rsc.read_text())
+        sdoc2["run_dirs"] = [str(run1), str(run2)]
+        sdoc2["restatements"]["superseded_resolutions"] = [
+            {"cluster_id": "ada/code-by-2030", "run": str(run1), "prediction_id": spec_pid, "outcome": "occurred"}]
+        sup_f = td / "rs-sup.json"
+        sup_f.write_text(json.dumps(sdoc2))
+        psu = run("--scores", str(sup_f), out_name="rs-sup.html")
+        check("RESTATED: a superseded resolution in another run is left out, as the scorer left it out",
+              psu.returncode == 0, (psu.stdout + psu.stderr)[:600])
+        sdoc2["restatements"]["superseded_resolutions"][0]["run"] = str(td / "run-nowhere")
+        sup_f.write_text(json.dumps(sdoc2))
+        psn = run("--scores", str(sup_f), out_name="rs-sup2.html")
+        check("RESTATED: a superseded sidecar the page cannot find refuses the render",
+              psn.returncode != 0 and "run-nowhere" in (psn.stdout + psn.stderr), (psn.stdout + psn.stderr)[-400:])
+
+        refuses("RESTATED: a cluster only partly on the page refuses the render, naming it",
+                lambda d: d["restatements"]["clusters"][0]["members"].append("not-on-this-page"), "ada/code-by-2030")
+        refuses("RESTATED: a row restated to a different member than the manifest says refuses the render",
+                lambda d: d["predictions"][-1].update(not_scored_because="restated:someone-else"), "someone-else")
+        refuses("RESTATED: a restated row with no restatements block refuses the render",
+                lambda d: d.pop("restatements"), twin["prediction_id"])
 
         # The sparkline axis is derived from the records. A hardcoded span silently drops a
         # recording older than the span, which is the whole failure mode here.

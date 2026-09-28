@@ -386,6 +386,8 @@ tr.audit>td{padding:0; background:var(--surface-2); border-bottom:1px solid var(
 .quotes .ts{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--faint); flex:none; padding-top:1px; text-decoration:none}
 .quotes a.ts{color:var(--d1)}
 .quotes q{font-style:italic}
+.also{margin:5px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:3px; font-size:12.5px; color:var(--ink-2)}
+.also q{font-style:italic}
 dl.kv{display:grid; grid-template-columns:max-content 1fr; gap:3px 14px; margin:10px 0 0; font-size:12.5px}
 dl.kv dt{font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--faint); padding-top:2px}
 dl.kv dd{margin:0; color:var(--ink-2)}
@@ -709,7 +711,23 @@ function marketLine(m){
   return h;
 }
 
-function predCard(r){
+/* A restatement is the same prediction said again on another day (operator decision,
+   2026-09-28). It is shown ONCE, as the cluster's specific member, and each other
+   statement is listed beneath it. The builder marks those with restated_by. */
+function alsoSaid(r, all){
+  const also = all.filter(x => x.restated_by === r.prediction_id)
+    .sort((a, b) => (a.statement_date || "").localeCompare(b.statement_date || ""));
+  if (!also.length) return "";
+  return `<ul class="also">` + also.map(x => {
+    const s = SRC[x.transcript_id] || {};
+    const where = s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || x.transcript_id)}</a>`
+                        : esc(s.title || x.transcript_id);
+    const when = x.statement_date ? `Also said on ${esc(x.statement_date)}` : "Also said, date unknown";
+    return `<li><span>${when}: <q>${esc(x.quote)}</q>
+      <span class="why">&mdash; ${where}</span></span></li>`;
+  }).join("") + `</ul>`;
+}
+function predCard(r, all){
   const s = SRC[r.transcript_id] || {};
   const link = ytLink(s.video_id, r.t);
   const ts = link ? `<a class="ts" href="${esc(link)}" target="_blank" rel="noopener" aria-label="Open the video at ${esc(r.timestamp_mark)}">${esc(r.timestamp_mark)}</a>`
@@ -721,6 +739,7 @@ function predCard(r){
   return `<div class="pred" data-cat="${esc(r.category)}" data-type="${esc(r.prediction_type)}" data-hor="${esc(r.horizon)}" data-ctrl="${esc(r.subject_control)}">
     <div class="claim">${esc(r.claim)}</div>
     <ul class="quotes"><li>${ts}<q>${esc(r.quote)}</q></li></ul>
+    ${alsoSaid(r, all || [])}
     <dl class="kv">
       <dt>Said</dt><dd>${esc(fmtDate(r.statement_date))}${r.statement_date ? ` <span class="why">(${esc(r.statement_date_basis.replace(/_/g, " "))})</span>` : ""}</dd>
       <dt>Target</dt><dd>${target}${r.horizon === "inferable" && r.horizon_years_inferred != null ? ` &middot; about ${esc(r.horizon_years_inferred)} years, inferred` : ""}</dd>
@@ -743,7 +762,8 @@ function options(recs, key, labels){
 }
 
 function cards(slug, filt){
-  const recs = (PRED[slug] || []).filter(r =>
+  const all = PRED[slug] || [];
+  const recs = all.filter(r => !r.restated_by &&
     (!filt.cat || r.category === filt.cat) && (!filt.type || r.prediction_type === filt.type)
     && (!filt.hor || r.horizon === filt.hor) && (!filt.ctrl || r.subject_control === filt.ctrl));
   const groups = new Map();
@@ -753,7 +773,7 @@ function cards(slug, filt){
     const s = SRC[tid] || {};
     h += `<div class="tcard"><div class="hdr"><span class="t">${esc(s.title || tid)}</span>
       <span class="meta">${esc(s.venue || "")}${rs[0].statement_date ? " &middot; " + esc(rs[0].statement_date) : ""}${s.url ? ` &middot; <a href="${esc(s.url)}" target="_blank" rel="noopener">source</a>` : ""}</span></div>`
-      + rs.map(predCard).join("") + `</div>`;
+      + rs.map(r => predCard(r, all)).join("") + `</div>`;
   }
   return {html: h || `<p class="sub">No predictions match these filters.</p>`, n: recs.length};
 }
@@ -762,10 +782,13 @@ function drawer(slug, person){
   const recs = PRED[slug] || [];
   const c = cards(slug, {});
   const cov = person.tx_attempted != null ? `; extraction ran on ${person.tx_succeeded} of ${person.tx_attempted} of their transcripts` : "";
+  const folded = recs.filter(r => r.restated_by).length;
   return `<div class="drawer" data-slug="${esc(slug)}">
     <h3>${esc(person.name)} &mdash; ${recs.length} accepted prediction${recs.length === 1 ? "" : "s"}</h3>
     <div class="sub">from ${person.transcripts} transcript${person.transcripts === 1 ? "" : "s"}${cov};
-      ${person.rejected} candidate${person.rejected === 1 ? "" : "s"} rejected by the verifier and not shown.</div>
+      ${person.rejected} candidate${person.rejected === 1 ? "" : "s"} rejected by the verifier and not shown.${folded
+        ? ` ${folded} of the ${recs.length} ${folded === 1 ? "restates another prediction and is shown under the prediction it repeats."
+                                                     : "restate another prediction and are shown under the prediction they repeat."}` : ""}</div>
     <div class="sub">Target date: ${person.h_explicit} named in the quote, ${person.h_inferable} inferred from
       the surrounding transcript, ${person.h_none} open-ended. Likelihood: ${person.p_explicit} where the
       speaker gave a number, ${person.p_qual} where the speaker used words of likelihood.</div>
@@ -1277,6 +1300,12 @@ def listed_corpus(scores_doc: dict, listed: set[str]) -> dict:
         "unresolvable": (sum(l["unresolvable"] for l in L), c["by_outcome"].get("unresolvable", 0)),
         "unresolvable_reasons": (_by_reason(unres_rows, None), dict(c.get("unresolvable_reasons") or {})),
     }
+    if "restated" in c:
+        lacking = [l["slug"] for l in L if "restated" not in l]
+        if lacking:
+            raise SystemExit(f"REFUSING: scores.json counts restatements for the corpus but not for "
+                             f"{lacking[:5]}; re-run score_predictions.py")
+        whole["restated"] = (sum(l["restated"] for l in L), c["restated"])
     bad = {k: v for k, v in whole.items() if v[0] != v[1]}
     if bad:
         raise SystemExit("REFUSING: scores.json's per-person figures do not add up to its corpus block "
@@ -1284,8 +1313,12 @@ def listed_corpus(scores_doc: dict, listed: set[str]) -> dict:
                          + "; re-run score_predictions.py")
     mine = [l for l in L if l["slug"] in listed]
     reasons = _by_reason(unres_rows, listed)
+    restated = sum(l.get("restated", 0) for l in mine)
     return {
-        "past_due": sum(l["past_due"] for l in mine),
+        # A restated statement is the same prediction as the one it repeats, so the
+        # prose counts each past-due prediction once and names the restatements apart.
+        "past_due": sum(l["past_due"] for l in mine) - restated,
+        "restated": restated,
         "eligible": sum(l["eligible"] for l in mine),
         "scored": sum(l["n_scored"] for l in mine),
         "leaders_ranked": sum(1 for l in mine if l["ranked"]),
@@ -1303,6 +1336,14 @@ def _by_reason(unres_rows: collections.Counter, slugs: "set[str] | None") -> dic
     return dict(out)
 
 
+def _run_path(d: str, scores_path: str) -> Path:
+    root = Path(scores_path).resolve().parent.parent          # <data>/predictions/scores.json
+    q = Path(d)
+    if not q.is_absolute():
+        q = root.joinpath(*(q.parts[1:] if q.parts[0] == "data" else q.parts))
+    return q
+
+
 def run_dirs(scores_doc: dict, scores_path: str) -> list[Path]:
     """The run directories scores.json was computed from, on this disk.
 
@@ -1316,12 +1357,9 @@ def run_dirs(scores_doc: dict, scores_path: str) -> list[Path]:
     if not dirs:
         raise SystemExit(f"REFUSING: {scores_path} names no run_dirs, so the page cannot read which "
                          "model set each prior; re-run score_predictions.py")
-    root = Path(scores_path).resolve().parent.parent          # <data>/predictions/scores.json
     out = []
     for d in dirs:
-        q = Path(d)
-        if not q.is_absolute():
-            q = root.joinpath(*(q.parts[1:] if q.parts[0] == "data" else q.parts))
+        q = _run_path(d, scores_path)
         if not q.is_dir():
             raise SystemExit(f"REFUSING: run directory {d} from {scores_path} is not at {q}; the page "
                              "names the models that set each prior and decided each outcome, and reads "
@@ -1339,7 +1377,11 @@ def stage_models(scores_doc: dict, scores_path: str) -> dict:
     own telemetry lists it."""
     dirs = run_dirs(scores_doc, scores_path)
     priors = SP.load_across(dirs, lambda d: R.load_sidecars(d, "prior"))
-    resol = SP.load_across(dirs, lambda d: R.load_sidecars(d, "resolve"))
+    # The resolutions a restatement manifest superseded were left out by the scorer,
+    # and are left out here the same way; each must still be on disk.
+    drop = {(_run_path(x["run"], scores_path), x["prediction_id"])
+            for x in (scores_doc.get("restatements") or {}).get("superseded_resolutions", [])}
+    resol = SP.load_across(dirs, lambda d: R.load_sidecars(d, "resolve"), drop=drop)
     prior_m, resolve_m, unverified = collections.Counter(), collections.Counter(), 0
     for row in scores_doc.get("predictions", []):
         if not row.get("scored"):
@@ -1420,10 +1462,42 @@ def e_html(x) -> str:
 # plain labels; the column's (?) help defines each one.
 BUCKETS = (("scored", "Scored"), ("not_due", "Not yet due"), ("no_deadline", "No deadline"),
            ("awaiting", "Awaiting check"), ("not_testable", "Not testable"),
-           ("unresolvable", "Couldn't check"))
+           ("unresolvable", "Couldn't check"), ("restated", "Restated"))
 UNRES_SHORT = {"no_public_evidence": "no public evidence", "criterion_ambiguous": "ambiguous criterion",
                "criterion_undirected": "no direction to test", "threshold_unmeasurable": "number not reported",
                "deadline_incoherent": "deadline makes no sense", "after_knowledge_cutoff": "too recent to check"}
+
+
+def restated_members(scores_doc: dict, by_slug: dict[str, list[dict]]) -> dict[str, str]:
+    """Each restated record on this page, mapped to its cluster's specific member.
+
+    Read from scores.json's `restatements` block, which the scorer wrote from the
+    manifest it applied, so the page and the score use one membership. A cluster
+    partly on this page refuses the render, because the drawer would show half of
+    one prediction. A row the scorer marked `restated:<id>` must agree with the
+    block, or the two halves of scores.json describe different manifests."""
+    page = {r["prediction_id"] for recs in by_slug.values() for r in recs}
+    out: dict[str, str] = {}
+    for c in (scores_doc.get("restatements") or {}).get("clusters", []):
+        on = [m for m in c["members"] if m in page]
+        if not on:
+            continue
+        if len(on) != len(c["members"]):
+            raise SystemExit(f"REFUSING: restatement cluster {c['cluster_id']} has members "
+                             f"{sorted(set(c['members']) - page)} that are no record on this page, so its "
+                             "drawer would show part of one prediction; render every corpus the scores cover")
+        out.update({m: c["specific_member"] for m in c["members"] if m != c["specific_member"]})
+    for row in scores_doc.get("predictions", []):
+        why = str(row.get("not_scored_because") or "")
+        pid = row["prediction_id"]
+        if why.startswith("restated:") and out.get(pid) != why.split(":", 1)[1]:
+            raise SystemExit(f"REFUSING: scores.json says {pid} is {why}, but its restatements block "
+                             + (f"maps it to {out[pid]}" if pid in out else "does not list it")
+                             + "; re-run score_predictions.py")
+        if pid in out and not why.startswith("restated:"):
+            raise SystemExit(f"REFUSING: {pid} is restated in scores.json's restatements block but its row "
+                             f"says {why or 'scored'}; re-run score_predictions.py")
+    return out
 
 
 def prediction_buckets(by_slug: dict[str, list[dict]], scores_doc: dict) -> tuple[dict, int]:
@@ -1448,6 +1522,7 @@ def prediction_buckets(by_slug: dict[str, list[dict]], scores_doc: dict) -> tupl
         raise SystemExit(f"REFUSING: scores.json carries {len(stray)} prediction(s) that are no record on "
                          f"this page, e.g. {stray[:3]}, so a person's buckets would not describe their "
                          "drawer; score only the corpus being rendered")
+    restated = restated_members(scores_doc, by_slug)
     out, late = {}, 0
     for slug, recs in by_slug.items():
         copies = [dict(r) for r in recs]
@@ -1455,7 +1530,11 @@ def prediction_buckets(by_slug: dict[str, list[dict]], scores_doc: dict) -> tupl
         b, unres = collections.Counter(), collections.Counter()
         for r in copies:
             row = rows.get(r["prediction_id"])
-            if row is not None:
+            if r["prediction_id"] in restated:
+                # Shown under its specific member and scored as that one, whether or
+                # not it was itself past due: one prediction, one line.
+                b["restated"] += 1
+            elif row is not None:
                 why = row.get("not_scored_because")
                 if row.get("leader_slug") != slug:
                     raise SystemExit(f"REFUSING: prediction {r['prediction_id']} is {slug}'s on the page "
@@ -1512,7 +1591,10 @@ def accepted_info(c: dict, as_of: str, min_lead_days: int) -> str:
         "before its own deadline, or with a deadline before the day it was said. "
         f"<b>{lab['unresolvable']}</b>: past due and looked at, but nothing public settles it"
         + (f" (for the people listed: {split})" if split else "")
-        + ". Hover that line for one person's split.</p>")
+        + ". Hover that line for one person's split. "
+        f"<b>{lab['restated']}</b>: the same prediction said again on another day. It is shown once, "
+        "under the earliest statement specific enough to settle it, with the others listed beneath it, "
+        "and it is scored once, as that statement.</p>")
 
 
 def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
@@ -1703,7 +1785,11 @@ def score_info(c: dict, rule: dict) -> str:
         f"than {rule['min_lead_days']} days before its own deadline, which makes it an announcement rather than a "
         f"forecast. {c['leaders_ranked']} people have the {MIN_SCORED} resolved predictions a number "
         "needs.</p>"
-        f"<p>The rule is {rule['baseline_only']}, with p held inside [{rule['clamp']}, "
+        + (f"<p>{c['restated']} more past-due statement{'s restate' if c['restated'] != 1 else ' restates'} "
+           "a prediction already counted: the same claim, said again on another day. Each prediction is "
+           "counted and scored once, as the earliest statement specific enough to settle it.</p>"
+           if c.get("restated") else "")
+        + f"<p>The rule is {rule['baseline_only']}, with p held inside [{rule['clamp']}, "
         f"{1 - rule['clamp']:.2f}] so a stated certainty cannot score infinitely.</p>`,")
 
 
@@ -1985,6 +2071,12 @@ def main(argv: list[str] | None = None) -> int:
     pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
     check_scores_are_renderable(scores_doc, pred)
+    # The drawer shows a restated record under its specific member, never as a card of its own.
+    for pid_, spec in (restated_members(scores_doc, by_slug) if scores_doc else {}).items():
+        for recs in pred.values():
+            for r in recs:
+                if r["prediction_id"] == pid_:
+                    r["restated_by"] = spec
     buckets, late = prediction_buckets(by_slug, scores_doc) if scores_doc else (None, 0)
     rows = person_rows(index, roster, hist, scores,
                        scores_doc["rule"]["min_lead_days"] if scores_doc else None, buckets)

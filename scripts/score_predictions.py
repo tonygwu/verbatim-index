@@ -34,6 +34,17 @@ Everything else is loaded, counted and reported, never silently dropped. A
 person below `MIN_SCORED_TO_RANK` keeps their number in this file and does not
 get a published one, which is how `MIN_TRANSCRIPTS_TO_RANK` already works on the
 leaderboard.
+
+RESTATEMENTS (operator decisions, 2026-09-28). A person who says the same thing on
+several days made ONE prediction. `--restatements` (or `restatements` in the
+config) names a manifest of clusters, each with its `members` and its
+`specific_member`: the earliest member specific enough on its own, which alone
+sets the statement date, the lead time, the prior and the resolution. Every other
+member stays a row, not scored because `restated:<specific_member>`, so the
+accounting still adds up. A cluster may name a fresh `resolution` run that
+supersedes named older sidecars; that is the only way one prediction may have a
+resolution in two runs, and every superseded sidecar is reported. See
+`read_restatements()` for what is refused.
 """
 from __future__ import annotations
 
@@ -81,12 +92,23 @@ def speaker_q(rec: dict) -> float | None:
     return float(p)
 
 
-def join(rows: list[dict], resolutions: dict, priors: dict) -> tuple[list[dict], collections.Counter]:
-    """One row per past-due prediction, with its points where all the parts exist."""
+def join(rows: list[dict], resolutions: dict, priors: dict,
+         restated: "dict[str, str] | None" = None) -> tuple[list[dict], collections.Counter]:
+    """One row per past-due prediction, with its points where all the parts exist.
+
+    `restated` maps a non-specific cluster member to its specific member. Such a
+    row keeps its identity and its funnel flags, carries none of its own outcome
+    or p in the scored fields (so no count sees one event twice), and records its
+    own verdict under `own_outcome` / `own_p` for audit."""
     out, why = [], collections.Counter()
+    restated = restated or {}
     for r in rows:
         pid = r["prediction_id"]
         res, pri = resolutions.get(pid), priors.get(pid)
+        own = None
+        if pid in restated:
+            own = {"own_outcome": (res or {}).get("outcome"), "own_p": (pri or {}).get("p")}
+            res = pri = None
         row = {
             "prediction_id": pid,
             "leader_slug": r["leader_slug"],
@@ -111,6 +133,11 @@ def join(rows: list[dict], resolutions: dict, priors: dict) -> tuple[list[dict],
             "q": speaker_q(r),
             "points": None, "rule": None, "scored": False, "not_scored_because": None,
         }
+        if own is not None:
+            row.update(own, not_scored_because=f"restated:{restated[pid]}", restated_by=restated[pid])
+            why["restated"] += 1
+            out.append(row)
+            continue
         if res is None:
             row["not_scored_because"] = "no_resolution"
         elif res["outcome"] == "unresolvable":
@@ -128,7 +155,11 @@ def join(rows: list[dict], resolutions: dict, priors: dict) -> tuple[list[dict],
     return out, why
 
 
-def per_leader(rows: list[dict], names: dict[str, str]) -> list[dict]:
+def is_restated(r: dict) -> bool:
+    return str(r.get("not_scored_because") or "").startswith("restated:")
+
+
+def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = False) -> list[dict]:
     by = collections.defaultdict(list)
     for r in rows:
         by[r["leader_slug"]].append(r)
@@ -141,7 +172,9 @@ def per_leader(rows: list[dict], names: dict[str, str]) -> list[dict]:
             "slug": slug,
             "name": names.get(slug, slug),
             "past_due": len(rs),
-            "eligible": sum(1 for r in rs if r["flags"]["eligible"]),
+            # A restated row is the same prediction as its specific member, so it is
+            # not a second eligible one.
+            "eligible": sum(1 for r in rs if r["flags"]["eligible"] and not is_restated(r)),
             "resolved": sum(1 for r in rs if r["outcome"] in ("occurred", "not_occurred")),
             "unresolvable": outcomes.get("unresolvable", 0),
             "occurred": outcomes.get("occurred", 0),
@@ -156,6 +189,8 @@ def per_leader(rows: list[dict], names: dict[str, str]) -> list[dict]:
             "mean_p": round(sum(r["p"] for r in scored) / len(scored), 4) if scored else None,
             "ranked": len(scored) >= MIN_SCORED_TO_RANK,
         })
+        if with_restated:
+            out[-1]["restated"] = sum(1 for r in rs if is_restated(r))
     out.sort(key=lambda l: (-(l["mean_points"] if l["ranked"] and l["mean_points"] is not None else -99),
                             l["name"]))
     return out
@@ -219,22 +254,177 @@ def _reading(gap: float, n: int) -> str:
             f"assessor as well as the speakers, and the overall mean is NOT a neutral zero")
 
 
-def load_across(runs: list[Path], loader) -> dict[str, dict]:
+def load_across(runs: list[Path], loader, drop: "set[tuple[Path, str]] | None" = None,
+                dropped: "dict | None" = None) -> dict[str, dict]:
     """One loader applied to every run, merged by prediction_id.
 
     A prediction present in two runs is REFUSED, naming both, because letting the
     later run win would settle an outcome by argument order. Within one run the
     loaders already raise on a duplicate.
+
+    `drop` names (run, prediction_id) sidecars a restatement manifest SUPERSEDES.
+    They are left out, copied into `dropped` for the report, and each must exist:
+    superseding a sidecar that is not there means the manifest describes other
+    inputs than these, and that is refused rather than read as done.
     """
+    drop = {(Path(r).resolve(), pid) for r, pid in (drop or set())}
+    elsewhere = sorted({str(r) for r, _ in drop} - {str(Path(x).resolve()) for x in runs})
+    if elsewhere:
+        raise SystemExit(f"the restatement manifest supersedes sidecars in runs that are not being read: "
+                         f"{elsewhere}")
     out: dict[str, dict] = {}
     seen: dict[str, Path] = {}
+    hit: set[tuple[Path, str]] = set()
     for run in runs:
         for pid, obj in loader(run).items():
+            key = (Path(run).resolve(), pid)
+            if key in drop:
+                hit.add(key)
+                if dropped is not None:
+                    dropped[key] = obj
+                continue
             if pid in out:
                 raise SystemExit(f"prediction {pid} has sidecars in two runs: {seen[pid]} and {run}; "
-                                 f"remove one before scoring")
+                                 f"remove one before scoring, or name the one that supersedes the "
+                                 f"other in the restatement manifest")
             out[pid], seen[pid] = obj, run
+    missing = drop - hit
+    if missing:
+        raise SystemExit("the restatement manifest supersedes sidecars that do not exist: "
+                         + "; ".join(f"{pid} in {run}" for run, pid in sorted(missing)))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Restatements
+# ---------------------------------------------------------------------------
+
+MANIFEST_KEYS = {"schema_version", "derived_from", "clusters"}
+CLUSTER_KEYS = {"cluster_id", "leader_slug", "specific_member", "members", "resolution", "note"}
+CLUSTER_REQUIRED = {"cluster_id", "leader_slug", "specific_member", "members"}
+RESOLUTION_KEYS = {"run", "supersedes", "why"}
+
+
+def read_restatements(path: Path, root: Path, runs: list[Path]) -> dict:
+    """The manifest, checked for shape. Everything wrong is refused, never skipped.
+
+    Refused here: an unknown key; a cluster with fewer than two members or a
+    repeated member; a specific member that is not a member; a member in two
+    clusters; a `resolution` whose run is not one of the scored runs, or whose
+    `supersedes` names a non-member or the fresh sidecar itself.
+    Refused later, against the data: an unknown prediction id, members of
+    different people (`check_restatement_records`), and a specific member with no
+    resolution or prior while another member has one (`check_specific_sidecars`).
+    """
+    doc = json.loads(Path(path).read_text())
+    bad = sorted(set(doc) ^ MANIFEST_KEYS)
+    if bad or doc.get("schema_version") != 1 or not isinstance(doc.get("clusters"), list):
+        raise SystemExit(f"{path}: a restatement manifest carries exactly {sorted(MANIFEST_KEYS)} with "
+                         f"schema_version 1 and a list of clusters; differs at {bad or 'schema_version/clusters'}")
+    run_set = {Path(r).resolve() for r in runs}
+    owner: dict[str, str] = {}
+    ids: set[str] = set()
+    for c in doc["clusters"]:
+        cid = c.get("cluster_id")
+        if set(c) - CLUSTER_KEYS or CLUSTER_REQUIRED - set(c):
+            raise SystemExit(f"{path}: cluster {cid!r} has keys {sorted(c)}; required "
+                             f"{sorted(CLUSTER_REQUIRED)}, allowed {sorted(CLUSTER_KEYS)}")
+        if cid in ids:
+            raise SystemExit(f"{path}: cluster id {cid} appears twice")
+        ids.add(cid)
+        m = c["members"]
+        if not isinstance(m, list) or len(m) < 2 or len(set(m)) != len(m):
+            raise SystemExit(f"{path}: cluster {cid} needs two or more distinct members, has {m}")
+        if c["specific_member"] not in m:
+            raise SystemExit(f"{path}: cluster {cid} names specific_member {c['specific_member']}, "
+                             f"which is not among its members {m}")
+        for pid in m:
+            if pid in owner:
+                raise SystemExit(f"{path}: prediction {pid} is a member of two clusters, "
+                                 f"{owner[pid]} and {cid}; a prediction restates one event at most")
+            owner[pid] = cid
+        res = c.get("resolution")
+        if res is None:
+            continue
+        if set(res) - RESOLUTION_KEYS or not res.get("run") or not res.get("supersedes") or not res.get("why"):
+            raise SystemExit(f"{path}: cluster {cid}'s resolution needs run, a non-empty supersedes "
+                             f"list and why; has {sorted(res)}")
+        if (root / res["run"]).resolve() not in run_set:
+            raise SystemExit(f"{path}: cluster {cid}'s resolution run {res['run']} is not one of the "
+                             f"runs being scored")
+        for s in res["supersedes"]:
+            if set(s) != {"run", "prediction_id"} or s["prediction_id"] not in m:
+                raise SystemExit(f"{path}: cluster {cid} supersedes {s}, which is not a member's "
+                                 f"sidecar named by run and prediction_id")
+            if (root / s["run"]).resolve() not in run_set:
+                raise SystemExit(f"{path}: cluster {cid} supersedes a sidecar in {s['run']}, which is "
+                                 f"not one of the runs being scored")
+            if (root / s["run"]).resolve() == (root / res["run"]).resolve() \
+                    and s["prediction_id"] == c["specific_member"]:
+                raise SystemExit(f"{path}: cluster {cid} supersedes the very resolution it names")
+    return doc
+
+
+def superseded_keys(doc: dict, root: Path) -> set[tuple[Path, str]]:
+    return {((root / s["run"]).resolve(), s["prediction_id"])
+            for c in doc["clusters"] for s in (c.get("resolution") or {}).get("supersedes", [])}
+
+
+def check_restatement_records(doc: dict, records: dict[str, dict]) -> None:
+    unknown = sorted(pid for c in doc["clusters"] for pid in c["members"] if pid not in records)
+    if unknown:
+        raise SystemExit(f"the restatement manifest names {len(unknown)} prediction id(s) that are no "
+                         f"accepted record in the corpora being scored: {unknown}")
+    for c in doc["clusters"]:
+        who = {pid: records[pid]["leader_slug"] for pid in c["members"]}
+        if set(who.values()) != {c["leader_slug"]}:
+            raise SystemExit(f"cluster {c['cluster_id']} is {c['leader_slug']}'s, but its members "
+                             f"belong to {who}; a restatement is one person's")
+
+
+def check_specific_sidecars(doc: dict, resolutions: dict, priors: dict, root: Path) -> None:
+    """Never borrow another member's verdict, and never lose one silently."""
+    for c in doc["clusters"]:
+        spec, others = c["specific_member"], [m for m in c["members"] if m != c["specific_member"]]
+        for stage, have in (("resolution", resolutions), ("prior", priors)):
+            if spec not in have and any(m in have for m in others):
+                raise SystemExit(
+                    f"cluster {c['cluster_id']}: the specific member {spec} has no {stage} while "
+                    f"{[m for m in others if m in have]} do; the merged prediction must be settled on "
+                    f"its own {stage}, so give it one (and name it in the manifest) rather than "
+                    f"borrowing another member's")
+        res = c.get("resolution")
+        if res is not None:
+            fresh = R.load_sidecars(root / res["run"], "resolve")
+            if spec not in fresh:
+                raise SystemExit(f"cluster {c['cluster_id']}: the manifest says {spec}'s resolution is in "
+                                 f"{res['run']}, and there is none there")
+
+
+def restatement_report(doc: dict, path_rel: str, sha: str, joined: list[dict], resolutions: dict,
+                       dropped: dict, root: Path) -> dict:
+    by = {r["prediction_id"]: r for r in joined}
+    clusters = []
+    for c in doc["clusters"]:
+        spec = c["specific_member"]
+        row = by.get(spec)
+        state = ("not_past_due" if row is None else "scored" if row["scored"]
+                 else f"not_scored:{row['not_scored_because']}")
+        outcomes = {m: resolutions[m]["outcome"] for m in c["members"] if m in resolutions}
+        entry = {"cluster_id": c["cluster_id"], "leader_slug": c["leader_slug"], "specific_member": spec,
+                 "members": list(c["members"]), "specific_member_state": state,
+                 "points": row["points"] if row else None, "member_outcomes": outcomes,
+                 "member_outcomes_disagree": len(set(outcomes.values())) > 1}
+        if c.get("resolution"):
+            entry["resolution"] = c["resolution"]
+        clusters.append(entry)
+    owner = {s["prediction_id"]: c["cluster_id"] for c in doc["clusters"]
+             for s in (c.get("resolution") or {}).get("supersedes", [])}
+    sup = [{"cluster_id": owner[pid], "run": rel(run, root), "prediction_id": pid, "outcome": obj.get("outcome")}
+           for (run, pid), obj in sorted(dropped.items(), key=lambda kv: (owner[kv[0][1]], kv[0][1], str(kv[0][0])))]
+    return {"manifest": path_rel, "manifest_sha256": sha, "derived_from": doc.get("derived_from"),
+            "clusters": clusters, "superseded_resolutions": sup,
+            "restated_rows": sum(1 for r in joined if is_restated(r))}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -252,9 +442,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--trend", action="store_const", const=True, default=None,
                     help="include undated directional claims judged over the elapsed window")
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--restatements", type=Path, default=None,
+                    help="a restatement manifest; each cluster scores once, as its specific_member")
     args = ap.parse_args(argv)
     flags = {"--run": args.run, "--predictions": args.predictions, "--index": args.index, "--as-of": args.as_of,
-             "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out}
+             "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out,
+             "--restatements": args.restatements}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -265,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
         args.index = root / cfg["index"]
         args.as_of, args.min_lead_days, args.trend = cfg["as_of"], cfg["min_lead_days"], cfg["trend"]
         args.out = root / cfg["out"]
+        args.restatements = root / cfg["restatements"] if "restatements" in cfg else None
     else:
         if not args.run or args.as_of is None:
             raise SystemExit("pass --config, or at least one --run and --as-of")
@@ -276,14 +470,26 @@ def main(argv: list[str] | None = None) -> int:
     settings = {"as_of": args.as_of, "trend": args.trend, "min_lead_days": args.min_lead_days,
                 "predictions": [rel(p, root) for p in args.predictions],
                 "runs": [rel(r, root) for r in args.run], "index": rel(args.index, root)}
+    if args.restatements is not None:
+        # Only when named, so a scoring run without a manifest writes exactly what it did before.
+        settings["restatements"] = rel(args.restatements, root)
 
     try:
         cutoff = dt.date.fromisoformat(args.as_of)
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
-    resolutions = load_across(args.run, lambda run: R.load_sidecars(run, "resolve"))
+    manifest = read_restatements(args.restatements, root, args.run) if args.restatements is not None else None
+    dropped: dict = {}
+    resolutions = load_across(args.run, lambda run: R.load_sidecars(run, "resolve"),
+                              drop=superseded_keys(manifest, root) if manifest else None, dropped=dropped)
     priors = load_across(args.run, lambda run: R.load_sidecars(run, "prior"))
+    restated: dict[str, str] = {}
+    if manifest is not None:
+        check_restatement_records(manifest, {r["prediction_id"]: r for r in P2.load(args.predictions)})
+        check_specific_sidecars(manifest, resolutions, priors, root)
+        restated = {m: c["specific_member"] for c in manifest["clusters"]
+                    for m in c["members"] if m != c["specific_member"]}
     # A prior and a resolution of one prediction must describe ONE window, or the
     # points price one question and settle another. Every production prior records
     # the window it priced; a prior that records none has nothing to compare.
@@ -299,10 +505,10 @@ def main(argv: list[str] | None = None) -> int:
     repairs = load_across(args.run, R.load_repairs)
     applied, unrepairable = R.apply_repairs(rows, repairs)
 
-    joined, why = join(rows, resolutions, priors)
+    joined, why = join(rows, resolutions, priors, restated)
     index = json.loads(args.index.read_text())
     names = {l["slug"]: l["name"] for l in index["leaders"]}
-    leaders = per_leader(joined, names)
+    leaders = per_leader(joined, names, with_restated=manifest is not None)
 
     scored = [r for r in joined if r["scored"]]
     outcomes = collections.Counter(r["outcome"] for r in joined if r["outcome"])
@@ -326,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "corpus": {
             "past_due": len(rows),
-            "eligible": sum(1 for r in rows if r["_flags"]["eligible"]),
+            "eligible": sum(1 for r in joined if r["flags"]["eligible"] and not is_restated(r)),
             "criteria_repairs_applied": applied,
             "criteria_unrepairable": unrepairable,
             "resolutions_present": len(resolutions),
@@ -345,6 +551,11 @@ def main(argv: list[str] | None = None) -> int:
         "leaders": leaders,
         "predictions": joined,
     }
+    if manifest is not None:
+        doc["corpus"]["restated"] = sum(1 for r in joined if is_restated(r))
+        doc["restatements"] = restatement_report(
+            manifest, settings["restatements"], hashlib.sha256(args.restatements.read_bytes()).hexdigest(),
+            joined, resolutions, dropped, root)
     out = args.out or (args.run[0] / "scores.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
@@ -356,6 +567,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"unresolvable: {json.dumps(c['unresolvable_reasons'], sort_keys=True)}")
     print(f"not scored: {json.dumps(c['not_scored_because'], sort_keys=True)}")
     print(f"criteria repaired: {applied} applied, {unrepairable} unrepairable")
+    if manifest is not None:
+        rs = doc["restatements"]
+        print(f"restatements: {len(rs['clusters'])} clusters, {rs['restated_rows']} past-due rows not scored "
+              f"as restated, {len(rs['superseded_resolutions'])} resolution sidecars superseded")
+        for x in rs["superseded_resolutions"]:
+            print(f"  superseded: {x['prediction_id']} in {x['run']} ({x['outcome']}) by {x['cluster_id']}")
     if nosrc:
         print(f"WARNING: {nosrc} decided outcomes cite no source")
     cal = doc["calibration"]

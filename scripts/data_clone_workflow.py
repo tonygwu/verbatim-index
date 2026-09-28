@@ -503,6 +503,11 @@ def prediction_inputs_sha256(predictions: Path) -> str:
 # rather than defaulting, because a default here silently changes a published
 # number; an unknown key refuses because it is usually a typo of a real one.
 CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index", "out")
+# Keys a config MAY carry. Absent means the feature is off, which is how every
+# config written before it behaves, so an old config keeps its exact output.
+# `restatements` names a restatement manifest (predictions/restatements.json in
+# production), relative to the data root like every other path here.
+OPTIONAL_CONFIG_KEYS = ("restatements",)
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
 
 
@@ -561,10 +566,13 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
     <data>."""
     cfg = json.loads(Path(path).read_text())
     missing = [k for k in CONFIG_KEYS if k not in cfg]
-    unknown = sorted(set(cfg) - set(CONFIG_KEYS))
+    unknown = sorted(set(cfg) - set(CONFIG_KEYS) - set(OPTIONAL_CONFIG_KEYS))
     if missing or unknown:
         raise SystemExit(f"{path}: missing keys {missing}, unknown keys {unknown}; "
-                         f"a scoring config carries exactly {list(CONFIG_KEYS)}")
+                         f"a scoring config carries exactly {list(CONFIG_KEYS)}, "
+                         f"and optionally {list(OPTIONAL_CONFIG_KEYS)}")
+    if "restatements" in cfg and not (isinstance(cfg["restatements"], str) and cfg["restatements"]):
+        raise SystemExit(f"{path}: restatements must be a path relative to the data root")
     if not isinstance(cfg["trend"], bool) or not isinstance(cfg["min_lead_days"], int) \
             or not cfg["predictions"] or not cfg["runs"]:
         raise SystemExit(f"{path}: trend must be a boolean, min_lead_days an integer, and predictions "
@@ -587,6 +595,9 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
     for pd in settings["predictions"]:
         h.update(f"records {pd} {prediction_inputs_sha256(root / pd)}\n".encode())
     h.update(f"index {hashlib.sha256((root / settings['index']).read_bytes()).hexdigest()}\n".encode())
+    if "restatements" in settings:
+        # Only when a manifest is named, so a config without one hashes exactly as before.
+        h.update(f"restatements {hashlib.sha256((root / settings['restatements']).read_bytes()).hexdigest()}\n".encode())
     for run in settings["runs"]:
         for sub in SIDECAR_DIRS:
             for f in sorted((root / run / sub).glob("*/*.json")):
@@ -595,7 +606,9 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
 
 
 def settings_from_config(cfg: dict) -> dict:
-    return {k: cfg[k] for k in ("as_of", "trend", "min_lead_days", "predictions", "runs", "index")}
+    keys = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index") + \
+        tuple(k for k in OPTIONAL_CONFIG_KEYS if k in cfg)
+    return {k: cfg[k] for k in keys}
 
 
 def scores_staleness(scores_path: Path, config_path: Path) -> str | None:
