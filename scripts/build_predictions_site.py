@@ -266,6 +266,7 @@ td.hit{text-align:right; padding-right:10px; font-family:"IBM Plex Mono",monospa
   font-size:13px; font-variant-numeric:tabular-nums; color:var(--muted)}
 td.hit .sl{color:var(--faint); padding:0 1px}
 td.hit.none{text-align:center; color:var(--faint)}
+td.hit.unranked{color:var(--faint)}
 td.sc{text-align:right; padding-right:14px; font-family:"IBM Plex Mono",monospace; font-size:14px; font-variant-numeric:tabular-nums}
 td.sc .v{font-weight:600}
 td.sc .pos{color:var(--d3)}
@@ -445,6 +446,11 @@ __METHOD__
 <script>
 const DATA = __DATA__;
 const SRC = __SRC__;
+/* score:start */
+// The rank floor, from score_predictions.MIN_SCORED_TO_RANK by way of the
+// renderer; never typed here, so the hover text cannot drift from the rule.
+const MIN_SCORED = __MIN_SCORED__;
+/* score:end */
 
 /* The prediction records are deliberately NOT in this document.
 
@@ -537,7 +543,12 @@ function spark(r){
    assume it tracks the hit rate; the fraction shows that it does not. */
 function hitCell(r){
   if (r.score_hits == null) return `<td class="hit none">&mdash;</td>`;
-  return `<td class="hit" title="${r.score_hits} of ${r.n_scored} scored predictions came true">` +
+  // Below the rank floor the fraction still prints, muted, and the hover says why
+  // the Score beside it is blank. A count needs no floor; a mean does.
+  const base = `${r.score_hits} of ${r.n_scored} scored prediction${r.n_scored === 1 ? "" : "s"} came true`;
+  const cls = r.ranked ? "hit" : "hit unranked";
+  const title = r.ranked ? base : `${base}; below the floor of ${MIN_SCORED} for a Score`;
+  return `<td class="${cls}" title="${title}">` +
     `${r.score_hits}<span class="sl">/</span>${r.n_scored}</td>`;
 }
 
@@ -986,13 +997,19 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
         if scores and (sc or {}).get("past_due", 0) < MIN_PAST_DUE_TO_LIST:
             continue
         rows.append({
-            # A person below the floor carries no number and says so on hover. Never
+            # A person below the floor carries no Score and says so on hover. Never
             # a 0: an absent score and a score of zero mean opposite things here, and
             # zero is a real and meaningful value under this rule.
             "score": (sc["mean_points"] if sc and sc["ranked"] else None),
             "n_scored": (sc["n_scored"] if sc else 0),
-            "score_hits": (sc["scored_occurred"] if sc and sc["ranked"] else None),
-            "hit_rate": (sc["hit_rate"] if sc and sc["ranked"] else None),
+            # The fraction has NO floor. It is a plain count, so 0/2 is as honest as
+            # 4/6, and the floor protects only the mean, which is noisy at small n.
+            # Until 2026-09-27 both cells went blank together, and Bill Gurley's row
+            # read as "nothing checked" over a drawer holding two resolved misses.
+            # Absent only when nothing was scored, because 0/0 is not a count.
+            "score_hits": (sc["scored_occurred"] if sc and sc["n_scored"] else None),
+            "hit_rate": (sc["hit_rate"] if sc and sc["n_scored"] else None),
+            "ranked": bool(sc and sc["ranked"]),
             "score_why": score_why(sc, min_lead_days),
             "years": h["years"], "undated": h["undated"], "early": h.get("early", 0),
             "slug": l["slug"], "name": l["name"], "role": entry.get("role") or l.get("role"), "company": l.get("company") or entry.get("company"),
@@ -1073,7 +1090,11 @@ def came_true_info(c: dict) -> str:
         "worth against how likely each call looked at the time.</p>"
         "<p>Only scored predictions are counted. The ones that could not be resolved, "
         "or that were too vague or too close to their own deadline to test, are in "
-        "neither number.</p>`,")
+        "neither number.</p>"
+        f"<p>The fraction has no floor: it appears for anyone with at least one scored "
+        f"prediction, greyed when there are fewer than {MIN_SCORED}. Score needs the "
+        f"{MIN_SCORED}, because a mean over one or two calls says more about the calls "
+        f"than the caller.</p>`,")
 
 
 SCORE_INFO_EMPTY = (
@@ -1426,6 +1447,7 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__OG_VERSION__", og_version())
         .replace("__DATA__", data_js)
         .replace("__SRC__", src_js)
+        .replace("__MIN_SCORED__", str(MIN_SCORED))
         .replace("__PRED_VERSION__", pred_version)
         .replace("__PRED_SLUGS__", safe_json(pred_slugs))
         .replace("__YEARS__", safe_json(span))

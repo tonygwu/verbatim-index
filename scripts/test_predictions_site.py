@@ -365,8 +365,28 @@ def main() -> int:
         check("HITS: a ranked person shows the count that came true over the count scored",
               d2["ada"]["score_hits"] == 4 and d2["ada"]["n_scored"] == 6,
               str((d2["ada"].get("score_hits"), d2["ada"].get("n_scored"))))
-        check("HITS: an unranked person carries no fraction, the same rule as Score",
-              d2["alan"]["score_hits"] is None, str(d2["alan"].get("score_hits")))
+        # The fraction is a plain count and needs no floor to be honest; only the
+        # mean is the noisy statistic the floor protects. Before 2026-09-27 both
+        # cells were blank below the floor, and a reader who opened Bill Gurley's
+        # drawer saw two resolved misses under a row that said nothing.
+        check("HITS: a person BELOW the floor still shows the fraction, and is marked unranked",
+              d2["alan"]["score_hits"] == 1 and d2["alan"]["n_scored"] == 2
+              and d2["alan"]["ranked"] is False and d2["alan"]["hit_rate"] == 0.5,
+              str({k: d2["alan"].get(k) for k in ("score_hits", "n_scored", "ranked", "hit_rate")}))
+        check("HITS: a ranked person is marked ranked, so the cell can tell the two apart",
+              d2["ada"]["ranked"] is True, str(d2["ada"].get("ranked")))
+        check("HITS: the cell says on hover that an unranked fraction sits below the floor",
+              "hitCell" in h2 and "r.ranked" in h2 and "below the floor" in h2
+              and '"hit unranked"' in h2)
+        none_scored = B.person_rows(idx, {}, {}, {"alan": {
+            "n_scored": 0, "mean_points": None, "ranked": False, "past_due": 2,
+            "eligible": 0, "unresolvable": 2, "scored_occurred": 0, "hit_rate": None}}, 60)
+        alan0 = next(r for r in none_scored if r["slug"] == "alan")
+        check("HITS: a person with NOTHING scored carries no fraction, never 0/0",
+              alan0["score_hits"] is None and alan0["hit_rate"] is None and alan0["n_scored"] == 0,
+              str({k: alan0[k] for k in ("score_hits", "hit_rate", "n_scored")}))
+        check("HITS: the ? panel says the fraction has no floor and Score does",
+              "no floor" in B.came_true_info({"scored": 6, "past_due": 9}), B.came_true_info({}) [:200])
         check("HITS: the numerator is STORED, never recovered from hit_rate times n",
               "scored_occurred" in json.loads(scores.read_text())["leaders"][0])
 
