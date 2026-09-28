@@ -1,24 +1,21 @@
 #!/usr/bin/env bash
-# Render from the explicitly named production checkout, then publish.
-# See docs/DATA-CLONE-WORKFLOW.md. --dry-run renders but does not publish;
-# --refresh first regenerates the production index and requires its owner.
+# Render the predictions site from a data checkout at exactly origin/main, then
+# publish. ANY clone with a push role may run it (origin mode, plan phase P5 in
+# docs/plans/shared-data-push-2026-09-27.md): the data and public checkouts must
+# both be at their freshly fetched origin/main with published paths clean, and
+# the live page must not be newer. --dry-run renders and checks, publishes
+# nothing. --first-revision-deploy allows one deploy when the live page carries
+# no revision.json yet. --refresh is gone: regenerate with data_sync.py push.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
-. scripts/deploy_source.sh
 PUBLICATION_SITE=predictions
-
-if [ "$REFRESH" -eq 1 ]; then
-  # shellcheck source=scripts/daemon_guard.sh
-  . scripts/daemon_guard.sh
-  require_daemon_clone || exit 1
-  $PY scripts/aggregate_predictions.py --predictions "${PRODUCTION_DATA}/predictions" --roster "${PRODUCTION_DATA}/roster/final.json" \
-      --transcripts "${PRODUCTION_DATA}/transcripts_open" --transcripts "${PRODUCTION_DATA}/transcripts_web" --out "${PRODUCTION_DATA}/predictions/index.json"
-fi
+PUBLICATION_MODE=origin
+. scripts/deploy_source.sh
 
 PUBLICATION_BEFORE="$(publication_fingerprint)"
 
-[ -f "${PRODUCTION_DATA}/predictions/index.json" ] || { echo "no ${PRODUCTION_DATA}/predictions/index.json; run aggregate_predictions.py first (from repo-0, or --refresh there)" >&2; exit 1; }
+[ -f "${PRODUCTION_DATA}/predictions/index.json" ] || { echo "no ${PRODUCTION_DATA}/predictions/index.json; regenerate it and push with scripts/data_sync.py push" >&2; exit 1; }
 
 # The Score column is data-driven and OPTIONAL. Without a scores file the page
 # renders the column empty and says why, which is the honest default. With one,
@@ -81,6 +78,12 @@ if scores.exists():
 EOF
 
 check_publication_unchanged
+
+# The page's own provenance, served no-store (site-predictions/_headers) so the
+# next deploy can refuse to replace a newer page with an older one.
+$PY -c 'import json, sys; json.dump({"data_revision": sys.argv[1], "public_revision": sys.argv[2], "data_date": sys.argv[3]}, open("site-predictions/revision.json", "w"), indent=1, sort_keys=True)' \
+  "$DATA_REVISION" "$PUBLIC_REVISION" "$DATA_DATE"
+check_origin_before_publish
 
 if [ "$DRY" -eq 1 ]; then
   echo "--dry-run: rendered site-predictions/index.html, published nothing"

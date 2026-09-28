@@ -157,7 +157,7 @@ def main():
         # so test_deploy_floor.py now asserts that every script deploy.sh invokes
         # appears in it. Add to both, or that assertion fails.
         for name in ('data_clone_workflow.py', 'study_profile.py', 'daemon_guard.sh', 'deploy_source.sh',
-                     'deploy.sh', 'deploy_predictions.sh', 'publication_floor.py'):
+                     'deploy.sh', 'deploy_predictions.sh', 'publication_floor.py', 'data_sync.py'):
             shutil.copy2(REPO / 'scripts' / name, a / 'scripts' / name)
         # data_clone_workflow resolves the production key through the study profile.
         shutil.copytree(REPO / 'profiles', a / 'profiles')
@@ -214,7 +214,11 @@ out.write_text('rendered from explicit production source')
 """
             for name in ('build_site.py', 'build_predictions_site.py'):
                 (a / 'scripts' / name).write_text(renderer)
-            for script in ('deploy.sh', 'deploy_predictions.sh'):
+            # Owner mode is the leaderboard's. The predictions site deploys in
+            # origin mode since plan phase P5, which needs a public remote this
+            # fixture does not have; test_deploy_predictions_origin.py covers it,
+            # including the staleness refusals that used to live below.
+            for script in ('deploy.sh',):
                 p = run('bash', a / 'scripts' / script, '--production-data', live,
                         '--data-revision', revision, '--dry-run')
                 assert 'published nothing' in p.stdout and 'content sha256' in p.stdout
@@ -225,41 +229,6 @@ out.write_text('rendered from explicit production source')
             p = run('bash', a / 'scripts/deploy.sh', '--production-data', live,
                     '--data-revision', revision, '--dry-run', ok=False)
             assert p.returncode and 'changed during rendering' in p.stderr, p.stderr
-            # Existing count drift blocks publication before npx too.
-            drift = {'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
-                     'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 0,
-                     'roster_sha256': roster_digest, 'transcripts_listing_sha256': listing_digest,
-                     'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}
-            (live / 'predictions/index.json').write_text(json.dumps(drift))
-            p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
-                    '--data-revision', revision, '--dry-run', ok=False)
-            assert p.returncode and 'stale production index' in p.stderr, p.stderr
-            # An index from before the digest existed cannot prove freshness, so it is refused.
-            del drift['inputs_sha256']
-            drift['files_read'] = 0
-            (live / 'predictions/index.json').write_text(json.dumps(drift))
-            p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
-                    '--data-revision', revision, '--dry-run', ok=False)
-            assert p.returncode and 'refresh the production index' in p.stderr, p.stderr
-            # A same-count rewrite blocks publication too. Verification and market
-            # consensus rewrite records in place, so on 2026-09-13 an index built
-            # before verification matched 666 files / 1494 records on disk while
-            # describing 11 accepted predictions instead of 475.
-            rec = live / 'predictions/some-leader/some-talk.jsonl'
-            rec.parent.mkdir(parents=True)
-            rec.write_text('{"accepted": false}\n')
-            (live / 'predictions/index.json').write_text(json.dumps({
-                'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
-                'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 1,
-                'roster_sha256': roster_digest, 'transcripts_listing_sha256': listing_digest,
-                'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}))
-            p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
-                    '--data-revision', revision, '--dry-run')
-            assert 'published nothing' in p.stdout, p.stdout + p.stderr
-            rec.write_text('{"accepted": true }\n')
-            p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
-                    '--data-revision', revision, '--dry-run', ok=False)
-            assert p.returncode and 'stale production index' in p.stderr, p.stdout + p.stderr
         finally:
             os.environ['PATH'] = old_path
         run_dir = D.new_run(a, 'unique-new-run', 'astra', 'fable', 'gpt-6-astra')

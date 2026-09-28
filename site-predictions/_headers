@@ -1,0 +1,6 @@
+# Cloudflare Workers static assets read this file and do not serve it.
+# revision.json names the data and public revisions the live page was built
+# from. deploy_predictions.sh reads it back before every publish and refuses to
+# overwrite a newer page, so it must never come from a cache.
+/revision.json
+  Cache-Control: no-store

@@ -93,6 +93,99 @@ def publication_source(repo: Path, source: Path | None, revision: str | None,
     return source
 
 
+# ---------------------------------------------------------------------------
+# Origin mode: any push-role clone may publish the PREDICTIONS site, but only
+# exactly origin/main, clean, with public code at public origin/main. The
+# leaderboard and pundits sites render from the daemon clone's uncommitted
+# output, so they keep publication_source()'s owner mode.
+# See docs/plans/shared-data-push-2026-09-27.md, phase P5.
+# ---------------------------------------------------------------------------
+
+ORIGIN_SITES = ('predictions',)
+# What the page reads plus what its index counts: all must be committed.
+ORIGIN_CLEAN_PATHS = {'predictions': ['predictions', 'roster/final.json', 'transcripts_open', 'transcripts_web']}
+LIVE_REVISION_URL = 'https://verbatim-predictions.tonygwu.com/revision.json'
+
+
+def origin_publication_source(repo: Path, source: Path | None, revision: str | None, site: str,
+                              fetch: bool = True) -> Path:
+    if site not in ORIGIN_SITES:
+        raise RuntimeError(f'{site} publishes from its owner checkout only')
+    if source is None or not revision:
+        raise RuntimeError('explicit --production-data and --data-revision are required')
+    source = source.resolve()
+    if git(source, 'rev-parse', '--show-toplevel') != str(source):
+        raise RuntimeError('production source must be a private repository root')
+    who = role(source)
+    if who not in ('contributor', 'daemon'):
+        # The owner checkout before it carries role=daemon (plan phase P4b).
+        try:
+            publication_source(repo, source, revision)
+        except RuntimeError as exc:
+            raise RuntimeError(f'production source must be a contributor or daemon checkout, or the owner '
+                               f'checkout; {source} has role {who or "unset"} ({exc})')
+    if fetch:
+        git(source, 'fetch', '-q', 'origin')
+        git(repo, 'fetch', '-q', 'origin')
+    head, main = git(source, 'rev-parse', 'HEAD'), git(source, 'rev-parse', 'origin/main')
+    if not re.fullmatch(r'[0-9a-f]{40}', revision) or revision != head:
+        raise RuntimeError('production data revision must be the full current HEAD SHA')
+    if head != main:
+        raise RuntimeError(f'data HEAD {head[:12]} is not origin/main {main[:12]}; push it with '
+                           f'scripts/data_sync.py push, or pull, before publishing')
+    # Read unstripped and NUL-separated: git() strips its output, which would eat
+    # the leading space of the first porcelain entry and misname its path.
+    status = subprocess.run(['git', '-C', str(source), 'status', '--porcelain', '-z', '--untracked-files=all',
+                             '--', *ORIGIN_CLEAN_PATHS[site]], capture_output=True, text=True, check=True).stdout
+    dirty = [entry[3:] for entry in status.split('\0') if len(entry) > 3]
+    if dirty:
+        raise RuntimeError('uncommitted or untracked files in published paths: ' + ', '.join(dirty))
+    public_head, public_main = git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main')
+    if public_head != public_main:
+        raise RuntimeError(f'public HEAD {public_head[:12]} is not public origin/main {public_main[:12]}; '
+                           f'the page renders the code it ships with, so push or pull the public clone first')
+    if git(repo, 'status', '--porcelain', '--untracked-files=no'):
+        raise RuntimeError('the public clone has uncommitted tracked changes')
+    return source
+
+
+def origin_unmoved(repo: Path, source: Path, data_revision: str, public_revision: str) -> None:
+    git(source, 'fetch', '-q', 'origin')
+    git(repo, 'fetch', '-q', 'origin')
+    data_main, public_main = git(source, 'rev-parse', 'origin/main'), git(repo, 'rev-parse', 'origin/main')
+    if data_main != data_revision:
+        raise RuntimeError(f'data origin/main moved to {data_main[:12]} during rendering; render again from it')
+    if public_main != public_revision:
+        raise RuntimeError(f'public origin/main moved to {public_main[:12]} during rendering; pull and render again')
+
+
+def live_revision_error(source: Path, revision: str, first: bool) -> str | None:
+    """None when the live page's data revision is an ancestor of ours. wrangler
+    publishes last-writer-wins, so this is what stops an older render replacing a
+    newer page. VI_LIVE_REVISION_URL is a TEST SEAM only."""
+    import urllib.request
+    url = os.environ.get('VI_LIVE_REVISION_URL', LIVE_REVISION_URL)
+    try:
+        req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache'})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            live = json.loads(resp.read())['data_revision']
+    except Exception as exc:  # noqa: BLE001 - any failure to read is a refusal, reported whole
+        if first:
+            return None
+        return (f'cannot read the live revision from {url} ({exc}); pass --first-revision-deploy only for '
+                f'the first deploy that publishes revision.json')
+    if not isinstance(live, str) or not re.fullmatch(r'[0-9a-f]{40}', live):
+        return f'the live revision {live!r} is not a full SHA'
+    p = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', live, revision],
+                       capture_output=True, text=True)
+    if p.returncode == 0:
+        return None
+    if p.returncode == 1:
+        return (f'the live page was built from {live[:12]}, which is not an ancestor of {revision[:12]}; '
+                f'publishing would replace a newer page')
+    return f'the live revision {live[:12]} is not in this checkout history; fetch, then retry'
+
+
 def tree_hashes(root: Path) -> dict[str, str]:
     if root.is_symlink():
         raise RuntimeError(f'symlink is not an owned regular output: {root}')
@@ -587,6 +680,15 @@ def main() -> int:
     p.add_argument('--site', choices=sorted(SITE_SHELVES))
     p.add_argument('--study', default=os.environ.get('STUDY') or 'leaders')
     p.add_argument('--fingerprint', action='store_true')
+    p.add_argument('--origin', action='store_true', help='origin mode: any push-role clone, exactly origin/main')
+    u = sub.add_parser('origin-unmoved')
+    u.add_argument('--production-data', type=Path, required=True)
+    u.add_argument('--data-revision', required=True)
+    u.add_argument('--public-revision', required=True)
+    lv = sub.add_parser('live-revision')
+    lv.add_argument('--production-data', type=Path, required=True)
+    lv.add_argument('--data-revision', required=True)
+    lv.add_argument('--first-revision-deploy', action='store_true')
     args = ap.parse_args()
     try:
         if args.command == 'setup':
@@ -595,6 +697,16 @@ def main() -> int:
             print(new_run(REPO, args.name, args.extractor, args.verifier, args.astra_model))
         elif args.command == 'consumers':
             print(json.dumps(active_consumers(REPO), indent=2))
+        elif args.command == 'origin-unmoved':
+            origin_unmoved(REPO, args.production_data.resolve(), args.data_revision, args.public_revision)
+        elif args.command == 'live-revision':
+            why = live_revision_error(args.production_data.resolve(), args.data_revision, args.first_revision_deploy)
+            if why:
+                raise RuntimeError(why)
+        elif args.origin:
+            source = origin_publication_source(REPO, args.production_data, args.data_revision, args.site,
+                                               fetch=not args.fingerprint)
+            print(fingerprint(source, args.site) if args.fingerprint else source)
         else:
             source = publication_source(REPO, args.production_data, args.data_revision, args.study)
             print(fingerprint(source, args.site) if args.fingerprint else source)

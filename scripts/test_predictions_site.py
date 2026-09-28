@@ -847,8 +847,15 @@ def main() -> int:
     check("DEPLOY: renders before deploying, with -c and never a bare wrangler deploy",
           src_sh.index("build_predictions_site.py") < src_sh.index("npx wrangler deploy") and "-c wrangler.predictions.toml" in src_sh
           and not re.search(r"wrangler deploy\s*$", src_sh, re.M))
-    check("DEPLOY: --refresh is daemon-guarded before aggregation, and aggregation precedes the build",
-          src_sh.index('if [ "$REFRESH" -eq 1 ]') < src_sh.index("require_daemon_clone") < src_sh.index("aggregate_predictions.py") < src_sh.index("build_predictions_site.py"))
+    # Origin mode since plan phase P5 (docs/plans/shared-data-push-2026-09-27.md):
+    # any push-role clone deploys exactly origin/main, and a deploy never
+    # regenerates data (data_sync.py push does). Behaviour is tested end to end
+    # in test_deploy_predictions_origin.py; this pins the order in the script.
+    check("DEPLOY: origin mode is declared before deploy_source.sh, the origin checks precede npx, "
+          "and a deploy regenerates nothing",
+          src_sh.index("PUBLICATION_MODE=origin") < src_sh.index(". scripts/deploy_source.sh")
+          and src_sh.index("check_origin_before_publish") < src_sh.index("npx wrangler deploy")
+          and "$PY scripts/aggregate_predictions.py" not in src_sh and "require_daemon_clone" not in src_sh)
     check("DEPLOY: staleness line and unknown-argument handling are present", "STALE" in src_sh and "cannot be checked" in src_sh and ". scripts/deploy_source.sh" in src_sh and "unknown argument" in (REPO / "scripts/deploy_source.sh").read_text())
     p = subprocess.run(["bash", str(dep), "--nonsense"], capture_output=True, text=True, cwd=REPO)
     check("DEPLOY: an unknown flag exits 2 before anything runs", p.returncode == 2 and "unknown argument" in p.stderr)
