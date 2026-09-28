@@ -11,7 +11,8 @@ What this pins, end to end through the CLI:
   - sidecars from two runs are joined, so a prediction resolved in either scores;
   - the SAME prediction in two runs is refused, naming it, never silently
     resolved by whichever run was read last;
-  - every run read is recorded in scores.json under `run_dirs`, and `run_dir`
+  - every run read is recorded in scores.json under `run_dirs`, relative to the
+    data root (the parent of the first predictions directory), and `run_dir`
     keeps its old meaning, the first run, so an existing reader is unaffected;
   - one `--run` behaves exactly as before.
 """
@@ -88,7 +89,7 @@ def main() -> int:
         doc1 = json.loads((d / "one.json").read_text()) if one.returncode == 0 else {}
         check("ONE RUN: only the prediction resolved in that run scores",
               doc1.get("corpus", {}).get("scored") == 1, str(doc1.get("corpus")))
-        check("ONE RUN: run_dir is the run, as before", doc1.get("run_dir") == str(a), str(doc1.get("run_dir")))
+        check("ONE RUN: run_dir is the run, relative to the data root", doc1.get("run_dir") == "run-a", str(doc1.get("run_dir")))
 
         both = score(a, b, out=d / "both.json")
         check("TWO RUNS: exits 0", both.returncode == 0, both.stderr[-600:])
@@ -97,8 +98,8 @@ def main() -> int:
         check("TWO RUNS: a prediction resolved in either run scores",
               c.get("scored") == 2 and c.get("resolutions_present") == 2 and c.get("priors_present") == 2, str(c))
         check("TWO RUNS: every run read is recorded, in the order given",
-              doc2.get("run_dirs") == [str(a), str(b)], str(doc2.get("run_dirs")))
-        check("TWO RUNS: run_dir keeps its meaning, the first run", doc2.get("run_dir") == str(a))
+              doc2.get("run_dirs") == ["run-a", "run-b"], str(doc2.get("run_dirs")))
+        check("TWO RUNS: run_dir keeps its meaning, the first run", doc2.get("run_dir") == "run-a")
 
         clash = score(a, dup, out=d / "clash.json")
         check("DUPLICATE: the same prediction in two runs is refused",

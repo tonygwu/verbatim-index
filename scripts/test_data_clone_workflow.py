@@ -191,12 +191,18 @@ def main():
             # roster_sha256 joins the fixture for the same reason inputs_sha256
             # did: the deploy refuses an index that cannot prove it describes the
             # current roster, and aggregate_predictions unions roster slugs.
+            # The index fingerprints the transcript roots it counts, so a live
+            # checkout carries both; empty roots list nothing, which is a listing.
+            for root in ('transcripts_open', 'transcripts_web'):
+                (live / root).mkdir(exist_ok=True)
+            listing_digest = D.listing_sha256(D.transcript_listing(
+                [live / 'transcripts_open', live / 'transcripts_web']))
             roster_digest = hashlib.sha256(
                 (live / 'roster/final.json').read_bytes()).hexdigest()
             (live / 'predictions/index.json').write_text(json.dumps({
                 'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
                 'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 0, 'records_read': 0,
-                'roster_sha256': roster_digest,
+                'roster_sha256': roster_digest, 'transcripts_listing_sha256': listing_digest,
                 'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}))
             renderer = """import pathlib, sys
 args = sys.argv[1:]
@@ -222,7 +228,7 @@ out.write_text('rendered from explicit production source')
             # Existing count drift blocks publication before npx too.
             drift = {'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
                      'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 0,
-                     'roster_sha256': roster_digest,
+                     'roster_sha256': roster_digest, 'transcripts_listing_sha256': listing_digest,
                      'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}
             (live / 'predictions/index.json').write_text(json.dumps(drift))
             p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
@@ -245,7 +251,7 @@ out.write_text('rendered from explicit production source')
             (live / 'predictions/index.json').write_text(json.dumps({
                 'leaders': [], 'corpus': {'accepted': 0, 'transcripts_with_accepted': 0},
                 'run_ids_seen': [], 'generated_at_utc': 'fixture', 'files_read': 1, 'records_read': 1,
-                'roster_sha256': roster_digest,
+                'roster_sha256': roster_digest, 'transcripts_listing_sha256': listing_digest,
                 'inputs_sha256': D.prediction_inputs_sha256(live / 'predictions')}))
             p = run('bash', a / 'scripts/deploy_predictions.sh', '--production-data', live,
                     '--data-revision', revision, '--dry-run')

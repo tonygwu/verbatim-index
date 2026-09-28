@@ -38,53 +38,46 @@ else
   echo "scores: none at ${SCORES}; the Score column will render empty"
 fi
 
-$PY scripts/build_predictions_site.py --index "${PRODUCTION_DATA}/predictions/index.json" --predictions "${PRODUCTION_DATA}/predictions" \
+# The page's date is the data revision's commit time, in UTC, never a clock.
+DATA_DATE="$($PY -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).date())' \
+  "$(git -C "$PRODUCTION_DATA" show -s --format=%ct "$DATA_REVISION")")" || { echo "REFUSING: cannot read the data revision's date" >&2; exit 1; }
+$PY scripts/build_predictions_site.py --data-date "$DATA_DATE" --index "${PRODUCTION_DATA}/predictions/index.json" --predictions "${PRODUCTION_DATA}/predictions" \
     --roster "${PRODUCTION_DATA}/roster/final.json" --out site-predictions/index.html \
     ${SCORES_ARG[@]+"${SCORES_ARG[@]}"}   # empty-array-safe: bash 3.2 calls a bare "${a[@]}" unbound under set -u
 
-# What is about to ship, and whether the index is behind the files on disk.
+# What is about to ship, and whether any derived file is behind its inputs. The
+# checks live in data_clone_workflow (index_staleness, scores_staleness), which
+# imports no model harness, so data_sync.py applies exactly the same ones.
 $PY - "$PRODUCTION_DATA" <<'EOF'
-import hashlib, json, pathlib, sys
+import json, pathlib, sys
 sys.path.insert(0, "scripts")
-from data_clone_workflow import prediction_inputs_sha256
+import data_clone_workflow as D
 data = pathlib.Path(sys.argv[1])
 idx = json.load((data / "predictions/index.json").open())
 c = idx["corpus"]
 print(f"about to publish {len(idx['leaders'])} people, {c['accepted']} accepted predictions from "
-      f"{c['transcripts_with_accepted']} transcripts, index generated {idx['generated_at_utc']}, "
-      f"runs {len(idx['run_ids_seen'])}")
-files = [p for p in (data / "predictions").glob("*/*.jsonl") if not p.parent.name.startswith("_")]
-lines = sum(1 for p in files for _ in open(p))
-digest = prediction_inputs_sha256(data / "predictions")
-roster_digest = hashlib.sha256((data / "roster/final.json").read_bytes()).hexdigest()
-if any(k not in idx for k in ("files_read", "records_read", "inputs_sha256")):
-    print("index.json predates inputs_sha256; staleness cannot be checked")
+      f"{c['transcripts_with_accepted']} transcripts, runs {len(idx['run_ids_seen'])}")
+why = D.index_staleness(idx, data / "predictions", data / "roster/final.json",
+                        [data / "transcripts_open", data / "transcripts_web"])
+if why and "lacks" in why:
+    print(why)
     raise SystemExit("REFUSING: refresh the production index before publication")
-elif "roster_sha256" not in idx:
-    # THE ROSTER IS AN INPUT inputs_sha256 cannot see. aggregate_predictions.py
-    # unions roster slugs with every slug that has records, so the roster can
-    # change while every record stays byte-identical and all three counts match.
-    print("index.json predates roster_sha256, so a roster change since it was "
-          "built cannot be detected")
-    raise SystemExit("REFUSING: re-run aggregate_predictions.py from repo-0")
-elif idx["roster_sha256"] != roster_digest:
-    print(f"STALE: the roster changed since the index was built "
-          f"(index {idx['roster_sha256'][:12]}, disk {roster_digest[:12]}). The "
-          f"index unions roster slugs, so it lists the wrong people even though "
-          f"every record is unchanged; re-run aggregate_predictions.py from repo-0")
+if why:
+    print(f"STALE: {why}; re-run aggregate_predictions.py and commit the index")
     raise SystemExit("REFUSING: stale production index")
-elif (idx["files_read"], idx["records_read"]) != (len(files), lines):
-    print(f"STALE: index read {idx['files_read']} files / {idx['records_read']} records, disk has {len(files)} / {lines}; "
-          f"re-run aggregate_predictions.py from repo-0 before deploying")
-    raise SystemExit("REFUSING: stale production index")
-elif idx["inputs_sha256"] != digest:
-    # Verification and market consensus rewrite records in place, so counts can
-    # match while the index describes an older corpus.
-    print(f"STALE: counts match ({len(files)} files, {lines} records) but record contents changed since the index "
-          f"was built (index {idx['inputs_sha256'][:12]}, disk {digest[:12]}); re-run aggregate_predictions.py from repo-0")
-    raise SystemExit("REFUSING: stale production index")
-else:
-    print(f"current: index matches disk ({len(files)} files, {lines} records, inputs sha256 {digest[:12]})")
+print(f"current: index matches disk ({idx['files_read']} files, {idx['records_read']} records, "
+      f"inputs sha256 {idx['inputs_sha256'][:12]})")
+scores = data / "predictions/scores.json"
+if scores.exists():
+    config = data / "predictions/scoring.json"
+    if not config.exists():
+        raise SystemExit("REFUSING: scores.json has no predictions/scoring.json beside it, so its inputs "
+                         "cannot be checked; commit the scoring config and regenerate scores.json from it")
+    why = D.scores_staleness(scores, config)
+    if why:
+        print(f"STALE scores: {why}")
+        raise SystemExit("REFUSING: stale scores.json; re-run score_predictions.py --config and commit it")
+    print("current: scores.json matches its config and inputs")
 EOF
 
 check_publication_unchanged

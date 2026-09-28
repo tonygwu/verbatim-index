@@ -1271,6 +1271,13 @@ def write_predictions(pred_dir: Path, bodies: dict[str, str]) -> None:
         print(f"  removed {len(stale)} file(s) no longer in the index: {', '.join(stale)}")
 
 
+def _iso_date(value: str) -> str:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a YYYY-MM-DD date")
+
+
 def nice_date(iso: str) -> str:
     return datetime.strptime(iso[:10], "%Y-%m-%d").strftime("%-d %B %Y")
 
@@ -1349,13 +1356,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--predictions", default="data/predictions")
     ap.add_argument("--roster", default="data/roster/final.json")
     ap.add_argument("--out", default="site-predictions/index.html")
+    # The page's date is the DATA's date, passed in explicitly. The deploy reads it
+    # from the published data revision's commit time in UTC. It used to come from
+    # index.json's generated_at_utc, which made the index change on every rebuild
+    # and conflict on every concurrent push; see test_derived_determinism.py.
+    ap.add_argument("--data-date", required=True, type=_iso_date,
+                    help="YYYY-MM-DD, the UTC date of the data revision being published")
     ap.add_argument("--scores", default=None,
                     help="scores.json from score_predictions.py; without it the Score column "
                          "renders empty and the page says why, which is the honest default")
     args = ap.parse_args(argv)
 
     index = json.loads(Path(args.index).read_text())
-    for k in ("generated_at_utc", "run_ids_seen", "contracts_seen", "leaders", "corpus", "coverage", "files_read", "records_read"):
+    for k in ("run_ids_seen", "contracts_seen", "leaders", "corpus", "coverage", "files_read", "records_read"):
         if k not in index:
             raise SystemExit(f"index.json lacks {k}; re-run aggregate_predictions.py")
     if any("transcripts_extracted_in_corpus" not in l for l in index["leaders"]):
@@ -1428,7 +1441,7 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__SCORE_INFO__", score_info(scores_doc["corpus"], scores_doc["rule"]) if scores_doc
                  else SCORE_INFO_EMPTY)
         .replace("__METHOD__", build_method(index, loaded))
-        .replace("__GENDATE__", nice_date(index["generated_at_utc"]))
+        .replace("__GENDATE__", nice_date(args.data_date))
         .replace("__N_PEOPLE__", str(len(rows)))
         .replace("__N_TX__", str(index["coverage"]["extract"].get("ok", 0)))
         .replace("__N_ACCEPTED__", str(c["accepted"]))

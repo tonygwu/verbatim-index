@@ -9,11 +9,15 @@ sure none is named like it does. Someone with more transcripts has more
 predictions; that is a fact about the corpus, not about foresight.
 
 Counters are sorted dicts and the leader list is sorted by slug, so two runs
-over the same tree are byte-identical. `files_read` and `records_read` are
+over the same tree are byte-identical. The index carries no wall-clock field and
+no absolute path, so the same tree rebuilt in another clone gives the same bytes:
+several clones push the data repo's main, and a derived file that changes on
+every rebuild would conflict on every concurrent push. `files_read` and `records_read` are
 counted before any filter so a deploy can check staleness against disk.
 `inputs_sha256` digests the record and sidecar bytes as well, because
 verification and market consensus rewrite records in place and leave every
-count unchanged.
+count unchanged. `roster_sha256` and `transcripts_listing_sha256` cover the
+other two inputs, and `staleness()` checks all of them against disk.
 
   .venv/bin/python scripts/aggregate_predictions.py
 """
@@ -29,7 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import predictions_lib as L  # noqa: E402
-from data_clone_workflow import prediction_inputs_sha256  # noqa: E402
+from data_clone_workflow import (  # noqa: E402
+    index_staleness as staleness, listing_sha256, prediction_inputs_sha256, transcript_listing,
+)
 
 FORBIDDEN_KEY_WORDS = ("accuracy", "accurate", "score", "rank", "resolved", "correct", "brier", "edge", "skill")
 
@@ -175,11 +181,7 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Pat
     # missing raises: counting it as zero is how "22 of 15" reached the page.
     roots = [] if transcripts_root is None else (
         [transcripts_root] if isinstance(transcripts_root, Path) else list(transcripts_root))
-    in_corpus: set[tuple[str, str]] = set()
-    for root in roots:
-        if not root.is_dir():
-            raise FileNotFoundError(f"transcript root {root} does not exist")
-        in_corpus.update((p.parent.name, p.stem) for p in root.glob("*/*.json"))
+    in_corpus = transcript_listing(roots)
     on_disk = Counter(slug for slug, _ in in_corpus)
 
     leaders = []
@@ -216,8 +218,6 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Pat
     }
     return {
         "schema_version": L.SCHEMA_VERSION,
-        "generated_at_utc": L.utc_now(),
-        "predictions_root": str(pred_root),
         "files_read": len(files),
         "records_read": records_read,
         "inputs_sha256": prediction_inputs_sha256(pred_root),
@@ -230,6 +230,9 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Pat
         # "current".
         "roster_sha256": (hashlib.sha256(Path(roster_path).read_bytes()).hexdigest()
                           if roster_path else None),
+        # The transcript roots are an input too: coverage counts them. Names only,
+        # because the index reads nothing inside a transcript file.
+        "transcripts_listing_sha256": listing_sha256(in_corpus) if roots else None,
         "run_ids_seen": sorted(run_ids),
         "contracts_seen": {"extraction": sorted(contracts_x), "verification": sorted(contracts_v), "matching": sorted(contracts_m)},
         "corpus": corpus,

@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Join resolutions and priors into points, and aggregate them per person.
 
+    .venv/bin/python scripts/score_predictions.py --config data/predictions/scoring.json
     .venv/bin/python scripts/score_predictions.py --run data/predictions/_experiments/<run> \
         --as-of 2026-09-14 --out data/predictions/_experiments/<run>/scores.json
+
+`--config` reads every setting from a committed file, so any clone regenerates
+the published scores.json identically. The output carries no wall-clock field,
+records every path relative to the data root (the parent of the first
+predictions directory), and fingerprints every input it read in
+`inputs_sha256`, which `scores_staleness()` checks.
 
 Spends no model calls. Everything here is arithmetic over what the two stages
 already wrote, so it can be re-run freely and its numbers re-derived.
@@ -33,6 +40,7 @@ from __future__ import annotations
 import argparse
 import collections
 import datetime as dt
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -42,6 +50,10 @@ import phase2_resolvability as P2  # noqa: E402
 import prediction_score as PS  # noqa: E402
 import resolution_lib as R  # noqa: E402
 from resolve_predictions import select  # noqa: E402
+from data_clone_workflow import (  # noqa: E402
+    load_scoring_config as load_config, scoring_rel as rel, score_inputs_sha256, scores_staleness,
+)
+
 
 # THREE, the operator's call on 2026-09-16. It was five, chosen to match
 # MIN_TRANSCRIPTS_TO_RANK on the leaderboard, which was a default rather than a
@@ -227,19 +239,43 @@ def load_across(runs: list[Path], loader) -> dict[str, dict]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--run", type=Path, action="append", required=True,
+    ap.add_argument("--config", type=Path, default=None,
+                    help="a scoring config (predictions/scoring.json); replaces every flag below")
+    ap.add_argument("--run", type=Path, action="append", default=None,
                     help="an experiment run directory; repeat it to read several runs as one. "
                          "A prediction with sidecars in two runs is refused")
     ap.add_argument("--predictions", type=Path, action="append", default=None,
                     help="a corpus directory; repeat it to score several corpora together")
-    ap.add_argument("--index", type=Path, default=Path("data/predictions/index.json"))
-    ap.add_argument("--as-of", required=True)
-    ap.add_argument("--min-lead-days", type=int, default=P2.MIN_LEAD_DAYS)
-    ap.add_argument("--trend", action="store_true",
+    ap.add_argument("--index", type=Path, default=None, help="default data/predictions/index.json")
+    ap.add_argument("--as-of", default=None)
+    ap.add_argument("--min-lead-days", type=int, default=None, help=f"default {P2.MIN_LEAD_DAYS}")
+    ap.add_argument("--trend", action="store_const", const=True, default=None,
                     help="include undated directional claims judged over the elapsed window")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
-    args.predictions = args.predictions or [Path("data/predictions")]
+    flags = {"--run": args.run, "--predictions": args.predictions, "--index": args.index, "--as-of": args.as_of,
+             "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out}
+    if args.config is not None:
+        mixed = [k for k, v in flags.items() if v is not None]
+        if mixed:
+            raise SystemExit(f"--config replaces {mixed}; pass one or the other")
+        root, cfg = load_config(args.config)
+        args.run = [root / r for r in cfg["runs"]]
+        args.predictions = [root / p for p in cfg["predictions"]]
+        args.index = root / cfg["index"]
+        args.as_of, args.min_lead_days, args.trend = cfg["as_of"], cfg["min_lead_days"], cfg["trend"]
+        args.out = root / cfg["out"]
+    else:
+        if not args.run or args.as_of is None:
+            raise SystemExit("pass --config, or at least one --run and --as-of")
+        args.predictions = args.predictions or [Path("data/predictions")]
+        args.index = args.index or Path("data/predictions/index.json")
+        args.min_lead_days = P2.MIN_LEAD_DAYS if args.min_lead_days is None else args.min_lead_days
+        args.trend = bool(args.trend)
+    root = args.predictions[0].resolve().parent
+    settings = {"as_of": args.as_of, "trend": args.trend, "min_lead_days": args.min_lead_days,
+                "predictions": [rel(p, root) for p in args.predictions],
+                "runs": [rel(r, root) for r in args.run], "index": rel(args.index, root)}
 
     try:
         cutoff = dt.date.fromisoformat(args.as_of)
@@ -264,10 +300,11 @@ def main(argv: list[str] | None = None) -> int:
     nosrc = sum(1 for r in joined if r["outcome"] in ("occurred", "not_occurred") and not r["sources"])
 
     doc = {
-        "generated_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "as_of": args.as_of,
-        "run_dir": str(args.run[0]),
-        "run_dirs": [str(r) for r in args.run],
+        "run_dir": settings["runs"][0],
+        "run_dirs": settings["runs"],
+        "settings": settings,
+        "inputs_sha256": score_inputs_sha256(root, settings),
         "rule": {
             "clamp": PS.CLAMP,
             "min_scored_to_rank": MIN_SCORED_TO_RANK,

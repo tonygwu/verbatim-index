@@ -148,7 +148,7 @@ def main() -> int:
         td = Path(td)
         pr, roster, index = build(td, L, A)
         out = td / "site" / "index.html"
-        p = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr), "--roster", str(roster), "--out", str(out)],
+        p = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr), "--roster", str(roster), "--out", str(out)],
                            capture_output=True, text=True, cwd=REPO)
         check("FIXTURE: builder exits 0 and writes the page", p.returncode == 0 and out.exists(), p.stdout + p.stderr[-500:])
         html = out.read_text()
@@ -187,13 +187,13 @@ def main() -> int:
               sl.group(1) if sl else "none")
         stale_file = out.parent / "predictions" / "gone.json"
         stale_file.write_text("[]")
-        p2 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+        p2 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(out)],
                             capture_output=True, text=True, cwd=REPO)
         check("PAYLOAD: a file from an earlier render is deleted and named",
               p2.returncode == 0 and not stale_file.exists() and "gone.json" in p2.stdout,
               p2.stdout[-300:] + p2.stderr[-200:])
-        p3 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+        p3 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(out)],
                             capture_output=True, text=True, cwd=REPO,
                             env={**__import__("os").environ, "VI_MAX_PAGE_BYTES": "1000"})
@@ -350,7 +350,7 @@ def main() -> int:
                  "not_scored_because": None}],
         }))
         out2 = td / "site" / "scored.html"
-        p2 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+        p2 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(out2), "--scores", str(scores)],
                             capture_output=True, text=True, cwd=REPO)
         check("SCORE: the builder accepts a scores file and exits 0",
@@ -385,7 +385,7 @@ def main() -> int:
         tdoc["leaders"] = [dict(l, past_due=0) if l["slug"] == "alan" else l
                            for l in tdoc["leaders"]]
         thin.write_text(json.dumps(tdoc))
-        p5 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+        p5 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(td / "site" / "t.html"),
                              "--scores", str(thin)], capture_output=True, text=True, cwd=REPO)
         n5 = {r["name"] for r in embedded((td / "site" / "t.html").read_text(), "DATA")}
@@ -432,7 +432,7 @@ def main() -> int:
              "sources": [], "p": 0.5, "reference_class": "c", "points": 1.0,
              "not_scored_because": None}]
         wide.write_text(json.dumps(wdoc))
-        p4 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+        p4 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(td / "site" / "w.html"),
                              "--scores", str(wide)], capture_output=True, text=True, cwd=REPO)
         check("SCORE: a scored prediction the page cannot show fails the render, naming the person",
@@ -447,7 +447,7 @@ def main() -> int:
         doc["leaders"].append({"slug": "ghost", "name": "G", "n_scored": 9, "mean_points": 9.0,
                                "ranked": True, "past_due": 9, "eligible": 9, "unresolvable": 0})
         stray.write_text(json.dumps(doc))
-        p3 = subprocess.run([PY, str(script), "--index", str(index), "--predictions", str(pr),
+        p3 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(td / "site" / "x.html"),
                              "--scores", str(stray)], capture_output=True, text=True, cwd=REPO)
         # The drawer is what makes a published number auditable. A reader who doubts a
@@ -541,7 +541,7 @@ def main() -> int:
         bad = json.loads(index.read_text())
         bad["leaders"][0]["accepted"] = 9
         (td / "bad.json").write_text(json.dumps(bad))
-        p = subprocess.run([PY, str(script), "--index", str(td / "bad.json"), "--predictions", str(pr), "--roster", str(roster), "--out", str(td / "x.html")],
+        p = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(td / "bad.json"), "--predictions", str(pr), "--roster", str(roster), "--out", str(td / "x.html")],
                            capture_output=True, text=True, cwd=REPO)
         check("STALE: an index count that disagrees with the files fails, naming the person", p.returncode != 0 and "ada" in p.stderr, p.stderr[-300:])
 

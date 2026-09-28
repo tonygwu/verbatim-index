@@ -99,50 +99,38 @@ def main() -> int:
         check("it is None rather than a digest of nothing",
               noroster["roster_sha256"] is None, str(noroster["roster_sha256"]))
 
-        print("\n[4] the deploy refuses an index that predates the field")
+        print("\n[4] the deploy refuses through the one shared staleness check")
+        # The check moved out of the deploy script into
+        # data_clone_workflow.index_staleness(), so the deploy and data_sync.py
+        # apply the same one. Section [5] runs it; this only pins the call.
         src = (REPO / "scripts" / "deploy_predictions.sh").read_text()
-        live = [l for l in src.splitlines() if not l.lstrip().startswith("#")]
-        body = "\n".join(live)
-        check("deploy_predictions computes the roster digest",
-              "roster/final.json" in body and "sha256" in body)
-        check("it refuses when the field is absent",
-              'roster_sha256" not in idx' in body and "REFUSING" in body,
-              "an index that cannot be checked is not a checked index")
-        check("it refuses when the digest differs",
-              'idx["roster_sha256"] != roster_digest' in body)
-        check("the message names the command to fix it",
-              "aggregate_predictions.py" in body)
+        body = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+        check("deploy_predictions calls index_staleness with the roster file",
+              "D.index_staleness(" in body and "roster/final.json" in body, "")
+        check("it refuses on any staleness it reports",
+              "REFUSING: stale production index" in body
+              and "REFUSING: refresh the production index before publication" in body)
 
-        print("\n[5] the refusal really fires, end to end")
-        # A whole fake production checkout is more than this needs; the branch is
-        # exercised directly against the two inputs it reads.
-        probe = tmp / "probe.py"
-        probe.write_text(
-            "import hashlib, json, pathlib, sys\n"
-            "data = pathlib.Path(sys.argv[1])\n"
-            "idx = json.load((data / 'index.json').open())\n"
-            "roster_digest = hashlib.sha256((data / 'roster.json').read_bytes()).hexdigest()\n"
-            "if 'roster_sha256' not in idx:\n"
-            "    print('PREDATES'); raise SystemExit(1)\n"
-            "if idx['roster_sha256'] != roster_digest:\n"
-            "    print('STALE'); raise SystemExit(1)\n"
-            "print('CURRENT')\n")
+        print("\n[5] the refusal really fires, through the real function")
+        sys.path.insert(0, str(REPO / "scripts"))
+        import data_clone_workflow as D
         d = tmp / "probe-data"
-        d.mkdir()
+        (d / "predictions").mkdir(parents=True)
+        (d / "tx").mkdir()
         (d / "roster.json").write_text(roster.read_text())
-        (d / "index.json").write_text(json.dumps({"files_read": 1}))
-        r = subprocess.run([PY, str(probe), str(d)], capture_output=True, text=True)
-        check("an index with no roster_sha256 refuses",
-              r.returncode != 0 and "PREDATES" in r.stdout, r.stdout)
-        (d / "index.json").write_text(json.dumps({"roster_sha256": "deadbeef"}))
-        r = subprocess.run([PY, str(probe), str(d)], capture_output=True, text=True)
-        check("a mismatched digest refuses",
-              r.returncode != 0 and "STALE" in r.stdout, r.stdout)
-        (d / "index.json").write_text(json.dumps(
-            {"roster_sha256": hashlib.sha256(roster.read_bytes()).hexdigest()}))
-        r = subprocess.run([PY, str(probe), str(d)], capture_output=True, text=True)
-        check("a matching digest passes", r.returncode == 0 and "CURRENT" in r.stdout,
-              r.stdout)
+        good = {"files_read": 0, "records_read": 0,
+                "inputs_sha256": D.prediction_inputs_sha256(d / "predictions"),
+                "roster_sha256": hashlib.sha256(roster.read_bytes()).hexdigest(),
+                "transcripts_listing_sha256": D.listing_sha256(D.transcript_listing([d / "tx"]))}
+        stale = lambda idx: D.index_staleness(idx, d / "predictions", d / "roster.json", [d / "tx"]) or ""  # noqa: E731
+        why = stale({k: v for k, v in good.items() if k != "roster_sha256"})
+        check("an index with no roster_sha256 refuses, naming the field",
+              "lacks roster_sha256" in why, why)
+        why = stale({**good, "roster_sha256": "deadbeef"})
+        check("a mismatched digest refuses as a roster change", "roster changed" in why, why)
+        check("the message names the command to fix it",
+              "aggregate_predictions.py" in stale({k: v for k, v in good.items() if k != "roster_sha256"}))
+        check("a matching digest passes", stale(good) == "", stale(good))
 
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0

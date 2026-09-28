@@ -374,6 +374,127 @@ def prediction_inputs_sha256(predictions: Path) -> str:
     return h.hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Freshness of the derived predictions files. These live here, beside
+# prediction_inputs_sha256, and not in the scripts that build the files,
+# because the deploy and data_sync.py must check freshness without importing
+# the model harness that predictions_lib pulls in.
+# ---------------------------------------------------------------------------
+
+# Every key a scoring config must carry, and nothing else. A missing key refuses
+# rather than defaulting, because a default here silently changes a published
+# number; an unknown key refuses because it is usually a typo of a real one.
+CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index", "out")
+SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
+
+
+def transcript_listing(roots: list[Path]) -> set[tuple[str, str]]:
+    """(slug, stem) of every transcript file under the roots. A named root that is
+    missing raises: counting it as zero is how "22 of 15" reached the page."""
+    out: set[tuple[str, str]] = set()
+    for root in roots:
+        if not root.is_dir():
+            raise FileNotFoundError(f"transcript root {root} does not exist")
+        out.update((p.parent.name, p.stem) for p in root.glob("*/*.json"))
+    return out
+
+
+def listing_sha256(listing: set[tuple[str, str]]) -> str:
+    return hashlib.sha256("".join(f"{s}/{t}\n" for s, t in sorted(listing)).encode()).hexdigest()
+
+
+def count_records(pred_root: Path) -> tuple[int, int]:
+    files = [p for p in pred_root.glob("*/*.jsonl") if not p.parent.name.startswith("_")]
+    return len(files), sum(1 for p in files for _ in p.open())
+
+
+def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list[Path]) -> str | None:
+    """None when every input the index read is unchanged on disk; otherwise a
+    message naming the input that moved. Refuses an index that predates a
+    fingerprint, because such an index cannot be proved current."""
+    for k in ("files_read", "records_read", "inputs_sha256", "roster_sha256", "transcripts_listing_sha256"):
+        if index.get(k) is None:
+            return f"index.json lacks {k}, so its freshness cannot be checked; re-run aggregate_predictions.py"
+    roster_now = hashlib.sha256(Path(roster_path).read_bytes()).hexdigest()
+    if index["roster_sha256"] != roster_now:
+        return (f"the roster changed since the index was built (index {index['roster_sha256'][:12]}, "
+                f"disk {roster_now[:12]}); the index unions roster slugs, so it lists the wrong people")
+    files, lines = count_records(pred_root)
+    if (index["files_read"], index["records_read"]) != (files, lines):
+        return (f"record counts changed: index read {index['files_read']} files / {index['records_read']} "
+                f"records, disk has {files} / {lines}")
+    digest = prediction_inputs_sha256(pred_root)
+    if index["inputs_sha256"] != digest:
+        return (f"record contents changed in place: counts match ({files} files, {lines} records) but "
+                f"inputs sha256 is {digest[:12]}, index says {index['inputs_sha256'][:12]}")
+    listing = listing_sha256(transcript_listing(roots))
+    if index["transcripts_listing_sha256"] != listing:
+        return (f"the transcript listing changed (index {index['transcripts_listing_sha256'][:12]}, "
+                f"disk {listing[:12]}); coverage counts are stale")
+    return None
+
+
+def load_scoring_config(path: Path) -> tuple[Path, dict]:
+    """(data root, config). The root is the config file's grandparent, since the
+    config lives at <data>/predictions/scoring.json and its paths are relative to
+    <data>."""
+    cfg = json.loads(Path(path).read_text())
+    missing = [k for k in CONFIG_KEYS if k not in cfg]
+    unknown = sorted(set(cfg) - set(CONFIG_KEYS))
+    if missing or unknown:
+        raise SystemExit(f"{path}: missing keys {missing}, unknown keys {unknown}; "
+                         f"a scoring config carries exactly {list(CONFIG_KEYS)}")
+    if not isinstance(cfg["trend"], bool) or not isinstance(cfg["min_lead_days"], int) \
+            or not cfg["predictions"] or not cfg["runs"]:
+        raise SystemExit(f"{path}: trend must be a boolean, min_lead_days an integer, and predictions "
+                         f"and runs non-empty lists")
+    return Path(path).resolve().parent.parent, cfg
+
+
+def scoring_rel(path: Path, root: Path) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(root))
+    except ValueError:
+        raise SystemExit(f"{path} is outside the data root {root}; every scoring input must live under it")
+
+
+def score_inputs_sha256(root: Path, settings: dict) -> str:
+    """One digest of everything a scores.json is computed from: the settings, the
+    records, the index it takes names from, and every sidecar in every run."""
+    h = hashlib.sha256()
+    h.update(json.dumps(settings, sort_keys=True).encode() + b"\n")
+    for pd in settings["predictions"]:
+        h.update(f"records {pd} {prediction_inputs_sha256(root / pd)}\n".encode())
+    h.update(f"index {hashlib.sha256((root / settings['index']).read_bytes()).hexdigest()}\n".encode())
+    for run in settings["runs"]:
+        for sub in SIDECAR_DIRS:
+            for f in sorted((root / run / sub).glob("*/*.json")):
+                h.update(f"{run}/{f.relative_to(root / run)} {hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
+    return h.hexdigest()
+
+
+def settings_from_config(cfg: dict) -> dict:
+    return {k: cfg[k] for k in ("as_of", "trend", "min_lead_days", "predictions", "runs", "index")}
+
+
+def scores_staleness(scores_path: Path, config_path: Path) -> str | None:
+    """None when scores.json was computed from exactly the inputs on disk now."""
+    root, cfg = load_scoring_config(config_path)
+    doc = json.loads(Path(scores_path).read_text())
+    if not doc.get("inputs_sha256"):
+        return "scores.json lacks inputs_sha256, so its freshness cannot be checked; re-run score_predictions.py"
+    want = settings_from_config(cfg)
+    if doc.get("settings") != want:
+        return f"scores.json was computed with settings {doc.get('settings')}, the config now says {want}"
+    now = score_inputs_sha256(root, want)
+    if doc["inputs_sha256"] != now:
+        return (f"an input changed since scores.json was computed (scores {doc['inputs_sha256'][:12]}, "
+                f"disk {now[:12]}): a record, a sidecar or the index")
+    return None
+
+
+
+
 def guard_prediction_write(repo: Path, path: Path, root: Path, study: str = 'leaders') -> None:
     path, root = path.resolve(), root.resolve()
     if role(root) != 'experiment':
