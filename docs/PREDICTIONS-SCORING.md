@@ -240,3 +240,35 @@ prediction once. A cluster only partly on the page, or a row whose
 
 Proof: `scripts/test_restatements_scoring.py`, `scripts/test_build_restatement_manifest.py`,
 and the RESTATED checks in `scripts/test_predictions_site.py`.
+
+## Statement-date overrides, 2026-09-28
+
+VP-16. A YouTube upload date stands in for the date of speech, and on an old
+recording it creates a wrong deadline. The fix re-dates the RECORDING, not the
+record: a reviewed file, `<data>/sources/statement_date_overrides.json` in
+production or `--date-overrides` for an experiment, maps a transcript id to its
+true date, its basis, a source URL, verbatim evidence, and who confirmed it when.
+
+`predictions_lib.apply_statement_date_override` applies it when extraction reads
+a transcript, which is the one point both extract and verify pass through. The
+prompt header, the input hash and the record therefore agree. The record carries
+basis `sourced_override` and a `statement_date_override` block that names the
+date it replaced. The loader refuses an unknown transcript, a malformed date, a
+date after the transcript's own upload or publication date, and a missing or
+unknown field. The transcript must then be re-extracted, because its claim text
+and target date were written against the wrong year.
+
+When the override file is read, `phase2_resolvability.load` leaves out every
+record of that transcript that was extracted under another date, and names it.
+`score_predictions.py` drops and names every resolution or prior that does not
+record the override date. So a re-extracted prediction counts once whether or
+not its id changed. The scorer reads the production file whenever it exists, a
+`scoring.json` that exists alongside it must name it as `date_overrides`, and
+the file is hashed into `inputs_sha256`. Proof:
+`.venv/bin/python scripts/test_statement_date_override.py`.
+
+First use, experiment `date-override-20260927`: Marc Andreessen's Netscape
+keynote, 1996-10-16, uploaded 2013-07-05. Re-extracted, the claim reads "within
+the next couple of months after October 16, 1996", deadline 1996-12-31. It was
+priced blind at p = 0.40 and resolved `unresolvable: no_public_evidence`, so it
+still does not score.
