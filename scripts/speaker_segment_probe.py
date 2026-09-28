@@ -321,6 +321,44 @@ def failure_label(r: dict) -> str | None:
     return r["errors"][-1]["error"].split(":", 1)[0] if r.get("errors") else r["outcome"]
 
 
+def merge(args) -> int:
+    """A new run directory: the base run, with each INFRASTRUCTURE failure replaced by
+    the top-up run's result for the same arm, recording and repeat.
+
+    Only infrastructure failures may be topped up: they say nothing about the model,
+    so a fresh try under the same attempt cap is a retry of the harness, not a second
+    chance for the model. A model failure is final, and a top-up result for one
+    refuses the merge. Both inputs are left as they are.
+    """
+    base, top, out = Path(args.base), Path(args.topup), Path(args.out)
+    if out.exists():
+        raise SystemExit(f"REFUSING: {out} exists")
+    results = json.loads((base / "results.json").read_text())
+    extra = {(r["arm"], r["key"], r["repeat"]): r for r in json.loads((top / "results.json").read_text())}
+    merged, replaced = [], []
+    for r in results:
+        k = (r["arm"], r["key"], r["repeat"])
+        if k in extra:
+            if failure_label(r) not in INFRA_LABELS:
+                raise SystemExit(f"REFUSING: {k} ended in {failure_label(r) or 'a parsed answer'}, "
+                                 "not an infrastructure failure; only those may be topped up")
+            t = extra.pop(k)
+            merged.append({**t, "raw": str(Path("..") / top.name / t["raw"]) if t.get("raw") else None,
+                           "topped_up_from": {"run": base.name, "attempts": r["attempts"], "errors": r["errors"]}})
+            replaced.append(f"{k[0]} {k[1]} r{k[2]}: {failure_label(r)} -> {failure_label(t) or 'parsed'}")
+        else:
+            merged.append(r)
+    if extra:
+        raise SystemExit(f"REFUSING: the top-up has results the base run lacks: {sorted(extra)}")
+    manifest = json.loads((base / "manifest.json").read_text())
+    manifest["topups"] = manifest.get("topups", []) + [{"run": top.name, "replaced": replaced, "merged_at_utc": utc()}]
+    out.mkdir(parents=True)
+    write_atomic(out / "manifest.json", json.dumps(manifest, indent=1) + "\n")
+    write_atomic(out / "results.json", json.dumps(merged, indent=1, ensure_ascii=False) + "\n")
+    print("\n".join(replaced) or "nothing replaced")
+    return 0
+
+
 def score(args) -> int:
     run_dir, page = Path(args.run), Path(args.page)
     results = json.loads((run_dir / "results.json").read_text())
@@ -432,6 +470,9 @@ def main() -> int:
     r.add_argument("--codex-home", default="~/.codex")
     r.add_argument("--gemini-home", default="~")
     r.add_argument("--scratch", required=True, help="per-call working directories, OUTSIDE the container")
+    m = sub.add_parser("merge")
+    for a in ("--base", "--topup", "--out"):
+        m.add_argument(a, required=True)
     s = sub.add_parser("score")
     for a in ("--run", "--answers", "--page"):
         s.add_argument(a, required=True)
@@ -439,7 +480,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.cmd == "run" and Path(args.scratch).resolve().is_relative_to(DENIED_ROOT):
         raise SystemExit("REFUSING: --scratch sits inside the sandboxed container; the models could not work there")
-    return {"run": run, "score": score}[args.cmd](args)
+    return {"run": run, "merge": merge, "score": score}[args.cmd](args)
 
 
 if __name__ == "__main__":

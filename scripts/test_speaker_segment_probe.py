@@ -111,7 +111,7 @@ def main() -> int:
               rows["a2"]["confusion"].get("subject->other") == 5 and rows["a2"]["quotes"][0]["model"] == "both")
         # Operator's rule, 2026-09-28: a model that fails both attempts is dinged, and
         # only an infrastructure failure removes the recording, from every arm.
-        results[1] = {"arm": "a2", "key": key, "repeat": 0, "outcome": "failed",
+        results[1] = {"arm": "a2", "key": key, "repeat": 0, "outcome": "failed", "attempts": 2,
                       "errors": [{"attempt": 1, "error": "empty_response: x"}, {"attempt": 2, "error": "empty_response: y"}]}
         (run / "results.json").write_text(json.dumps(results))
         P.score(SimpleNamespace(run=str(run), answers=str(td / "answers.json"), page=str(page), report=None))
@@ -129,6 +129,23 @@ def main() -> int:
         rep = json.loads((run / "score.json").read_text())
         check("an infrastructure failure removes the recording from EVERY arm, and says so",
               rep["per_run"] == [] and rep["arms"]["a2"]["excluded_infra"] == ["p/a r0: auth_or_quota"])
+        # A top-up may replace an infrastructure failure, and nothing else.
+        top = td / "top"
+        top.mkdir()
+        (top / "results.json").write_text(json.dumps([{**results[1], "outcome": "parsed", "turns": good, "errors": []}]))
+        P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged")))
+        merged = json.loads((td / "merged" / "results.json").read_text())
+        check("a top-up replaces an infrastructure failure and records what it replaced",
+              merged[1]["outcome"] == "parsed" and merged[1]["topped_up_from"]["errors"][-1]["error"].startswith("auth_or_quota")
+              and json.loads((td / "merged" / "manifest.json").read_text())["topups"][0]["replaced"])
+        results[1]["errors"][-1]["error"] = "empty_response: z"
+        (run / "results.json").write_text(json.dumps(results))
+        try:
+            P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged2")))
+            refused = False
+        except SystemExit as exc:
+            refused = "only those may be topped up" in str(exc)
+        check("a top-up for a MODEL failure is refused: that failure is final", refused and not (td / "merged2").exists())
         (run / "results.json").write_text(json.dumps(results[:1]))
         P.score(SimpleNamespace(run=str(run), answers=str(td / "answers.json"), page=str(page), report=None))
         rep = json.loads((run / "score.json").read_text())
