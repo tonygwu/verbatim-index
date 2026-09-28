@@ -282,11 +282,22 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
-    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend)
-    repairs = load_across(args.run, R.load_repairs)
-    applied, unrepairable = R.apply_repairs(rows, repairs)
     resolutions = load_across(args.run, lambda run: R.load_sidecars(run, "resolve"))
     priors = load_across(args.run, lambda run: R.load_sidecars(run, "prior"))
+    # A prior and a resolution of one prediction must describe ONE window, or the
+    # points price one question and settle another. Every production prior records
+    # the window it priced; a prior that records none has nothing to compare.
+    split = sorted(pid for pid in resolutions.keys() & priors.keys() if "deadline" in priors[pid]
+                   and priors[pid]["deadline"] != resolutions[pid].get("deadline"))
+    if split:
+        raise SystemExit(f"{len(split)} predictions were priced over a different window than they were "
+                         f"resolved over: " + "; ".join(
+                             f"{pid} prior {priors[pid].get('deadline')} resolution "
+                             f"{resolutions[pid].get('deadline')}" for pid in split))
+    # Resolved trend records keep the window their resolution judged; see select().
+    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend, resolutions=resolutions)
+    repairs = load_across(args.run, R.load_repairs)
+    applied, unrepairable = R.apply_repairs(rows, repairs)
 
     joined, why = join(rows, resolutions, priors)
     index = json.loads(args.index.read_text())

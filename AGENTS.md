@@ -1355,8 +1355,15 @@ new grades incomparable with the corpus already graded.
   counts as past due, so an old one silently leaves out every prediction that fell due since. On
   2026-09-27 moving it 11 days added 2 scored predictions and ranked Chamath Palihapitiya. When
   you add predictions, in the same integration: set `as_of` to the UTC date of the commit that will
-  carry them; resolve and price every eligible prediction that became past due; re-resolve trend
-  records, because their window runs to the as-of; re-score (`data_sync.py push` regenerates `scores.json` from `scoring.json`).
+  carry them; resolve and price every eligible prediction that became past due; re-score
+  (`data_sync.py push` regenerates `scores.json` from `scoring.json`). A trend record's window
+  freezes at its first resolution (operator decision, 2026-09-27): its end is the `deadline` in that
+  resolution sidecar, and a later as-of does not move it. So moving the as-of date costs no model
+  calls unless new predictions fell due or new trend records qualified. An unresolved trend record
+  still runs to the current as-of until it is resolved. `resolve_predictions.select` applies the
+  freeze, refuses a trend resolution with no usable `deadline`, and `score_predictions.py` refuses
+  a prior and a resolution that name different windows. Proof:
+  `.venv/bin/python scripts/test_trend_window_freeze.py`.
   If the commit lands after UTC midnight, the date moved, so repeat. `deploy_predictions.sh`
   refuses when `as_of` is older than the newest commit touching `predictions/`, except commits that
   touch only `scores.json` or `scoring.json`. The check is `scores_asof_lag()` in

@@ -637,7 +637,8 @@ def scores_asof_lag(data_root: Path, revision: str, as_of: str) -> str | None:
     if want < newest:
         return (f"scoring as_of {want} is older than the newest predictions data, committed {newest} (UTC). "
                 f"Move as_of in predictions/scoring.json to {newest} or later, resolve and price every "
-                f"prediction that became past due, re-resolve trend records whose window grew, and re-score")
+                f"prediction that became past due, including newly qualifying trend records (a resolved "
+                f"trend record keeps its window), and re-score")
     return None
 
 

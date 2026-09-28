@@ -72,17 +72,39 @@ def utc_now() -> str:
 # Selection: exactly the funnel's past-due set, computed by the funnel's own code
 # ---------------------------------------------------------------------------
 
-def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False) -> list[dict]:
+def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
+           resolutions: dict | None = None) -> list[dict]:
     """Past-due accepted predictions, each carrying the funnel's deadline and flags.
 
     The deadline comes from `phase2_resolvability`, never from a second parser
     here. A partial `target_date` expands to its LAST day, and a resolver told
     "2020" rather than "2020-12-31" would resolve a year-long claim against
     New Year's Day.
+
+    `resolutions` (sidecars by prediction_id) freezes each RESOLVED trend
+    record's window at the `deadline` its resolution judged (operator decision,
+    2026-09-27). A later cutoff does not move it, so no stage prices, re-resolves
+    or scores it over a window that grew. An unresolved trend record still runs
+    to `cutoff`, and a dated record is untouched.
     """
     rows = P2.load(pred_dir)
     # The trend window is opt-in and dated by the caller's cutoff, never the clock.
     P2.attach_deadlines(rows, derive=True, trend_cutoff=(cutoff if trend else None))
+    for r in rows:
+        res = (resolutions or {}).get(r["prediction_id"])
+        if res is None or not str(r.get("_basis") or "").startswith("trend"):
+            continue
+        try:
+            frozen = dt.date.fromisoformat(str(res.get("deadline")))
+        except ValueError:
+            raise SystemExit(f"trend prediction {r['prediction_id']} has a resolution with no usable "
+                             f"deadline ({res.get('deadline')!r}); its window cannot be frozen, and the "
+                             f"as-of is never substituted for it") from None
+        d, why = P2.trend_window(r, frozen)
+        if d is None:
+            raise SystemExit(f"trend prediction {r['prediction_id']} was resolved over a window to "
+                             f"{frozen} that is not a trend window today ({why})")
+        r["_deadline"], r["_basis"] = frozen, f"trend: {why}, frozen at its first resolution"
     out = []
     for r in rows:
         if not r["_deadline"] or r["_deadline"] > cutoff:
@@ -272,13 +294,14 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
 
-    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend)
+    out_root = Path(args.out)
+    rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
+                  resolutions=R.load_sidecars(out_root, "resolve"))
     if args.slug:
         rows = [r for r in rows if r["leader_slug"] in set(args.slug)]
     if args.eligible_only:
         rows = [r for r in rows if r["_flags"]["eligible"]]
 
-    out_root = Path(args.out)
     done = set(R.load_sidecars(out_root, args.stage)) if not args.redo else set()
     todo = [r for r in rows if r["prediction_id"] not in done]
     if args.limit is not None:
