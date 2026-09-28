@@ -815,6 +815,36 @@ def main() -> int:
         check("RESTATED: a superseded sidecar the page cannot find refuses the render",
               psn.returncode != 0 and "run-nowhere" in (psn.stdout + psn.stderr), (psn.stdout + psn.stderr)[-400:])
 
+        # ---- 2026-09-28: a statement-date override drops old-date sidecars ----
+        # The scorer drops, and names in date_overrides.stale_sidecars_dropped, the
+        # prior and resolution a run made under the old statement date. The page
+        # reads the sidecars to name the models, so it drops the same ones, or it
+        # refuses one prediction with sidecars in two runs.
+        run3 = td / "run-redated"
+        for sub, stage_doc in (("priors", prior_doc), ("resolutions", {
+                "prediction_id": spec_pid, "leader_slug": "ada", "stage": "resolve", "outcome": "occurred",
+                "harness": "astra", "telemetry": {"requested_model": "gpt-6-astra", "served_model": "gpt-6-astra"}})):
+            (run3 / sub / "ada").mkdir(parents=True)
+            (run3 / sub / "ada" / f"{spec_pid}.json").write_text(json.dumps(stage_doc))
+        odoc3 = json.loads(rsc.read_text())
+        odoc3["run_dirs"] = [str(run1), str(run3)]
+        odoc3["date_overrides"] = {"file": "predictions/statement_date_overrides.json", "entries": ["ada/s1"],
+                                   "superseded_records": [], "entries_without_records": [],
+                                   "stale_sidecars_dropped": [
+                                       {"prediction_id": spec_pid, "stage": st, "run": str(run1),
+                                        "transcript_id": "ada/s1", "sidecar_statement_date": None}
+                                       for st in ("prior", "resolve")]}
+        ov_f = td / "ov.json"
+        ov_f.write_text(json.dumps(odoc3))
+        pov = run("--scores", str(ov_f), out_name="ov.html")
+        check("OVERRIDE: old-date sidecars the scorer dropped are left out, so the page renders",
+              pov.returncode == 0, (pov.stdout + pov.stderr)[-600:])
+        odoc3["date_overrides"]["stale_sidecars_dropped"][0]["run"] = str(td / "run-nowhere")
+        ov_f.write_text(json.dumps(odoc3))
+        pon = run("--scores", str(ov_f), out_name="ov2.html")
+        check("OVERRIDE: a dropped sidecar the page cannot find refuses the render",
+              pon.returncode != 0 and "run-nowhere" in (pon.stdout + pon.stderr), (pon.stdout + pon.stderr)[-400:])
+
         refuses("RESTATED: a cluster only partly on the page refuses the render, naming it",
                 lambda d: d["restatements"]["clusters"][0]["members"].append("not-on-this-page"), "ada/code-by-2030")
         refuses("RESTATED: a row restated to a different member than the manifest says refuses the render",

@@ -1376,12 +1376,17 @@ def stage_models(scores_doc: dict, scores_path: str) -> dict:
     A prior model counts as served, not merely requested, only when the call's
     own telemetry lists it."""
     dirs = run_dirs(scores_doc, scores_path)
-    priors = SP.load_across(dirs, lambda d: R.load_sidecars(d, "prior"))
+    # Sidecars a statement-date override made stale (priced or resolved under the
+    # old date) were dropped by the scorer, and are dropped here the same way.
+    stale = (scores_doc.get("date_overrides") or {}).get("stale_sidecars_dropped", [])
+    stale_drop = {st: {(_run_path(x["run"], scores_path), x["prediction_id"]) for x in stale if x["stage"] == st}
+                  for st in ("prior", "resolve")}
+    priors = SP.load_across(dirs, lambda d: R.load_sidecars(d, "prior"), drop=stale_drop["prior"])
     # The resolutions a restatement manifest superseded were left out by the scorer,
     # and are left out here the same way; each must still be on disk.
     drop = {(_run_path(x["run"], scores_path), x["prediction_id"])
             for x in (scores_doc.get("restatements") or {}).get("superseded_resolutions", [])}
-    resol = SP.load_across(dirs, lambda d: R.load_sidecars(d, "resolve"), drop=drop)
+    resol = SP.load_across(dirs, lambda d: R.load_sidecars(d, "resolve"), drop=drop | stale_drop["resolve"])
     prior_m, resolve_m, unverified = collections.Counter(), collections.Counter(), 0
     for row in scores_doc.get("predictions", []):
         if not row.get("scored"):
