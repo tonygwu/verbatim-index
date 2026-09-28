@@ -150,6 +150,19 @@ def main() -> int:
         p = sync(d, "push", "--daemon")
         check("RESULTS: a matching results.json passes", p.returncode == 0, p.stdout + p.stderr[-600:])
 
+        # The pundits grading contract writes grades/_provenance/, and
+        # deploy_pundits.sh does not count it as a grade. Neither may the gate:
+        # on 2026-09-27 pundits data held 325 such files against
+        # grade_files_read 312, which would have refused every pundits push.
+        (d / "grades" / "_provenance").mkdir(parents=True)
+        (d / "grades" / "_provenance" / "c1.json").write_text('{"contract": 1}')
+        results_for(d, 3)
+        git(d, "add", "grades/_provenance/c1.json", "results.json")
+        git(d, "commit", "-q", "-m", "daemon: a provenance file beside the grades")
+        p = sync(d, "push", "--daemon")
+        check("RESULTS: grades/_provenance is not a grade, as in deploy_pundits.sh", p.returncode == 0,
+              p.stdout + p.stderr[-600:])
+
         # ----------------------------------------------------------- STAGED --
         (d / "logs").mkdir(exist_ok=True)
         (d / "logs" / "x.jsonl").write_text("{}\n")

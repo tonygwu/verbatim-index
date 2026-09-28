@@ -443,8 +443,11 @@ def push(data: Path, attempts: int = ATTEMPTS, daemon: bool = False) -> tuple[in
 
 # ------------------------------------------------------------------- results --
 
-# deploy.sh skips these when it counts grade files; the gate counts the same way.
-GRADE_SKIP = {"_raw", "_obsolete"}
+# The deploys skip these when they count grade files, and the gate counts the same
+# way: deploy.sh skips _raw and _obsolete, and deploy_pundits.sh also skips
+# _provenance, which the pundits contract writes. Leaders has no _provenance, so
+# one set serves both.
+GRADE_SKIP = {"_raw", "_obsolete", "_provenance"}
 
 
 def results_problems(data: Path, rev: str) -> list[str]:
