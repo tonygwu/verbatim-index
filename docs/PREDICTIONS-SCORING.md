@@ -245,7 +245,7 @@ and the RESTATED checks in `scripts/test_predictions_site.py`.
 
 VP-16. A YouTube upload date stands in for the date of speech, and on an old
 recording it creates a wrong deadline. The fix re-dates the RECORDING, not the
-record: a reviewed file, `<data>/sources/statement_date_overrides.json` in
+record: a reviewed file, `<data>/predictions/statement_date_overrides.json` in
 production or `--date-overrides` for an experiment, maps a transcript id to its
 true date, its basis, a source URL, verbatim evidence, and who confirmed it when.
 

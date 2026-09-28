@@ -431,8 +431,10 @@ def own_statement_date(rec: dict) -> tuple[str | None, str]:
 
 OVERRIDE_DATE_BASIS = "sourced_override"
 # Relative to the data root. Production keeps the reviewed file here; an
-# experiment passes its own with --date-overrides.
-DATE_OVERRIDES_FILE = Path("sources") / "statement_date_overrides.json"
+# experiment passes its own with --date-overrides. It sits under predictions/,
+# which ownership.json makes shared, so any contributor clone can commit it;
+# sources/ is daemon-only.
+DATE_OVERRIDES_FILE = Path("predictions") / "statement_date_overrides.json"
 TRANSCRIPT_DIRS = ("transcripts_open", "transcripts_web")
 OVERRIDE_REQUIRED = ("statement_date", "basis", "source_url", "verbatim_evidence", "confirmed_by", "confirmed_at_utc")
 OVERRIDE_OPTIONAL = ("internal_evidence", "confidence", "confirmation_note", "researched_by", "speaker_check")

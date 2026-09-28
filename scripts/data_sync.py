@@ -246,6 +246,19 @@ def run_script(*argv: str) -> None:
                       f"{(p.stderr.strip() or p.stdout.strip()).splitlines()[-1]}")
 
 
+def override_transcripts(tree: Path, cfg: dict) -> list[str]:
+    """The transcript paths, under every transcript root, of each entry in the
+    override file the scoring config names. The file must be in the extracted tree."""
+    rel = cfg.get("date_overrides")
+    if not rel:
+        return []
+    if not (tree / rel).is_file():
+        raise Refusal(f"{SCORING} names date_overrides {rel!r}, which is not in the commit under predictions/ "
+                      f"or roster/, the only paths the scores are regenerated from")
+    tids = json.loads((tree / rel).read_text()).get("overrides") or {}
+    return [f"{root}/{tid}.json" for tid in sorted(tids) for root in TRANSCRIPT_ROOTS]
+
+
 def regenerate(data: Path, rev: str) -> dict[str, bytes]:
     """The derived files as the commit rev's own inputs make them, computed in a
     scratch tree extracted from the commit, never from the working tree."""
@@ -264,6 +277,9 @@ def regenerate(data: Path, rev: str) -> dict[str, bytes]:
             cfg = json.loads((tree / SCORING).read_text())
             if cfg.get("out") != SCORES:
                 raise Refusal(f"{SCORING} writes {cfg.get('out')!r}; the derived file is {SCORES}")
+            # The scorer checks each statement-date override against its transcript,
+            # so the transcripts the override file names must be in the scratch tree.
+            extract(data, rev, tree, override_transcripts(tree, cfg))
             run_script("score_predictions.py", "--config", str(tree / SCORING))
             out[SCORES] = (tree / SCORES).read_bytes()
         return out

@@ -371,13 +371,17 @@ def test_sidecars_and_scorer(d: pathlib.Path) -> None:
     h2 = json.loads((data / "ov2.json").read_text()).get("inputs_sha256") if ok2.returncode == 0 else None
     check("SCORER: editing the override file changes inputs_sha256", h1 and h2 and h1 != h2, f"{h1} {h2}")
 
-    # The production default: a file at <data>/sources/statement_date_overrides.json is never silently ignored.
-    (data / "sources").mkdir()
-    (data / "sources" / "statement_date_overrides.json").write_text(path.read_text())
+    # The production default: a file at <data>/predictions/statement_date_overrides.json is never
+    # silently ignored. It lives under predictions/ because ownership.json makes that path shared,
+    # so a contributor clone can commit it; sources/ is daemon-only (2026-09-28).
+    check("DEFAULT: the production override file lives under predictions/, a path every clone may write",
+          L.DATE_OVERRIDES_FILE == pathlib.Path("predictions") / "statement_date_overrides.json", str(L.DATE_OVERRIDES_FILE))
+    prod_ov = data / "predictions" / "statement_date_overrides.json"
+    prod_ov.write_text(path.read_text())
     auto = score(out=data / "auto.json")
     auto_doc = json.loads((data / "auto.json").read_text()) if auto.returncode == 0 else {}
     check("SCORER: with no flag, the production override file is read, not ignored",
-          auto.returncode == 0 and auto_doc.get("settings", {}).get("date_overrides") == "sources/statement_date_overrides.json",
+          auto.returncode == 0 and auto_doc.get("settings", {}).get("date_overrides") == "predictions/statement_date_overrides.json",
           auto.stderr[-400:])
     cfg = data / "predictions" / "scoring.json"
     cfg.write_text(json.dumps({"as_of": "2026-09-27", "trend": True, "min_lead_days": 60,
@@ -388,15 +392,14 @@ def test_sidecars_and_scorer(d: pathlib.Path) -> None:
                             capture_output=True, text=True)
     check("CONFIG: a scoring config that omits date_overrides while the production file exists is refused",
           no_key.returncode != 0 and "date_overrides" in (no_key.stderr + no_key.stdout), no_key.stderr[-400:])
-    cfg.write_text(json.dumps({**json.loads(cfg.read_text()), "date_overrides": "sources/statement_date_overrides.json"}))
+    cfg.write_text(json.dumps({**json.loads(cfg.read_text()), "date_overrides": "predictions/statement_date_overrides.json"}))
     with_key = subprocess.run([sys.executable, str(ROOT / "scripts" / "score_predictions.py"), "--config", str(cfg)],
                               capture_output=True, text=True)
     check("CONFIG: a scoring config naming date_overrides scores", with_key.returncode == 0, with_key.stderr[-400:])
     from data_clone_workflow import scores_staleness
     check("CONFIG: scores computed from that config are fresh",
           with_key.returncode == 0 and scores_staleness(data / "predictions" / "scores.json", cfg) is None)
-    (data / "sources" / "statement_date_overrides.json").write_text(
-        json.dumps({"schema_version": 1, "overrides": {TID: {**ENTRY, "basis": "revised"}}}))
+    prod_ov.write_text(json.dumps({"schema_version": 1, "overrides": {TID: {**ENTRY, "basis": "revised"}}}))
     check("CONFIG: editing the override file makes those scores stale",
           with_key.returncode == 0 and scores_staleness(data / "predictions" / "scores.json", cfg) is not None)
 
