@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """Render the Verbatim Predictions page from data/predictions into one self-contained HTML file.
 
-An INDEX of what each person said would happen, not a ranking of who predicts
-well. The table is alphabetical by default and no column measures foresight;
-the test forbids the vocabulary of accuracy anywhere outside the disclaimer.
+An index of what each person said would happen and, once a scores file is
+supplied, a score over the part of it that has come due. With a scores file the
+table opens sorted by Score, highest first, with unscored people after them in
+name order; without one it opens in name order. Only the Score and Came true
+columns measure foresight, and the test forbids the vocabulary of accuracy
+anywhere outside the fenced score and disclaimer copy.
+
+A person needs MIN_PREDICTIONS_TO_LIST accepted predictions for a row, and,
+with scores, at least one that has come due. Everyone else is NAMED under the
+table with the reason, because "deliberately not listed" and "missing" are
+different facts.
 
 Only accepted records are embedded (extractor and verifier agreed). Rejected
 candidates are counted per person and never shown, because publishing a claim
@@ -28,7 +36,7 @@ import json
 import os
 import statistics
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,6 +44,9 @@ from atomicio import write_atomic  # noqa: E402
 from site_theme import FONT_LINKS, THEME_CSS  # noqa: E402
 import predictions_lib as L  # noqa: E402
 import score_predictions as SP  # noqa: E402
+import resolution_lib as R  # noqa: E402
+import prediction_score as PS  # noqa: E402
+import phase2_resolvability as P2  # noqa: E402
 
 # The public origin, needed absolute because Open Graph and Twitter cards are
 # fetched by a crawler that has no page context to resolve a relative path
@@ -49,6 +60,13 @@ SOCIAL_DESC = (
     "Forward-looking claims that __N_PEOPLE__ technology leaders made in public, quoted verbatim "
     "from transcripts of their own recorded speech, with the date they said it and the date it "
     "refers to. __N_ACCEPTED__ predictions from __N_TX__ transcripts."
+)
+# Once the page carries a score, the card says what the page now is, in the
+# words its own intro opens with.
+SOCIAL_DESC_SCORED = (
+    "Who in tech is best at predicting the future? The public predictions of __N_PEOPLE__ tech "
+    "leaders, quoted verbatim, dated, and scored against how likely each one looked on the day "
+    "it was said."
 )
 
 OG_CARD = Path(__file__).resolve().parent.parent / "site-predictions" / "og.png"
@@ -111,14 +129,14 @@ TEMPLATE = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Verbatim Predictions</title>
-<meta name="description" content="__SOCIAL_DESC__">
+<!-- score:start --><meta name="description" content="__SOCIAL_DESC__"><!-- score:end -->
 <link rel="canonical" href="__SITE_URL__">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Verbatim Predictions">
 <meta property="og:locale" content="en_GB">
 <meta property="og:url" content="__SITE_URL__">
 <meta property="og:title" content="__SOCIAL_TITLE__">
-<meta property="og:description" content="__SOCIAL_DESC__">
+<!-- score:start --><meta property="og:description" content="__SOCIAL_DESC__"><!-- score:end -->
 <meta property="og:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
@@ -126,7 +144,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <meta property="og:image:alt" content="Verbatim Predictions. __SOCIAL_TITLE__">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="__SOCIAL_TITLE__">
-<meta name="twitter:description" content="__SOCIAL_DESC__">
+<!-- score:start --><meta name="twitter:description" content="__SOCIAL_DESC__"><!-- score:end -->
 <meta name="twitter:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
 <meta name="twitter:image:alt" content="Verbatim Predictions. __SOCIAL_TITLE__">
 __FONTS__
@@ -204,6 +222,19 @@ tbody tr.row:focus-visible{outline:2px solid var(--d1); outline-offset:-2px}
 td{padding:11px 7px; vertical-align:middle}
 td.num{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums}
 td.num.zero{color:var(--faint)}
+/* Predictions: the total, then where each prediction stands. Left-aligned and
+   smaller than the other numbers, so a six-line breakdown stays a compact block. */
+th.pc{text-align:left; padding-left:12px}
+td.pc{text-align:left; padding:7px 7px 7px 12px; font-size:11px; line-height:1.2; font-variant-numeric:tabular-nums}
+td.pc .tot,td.pc li{display:flex; justify-content:space-between; gap:10px; max-width:118px}
+td.pc .tot{font-size:13px; color:var(--ink); font-weight:600}
+td.pc .tot span{font-weight:500}
+td.pc .tot b,td.pc li b{font-family:"IBM Plex Mono",monospace; font-weight:inherit}
+td.pc ul.bk{list-style:none; margin:1px 0 0; padding:0}
+td.pc li{color:var(--muted)}
+td.pc li b{color:var(--ink-2); font-weight:500}
+td.pc li[title]{cursor:help; text-decoration:underline dotted var(--rule-strong); text-underline-offset:2px}
+td.pc.zero{color:var(--faint)}
 .who{padding-left:16px}
 .who .nm{font-weight:600; letter-spacing:-.01em}
 .who .rl{font-size:12px; color:var(--muted); margin-top:1px; overflow-wrap:anywhere}
@@ -241,6 +272,40 @@ tr.axisrow td:first-child{padding-left:16px}
    count from once every year carries a label. */
 .sq-ax i.tick{color:var(--ink-2); font-weight:600}
 .sq-nd{display:block; font-family:"IBM Plex Mono",monospace; font-size:9px; letter-spacing:.04em; color:var(--faint); margin-top:4px}
+/* ---------- year-square popover ----------
+   One element for the whole table, like #tip. Its text takes the colour of the
+   square it describes. Where that colour is too light to read on the popover,
+   readable() moves it along the SAME hue until it reaches WCAG AA, 4.5:1. The
+   swatch beside it always shows the square's true colour. */
+.sq:focus-visible{outline:2px solid var(--d1); outline-offset:3px; border-radius:1px}
+.sq i.on{box-shadow:0 0 0 1.5px var(--ink)}
+#sqtip{
+  position:fixed; z-index:61; pointer-events:none; padding:8px 12px 9px;
+  background:var(--surface); color:var(--ink-2);
+  border:1px solid var(--rule-strong); border-radius:4px; box-shadow:var(--shadow);
+  font-family:"IBM Plex Sans",system-ui,sans-serif; font-size:13.5px; line-height:1.35;
+  white-space:nowrap; text-transform:none; letter-spacing:0;
+}
+#sqtip[hidden]{display:none}
+#sqtip .l1{display:flex; align-items:center; gap:8px; font-weight:600; font-variant-numeric:tabular-nums}
+#sqtip .l2{margin-top:3px; padding-left:19px; font-size:11.5px; color:var(--muted)}
+#sqtip .sw{display:inline-block; width:11px; height:11px; border-radius:1px; background:var(--rule); flex:none}
+#sqtip .sw.q1{background:var(--d1); opacity:.30}
+#sqtip .sw.q2{background:var(--d1); opacity:.55}
+#sqtip .sw.q3{background:var(--d2); opacity:.80}
+#sqtip .sw.q4{background:var(--d2)}
+p.omitted{margin:12px 0 0; max-width:92ch; font-size:12.5px; color:var(--muted)}
+p.omitted b{color:var(--ink); font-weight:600}
+.howscore{margin:16px 0 0; max-width:72ch; font-size:13.5px; color:var(--ink-2)}
+.howscore h3{font-size:14px; font-weight:600; margin:0 0 6px; color:var(--ink)}
+.sec .howscore p{margin:0 0 9px; color:var(--ink-2); font-size:13.5px; max-width:none}
+.howscore .f{font-family:"IBM Plex Mono",monospace; font-size:12.5px; white-space:nowrap}
+.howscore table{width:auto; min-width:0; table-layout:auto; margin:4px 0 2px; font-size:12.5px}
+.howscore th,.howscore td{padding:3px 16px 3px 0; text-align:left; font-weight:400; border-bottom:1px solid var(--rule)}
+.howscore th{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint)}
+.howscore td.n{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; text-align:right}
+.howscore td .pos{color:var(--d3); font-weight:600}
+.howscore td .neg{color:var(--bad); font-weight:600}
 .legend i.k{display:inline-block; width:11px; height:11px; border-radius:1px; vertical-align:-1px; background:var(--rule)}
 .legend i.k.q1{background:var(--d1); opacity:.30}
 .legend i.k.q2{background:var(--d1); opacity:.55}
@@ -365,9 +430,7 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
   <div class="eyebrow">__GENDATE__ &middot; Verbatim quotes, dated &middot; __EYEBROW_STATUS__ &middot; <a href="https://verbatim-index.tonygwu.com">Verbatim Index &rarr;</a></div>
   <h1>Verbatim <em>Predictions</em></h1>
   <p class="thesis">
-    Forward-looking claims that __N_PEOPLE__ technology leaders made in public, quoted
-    <strong>verbatim</strong> from transcripts of their own recorded speech, with the date they said
-    it and the date it refers to. <!-- disclaimer:start -->__DISCLAIMER__<!-- disclaimer:end -->
+    __THESIS__
   </p>
 </header>
 
@@ -385,7 +448,7 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
   <p>
     Click any row to read every prediction with its verbatim quote and the surrounding transcript,
     and to filter by target date, category and how much of the outcome is under the speaker's control.
-    Every column sorts; the default is alphabetical.
+    __SORT_NOTE__
   </p>
   <div class="legend">
     <span>A <b>prediction</b> is a claim the extractor (__EXTRACTOR__) proposed and an independent
@@ -394,19 +457,20 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
     counts of what each person said. Neither is a measure of foresight.
     <!-- score:start -->__SCORE_LEGEND__<!-- score:end --></span>
   </div>
+  <!-- score:start -->__HOWSCORE__<!-- score:end -->
 </div>
 
 <div class="tablecard">
   <table id="board">
     <colgroup>
-      <col style="width:215px"><col style="width:205px">
-      <col style="width:105px">
-      <col style="width:300px"><col style="width:85px"><col style="width:95px">
+      <col style="width:215px"><col style="width:140px">
+      <col style="width:130px">
+      <col style="width:315px"><col style="width:85px"><col style="width:95px">
     </colgroup>
     <thead><tr>
-      <th data-k="name" aria-sort="ascending">Person<span class="arrow">&#9650;</span></th>
+      <th data-k="name"__NAME_ARIA__>Person<span class="arrow">&#9650;</span></th>
       <th data-k="company">Organisation<span class="arrow">&#9650;</span></th>
-      <th data-k="accepted">Predictions<button class="info" type="button" data-info="accepted"
+      <th class="pc" data-k="accepted">Predictions<button class="info" type="button" data-info="accepted"
         aria-expanded="false" aria-label="What does Predictions mean?">?</button><span class="arrow">&#9650;</span></th>
       <th data-k="earliest">When it was said<button class="info" type="button" data-info="timeline"
         aria-expanded="false" aria-label="What does the timeline show?">?</button><span class="arrow">&#9650;</span></th>
@@ -417,12 +481,14 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
     <tbody id="tb"></tbody>
   </table>
 </div>
+__OMITTED__
 <div class="legend">
   <span><b>When it was said</b> is one square per year, __Y0__ on the left to __Y1__ on the right, the
   same years on every row. Shading is how many predictions that person made that year, on a scale
   shared by all rows: <i class="k q1"></i>&nbsp;1 &nbsp; <i class="k q2"></i>&nbsp;2&ndash;3 &nbsp;
   <i class="k q3"></i>&nbsp;4&ndash;7 &nbsp; <i class="k q4"></i>&nbsp;8 or more. An empty square is a
-  year with none. Hover a square for the year and the count. The statement date is the recording's
+  year with none. Hover or tap a square to see its year and count; from the keyboard, tab to a row's
+  squares and use the arrow keys. The statement date is the recording's
   publication date, an upper bound on when it was said.</span>
 </div>
 
@@ -436,12 +502,13 @@ __METHOD__
   captions of publicly posted recordings; each quote is a brief excerpt linked to its source at the
   nearest timestamp. The transcripts, the raw model output and the candidates the verifier rejected
   are not published. The pipeline is open source at
-  <a href="https://github.com/tonygwu/verbatim-index">github.com/tonygwu/verbatim-index</a>.
+  <a href="__REPO_URL__">github.com/tonygwu/verbatim-index</a>.
   Extraction run <code>__RUN_ID__</code>, contracts <code>__CONTRACT_ID__</code>.
 </footer>
 </div>
 
 <div id="tip" role="tooltip" hidden></div>
+<div id="sqtip" role="tooltip" aria-live="polite" hidden></div>
 
 <script>
 const DATA = __DATA__;
@@ -489,16 +556,13 @@ const HOR = {explicit:"Explicit date", inferable:"Inferable from context", none:
 const CTRL = {external:"External to the speaker", partial:"Partly under the speaker's control", own:"Under the speaker's own control"};
 
 const INFO = {
-  accepted: `<p><b>Predictions.</b> How many forward-looking claims the pipeline accepted from this
-    person's transcripts: the extractor proposed each one and an independent verifier agreed.</p>
-    <p>A count of what was said, <b>not a measure of foresight</b>. Someone with more long-form
-    appearances says more things. Nothing here has been checked against what happened.</p>
-    <p>Open the row to read each one, and to filter by whether it carries a target date and by
-    what the speaker said about likelihood.</p>`,
+  /* score:start */
+  accepted: `__ACCEPTED_INFO__`,
+  /* score:end */
   timeline: `<p><b>When it was said.</b> One square per year, __Y0__ to __Y1__, the same years on every
     row. The shading is how many of this person's accepted predictions carry a statement date in that
-    year, banded 1, 2&ndash;3, 4&ndash;7, 8 or more on a scale shared by all 50 people. Hover a square
-    for its count.</p>
+    year, banded 1, 2&ndash;3, 4&ndash;7, 8 or more on a scale shared by every row. Hover or tap a
+    square for its year and count.</p>
     <p>The statement date is the recording's <b>publication</b> date, an upper bound on when the words
     were said. A talk uploaded years after it was given sits in the upload year, so a square can be
     later than the event. Predictions from a recording with no date sit in no year and are counted
@@ -520,15 +584,17 @@ const YEARS = __YEARS__;
 const band = n => n === 0 ? "" : n === 1 ? "q1" : n <= 3 ? "q2" : n <= 7 ? "q3" : "q4";
 function spark(r){
   const y = r.years || {};
+  /* No native title: the popover below says the same thing, readably, and a
+     title would open a second, unstyled box on top of it. */
   const cells = YEARS.map(yr => {
     const n = y[yr] || 0;
-    return `<i class="${band(n)}" title="${yr}: ${n} prediction${n === 1 ? "" : "s"}"></i>`;
+    return `<i class="${band(n)}" data-y="${yr}" data-n="${n}"></i>`;
   }).join("");
   const bits = [];
   if (r.early) bits.push(`<span title="${r.early} prediction${r.early === 1 ? "" : "s"} from before the axis starts; too few predictions that early to give those years a column.">+${r.early} earlier</span>`);
   if (r.undated) bits.push(`<span title="${r.undated} of this person's predictions come from a recording with no publication date, so they sit in no year.">+${r.undated} undated</span>`);
   const nd = bits.length ? `<span class="sq-nd">${bits.join(" &middot; ")}</span>` : "";
-  return `<div class="sq">${cells}</div>${nd}`;
+  return `<div class="sq" tabindex="0" role="group" aria-label="Predictions per year by ${esc(r.name)}. Use the left and right arrow keys to read each year.">${cells}</div>${nd}`;
 }
 /* score:start */
 /* One number per person: the MEAN points over their resolved, eligible predictions.
@@ -541,6 +607,21 @@ function spark(r){
    three were near-certainties, while 1/4 scores -0.06 because the three misses
    were long shots nobody expected to land. A reader who sees only the mean will
    assume it tracks the hit rate; the fraction shows that it does not. */
+/* Where each of a person's predictions stands at the scoring run's as-of date.
+   The builder derives the buckets and refuses to render a row whose lines do not
+   add up to its total; only lines above zero are shown, in this fixed order. */
+const BUCKETS = __BUCKETS__;
+const UNRES_SHORT = __UNRES_SHORT__;
+function predCell(r){
+  if (!r.buckets) return `<td class="pc${r.accepted ? "" : " zero"}"><div class="tot"><span>Total</span><b>${r.accepted}</b></div></td>`;
+  const lines = BUCKETS.filter(([k]) => r.buckets[k]).map(([k, lab]) => {
+    const split = k === "unresolvable" && r.unres
+      ? ` title="${esc(Object.entries(r.unres).sort((a, b) => b[1] - a[1])
+          .map(([w, n]) => `${n} ${UNRES_SHORT[w] || w.replace(/_/g, " ")}`).join(", "))}"` : "";
+    return `<li${split}><span>${esc(lab)}</span><b>${r.buckets[k]}</b></li>`;
+  }).join("");
+  return `<td class="pc"><div class="tot"><span>Total</span><b>${r.accepted}</b></div><ul class="bk">${lines}</ul></td>`;
+}
 function hitCell(r){
   if (r.score_hits == null) return `<td class="hit none">&mdash;</td>`;
   // Below the rank floor the fraction still prints, muted, and the hover says why
@@ -708,8 +789,15 @@ document.getElementById("ax").innerHTML = YEARS.map(y => {
   return `<i class="${t ? "tick" : ""}">&rsquo;${y.slice(2)}</i>`;
 }).join("");
 
-let sortKey = "name", sortDir = 1;
+/* score:start */
+/* The opening sort. With a Score column it is Score, highest first; rows with no
+   Score follow every scored row, in name order (see the null rule in render).
+   Without one it is name order. The builder decides, so the static aria-sort on
+   the header and this line can never disagree. */
+/* score:end */
+let sortKey = __SORT_KEY__, sortDir = __SORT_DIR__;
 function render(){
+  sqHide();
   const rows = DATA.slice().sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
     /* score:start */
@@ -728,7 +816,7 @@ function render(){
   tb.innerHTML = rows.map(r => `<tr class="row" tabindex="0" data-slug="${esc(r.slug)}" aria-expanded="false">
     <td class="who"><div class="nm">${esc(r.name)}</div><div class="rl">${esc(r.role || "")}</div></td>
     <td class="org">${esc(r.company || "")}<span class="sector">${esc(r.sector || "")}</span></td>
-    ${["accepted"].map(k => `<td class="num${r[k] ? "" : " zero"}">${r[k]}</td>`).join("")}
+    ${predCell(r)}
     <td class="spark">${spark(r)}</td>
     ${hitCell(r)}${scoreCell(r)}
   </tr>`).join("");
@@ -780,6 +868,9 @@ document.addEventListener("click", e => {
     return;
   }
   if (tipBtn) hideTip();
+  const sqc = e.target.closest(".sq i");
+  if (sqc && touchTap){ sqShow(sqc, "tap"); return; }  // a tap reads the square; a click still opens the row
+  if (sqBy === "tap") sqHide();
   if (e.target.closest("tr.audit")) return;          // links, selects and details inside a drawer never toggle it
   const th = e.target.closest("thead th");
   if (th && th.dataset.k){
@@ -833,10 +924,122 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && tipBtn){ const b = tipBtn; hideTip(); b.blur(); return; }
   if (e.key === "Enter" && e.target.classList && e.target.classList.contains("row")) e.target.click();
 });
+/* ---------- year-square popover ----------
+   What a square encodes: how many of this person's accepted predictions carry a
+   statement date in that year. Its colour is a band of that count, blue for 1
+   and 2-3, rust for 4-7 and 8 or more, grey for none. The popover says the year
+   and the count in words, in the square's own colour. */
+const AA = 4.5;                                        // WCAG AA for normal text
+const BAND_WORDS = {"": "no shade: none that year", q1: "lightest blue: 1", q2: "blue: 2\u20133",
+                    q3: "light rust: 4\u20137", q4: "rust: 8 or more"};
+const sqtip = document.getElementById("sqtip");
+let sqCur = null, sqBy = null, touchTap = false;
+const rgbOf = s => (s.match(/[\d.]+/g) || []).map(Number);
+function lum(c){
+  const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+}
+function contrast(a, b){ const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+function toHsl([r, g, b]){
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s, l];
+}
+function fromHsl([h, s, l]){
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
+                  : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [r, g, b].map(v => Math.round((v + m) * 255));
+}
+/* The colour itself if it already reads at AA against bg. If not, the same hue
+   and saturation, darker on a light popover and lighter on a dark one, stepped
+   until it does. Only lightness moves, so a blue stays a blue. */
+function readable(fg, bg){
+  if (contrast(fg, bg) >= AA) return {rgb: fg, adjusted: false};
+  const [h, s, l] = toHsl(fg), down = lum(bg) > lum(fg);
+  for (let i = 1; i <= 100; i++){
+    const L = down ? l - i / 100 : l + i / 100;
+    if (L < 0 || L > 1) break;
+    const c = fromHsl([h, s, L]);
+    if (contrast(c, bg) >= AA) return {rgb: c, adjusted: true};
+  }
+  return {rgb: down ? [0, 0, 0] : [255, 255, 255], adjusted: true};
+}
+function sqHide(){
+  if (sqCur){ sqCur.classList.remove("on"); const g = sqCur.closest(".sq"); if (g) g.removeAttribute("aria-describedby"); }
+  sqCur = null; sqBy = null; sqtip.hidden = true;
+}
+function sqShow(cell, by){
+  if (sqCur && sqCur !== cell) sqCur.classList.remove("on");
+  const n = Number(cell.dataset.n), y = cell.dataset.y;
+  const tr = cell.closest("tr.row");
+  const person = tr ? DATA.find(d => d.slug === tr.dataset.slug) : null;
+  const b = band(n);
+  const what = n === 0 ? `No predictions in ${y}` : `${n} prediction${n === 1 ? "" : "s"} in ${y}`;
+  sqtip.innerHTML = `<div class="l1"><i class="sw ${b}"></i><span class="tx">${esc(what)}</span></div>`
+    + `<div class="l2">${person ? esc(person.name) + " &middot; " : ""}${esc(BAND_WORDS[b])}</div>`;
+  sqtip.hidden = false;
+  /* The square's colour as it appears on the popover: its fill, at its own
+     opacity, over the popover background. That is the swatch's colour too. */
+  const cs = getComputedStyle(cell), bg = rgbOf(getComputedStyle(sqtip).backgroundColor).slice(0, 3);
+  const fill = rgbOf(cs.backgroundColor), a = Number(cs.opacity) * (fill.length > 3 ? fill[3] : 1);
+  const seen = fill.slice(0, 3).map((v, i) => Math.round(v * a + bg[i] * (1 - a)));
+  const r = readable(seen, bg);
+  const tx = sqtip.querySelector(".tx");
+  tx.style.color = `rgb(${r.rgb.join(",")})`;
+  tx.dataset.square = `rgb(${seen.join(",")})`;
+  tx.dataset.adjusted = r.adjusted ? "yes" : "no";
+  const rect = cell.getBoundingClientRect(), t = sqtip.getBoundingClientRect(), pad = 8;
+  let left = rect.left + rect.width / 2 - t.width / 2;
+  left = Math.max(pad, Math.min(left, window.innerWidth - t.width - pad));
+  let top = rect.top - t.height - 8;
+  if (top < pad) top = rect.bottom + 8;
+  sqtip.style.left = left + "px";
+  sqtip.style.top = top + "px";
+  cell.classList.add("on");
+  const g = cell.closest(".sq");
+  if (g) g.setAttribute("aria-describedby", "sqtip");
+  sqCur = cell; sqBy = by;
+}
+document.addEventListener("pointerdown", e => { touchTap = e.pointerType === "touch"; }, true);
+document.addEventListener("pointerover", e => {
+  if (e.pointerType === "touch") return;               // a tap is handled on click
+  const c = e.target.closest && e.target.closest(".sq i");
+  if (c) sqShow(c, "hover");
+  else if (sqBy === "hover") sqHide();
+});
+document.addEventListener("focusin", e => {
+  const g = e.target.closest && e.target.closest(".sq");
+  if (!g){ if (sqBy === "focus") sqHide(); return; }
+  if (!g.matches(":focus-visible")) return;            // a mouse click focuses it too; hover already covers that
+  if (sqCur && g.contains(sqCur)){ sqBy = "focus"; return; }
+  // Open on the newest year that has anything, or the newest year if none do.
+  const cells = [...g.querySelectorAll("i")];
+  sqShow([...cells].reverse().find(c => Number(c.dataset.n) > 0) || cells[cells.length - 1], "focus");
+});
+document.addEventListener("focusout", e => {
+  if (e.target.classList && e.target.classList.contains("sq") && sqBy === "focus") sqHide();
+});
+document.addEventListener("keydown", e => {
+  if (!(e.target.classList && e.target.classList.contains("sq"))) return;
+  if (e.key === "Escape"){ sqHide(); return; }
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  const cells = [...e.target.querySelectorAll("i")];
+  const i = Math.max(0, cells.indexOf(sqCur));
+  sqShow(cells[Math.max(0, Math.min(cells.length - 1, i + (e.key === "ArrowRight" ? 1 : -1)))], "focus");
+});
+window.addEventListener("scroll", () => { if (sqBy !== "focus") sqHide(); }, true);
+window.addEventListener("resize", sqHide);
+
 document.getElementById("themeBtn").addEventListener("click", () => {
   const cur = document.documentElement.getAttribute("data-theme");
   const dark = cur ? cur === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  sqHide();
 });
 render();
 </script>
@@ -980,21 +1183,354 @@ def statement_years(by_slug: dict[str, list[dict]]) -> tuple[dict[str, dict], li
 # they simply do not get a line on a leaderboard. Set to 0 to show everyone.
 MIN_PAST_DUE_TO_LIST = 1
 
+# A person needs this many ACCEPTED predictions for a row. Asked for on
+# 2026-09-27: Clem Delangue (1), Tobi Lütke (2) and Sergey Brin (3) had so few
+# that a row for them read as a finding about them rather than about the
+# corpus, and the operator kept Alex Karp, the next up, at 4. It is a rule and
+# not a list of names, so a person who later gains predictions reappears on the
+# next render with no edit. It applies with or without a scores file, because
+# it needs no outcome. Everyone it removes is NAMED under the table.
+MIN_PREDICTIONS_TO_LIST = 4
+
+
+def unlisted_reason(l: dict, sc: "dict | None", scores: dict) -> "str | None":
+    """Why this person has no row, or None when they have one. The count floor is
+    checked first, so a person with too few predictions is reported under that
+    reason whatever their past-due count is."""
+    if l["accepted"] < MIN_PREDICTIONS_TO_LIST:
+        return "few"
+    if scores and (sc or {}).get("past_due", 0) < MIN_PAST_DUE_TO_LIST:
+        return "none_due"
+    return None
+
+
+def default_order(rows: list[dict], scored: bool) -> list[dict]:
+    """The order the page opens in, which is also the order DATA is emitted in.
+
+    With scores: highest Score first; rows with no Score after every scored row;
+    ties and unscored rows in name order. Without: name order. render() in the
+    page applies the same rule, and the test pins both."""
+    if not scored:
+        return sorted(rows, key=lambda r: r["name"])
+    return sorted(rows, key=lambda r: (r["score"] is None, -(r["score"] or 0), r["name"]))
+
+
+def omitted_people(index: dict, scores: dict) -> dict:
+    """Everyone in the index without a row, grouped by reason, with what they said."""
+    few, none_due, accepted = [], [], 0
+    for l in index["leaders"]:
+        why = unlisted_reason(l, scores.get(l["slug"]), scores)
+        if why is None:
+            continue
+        accepted += l["accepted"]
+        (few if why == "few" else none_due).append(l)
+    return {"few": sorted(few, key=lambda l: (l["accepted"], l["name"])),
+            "none_due": sorted(none_due, key=lambda l: l["name"]), "accepted": accepted}
+
+
+def _names(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def omitted_note(om: dict) -> str:
+    """The line under the table that names who is not in it, and why.
+
+    "Deliberately not listed" and "missing" are different facts, so the page
+    states the first rather than leaving a reader to infer the second."""
+    e = lambda x: str(x).replace("&", "&amp;").replace("<", "&lt;")  # noqa: E731
+    parts = []
+    if om["few"]:
+        parts.append(f"{_names([f'{e(l['name'])} ({l['accepted']})' for l in om['few']])} "
+                     f"{'has' if len(om['few']) == 1 else 'have'} fewer than {MIN_PREDICTIONS_TO_LIST} "
+                     f"accepted predictions, too few for a row.")
+    if om["none_due"]:
+        parts.append(f"{_names([e(l['name']) for l in om['none_due']])} "
+                     f"{'has' if len(om['none_due']) == 1 else 'have'} no prediction whose deadline "
+                     f"has passed yet.")
+    if not parts:
+        return ""
+    n = om["accepted"]
+    parts.append("A person returns to the table as soon as they pass these limits.")
+    if n:
+        parts.append(f"Their {n} prediction{' still counts' if n == 1 else 's still count'} in the "
+                     f"totals at the top of the page.")
+    return f'<p class="omitted" id="omitted"><b>Not listed.</b> {" ".join(parts)}</p>'
+
+
+def listed_corpus(scores_doc: dict, listed: set[str]) -> dict:
+    """The score figures for the people the table LISTS, from scores.json's own rows.
+
+    The corpus block counts everyone the scorer saw, including people under the
+    list floor, so printing it over the table would describe rows that are not
+    there. Before the per-person rows are trusted for that, they must add up to
+    the corpus block exactly: if they do not, the two halves of the file were
+    computed differently and neither can be printed."""
+    c, L = scores_doc["corpus"], scores_doc["leaders"]
+    unres_rows = collections.Counter(
+        (row["leader_slug"], row["unresolvable_reason"]) for row in scores_doc.get("predictions", [])
+        if row.get("outcome") == "unresolvable")
+    whole = {
+        "past_due": (sum(l["past_due"] for l in L), c["past_due"]),
+        "eligible": (sum(l["eligible"] for l in L), c["eligible"]),
+        "scored": (sum(l["n_scored"] for l in L), c["scored"]),
+        "leaders_ranked": (sum(1 for l in L if l["ranked"]), c["leaders_ranked"]),
+        "unresolvable": (sum(l["unresolvable"] for l in L), c["by_outcome"].get("unresolvable", 0)),
+        "unresolvable_reasons": (_by_reason(unres_rows, None), dict(c.get("unresolvable_reasons") or {})),
+    }
+    bad = {k: v for k, v in whole.items() if v[0] != v[1]}
+    if bad:
+        raise SystemExit("REFUSING: scores.json's per-person figures do not add up to its corpus block "
+                         + ", ".join(f"{k}: people sum to {a}, corpus says {b}" for k, (a, b) in bad.items())
+                         + "; re-run score_predictions.py")
+    mine = [l for l in L if l["slug"] in listed]
+    reasons = _by_reason(unres_rows, listed)
+    return {
+        "past_due": sum(l["past_due"] for l in mine),
+        "eligible": sum(l["eligible"] for l in mine),
+        "scored": sum(l["n_scored"] for l in mine),
+        "leaders_ranked": sum(1 for l in mine if l["ranked"]),
+        "by_outcome": {"unresolvable": sum(l["unresolvable"] for l in mine)},
+        "unresolvable_reasons": dict(reasons),
+    }
+
+
+def _by_reason(unres_rows: collections.Counter, slugs: "set[str] | None") -> dict:
+    """Unresolvable counts by reason, over the given people or over everyone."""
+    out = collections.Counter()
+    for (slug, why), n in unres_rows.items():
+        if slugs is None or slug in slugs:
+            out[why] += n
+    return dict(out)
+
+
+def run_dirs(scores_doc: dict, scores_path: str) -> list[Path]:
+    """The run directories scores.json was computed from, on this disk.
+
+    A relative entry is resolved inside the checkout that holds this
+    scores.json, never against the current directory: a clone's own `data` link
+    may point at an experiment checkout rather than the one being published.
+    Two relative forms exist. Until data a5525e31 an entry was written from a
+    clone's root, as data/predictions/...; since then it is written from the
+    data checkout's root, as predictions/.... Both name the same directory."""
+    dirs = scores_doc.get("run_dirs") or ([scores_doc["run_dir"]] if scores_doc.get("run_dir") else [])
+    if not dirs:
+        raise SystemExit(f"REFUSING: {scores_path} names no run_dirs, so the page cannot read which "
+                         "model set each prior; re-run score_predictions.py")
+    root = Path(scores_path).resolve().parent.parent          # <data>/predictions/scores.json
+    out = []
+    for d in dirs:
+        q = Path(d)
+        if not q.is_absolute():
+            q = root.joinpath(*(q.parts[1:] if q.parts[0] == "data" else q.parts))
+        if not q.is_dir():
+            raise SystemExit(f"REFUSING: run directory {d} from {scores_path} is not at {q}; the page "
+                             "names the models that set each prior and decided each outcome, and reads "
+                             "them from there")
+        out.append(q)
+    return out
+
+
+def stage_models(scores_doc: dict, scores_path: str) -> dict:
+    """Which model set the prior, and which decided the outcome, for every SCORED prediction.
+
+    Read from the sidecars the scorer joined, never typed here. The prior's p
+    must equal the p in scores.json, or these are not the records it scored.
+    A prior model counts as served, not merely requested, only when the call's
+    own telemetry lists it."""
+    dirs = run_dirs(scores_doc, scores_path)
+    priors = SP.load_across(dirs, lambda d: R.load_sidecars(d, "prior"))
+    resol = SP.load_across(dirs, lambda d: R.load_sidecars(d, "resolve"))
+    prior_m, resolve_m, unverified = collections.Counter(), collections.Counter(), 0
+    for row in scores_doc.get("predictions", []):
+        if not row.get("scored"):
+            continue
+        pid = row["prediction_id"]
+        pri, res = priors.get(pid), resol.get(pid)
+        if pri is None or res is None:
+            raise SystemExit(f"REFUSING: scored prediction {pid} has no "
+                             f"{'prior' if pri is None else 'resolution'} record in {[str(d) for d in dirs]}")
+        if pri["p"] != row["p"]:
+            raise SystemExit(f"REFUSING: scored prediction {pid} has p {row['p']} in {scores_path} but "
+                             f"{pri['p']} in its prior record; these are not the records it was scored from")
+        t = pri.get("telemetry") or {}
+        m = t.get("canonical_model") or t.get("requested_model")
+        if not m:
+            raise SystemExit(f"REFUSING: the prior record for {pid} names no model")
+        unverified += m not in (t.get("telemetry_models") or [])
+        prior_m[model_label(m)] += 1
+        rt = res.get("telemetry") or {}
+        rm = rt.get("served_model") or rt.get("requested_model")
+        if not rm:
+            raise SystemExit(f"REFUSING: the resolution record for {pid} names no model")
+        resolve_m[model_label(rm)] += 1
+    return {"prior": prior_m, "resolve": resolve_m, "prior_unverified": unverified}
+
+
+def _model_phrase(c: collections.Counter) -> str:
+    if len(c) == 1:
+        return next(iter(c))
+    return _names([f"{m} ({n})" for m, n in c.most_common()])
+
+
+def signed(x: float) -> str:
+    return ("+" if x >= 0 else "\u2212") + f"{abs(x):.2f}"
+
+
+def howscore(models: dict, n_scored: int) -> str:
+    """How a single prediction is scored, with numbers from prediction_score itself.
+
+    The model names come from the sidecars (stage_models), and every number in
+    the worked example is computed here by the function that computes the real
+    scores. The example also checks, at render time, the property the prose
+    claims: at each p the expected points are zero."""
+    rows = []
+    for p, label in ((0.9, "a near-certainty"), (0.1, "a long shot")):
+        hit, miss = PS.score(True, p)["points"], PS.score(False, p)["points"]
+        if abs(p * hit + (1 - p) * miss) > 1e-9:
+            raise SystemExit(f"REFUSING: at p={p} the expected points are {p * hit + (1 - p) * miss}, not "
+                             "zero, so the page's explanation of the rule would be false")
+        rows.append(f"<tr><td>p = {p}, {label}</td><td class=\"n\"><span class=\"pos\">{signed(hit)}</span></td>"
+                    f"<td class=\"n\"><span class=\"neg\">{signed(miss)}</span></td></tr>")
+    served = ("" if not models["prior_unverified"] else
+              f" For {models['prior_unverified']} of these calls the reply did not confirm the model, so "
+              "that name is the one requested.")
+    return (
+        '<div class="howscore" id="howscore">'
+        "<h3>How one prediction is scored</h3>"
+        "<p>Every scored prediction has a number <b>p</b>: the chance the event would happen, judged as "
+        "if on the day the words were said. A separate model call sets p "
+        f"({e_html(_model_phrase(models['prior']))}, for all {n_scored} scored predictions). That call "
+        "sees the quote, the date and the words around it. It does not see what happened. It can "
+        "still remember some events from its training, and nothing here removes that. A different "
+        f"model ({e_html(_model_phrase(models['resolve']))}) searches the web, decides what happened "
+        f"and must cite a source.{served}</p>"
+        "<p>A prediction that came true earns <span class=\"f\">&minus;log&#8322;(p)</span> points. One "
+        "that did not costs <span class=\"f\">(p/(1&minus;p))&middot;log&#8322;(1/p)</span> points. The "
+        "two are set so that a person who only repeats the odds of the day averages zero, whatever "
+        "they predict. Calling a near-certainty earns little; calling a long shot earns a lot.</p>"
+        "<table><tr><th>If p was</th><th>Came true</th><th>Did not</th></tr>"
+        + "".join(rows) + "</table></div>")
+
+
+def e_html(x) -> str:
+    return str(x).replace("&", "&amp;").replace("<", "&lt;")
+
+
+# Where a prediction stands, in the order the Predictions cell lists them. Short
+# plain labels; the column's (?) help defines each one.
+BUCKETS = (("scored", "Scored"), ("not_due", "Not yet due"), ("no_deadline", "No deadline"),
+           ("awaiting", "Awaiting check"), ("not_testable", "Not testable"),
+           ("unresolvable", "Couldn't check"))
+UNRES_SHORT = {"no_public_evidence": "no public evidence", "criterion_ambiguous": "ambiguous criterion",
+               "criterion_undirected": "no direction to test", "threshold_unmeasurable": "number not reported",
+               "deadline_incoherent": "deadline makes no sense", "after_knowledge_cutoff": "too recent to check"}
+
+
+def prediction_buckets(by_slug: dict[str, list[dict]], scores_doc: dict) -> tuple[dict, int]:
+    """Per person, how many accepted predictions sit in each bucket at the scoring as-of.
+
+    A prediction scores.json carries was past due at its as-of, and its
+    `scored` / `not_scored_because` decide the bucket. One it does not carry was
+    not past due, and its deadline decides: none this pipeline can read is "No
+    deadline", after the as-of is "Not yet due". The deadline comes from
+    phase2_resolvability, the same code that chose the past-due set, never from a
+    second parser here.
+
+    Returns the buckets and how many predictions were past due at the as-of yet
+    absent from scores.json. Those are counted as "Awaiting check", which is what
+    they are: the corpus grew after the scoring run. The count is printed.
+    """
+    as_of = date.fromisoformat(scores_doc["as_of"])
+    rows = {r["prediction_id"]: r for r in scores_doc.get("predictions", [])}
+    page = {r["prediction_id"]: slug for slug, recs in by_slug.items() for r in recs}
+    stray = [(r.get("leader_slug"), pid) for pid, r in rows.items() if pid not in page]
+    if stray:
+        raise SystemExit(f"REFUSING: scores.json carries {len(stray)} prediction(s) that are no record on "
+                         f"this page, e.g. {stray[:3]}, so a person's buckets would not describe their "
+                         "drawer; score only the corpus being rendered")
+    out, late = {}, 0
+    for slug, recs in by_slug.items():
+        copies = [dict(r) for r in recs]
+        P2.attach_deadlines(copies, derive=True)
+        b, unres = collections.Counter(), collections.Counter()
+        for r in copies:
+            row = rows.get(r["prediction_id"])
+            if row is not None:
+                why = row.get("not_scored_because")
+                if row.get("leader_slug") != slug:
+                    raise SystemExit(f"REFUSING: prediction {r['prediction_id']} is {slug}'s on the page "
+                                     f"but {row.get('leader_slug')}'s in scores.json")
+                if row["scored"]:
+                    b["scored"] += 1
+                elif why in ("no_resolution", "no_prior"):
+                    b["awaiting"] += 1
+                elif why == "not_eligible":
+                    b["not_testable"] += 1
+                elif isinstance(why, str) and why.startswith("unresolvable:"):
+                    b["unresolvable"] += 1
+                    unres[why.split(":", 1)[1]] += 1
+                else:
+                    raise SystemExit(f"REFUSING: {slug}'s prediction {r['prediction_id']} is not scored "
+                                     f"because {why!r}, and the Predictions column has no bucket for that")
+            elif r["_deadline"] is None:
+                b["no_deadline"] += 1
+            elif r["_deadline"] > as_of:
+                b["not_due"] += 1
+            else:
+                b["awaiting"] += 1
+                late += 1
+        out[slug] = {"buckets": {k: b[k] for k, _ in BUCKETS if b[k]}, "unres": dict(unres)}
+    return out, late
+
+
+def check_buckets_sum(rows: list[dict]) -> None:
+    """The lines under a total must add up to it, or the cell contradicts itself."""
+    bad = [f"{r['name']} ({sum(r['buckets'].values())} in buckets, {r['accepted']} total)"
+           for r in rows if r.get("buckets") is not None and sum(r["buckets"].values()) != r["accepted"]]
+    if bad:
+        raise SystemExit("REFUSING: the Predictions breakdown does not add up to the total for "
+                         + "; ".join(bad))
+
+
+def accepted_info(c: dict, as_of: str, min_lead_days: int) -> str:
+    """The Predictions column's (?) panel once there is a scoring run to date it by."""
+    u = c.get("unresolvable_reasons") or {}
+    split = ", ".join(f"{n} {UNRES_SHORT.get(k, k.replace('_', ' '))}"
+                      for k, n in sorted(u.items(), key=lambda kv: -kv[1]))
+    lab = dict(BUCKETS)
+    return (
+        "<p><b>Predictions.</b> The total is how many forward-looking claims the pipeline accepted "
+        "from this person: the extractor proposed each one and an independent verifier agreed. It is "
+        "a count of what was said. Sorting this column sorts by the total.</p>"
+        f"<p>The lines under it say where each prediction stood as of {as_of}, the date of the last "
+        "scoring run. They always add up to the total, and a line at zero is left out.</p>"
+        f"<p><b>{lab['scored']}</b>: past due, checked against a cited source, and given points. "
+        f"<b>{lab['not_due']}</b>: its deadline is after {as_of}. "
+        f"<b>{lab['no_deadline']}</b>: it names no date this pipeline can read, so it never falls due. "
+        f"<b>{lab['awaiting']}</b>: past due, but not checked yet. "
+        f"<b>{lab['not_testable']}</b>: past due, but too vague, said less than {min_lead_days} days "
+        "before its own deadline, or with a deadline before the day it was said. "
+        f"<b>{lab['unresolvable']}</b>: past due and looked at, but nothing public settles it"
+        + (f" (for the people listed: {split})" if split else "")
+        + ". Hover that line for one person's split.</p>")
+
 
 def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
-                min_lead_days: int | None = None) -> list[dict]:
-    """One table row per person with something that has come due.
+                min_lead_days: int | None = None, buckets: "dict | None" = None) -> list[dict]:
+    """One table row per person with enough predictions and, with scores, something due.
 
     `scores` is keyed by slug and may be empty, in which case every row shows an
-    em dash and the page says why. When it is empty nobody is hidden either,
-    because without it there is no evidence about who has come due.
+    em dash and the page says why. When it is empty the past-due rule hides
+    nobody, because without it there is no evidence about who has come due; the
+    count floor, MIN_PREDICTIONS_TO_LIST, still applies. Rows come back in the
+    page's opening order, default_order.
     """
     rows = []
     for l in index["leaders"]:
         entry = roster.get(l["slug"], {})
         h = hist.get(l["slug"], {"years": {}, "undated": 0})
         sc = scores.get(l["slug"])
-        if scores and (sc or {}).get("past_due", 0) < MIN_PAST_DUE_TO_LIST:
+        if unlisted_reason(l, sc, scores):
             continue
         rows.append({
             # A person below the floor carries no Score and says so on hover. Never
@@ -1015,14 +1551,15 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
             "slug": l["slug"], "name": l["name"], "role": entry.get("role") or l.get("role"), "company": l.get("company") or entry.get("company"),
             "sector": l.get("sector") or entry.get("sector"),
             "accepted": l["accepted"], "rejected": l["rejected_by_verifier"],
+            "buckets": (buckets[l["slug"]]["buckets"] if buckets is not None else None),
+            "unres": (buckets[l["slug"]]["unres"] if buckets is not None else None),
             "h_explicit": l["by_horizon"].get("explicit", 0), "h_inferable": l["by_horizon"].get("inferable", 0), "h_none": l["by_horizon"].get("none", 0),
             "p_explicit": l["explicit_probability"], "p_qual": l["qualitative_confidence"],
             "transcripts": l["transcripts_with_accepted"], "earliest": l["earliest_statement_date"],
             "tx_attempted": l["transcripts_on_disk"] or None, "tx_succeeded": l["transcripts_extracted_in_corpus"],
             "by_category": l["by_category"], "by_type": l["by_prediction_type"],
         })
-    rows.sort(key=lambda r: r["name"])
-    return rows
+    return default_order(rows, scored=bool(scores))
 
 
 # Mirrors score_predictions.MIN_SCORED_TO_RANK. Imported rather than typed, so the
@@ -1041,7 +1578,7 @@ CAME_TRUE_HEADER_LIVE = ('<th data-k="hit_rate">Came true<button class="info" ty
 
 SCORE_HEADER_EMPTY = ('<th class="nosort">Score<button class="info" type="button" data-info="score" '
                       'aria-expanded="false" aria-label="Why is this column empty?">?</button></th>')
-SCORE_HEADER_LIVE = ('<th data-k="score">Score<button class="info" type="button" data-info="score" '
+SCORE_HEADER_LIVE = ('<th data-k="score" aria-sort="descending">Score<button class="info" type="button" data-info="score" '
                      'aria-expanded="false" aria-label="What does Score mean?">?</button>'
                      '<span class="arrow">&#9650;</span></th>')
 
@@ -1058,17 +1595,42 @@ def eyebrow_status(c: dict) -> str:
     return f"{c['scored']} of {c['past_due']} due predictions resolved"
 
 
-def disclaimer(c: dict) -> str:
-    """What the page claims about itself once it carries a number. It says what the
-    score covers and what it leaves out, because the gap is most of the corpus."""
-    return (f"<strong>This is an index of what was said, and a score over the small part of it that "
-            f"has come due.</strong> {c['scored']} of {c['past_due']} past-due predictions were "
-            f"resolved against a cited source and scored; the other "
-            f"{c['past_due'] - c['scored']} could not be resolved or were not specific enough to "
-            f"test, and {c['leaders_ranked']} of the people here "
-            f"{'has' if c['leaders_ranked'] == 1 else 'have'} enough resolved predictions to carry a "
-            f"number at all. Everything else on this page is a count of what someone said, "
-            f"not a measure of how well they said it.")
+THESIS_EMPTY = (
+    "Forward-looking claims that __N_PEOPLE__ technology leaders made in public, quoted\n"
+    "    <strong>verbatim</strong> from transcripts of their own recorded speech, with the date they said\n"
+    "    it and the date it refers to. <!-- disclaimer:start -->" + DISCLAIMER_EMPTY + "<!-- disclaimer:end -->")
+
+REPO_URL = "https://github.com/tonygwu/verbatim-index"
+
+
+def thesis(c: dict, n_people: int) -> str:
+    """The intro once the page carries a number, for a general reader.
+
+    Every figure describes the LISTED people (listed_corpus), the same rows the
+    table shows. It says what the score covers and what it leaves out, because
+    the gap is a large part of the corpus."""
+    k = c["leaders_ranked"]
+    return (f"<!-- score:start -->Who in tech is best at predicting the future? We track what {n_people} "
+            f"tech leaders predicted in public, quoted <strong>word for word</strong> from their own talks "
+            f"and interviews. When a deadline passes, we check what happened and score the call against "
+            f"how likely it looked on the day it was said. A long shot that comes true earns far more "
+            f"than a safe bet. So far {c['scored']} of {c['past_due']} past-due predictions could be "
+            f"checked and scored, and {k} {'person has' if k == 1 else 'people have'} enough of them to "
+            f'carry a Score. The method and the code are open on <a href="{REPO_URL}">GitHub</a>.'
+            f"<!-- score:end -->")
+
+
+SORT_NOTE_EMPTY = "Every column sorts; the default is alphabetical."
+ACCEPTED_INFO_EMPTY = (
+    "<p><b>Predictions.</b> How many forward-looking claims the pipeline accepted from this\n"
+    "    person's transcripts: the extractor proposed each one and an independent verifier agreed.</p>\n"
+    "    <p>A count of what was said, <b>not a measure of foresight</b>. Someone with more long-form\n"
+    "    appearances says more things. Nothing here has been checked against what happened.</p>\n"
+    "    <p>Open the row to read each one, and to filter by whether it carries a target date and by\n"
+    "    what the speaker said about likelihood.</p>")
+SORT_NOTE_SCORED = ("<!-- score:start -->Every column sorts. The table opens sorted by Score, highest "
+                    "first. People without a Score come after everyone with one, in name order."
+                    "<!-- score:end -->")
 
 
 SCORE_LEGEND_EMPTY = ("<b>Score is empty on every row</b>, and stays empty until outcomes are "
@@ -1133,7 +1695,7 @@ def score_info(c: dict, rule: dict) -> str:
         "cannot lift the number and spraying long shots cannot either.</p>"
         "<p>Two separate passes produce each score, and neither sees the other. One decides what "
         "happened and must cite a source for it; it can also answer that the claim cannot be "
-        f"resolved, and on this corpus it did so {unres} times"
+        f"resolved, and for the people listed here it did so {unres} time{'' if unres == 1 else 's'}"
         f"{f' (most often {top})' if top else ''}. The other estimates p from the quote, the date and "
         "the surrounding words, and is never told what happened.</p>"
         f"<p>{c['scored']} of {c['past_due']} past-due predictions carry a score. A prediction is left "
@@ -1420,11 +1982,23 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{args.scores} scores {strays} who are not in index.json; "
                              f"the two inputs describe different corpora")
     scores = {l["slug"]: l for l in scores_doc["leaders"]} if scores_doc else {}
-    rows = person_rows(index, roster, hist, scores,
-                       scores_doc["rule"]["min_lead_days"] if scores_doc else None)
     pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
     check_scores_are_renderable(scores_doc, pred)
+    buckets, late = prediction_buckets(by_slug, scores_doc) if scores_doc else (None, 0)
+    rows = person_rows(index, roster, hist, scores,
+                       scores_doc["rule"]["min_lead_days"] if scores_doc else None, buckets)
+    check_buckets_sum(rows)
+    if late:
+        print(f"NOTE: {late} prediction(s) were past due on {scores_doc['as_of']} but are not in "
+              f"{args.scores}; the corpus grew after scoring, so they show as Awaiting check",
+              file=sys.stderr)
+    omitted = omitted_people(index, scores)
+    # Every score figure the page prints describes the people it LISTS. The
+    # corpus-wide totals in the strip (predictions, transcripts) describe
+    # everything the pipeline read, and the omitted note says so.
+    cl = listed_corpus(scores_doc, {r["slug"] for r in rows}) if scores_doc else None
+    models = stage_models(scores_doc, args.scores) if scores_doc else None
     n_outcomes = attach_outcomes(pred, scores_doc)
     src = src_map(loaded["accepted"])
     c = index["corpus"]
@@ -1442,7 +2016,19 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__FONTS__", FONT_LINKS)
         .replace("__THEME__", THEME_CSS)
         .replace("__SOCIAL_TITLE__", SOCIAL_TITLE)
-        .replace("__SOCIAL_DESC__", SOCIAL_DESC)
+        .replace("__SOCIAL_DESC__", SOCIAL_DESC_SCORED if scores_doc else SOCIAL_DESC)
+        .replace("__THESIS__", thesis(cl, len(rows)) if scores_doc else THESIS_EMPTY)
+        .replace("__SORT_NOTE__", SORT_NOTE_SCORED if scores_doc else SORT_NOTE_EMPTY)
+        .replace("__SORT_KEY__", '"score"' if scores_doc else '"name"')
+        .replace("__SORT_DIR__", "-1" if scores_doc else "1")
+        .replace("__NAME_ARIA__", "" if scores_doc else ' aria-sort="ascending"')
+        .replace("__HOWSCORE__", howscore(models, cl["scored"]) if scores_doc else "")
+        .replace("__OMITTED__", omitted_note(omitted))
+        .replace("__BUCKETS__", safe_json([list(b) for b in BUCKETS]))
+        .replace("__UNRES_SHORT__", safe_json(UNRES_SHORT))
+        .replace("__ACCEPTED_INFO__", accepted_info(cl, scores_doc["as_of"], scores_doc["rule"]["min_lead_days"])
+                 if scores_doc else ACCEPTED_INFO_EMPTY)
+        .replace("__REPO_URL__", REPO_URL)
         .replace("__SITE_URL__", SITE_URL)
         .replace("__OG_VERSION__", og_version())
         .replace("__DATA__", data_js)
@@ -1453,14 +2039,13 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__YEARS__", safe_json(span))
         .replace("__Y0__", span[0] if span else "n/a")
         .replace("__Y1__", span[-1] if span else "n/a")
-        .replace("__EYEBROW_STATUS__", eyebrow_status(scores_doc["corpus"]) if scores_doc else EYEBROW_EMPTY)
-        .replace("__DISCLAIMER__", disclaimer(scores_doc["corpus"]) if scores_doc else DISCLAIMER_EMPTY)
+        .replace("__EYEBROW_STATUS__", eyebrow_status(cl) if scores_doc else EYEBROW_EMPTY)
         .replace("__CAME_TRUE_HEADER__", CAME_TRUE_HEADER_LIVE if scores_doc else CAME_TRUE_HEADER_EMPTY)
-        .replace("__CAME_TRUE_INFO__", came_true_info(scores_doc["corpus"]) if scores_doc
+        .replace("__CAME_TRUE_INFO__", came_true_info(cl) if scores_doc
                  else CAME_TRUE_INFO_EMPTY)
         .replace("__SCORE_HEADER__", SCORE_HEADER_LIVE if scores_doc else SCORE_HEADER_EMPTY)
-        .replace("__SCORE_LEGEND__", score_legend(scores_doc["corpus"]) if scores_doc else SCORE_LEGEND_EMPTY)
-        .replace("__SCORE_INFO__", score_info(scores_doc["corpus"], scores_doc["rule"]) if scores_doc
+        .replace("__SCORE_LEGEND__", score_legend(cl) if scores_doc else SCORE_LEGEND_EMPTY)
+        .replace("__SCORE_INFO__", score_info(cl, scores_doc["rule"]) if scores_doc
                  else SCORE_INFO_EMPTY)
         .replace("__METHOD__", build_method(index, loaded))
         .replace("__GENDATE__", nice_date(args.data_date))
@@ -1485,11 +2070,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"scores: {sc['scored']} of {sc['past_due']} past due scored, "
               f"{sc['leaders_ranked']} people ranked, {n_outcomes} outcomes attached to drawers, "
               f"as of {scores_doc['as_of']}")
+        print(f"listed: {len(rows)} people; the page prints {cl['scored']} of {cl['past_due']} past due "
+              f"scored and {cl['leaders_ranked']} people ranked; prior model "
+              f"{dict(models['prior'])}, resolver {dict(models['resolve'])}")
     else:
         print("scores: none supplied; the Score column renders empty")
     ctx = [len(r["context_before"]) + len(r["context_after"]) for rs in pred.values() for r in rs]
     print(f"wrote {args.out}  ({len(html_out) // 1024} KB; DATA {len(data_js) // 1024} KB, SRC {len(src_js) // 1024} KB, "
-          f"records in {len(pred_slugs)} files beside it; {len(rows)} people, {c['accepted']} accepted, "
+          f"records in {len(pred_slugs)} files beside it; {len(rows)} people listed, "
+          f"{len(omitted['few'])} under the floor of {MIN_PREDICTIONS_TO_LIST} and "
+          f"{len(omitted['none_due'])} with nothing due not listed; {c['accepted']} accepted, "
           f"{loaded['rejected']} rejected not embedded; "
           f"context chars median {int(statistics.median(ctx)) if ctx else 0} max {max(ctx) if ctx else 0})")
     return 0

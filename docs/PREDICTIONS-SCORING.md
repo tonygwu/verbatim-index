@@ -136,3 +136,63 @@ The cost is latitude in the criterion. "Some unicorns will die" can be settled,
 but a resolver must choose how many is "some" and what "die" means. That choice
 is visible in each resolution's reasoning, and a criterion that cannot be settled
 comes back `criterion_ambiguous` and is excluded rather than scored as a miss.
+
+## What the page lists and prints, decided 2026-09-27
+
+Operator request, implemented in `scripts/build_predictions_site.py`.
+
+**Who gets a row.** A person needs `MIN_PREDICTIONS_TO_LIST` (4) accepted
+predictions. With a scores file, they also need at least one past-due
+prediction (`MIN_PAST_DUE_TO_LIST`). The count floor is a rule, not a list of
+names, so a person who gains predictions returns on the next render. On
+2026-09-27 it removed Clem Delangue (1), Tobi Lütke (2) and Sergey Brin (3),
+and kept Alex Karp (4). Everyone without a row is named under the table with
+the reason, because "not listed" and "missing" are different facts.
+
+**Which totals the prose uses.** Every score figure on the page (the intro, the
+eyebrow, the Score legend and its help panel) describes the LISTED people only.
+`listed_corpus()` sums them from scores.json's per-person rows, and it refuses
+the render if those rows do not add up to the file's corpus block. The strip's
+corpus totals (predictions, transcripts scanned, percent dated) still describe
+everything the pipeline read, which is also what the social card draws. The
+note under the table says the unlisted people's predictions still count there.
+
+**Default sort.** With a scores file, Score, highest first. Unscored rows come
+after every scored row, in name order, whichever way the column is sorted.
+Without a scores file, name order.
+
+**The prior explanation.** The page names the model that set each prior and the
+model that decided each outcome. It reads both from the prior and resolution
+sidecars in scores.json's `run_dirs`, resolved inside the checkout that holds
+scores.json. It refuses the render if a run directory is missing, if a scored
+prediction has no sidecar, or if a sidecar's `p` differs from the scored `p`.
+The worked example calls `prediction_score.score()` at render time and checks
+that the expected points are zero at each p shown.
+
+**Year-square popover.** A square's shade encodes how many accepted predictions
+carry a statement date in that year (bands 1, 2-3, 4-7, 8+; grey for none). The
+popover says the year and the count. Its text takes the square's colour; where
+that colour is under WCAG AA (4.5:1) on the popover, the page keeps the hue and
+moves only the lightness until it reaches 4.5:1. MEASURED on 2026-09-27: in
+both themes every band except the darkest (8+) needs that adjustment.
+
+**The Predictions column.** The cell shows the total, then where each
+prediction stood at scores.json's `as_of`. The builder derives the buckets per
+person and refuses the render if a row's lines do not add up to its total,
+naming the person. Only lines above zero are shown, in this order:
+
+| Line | A prediction lands here when |
+|---|---|
+| Scored | scores.json has it with `scored: true` |
+| Not yet due | scores.json does not have it, and its deadline is after `as_of` |
+| No deadline | scores.json does not have it, and `phase2_resolvability` reads no deadline |
+| Awaiting check | `not_scored_because` is `no_resolution` or `no_prior`; also a record past due at `as_of` that scores.json lacks, which the builder counts and prints |
+| Not testable | `not_scored_because` is `not_eligible` |
+| Couldn't check | `not_scored_because` is `unresolvable:<reason>`; the reasons are split on hover and in the column's help |
+
+A not-scored reason with no bucket, or a scores.json row that is no record on
+the page, refuses the render.
+
+Proof: `.venv/bin/python scripts/test_predictions_site.py`. Browser check,
+which needs Playwright and a rendered site directory:
+`python scripts/check_predictions_site_ui.py --site <dir> --absent "<names>" --shots <dir>`.

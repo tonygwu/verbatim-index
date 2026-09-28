@@ -4,7 +4,14 @@
   FIXTURE    renders from a synthetic index.json plus jsonl; DATA and SRC parse
   PAYLOAD    the records are files beside the page, versioned, and the page stays under the budget
   NEUTRAL    no evaluative vocabulary outside the fenced disclaimer and the data constants
-  SORT       alphabetical by default, static aria-sort, exact column keys, DATA alphabetical
+  SORT       Score descending by default with scores (unscored last, name order), name order without;
+             static aria-sort, exact column keys
+  FLOOR      a person under MIN_PREDICTIONS_TO_LIST has no row and is named; score prose counts listed people
+  ORG        the Organisation column is at most 150px
+  POPOVER    year squares carry data for the popover, which is held to WCAG AA (behaviour: check_predictions_site_ui.py)
+  INTRO      the scored intro is derived from the listed people and links the repo; the social text matches
+  PRIOR      the prior explanation names the model from its sidecars and prints prediction_score's numbers
+  BUCKETS    the Predictions cell's lines are derived per person, add up to the total, and refuse unknown reasons
   TIMESTAMP  [01:02:03] gives t 3723 and a YouTube link at that second; a null mark gives no link
   REJECTED   a rejected candidate's quote never reaches the page; its count does
   TRIM       telemetry, gates, offsets and harness internals are not embedded
@@ -114,11 +121,34 @@ def build(td: Path, L, A) -> tuple[Path, Path, Path]:
     alan = [rec(L, "alan", "s2", "rates will be lower next year for sure", True, upload=None, video=None, ctype="qualitative")]
     (pr / "alan" / "s2.jsonl").write_text(L.serialise_lines(alan))
     (pr / "alan" / "s2.meta.json").write_text(json.dumps({"extract": {"status": "ok", "candidates_written": 1, "harness": "astra"}, "verify": {"status": "ok", "accepted": 1}}))
+    # LIST FLOOR. Since 2026-09-27 a person needs B.MIN_PREDICTIONS_TO_LIST (4)
+    # accepted predictions for a row. ada and alan are brought to exactly 4 by a
+    # second recording each, so they sit ON the floor and stay; cleo has 1 and
+    # sits under it, so she must leave the table and be NAMED in the note.
+    ada2 = [rec(L, "ada", "s3", "by 2030 most code will be written by AI I would say that is my bet", True),
+            rec(L, "ada", "s3", "we will see 30 gigawatts of new capacity in 2026 </script><b>bold</b> and that is that", True)]
+    (pr / "ada" / "s3.jsonl").write_text(L.serialise_lines(ada2))
+    (pr / "ada" / "s3.meta.json").write_text(json.dumps({"extract": {"status": "ok", "candidates_written": 2, "harness": "fable"}, "verify": {"status": "ok", "accepted": 2}}))
+    alan2 = [rec(L, "alan", "s4", q, True, upload=None, video=None) for q in (
+        "by 2030 most code will be written by AI I would say that is my bet",
+        "we will see 30 gigawatts of new capacity in 2026 </script><b>bold</b> and that is that",
+        "and finally rates will be lower next year for sure")]
+    # BUCKETS: one prediction with no deadline at all, which is neither due nor
+    # past due and must land in its own bucket.
+    alan2[2]["prediction"].update(target_date=None, target_date_text=None, horizon="none")
+    (pr / "alan" / "s4.jsonl").write_text(L.serialise_lines(alan2))
+    (pr / "alan" / "s4.meta.json").write_text(json.dumps({"extract": {"status": "ok", "candidates_written": 3, "harness": "astra"}, "verify": {"status": "ok", "accepted": 3}}))
+    (pr / "cleo").mkdir()
+    cleo = [rec(L, "cleo", "s5", "by 2030 most code will be written by AI I would say that is my bet", True)]
+    (pr / "cleo" / "s5.jsonl").write_text(L.serialise_lines(cleo))
+    (pr / "cleo" / "s5.meta.json").write_text(json.dumps({"extract": {"status": "ok", "candidates_written": 1, "harness": "fable"}, "verify": {"status": "ok", "accepted": 1}}))
     roster = td / "roster.json"
     roster.write_text(json.dumps({"roster": [{"slug": "ada", "name": "Ada L", "role": "CEO", "company": "Co", "sector": "AI"},
-                                             {"slug": "alan", "name": "Alan T", "role": "Founder", "company": "Lab", "sector": "AI"}]}))
+                                             {"slug": "alan", "name": "Alan T", "role": "Founder", "company": "Lab", "sector": "AI"},
+                                             {"slug": "cleo", "name": "Cleo F", "role": "CTO", "company": "Few", "sector": "AI"}]}))
     index = A.build_index(pr, {"ada": {"name": "Ada L", "company": "Co", "role": "CEO", "sector": "AI"},
-                               "alan": {"name": "Alan T", "company": "Lab", "role": "Founder", "sector": "AI"}}, None)
+                               "alan": {"name": "Alan T", "company": "Lab", "role": "Founder", "sector": "AI"},
+                               "cleo": {"name": "Cleo F", "company": "Few", "role": "CTO", "sector": "AI"}}, None)
     (pr / "index.json").write_text(json.dumps(index, indent=1, sort_keys=True))
     return pr, roster, pr / "index.json"
 
@@ -154,7 +184,7 @@ def main() -> int:
         html = out.read_text()
         data, src, pred = embedded(html, "DATA"), embedded(html, "SRC"), records(out)
         check("FIXTURE: DATA and SRC parse, and the records are files beside the page",
-              isinstance(data, list) and isinstance(src, dict) and sorted(pred) == ["ada", "alan"],
+              isinstance(data, list) and isinstance(src, dict) and sorted(pred) == ["ada", "alan", "cleo"],
               f"{sorted(pred)}")
 
         # COVERAGE. The drawer says "extraction ran on X of Y of their
@@ -183,7 +213,7 @@ def main() -> int:
               "predictions/${encodeURIComponent(slug)}.json?v=${PRED_VERSION}" in html)
         sl = re.search(r"const PRED_SLUGS = (\[[^\]]*\])", html)
         check("PAYLOAD: the page names who has records",
-              bool(sl) and json.loads(sl.group(1).replace("<\\/", "</")) == ["ada", "alan"],
+              bool(sl) and json.loads(sl.group(1).replace("<\\/", "</")) == ["ada", "alan", "cleo"],
               sl.group(1) if sl else "none")
         stale_file = out.parent / "predictions" / "gone.json"
         stale_file.write_text("[]")
@@ -264,7 +294,7 @@ def main() -> int:
         check("NEUTRAL: no evaluative vocabulary outside the disclaimer and the data", not hits, str(hits))
         check("NEUTRAL: the disclaimer block exists and is non-empty", "<!-- disclaimer:start -->" in html and "no Brier score" in html)
 
-        check("SORT: default sort is name ascending and the Person header announces it in static HTML",
+        check("SORT: with no scores file the default sort is name ascending, announced in static HTML",
               'let sortKey = "name", sortDir = 1;' in html and '<th data-k="name" aria-sort="ascending">' in html)
         keys = re.findall(r'data-k="([a-z_]+)"', html)
         # FIVE columns. The five horizon and confidence breakdown columns moved into the
@@ -327,27 +357,57 @@ def main() -> int:
         # somebody the aggregation does not cover.
         scores = td / "scores.json"
         scored_pid = pred[sorted(pred)[0]][0]["prediction_id"]
+        # The prior and resolution sidecars the scorer joined. The page names the
+        # model that set each p, and it reads that name out of these records, the
+        # same run directories scores.json says it was computed from.
+        run1 = td / "run1"
+        prior_doc = {"prediction_id": scored_pid, "leader_slug": "ada", "stage": "prior", "p": 0.25,
+                     "p_raw": 0.25, "clamped": False, "reference_class": "things like this",
+                     "reasoning": "r", "harness": "fable",
+                     "telemetry": {"canonical_model": "claude-fable-5-1", "requested_model": "claude-fable-5-1",
+                                   "telemetry_models": ["claude-fable-5-1"]}}
+        (run1 / "priors" / "ada").mkdir(parents=True)
+        (run1 / "priors" / "ada" / f"{scored_pid}.json").write_text(json.dumps(prior_doc))
+        (run1 / "resolutions" / "ada").mkdir(parents=True)
+        (run1 / "resolutions" / "ada" / f"{scored_pid}.json").write_text(json.dumps(
+            {"prediction_id": scored_pid, "leader_slug": "ada", "stage": "resolve", "outcome": "occurred",
+             "harness": "astra", "telemetry": {"requested_model": "gpt-6-astra", "served_model": "gpt-6-astra"}}))
+        # The corpus block counts cleo, who is under the list floor: 1 past due, 1
+        # unresolvable. The page must describe the LISTED people, so every figure
+        # it prints is the corpus figure minus cleo's: 8 of 9, not 8 of 10.
         scores.write_text(json.dumps({
             "as_of": "2026-09-14",
+            "run_dirs": [str(run1)],
             "rule": {"clamp": 0.01, "min_scored_to_rank": 5, "min_lead_days": 60,
                      "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)"},
-            "corpus": {"past_due": 9, "eligible": 7, "scored": 6, "leaders_ranked": 1,
-                       "by_outcome": {"occurred": 4, "not_occurred": 2, "unresolvable": 3},
-                       "unresolvable_reasons": {"no_public_evidence": 2, "criterion_ambiguous": 1}},
+            "corpus": {"past_due": 10, "eligible": 10, "scored": 8, "leaders_ranked": 1,
+                       "by_outcome": {"occurred": 5, "not_occurred": 3, "unresolvable": 2},
+                       "unresolvable_reasons": {"no_public_evidence": 1, "criterion_ambiguous": 1}},
             "leaders": [
                 {"slug": "ada", "name": "Ada L", "n_scored": 6, "mean_points": 1.2345,
                  "ranked": True, "past_due": 7, "eligible": 7, "unresolvable": 1,
                  "scored_occurred": 4, "hit_rate": 0.6667},
                 {"slug": "alan", "name": "Alan T", "n_scored": 2, "mean_points": -0.5,
-                 "ranked": False, "past_due": 2, "eligible": 0, "unresolvable": 2,
-                 "scored_occurred": 1, "hit_rate": 0.5}],
+                 "ranked": False, "past_due": 2, "eligible": 2, "unresolvable": 0,
+                 "scored_occurred": 1, "hit_rate": 0.5},
+                {"slug": "cleo", "name": "Cleo F", "n_scored": 0, "mean_points": None,
+                 "ranked": False, "past_due": 1, "eligible": 1, "unresolvable": 1,
+                 "scored_occurred": 0, "hit_rate": None}],
             "predictions": [
-                {"prediction_id": scored_pid, "outcome": "occurred", "scored": True,
+                {"prediction_id": scored_pid, "leader_slug": "ada", "outcome": "occurred", "scored": True,
                  "unresolvable_reason": None, "resolution_reasoning": "it shipped",
                  "sources": [{"where": "https://example.com/a", "what_it_shows": "shipped",
                               "date": "2026-01-02"}],
                  "p": 0.25, "reference_class": "things like this", "points": 2.0,
-                 "not_scored_because": None}],
+                 "not_scored_because": None},
+                {"prediction_id": pred["ada"][1]["prediction_id"], "leader_slug": "ada", "outcome": "unresolvable", "scored": False,
+                 "unresolvable_reason": "criterion_ambiguous", "resolution_reasoning": "x", "sources": [],
+                 "p": None, "reference_class": None, "points": None,
+                 "not_scored_because": "unresolvable:criterion_ambiguous"},
+                {"prediction_id": pred["cleo"][0]["prediction_id"], "leader_slug": "cleo", "outcome": "unresolvable", "scored": False,
+                 "unresolvable_reason": "no_public_evidence", "resolution_reasoning": "x", "sources": [],
+                 "p": None, "reference_class": None, "points": None,
+                 "not_scored_because": "unresolvable:no_public_evidence"}],
         }))
         out2 = td / "site" / "scored.html"
         p2 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
@@ -402,8 +462,9 @@ def main() -> int:
               "Ada L" in names2 and "Alan T" in names2 and len(names2) == 2, str(names2))
         thin = td / "thin.json"
         tdoc = json.loads(scores.read_text())
-        tdoc["leaders"] = [dict(l, past_due=0) if l["slug"] == "alan" else l
+        tdoc["leaders"] = [dict(l, past_due=0, eligible=0, n_scored=0, ranked=False) if l["slug"] == "alan" else l
                            for l in tdoc["leaders"]]
+        tdoc["corpus"].update(past_due=8, eligible=8, scored=6)
         thin.write_text(json.dumps(tdoc))
         p5 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
                              "--roster", str(roster), "--out", str(td / "site" / "t.html"),
@@ -411,22 +472,23 @@ def main() -> int:
         n5 = {r["name"] for r in embedded((td / "site" / "t.html").read_text(), "DATA")}
         check("LIST: dropping a person's past-due count to 0 removes their row",
               p5.returncode == 0 and n5 == {"Ada L"}, f"{p5.returncode} {n5}")
-        check("LIST: with NO scores file nobody is hidden, because nothing says who is due",
-              len({r["name"] for r in data}) == 2, str({r["name"] for r in data}))
+        check("LIST: with NO scores file the past-due rule hides nobody; only the count floor applies",
+              {r["name"] for r in data} == {"Ada L", "Alan T"}, str({r["name"] for r in data}))
 
         check("SCORE: the masthead stops claiming everything is pending once anything is scored",
               "Every item pending" not in h2 and "every item\n    is pending" not in h2
-              and "6 of 9 due predictions resolved" in h2, 
+              and "8 of 9 due predictions resolved" in h2, 
               [l for l in h2.splitlines() if "pending" in l.lower()][:3])
-        check("SCORE: the disclaimer names what the score does NOT cover",
-              "3 could not be resolved or were not specific enough" in h2
-              and "not a measure of how well they said it" in h2,
+        # The intro replaced the disclaimer sentence on 2026-09-27 and still has
+        # to say what the score leaves out, in its own figures.
+        check("SCORE: the intro says the score covers only the past-due predictions it could check",
+              "So far 8 of 9 past-due predictions could be checked and scored" in h2,
               [l for l in h2.splitlines() if "could not be resolved" in l][:2])
         check("SCORE: with no scores file the page still says everything is pending",
               "Every item pending" in html and "every item is" in html)
 
         check("SCORE: the page reports the corpus figures from the file, not typed numbers",
-              "6 of 9 past-due predictions" in h2 and "3 times" in h2,
+              "8 of 9 past-due predictions" in h2 and "did so 1 time" in h2,
               [l for l in h2.splitlines() if "past-due predictions" in l][:2])
         check("SCORE: the rank floor named on the page is the aggregation constant",
               # Pinned to the constant, not to a literal: the operator moved it
@@ -474,14 +536,16 @@ def main() -> int:
         # score has to be able to see the outcome, the sources it rests on and the p it
         # was priced at, without leaving the page.
         pr2 = records(out2)
-        outs = [r for rs in pr2.values() for r in rs if r.get("outcome")]
+        # Three rows of the scores file name records on the page since task 7:
+        # one scored, two that could not be resolved.
+        outs = [r for rs in pr2.values() for r in rs if r.get("outcome") and r["outcome"]["verdict"] == "occurred"]
         check("DRAWER: a resolved prediction carries its outcome, evidence, p and points",
               len(outs) == 1 and outs[0]["outcome"]["verdict"] == "occurred"
               and outs[0]["outcome"]["sources"][0]["where"].startswith("http")
               and outs[0]["outcome"]["p"] == 0.25 and outs[0]["outcome"]["points"] == 2.0,
               str(outs[0]["outcome"] if outs else "no outcome attached"))
         check("DRAWER: an unresolved prediction carries no outcome key at all, not a null one",
-              sum(1 for rs in pr2.values() for r in rs if "outcome" in r) == 1,
+              sum(1 for rs in pr2.values() for r in rs if "outcome" in r) == 3,
               "an empty outcome object would render as a verdict")
         check("DRAWER: the telemetry of the resolving call never reaches the page",
               not any(k in outs[0]["outcome"] for k in ("telemetry", "run_id", "account", "harness")),
@@ -493,6 +557,177 @@ def main() -> int:
               p3.returncode != 0 and "ghost" in (p3.stdout + p3.stderr),
               (p3.stdout + p3.stderr)[-300:])
 
+        # ---- 2026-09-27 operator changes: list floor, sort, column, popover, intro, prior ----
+        run = lambda *extra, out_name, env=None: subprocess.run(  # noqa: E731
+            [PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
+             "--roster", str(roster), "--out", str(td / "site" / out_name), *extra],
+            capture_output=True, text=True, cwd=REPO, env=env)
+
+        # LIST FLOOR. One named constant, not a list of names, so a person who
+        # later gains predictions comes back without an edit.
+        check("FLOOR: the list floor is one named constant, 4 accepted predictions",
+              getattr(B, "MIN_PREDICTIONS_TO_LIST", None) == 4, str(getattr(B, "MIN_PREDICTIONS_TO_LIST", None)))
+        names_h2 = [r["name"] for r in embedded(h2, "DATA")]
+        check("FLOOR: a person under the floor has no row, with or without scores",
+              "Cleo F" not in names_h2 and "Cleo F" not in [r["name"] for r in data], f"{names_h2}")
+        check("FLOOR: a person exactly ON the floor keeps their row",
+              "Ada L" in names_h2 and "Alan T" in names_h2, f"{names_h2}")
+        om = re.search(r'<p class="omitted" id="omitted">(.*?)</p>', h2, re.S)
+        check("FLOOR: the page NAMES the omitted person with their count and the reason, on its own line",
+              bool(om) and "Cleo F (1)" in om.group(1) and "fewer than 4" in om.group(1),
+              om.group(1) if om else "no omitted note")
+        check("FLOOR: the note says the omitted predictions still count in the totals above",
+              bool(om) and "1 prediction still counts in the totals" in om.group(1),
+              om.group(1) if om else "no omitted note")
+        om0 = re.search(r'<p class="omitted" id="omitted">(.*?)</p>', html, re.S)
+        check("FLOOR: with no scores file the note still names who is under the floor",
+              bool(om0) and "Cleo F (1)" in om0.group(1), om0.group(1) if om0 else "no omitted note")
+        idx4 = json.loads(index.read_text())
+        next(l for l in idx4["leaders"] if l["slug"] == "cleo")["accepted"] = 4
+        check("FLOOR: a person who reaches the floor reappears automatically",
+              "cleo" in [r["slug"] for r in B.person_rows(idx4, {}, {}, {})],
+              str([r["slug"] for r in B.person_rows(idx4, {}, {}, {})]))
+        bad_sum = td / "badsum.json"
+        bdoc = json.loads(scores.read_text())
+        bdoc["corpus"]["past_due"] = 11
+        bad_sum.write_text(json.dumps(bdoc))
+        pb = run("--scores", str(bad_sum), out_name="bs.html")
+        check("FLOOR: per-person score counts that do not add up to the corpus block refuse the render",
+              pb.returncode != 0 and "do not add up" in (pb.stdout + pb.stderr), (pb.stdout + pb.stderr)[-300:])
+
+        # SORT. Score, highest first, once there is a Score; unscored rows after
+        # every scored one, alphabetical among themselves, in both directions.
+        check("SORT: with scores the default sort is Score descending, announced in static HTML",
+              'let sortKey = "score", sortDir = -1;' in h2
+              and '<th data-k="score" aria-sort="descending">' in h2
+              and '<th data-k="name" aria-sort' not in h2,
+              [l for l in h2.splitlines() if "let sortKey" in l])
+        sample = [{"name": "Zed", "score": None}, {"name": "Amy", "score": None},
+                  {"name": "Bo", "score": 0.5}, {"name": "Cy", "score": 1.0}, {"name": "Al", "score": 0.5}]
+        order = [r["name"] for r in B.default_order(sample, scored=True)] if hasattr(B, "default_order") else None
+        check("SORT: default order is score descending, ties and unscored rows alphabetical, unscored last",
+              order == ["Cy", "Al", "Bo", "Amy", "Zed"], str(order))
+        check("SORT: no sentence on the scored page says the default is alphabetical",
+              not re.search(r"default is alphabetical|alphabetical by default|the table is alphabetical", h2),
+              str(re.findall(r"[^.]*alphabetical[^.]*", h2)[:3]))
+
+        # ORGANISATION column. It was 205px and mostly white space.
+        cols = re.findall(r'<col style="width:(\d+)px">', h2)
+        check("ORG: the Organisation column is at most 150px", len(cols) == 6 and int(cols[1]) <= 150, str(cols))
+
+        # POPOVER on the year squares. Behaviour is proven in a browser by
+        # scripts/check_predictions_site_ui.py; these pin the parts a refactor
+        # would silently drop.
+        check("POPOVER: a popover element exists for the year squares",
+              'id="sqtip"' in h2 and 'role="tooltip"' in h2)
+        check("POPOVER: squares carry their year and count as data, not a native title",
+              'data-y="${yr}" data-n="${n}"' in h2 and 'title="${yr}: ${n}' not in h2)
+        check("POPOVER: text colour is held to WCAG AA 4.5:1 against the popover",
+              "const AA = 4.5;" in h2 and "function readable(" in h2)
+        check("POPOVER: it opens on hover, on keyboard focus and on tap",
+              "sqShow(" in h2 and "pointerover" in h2 and "focusin" in h2 and 'pointerType === "touch"' in h2)
+        check("POPOVER: the timeline help no longer types a people count",
+              "shared by all 50 people" not in h2)
+
+        # INTRO. Written for a general reader, every number derived.
+        thesis = re.search(r'<p class="thesis">(.*?)</p>', h2, re.S)
+        th = thesis.group(1) if thesis else ""
+        check("INTRO: the scored page opens with the question, a derived people count and the repo link",
+              "Who in tech is best at predicting the future?" in th
+              and f"{len(names_h2)} tech leaders" in th
+              and 'href="https://github.com/tonygwu/verbatim-index"' in th, th[:400])
+        check("INTRO: the intro states what the score covers, from the listed people's figures",
+              "8 of 9 past-due predictions could be checked" in th and "1 person has enough" in th, th[:600])
+        head2 = h2[:h2.find("</head>")]
+        check("INTRO: the social description matches the intro once there is a score",
+              'name="description" content="Who in tech is best at predicting the future?' in head2
+              and 'property="og:description" content="Who in tech' in head2, head2[-900:])
+        th0 = re.search(r'<p class="thesis">(.*?)</p>', html, re.S)
+        check("INTRO: with no scores file the intro stays an index and claims no score",
+              bool(th0) and "Who in tech" not in th0.group(1) and "Forward-looking claims" in th0.group(1))
+
+        # PRIOR. The explanation names the model from the prior records and
+        # prints numbers computed by prediction_score, never typed ones.
+        PS = load("prediction_score")
+        f2 = lambda x: ("+" if x >= 0 else "−") + f"{abs(x):.2f}"  # noqa: E731
+        hs = re.search(r'<div class="howscore" id="howscore">(.*?)</div>\s*<!-- score:end -->', h2, re.S)
+        hb = hs.group(1) if hs else ""
+        check("PRIOR: the index section explains p, and names the prior model read from its records",
+              "Claude Fable 5.1" in hb and "does not see what happened" in hb and "OpenAI GPT-6 Astra" in hb,
+              hb[:500])
+        want = [f2(PS.score(True, pp)["points"]) for pp in (0.9, 0.1)] + [f2(PS.score(False, pp)["points"]) for pp in (0.9, 0.1)]
+        check("PRIOR: the worked example prints the scoring function's own numbers",
+              bool(hb) and all(w in hb for w in want), f"{want} in {hb[-700:]}")
+        nodir = td / "nodir.json"
+        ndoc = json.loads(scores.read_text())
+        ndoc["run_dirs"] = [str(td / "no-such-run")]
+        nodir.write_text(json.dumps(ndoc))
+        pn = run("--scores", str(nodir), out_name="nd.html")
+        check("PRIOR: a scores file whose run directory is missing refuses the render, naming it",
+              pn.returncode != 0 and "no-such-run" in (pn.stdout + pn.stderr), (pn.stdout + pn.stderr)[-300:])
+        # run_dirs are written two ways: from a clone root as data/predictions/...
+        # (until data a5525e31) and from the data checkout root as predictions/...
+        # (since). Both resolve inside the checkout that holds scores.json.
+        droot = td / "droot"
+        (droot / "predictions" / "_experiments" / "r1").mkdir(parents=True)
+        spath = droot / "predictions" / "scores.json"
+        try:
+            got = B.run_dirs({"run_dirs": ["data/predictions/_experiments/r1", "predictions/_experiments/r1"]}, str(spath))
+        except SystemExit as err:
+            got = str(err)
+        check("PRIOR: run_dirs resolve in both the data/-prefixed and the checkout-relative form",
+              got == [droot.resolve() / "predictions" / "_experiments" / "r1"] * 2, str(got))
+        mism = td / "mism.json"
+        mdoc = json.loads(scores.read_text())
+        mdoc["predictions"][0]["p"] = 0.5
+        mism.write_text(json.dumps(mdoc))
+        pm = run("--scores", str(mism), out_name="mm.html")
+        check("PRIOR: a scored p that differs from its prior record refuses the render",
+              pm.returncode != 0 and scored_pid in (pm.stdout + pm.stderr), (pm.stdout + pm.stderr)[-300:])
+
+        # ---- task 7: the Predictions column says where each prediction stands ----
+        want_labels = ["Scored", "Not yet due", "No deadline", "Awaiting check", "Not testable", "Couldn't check"]
+        check("BUCKETS: six buckets in a fixed order with short plain labels",
+              [lab for _, lab in getattr(B, "BUCKETS", ())] == want_labels, str(getattr(B, "BUCKETS", None)))
+        dd = {r["slug"]: r for r in embedded(h2, "DATA")}
+        check("BUCKETS: derived per person from the records and scores.json",
+              dd["ada"].get("buckets") == {"scored": 1, "unresolvable": 1, "not_due": 2}
+              and dd["alan"].get("buckets") == {"not_due": 3, "no_deadline": 1},
+              f"{dd['ada'].get('buckets')} {dd['alan'].get('buckets')}")
+        check("BUCKETS: the unresolvable line carries its split by reason",
+              dd["ada"].get("unres") == {"criterion_ambiguous": 1}, str(dd["ada"].get("unres")))
+        check("BUCKETS: every row's buckets add up to its total",
+              all(sum((r.get("buckets") or {"x": -1}).values()) == r["accepted"] for r in dd.values()),
+              str({s: (r.get("buckets"), r["accepted"]) for s, r in dd.items()}))
+        check("BUCKETS: with no scores file there is no as-of date, so no breakdown",
+              all(r.get("buckets") is None for r in data), str([r.get("buckets") for r in data]))
+        try:
+            getattr(B, "check_buckets_sum", lambda rows: None)([{"name": "Xavier Q", "accepted": 3, "buckets": {"scored": 1}}])
+            refused = ""
+        except SystemExit as err:
+            refused = str(err)
+        check("BUCKETS: a row whose buckets do not add up refuses the render, naming the person",
+              "Xavier Q" in refused, refused or "no refusal")
+        odd = td / "odd.json"
+        odoc = json.loads(scores.read_text())
+        odoc["predictions"][1]["not_scored_because"] = "mystery_reason"
+        odd.write_text(json.dumps(odoc))
+        po = run("--scores", str(odd), out_name="odd.html")
+        check("BUCKETS: a not-scored reason the page does not know refuses the render, naming it",
+              po.returncode != 0 and "mystery_reason" in (po.stdout + po.stderr), (po.stdout + po.stderr)[-300:])
+        stray_row = td / "strayrow.json"
+        sdoc = json.loads(scores.read_text())
+        sdoc["predictions"].append(dict(sdoc["predictions"][1], prediction_id="not-a-page-record"))
+        stray_row.write_text(json.dumps(sdoc))
+        pr_ = run("--scores", str(stray_row), out_name="sr.html")
+        check("BUCKETS: a scored-file row that is no record on the page refuses the render",
+              pr_.returncode != 0 and "not-a-page-record" in (pr_.stdout + pr_.stderr), (pr_.stdout + pr_.stderr)[-300:])
+        check("BUCKETS: the column is left-aligned, header and cells, and still sorts by the total",
+              '<th class="pc" data-k="accepted">' in h2 and "td.pc{" in h2 and "th.pc{text-align:left" in h2)
+        check("BUCKETS: the (?) help names every bucket and the scoring as-of date",
+              all(lab.replace("'", "&#39;") in h2 or lab in h2 for lab in want_labels)
+              and "as of 2026-09-14" in h2)
+
         # The sparkline axis is derived from the records. A hardcoded span silently drops a
         # recording older than the span, which is the whole failure mode here.
         m_years = re.search(r"const YEARS = (\[.*?\]);", html)
@@ -501,8 +736,8 @@ def main() -> int:
         ada_row = next(d for d in data if d["slug"] == "ada")
         alan_row = next(d for d in data if d["slug"] == "alan")
         check("SPARK: the year span comes from the records, and dated and undated records are split",
-              years == ["2025"] and ada_row["years"] == {"2025": 2} and ada_row["undated"] == 0
-              and alan_row["years"] == {} and alan_row["undated"] == 1,
+              years == ["2025"] and ada_row["years"] == {"2025": 4} and ada_row["undated"] == 0
+              and alan_row["years"] == {} and alan_row["undated"] == 4,
               f"{years} {ada_row['years']}/{ada_row['undated']} {alan_row['years']}/{alan_row['undated']}")
         check("SPARK: every leader's squares sum to their dated accepted predictions",
               all(sum(d["years"].values()) + d["undated"] == d["accepted"] for d in data),
@@ -527,7 +762,8 @@ def main() -> int:
         check("SORT: the drawer cell spans every column",
               # Six columns since Came true arrived on 2026-09-16.
               '<td colspan="6">' in html and ncols == 6, str(ncols))
-        check("SORT: DATA is emitted alphabetically by name", [d["name"] for d in data] == ["Ada L", "Alan T"])
+        check("SORT: with no scores file DATA is emitted alphabetically by name",
+              [d["name"] for d in data] == ["Ada L", "Alan T"], str([d["name"] for d in data]))
 
         ada = pred["ada"]
         first = next(r for r in ada if r["quote"].startswith("by 2030"))
@@ -538,7 +774,7 @@ def main() -> int:
         # transcript text); it must never appear as a quote or a claim under the person's name.
         embedded_claims = json.dumps([[r["quote"], r["claim"]] for rs in pred.values() for r in rs])
         check("REJECTED: the rejected quote is never a quote or claim on the page, and its count is embedded",
-              "REJECTED-MARKER-QUOTE" not in embedded_claims and len(ada) == 2
+              "REJECTED-MARKER-QUOTE" not in embedded_claims and len(ada) == 4
               and next(d for d in data if d["slug"] == "ada")["rejected"] == 1)
         check("TRIM: no telemetry, gates, offsets, harness or accepted flag in the records",
               not re.search(r"secret_telemetry|\"gates\"|quote_char_start|\"harness\"|\"accepted\"", json.dumps(pred)) and "prediction_id" in first)
