@@ -1,0 +1,21 @@
+#!/bin/sh
+# Pre-push hook for a private data checkout (tonygwu/verbatim-index-data).
+# Installed with: git -C <data checkout> config core.hooksPath <public clone>/scripts/git-hooks/data
+# (scripts/data_sync.py adopt-main does it). A push to main runs the same check
+# as scripts/data_sync.py, so a raw `git push` cannot skip it by accident. Pushes
+# to any other branch are not checked: experiment clones push their own codex/*.
+# It prevents accidents, not abuse: --no-verify skips it, and the repo forbids that.
+# Plan: docs/plans/shared-data-push-2026-09-27.md.
+here="$(cd "$(dirname "$0")" && pwd -P)"
+repo="$(cd "$here/../../.." && pwd -P)"
+data="$(git rev-parse --show-toplevel)"
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+  if [ "$local_sha" = "$zero" ]; then
+    echo "REFUSING: deleting main" >&2
+    exit 1
+  fi
+  "$repo/.venv/bin/python" "$repo/scripts/data_sync.py" check --data "$data" --head "$local_sha" >&2 || exit 1
+done
+exit 0

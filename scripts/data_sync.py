@@ -9,6 +9,7 @@ repo's main itself, and this tool is what keeps that from clobbering:
     .venv/bin/python scripts/data_sync.py push               # merge, regenerate, check, push
     .venv/bin/python scripts/data_sync.py push --daemon      # the same, from the daemon clone
     .venv/bin/python scripts/data_sync.py pull               # take origin/main, never rebasing
+    .venv/bin/python scripts/data_sync.py adopt-main [--apply]  # move an experiment clone onto main
 
 `check` answers one question: may this checkout push the commits it holds that
 origin/main does not? It refuses when
@@ -48,6 +49,14 @@ from one cycle is never committed beside the grades of the next.
 commit when the checkout holds commits of its own. It never rebases and never
 stashes, and when an incoming file would overwrite a dirty or untracked one it
 refuses and names the path, leaving HEAD and every file as they were.
+
+`adopt-main` moves a clone's `data` link from its experiment checkout on a
+codex/* branch to a fresh checkout of origin/main at .data-clones/main, with
+verbatim.role=contributor and the pre-push hook installed. It carries whole
+predictions/_experiments/<run> directories that main lacks, committed or
+untracked, and REPORTS every other path the old branch changed as skipped with
+its reason, so nothing is dropped silently. The old checkout is left intact.
+Without --apply it only prints the plan.
 
 Roles, from `git config verbatim.role` in the data checkout:
   daemon       the clone that runs the daemons; may change every path
@@ -481,9 +490,97 @@ def pull(data: Path) -> tuple[int, list[str]]:
     return 0, [f"{how} to origin/main {base[:12]}; HEAD {git(data, 'rev-parse', 'HEAD').strip()[:12]}"]
 
 
+# ---------------------------------------------------------------- adopt-main --
+
+ADOPT_REPORT = "verbatim-adopt-main.json"
+HOOKS = REPO / "scripts" / "git-hooks" / "data"
+
+
+def run_of(path: str) -> str | None:
+    parts = path.split("/")
+    return "/".join(parts[:3]) if len(parts) >= 4 and parts[:2] == ["predictions", "_experiments"] else None
+
+
+def uncommitted(data: Path) -> list[tuple[str, str]]:
+    raw = git(data, "status", "--porcelain", "-z", "--untracked-files=all")
+    return [(e[:2], e[3:]) for e in raw.split("\0") if len(e) > 3]
+
+
+def adopt_plan(old: Path) -> dict:
+    git(old, "fetch", "-q", "origin")
+    base = git(old, "rev-parse", "origin/main").strip()
+    head = git(old, "rev-parse", "HEAD").strip()
+    manifest = load_manifest(old, base)
+    seen: dict[str, str] = {}
+    for status, path in changed_paths(old, base, head):
+        seen[path] = "deleted on the branch" if status == "D" else "committed on the branch"
+    for xy, path in uncommitted(old):
+        seen[path] = "deleted, uncommitted" if "D" in xy else "uncommitted"
+    carry, skipped = set(), []
+    for path, where in sorted(seen.items()):
+        run = run_of(path)
+        if where.startswith("deleted"):
+            skipped.append({"path": path, "source": where, "reason": "a deletion; deletions are not carried"})
+        elif run is None:
+            rule = classify(manifest, path)
+            cls = rule["class"] if rule else "unlisted"
+            skipped.append({"path": path, "source": where,
+                            "reason": f"{cls} path outside an experiment run; only whole "
+                                      f"predictions/_experiments/<run> directories are carried"})
+        elif git(old, "ls-tree", "--name-only", base, "--", run).strip():
+            skipped.append({"path": path, "source": where,
+                            "reason": f"{run} already exists on origin/main; reconcile it by hand"})
+        else:
+            carry.add(run)
+    return {"old_checkout": str(old), "old_branch": git(old, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+            "old_head": head, "origin_main": base, "carry": sorted(carry), "skipped": skipped}
+
+
+def adopt_main(repo: Path, apply: bool = False) -> tuple[int, list[str]]:
+    repo = repo.resolve()
+    link, dest = repo / "data", repo / ".data-clones" / "main"
+    if not link.is_symlink():
+        return 1, [f"REFUSING: {link} is not a symlink to an experiment checkout"]
+    old = link.resolve()
+    if old == dest.resolve() and role(old) == "contributor":
+        return 0, [f"already adopted: {link} -> {dest}"]
+    if role(old) != "experiment":
+        return 1, [f"REFUSING: adopt-main moves an experiment checkout; {old} has role {role(old) or 'unset'}"]
+    if dest.exists():
+        return 1, [f"REFUSING: {dest} exists; preserved, not reset. Inspect it, then move it aside"]
+    plan = adopt_plan(old)
+    lines = [f"{'APPLY' if apply else 'dry run'}: {link} -> {dest} at origin/main {plan['origin_main'][:12]}",
+             f"old checkout {old} on {plan['old_branch']} at {plan['old_head'][:12]} is left intact"]
+    lines += [f"  carry {run}" for run in plan["carry"]] or ["  carry nothing"]
+    lines += [f"  skipped {s['path']} ({s['source']}): {s['reason']}" for s in plan["skipped"]]
+    if not apply:
+        lines.append("dry run: nothing changed; rerun with --apply")
+        return 0, lines
+    D.assert_idle(repo)
+    origin = git(old, "remote", "get-url", "origin").strip()
+    subprocess.run(["git", "clone", "-q", "--no-local", origin, str(dest)], check=True)
+    git(dest, "checkout", "-q", "-B", "main", plan["origin_main"])
+    git(dest, "branch", "-q", "--set-upstream-to=origin/main", "main")
+    for key, value in (("verbatim.role", "contributor"), ("verbatim.owner", str(repo)),
+                       ("user.email", git(old, "config", "user.email").strip()),
+                       ("user.name", git(old, "config", "user.name").strip()),
+                       ("core.hooksPath", str(HOOKS))):
+        git(dest, "config", key, value)
+    hashes = D.copy_owned(old, dest, plan["carry"])
+    git(dest, "fsck", "--connectivity-only")
+    D.write_state(dest / ".git" / ADOPT_REPORT, {**plan, "copied_sha256": hashes})
+    D.assert_idle(repo)
+    temp = repo / ".data-clones" / f"link-{os.getpid()}"
+    temp.symlink_to(dest, target_is_directory=True)
+    os.replace(temp, link)
+    lines.append(f"adopted: {link} -> {dest}; carried runs are uncommitted there, so review them and "
+                 f"push with scripts/data_sync.py push; report in {dest / '.git' / ADOPT_REPORT}")
+    return 0, lines
+
+
 # --------------------------------------------------------------------- check --
 
-def check(data: Path, fetch: bool = True) -> tuple[int, list[str]]:
+def check(data: Path, fetch: bool = True, head_rev: str = "HEAD") -> tuple[int, list[str]]:
     lines: list[str] = []
     who = role(data)
     if who not in PUSH_ROLES:
@@ -492,7 +589,7 @@ def check(data: Path, fetch: bool = True) -> tuple[int, list[str]]:
     if fetch:
         git(data, "fetch", "-q", "origin")
     base = git(data, "rev-parse", "origin/main").strip()
-    head = git(data, "rev-parse", "HEAD").strip()
+    head = git(data, "rev-parse", head_rev).strip()
     lines.append(f"origin/main {base[:12]} ({'fetched' if fetch else 'local ref, not fetched'}); "
                  f"HEAD {head[:12]}; role {who}")
     manifest = load_manifest(data, base)
@@ -520,15 +617,21 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("check", help="may this checkout push HEAD to origin/main?")
     c.add_argument("--data", type=Path, default=Path("data"))
     c.add_argument("--no-fetch", action="store_true", help="read the local origin/main ref and say so")
+    c.add_argument("--head", default="HEAD", help="the commit to check; the pre-push hook passes the pushed SHA")
     u = sub.add_parser("push", help="merge origin/main, regenerate, check and push")
     u.add_argument("--data", type=Path, default=Path("data"))
     u.add_argument("--daemon", action="store_true", help="the daemon clone: dirty daemon files may stay")
     g = sub.add_parser("pull", help="take origin/main by fast-forward or merge, never rebase")
     g.add_argument("--data", type=Path, default=Path("data"))
+    a = sub.add_parser("adopt-main", help="move this clone's data link onto a fresh checkout of main")
+    a.add_argument("--repo", type=Path, default=REPO)
+    a.add_argument("--apply", action="store_true")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "check":
-            code, lines = check(args.data, fetch=not args.no_fetch)
+            code, lines = check(args.data, fetch=not args.no_fetch, head_rev=args.head)
+        elif args.cmd == "adopt-main":
+            code, lines = adopt_main(args.repo, apply=args.apply)
         elif args.cmd == "pull":
             code, lines = pull(args.data)
         else:

@@ -237,7 +237,9 @@ required changes are folded in above (each marked "Review item N").
 | P1 manifest and check | done in code: `data_sync.py check`, templates in `data-repo-templates/` (data repos get them in P6) | 4bb7278 |
 | P2 contributor push | done in code: `data_sync.py push` | see git log |
 | P3 daemon mode | done in code: `data_sync.py push --daemon`, `data_sync.py pull` | see git log |
-| P4-P6 | not started | |
+| P4a hook, adopt-main, contributor guard | done in code | see git log |
+| P4b role=daemon required | waits for role=daemon on repo-0 `data` and repo-3 `.data-clones/pundits` (review item 2) | |
+| P5-P6 | not started | |
 
 ### What P0 changes for the next predictions deploy
 

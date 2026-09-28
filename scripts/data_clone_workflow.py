@@ -500,6 +500,14 @@ def scores_staleness(scores_path: Path, config_path: Path) -> str | None:
 
 def guard_prediction_write(repo: Path, path: Path, root: Path, study: str = 'leaders') -> None:
     path, root = path.resolve(), root.resolve()
+    if role(root) == 'contributor':
+        # A contributor owns its checkout on main and pushes through data_sync.py,
+        # but the daemon's live checkout holds a running loop's uncommitted files.
+        live = production_path(repo, study).resolve()
+        if live != root and (path == live or live in path.parents):
+            raise RuntimeError('contributor clone cannot write the daemon clone\'s live checkout; '
+                               'write your own checkout and push with scripts/data_sync.py push')
+        return
     if role(root) != 'experiment':
         return
     live = production_path(repo, study)
