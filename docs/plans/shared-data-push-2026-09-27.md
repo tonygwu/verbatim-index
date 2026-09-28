@@ -240,7 +240,7 @@ required changes are folded in above (each marked "Review item N").
 | P4a hook, adopt-main, contributor guard | done in code | see git log |
 | P4b role=daemon required | done: role=daemon set on repo-0 `data` and repo-3 `.data-clones/pundits` first (operator-approved 2026-09-27), then the code | see git log |
 | P5 predictions deploy from origin/main | done in code. The FIRST real deploy after it needs `--first-revision-deploy` once, because the live page carries no revision.json yet; every later deploy checks it | see git log |
-| P6 docs and migration | docs done (AGENTS.md, DATA-CLONE-WORKFLOW.md); `data_sync.py bootstrap` added; the data-side steps below wait for repo-0 and repo-3 | see git log |
+| P6 docs and migration | leaders live: manifest bootstrapped onto data main `ceba3cba` from repo-0's checkout (operator-approved, no repo-0 session active), hook installed there; repo-2 adopted main. Waiting: repo-1 and repo-3 adopt-main, repo-3 pundits bootstrap. Also fixed on the way: the idle guard refused the invoking agent's own caffeinate (`cbfdda0`) | see git log |
 
 ### What P0 changes for the next predictions deploy
 
