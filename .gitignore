@@ -17,6 +17,8 @@ site/index.html
 
 # Build artifact of build_predictions_site.py, deployed from disk like site/index.html.
 site-predictions/index.html
+# Written by deploy_predictions.sh on every run and published beside the page.
+site-predictions/revision.json
 
 # Independent private clones, including incomplete migration preparations.
 /.data-clones/
