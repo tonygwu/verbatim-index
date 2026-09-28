@@ -34,9 +34,39 @@ Per recording the rules are:
   R3 namesake   every guess is the bare full name, and no guess and no metadata
                 names the company. A namesake with the same full name looks
                 exactly like this.
+  R7 share      at least three judges estimated share, none said 0, the mean
+                clears the cutoff, and exactly one judge sits at least
+                SHARE_DISSENT_GAP points from the median of the others while
+                the others agree within SHARE_DISSENT_AGREE. Fires alongside
+                any other rule; it does not change them.
 
-R1 and R2 are flags. R3, R5 and R6 are review lists: read the title and the
+R1 and R2 are flags. R3, R5, R6 and R7 are review lists: read the title and the
 judges' attribution notes before acting.
+
+R7 exists for the host-versus-guest recording. FOUND 2026-09-27 on the board:
+the leader hosts a fireside chat, two judges graded the host at 12 and 13, and
+the third graded the guest at 89. The mean is 38 and nobody said 0, so the share
+filter and R2/R5 all pass it. R6 listed it only because that judge also named
+the guest; a judge that names the leader and scores the guest reaches no
+identity rule. R7 names a DISAGREEMENT, not a culprit. On the one earlier case,
+`marc-benioff/dws-news-1g-x70` at 58/32/58, the lone low judge was the one that
+graded the leader, and the two agreeing judges had graded his guest.
+
+The thresholds come from the distribution, not from round numbers. MEASURED
+2026-09-27 as the largest gap between one judge and the median of the others,
+over 614 three-judge recordings live and 643 in the pre-withdrawal snapshot of
+2026-09-10 (data commit 85253d6a):
+
+    gap    0-4   5-9  10-14  15-19  20-25  26+
+    live   324   246   36      7      0     1   (76.5, the fireside chat)
+    09-10  340   251   36      5      0     11  (26.0, then 42 to 82)
+
+The noise tail ends at 17.0 in both. Every recording at 26 or above was later
+withdrawn or hand-verified as the wrong speaker, so 18 to 25 is the empty band
+and SHARE_DISSENT_GAP sits in its middle. The agreeing pair has no empty band
+to find: its spread was at most 10 in both corpora and at most 8 on every true
+case. SHARE_DISSENT_AGREE is 14, above every pair seen, and low enough that
+1.5 x 14 < 22, so at most one judge can qualify as the dissenter.
 
 MEASURED on the corpus of 2026-09-10 (558 blinded recordings): R1|R2 flagged 42,
 every one hand-verified as subject-absent or wrong-speaker, so 0 false
@@ -78,6 +108,10 @@ try:
     from aggregate import MIN_SUBJECT_SHARE  # noqa: E402
 except Exception:  # noqa: BLE001
     MIN_SUBJECT_SHARE = 10
+
+# R7. See the module docstring for the measured distribution behind both.
+SHARE_DISSENT_GAP = 22     # middle of the empty band 18..25
+SHARE_DISSENT_AGREE = 14   # above every agreeing pair seen (max 10); 1.5 x 14 < 22
 
 # Former employers and products a judge may name instead of the roster company.
 # A judge writing "the CEO of DeepMind" has identified Hassabis; "Meta's chief
@@ -205,6 +239,25 @@ def classify(guess: str | None, name: str, given: str, surname: str, comps: list
     return "OTHER", False, False
 
 
+def share_dissent(shares: dict[str, int], gap: float = SHARE_DISSENT_GAP,
+                  agree: float = SHARE_DISSENT_AGREE) -> dict | None:
+    """The one judge whose share sits far from the others, if exactly one does.
+
+    A judge qualifies when the OTHER judges agree within `agree` and its own
+    share is at least `gap` from their median. Fewer than three estimates name
+    no dissenter, because two judges cannot say which of them is out."""
+    if len(shares) < 3:
+        return None
+    hits = []
+    for judge, s in shares.items():
+        others = [v for j, v in shares.items() if j != judge]
+        med = st.median(others)
+        if max(others) - min(others) <= agree and abs(s - med) >= gap:
+            hits.append({"judge": judge, "share": s, "others_median": med,
+                         "gap": abs(s - med), "others_spread": max(others) - min(others)})
+    return hits[0] if len(hits) == 1 else None
+
+
 def load_grades(root: Path) -> dict[tuple[str, str], list[dict]]:
     """Valid blinded grades per (leader, source)."""
     out: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
@@ -238,6 +291,7 @@ def screen(grades: dict, transcripts: dict, roster: list[dict], cutoff: int = MI
             continue
         name, given, surname, comps = by_slug[key[0]]
         judges, shares = [], []
+        share_by_judge: dict[str, int] = {}
         company_in_guess = False
         for g in gs:
             gr = g["grade"]
@@ -249,6 +303,10 @@ def screen(grades: dict, transcripts: dict, roster: list[dict], cutoff: int = MI
                            "share": gr.get("subject_speech_share_pct")})
             if isinstance(gr.get("subject_speech_share_pct"), int):
                 shares.append(gr["subject_speech_share_pct"])
+                # A repeat grade from the same judge is its own estimate, never
+                # an overwrite of the first.
+                label = g["judge"] if g["judge"] not in share_by_judge else f'{g["judge"]}#{len(share_by_judge)}'
+                share_by_judge[label] = gr["subject_speech_share_pct"]
         r = transcripts.get(key, {})
         meta = " ".join(str(r.get(f) or "") for f in
                         ("yt_title", "declared_title", "yt_description", "yt_channel", "declared_venue"))
@@ -265,6 +323,9 @@ def screen(grades: dict, transcripts: dict, roster: list[dict], cutoff: int = MI
         R5 = zeros == 1 and n > 1 and on_board
         R6 = nonmatch == 1 and n > 1 and not (R1 or R2 or R5)
         R3 = not (R1 or R2 or R5 or R6) and not company_in_guess and not meta_comp
+        # R7 reads only the shares, and leaves every rule above as it was.
+        dissent = share_dissent(share_by_judge) if (zeros == 0 and on_board) else None
+        R7 = dissent is not None
         rows.append({
             "leader_slug": key[0], "source_id": key[1], "n_judges": n,
             "title": (r.get("yt_title") or r.get("declared_title") or "")[:120],
@@ -274,6 +335,7 @@ def screen(grades: dict, transcripts: dict, roster: list[dict], cutoff: int = MI
             "judges": judges,
             "R1_identity": R1, "R2_absent": R2, "R5_dissent_zero": R5, "R6_lone_dissent": R6,
             "R3_namesake_review": R3,
+            "R7_share_dissent": R7, "share_dissent": dissent,
             "flagged": R1 or R2,
         })
     rows.sort(key=lambda x: (x["leader_slug"], x["source_id"]))
@@ -294,17 +356,25 @@ def print_report(rows: list[dict], sample: int, seed: int) -> None:
             print(f"   {j['judge']:6s} {j['class']:12s} {j['guess'][:80]!r}")
     for rule, label in (("R5_dissent_zero", "R5: one judge says 0, recording on the board"),
                         ("R6_lone_dissent", "R6: one judge names someone else"),
-                        ("R3_namesake_review", "R3: bare name everywhere, company nowhere")):
+                        ("R3_namesake_review", "R3: bare name everywhere, company nowhere"),
+                        ("R7_share_dissent", f"R7: one judge's share >= {SHARE_DISSENT_GAP} from the others, on the board")):
         hits = [x for x in rows if x[rule]]
         print(f"\n==== REVIEW {label}: {len(hits)} ====")
         for x in hits:
             print(f"REV {x['leader_slug']}/{x['source_id']:34s} shares={x['shares']} title={x['title'][:60]!r}")
+            if rule == "R7_share_dissent":
+                d = x["share_dissent"]
+                print(f"      dissenter {d['judge']} at {d['share']}, others' median {d['others_median']}, "
+                      f"gap {d['gap']}; read every judge's notes, the dissenter may be the right one")
+                for j in x["judges"]:
+                    print(f"      {j['judge']:6s} share={j['share']!s:4s} {j['class']:12s} {j['guess'][:60]!r} :: {j['notes'][:140]!r}")
+                continue
             for j in x["judges"]:
                 if rule != "R3_namesake_review" and (j["class"] != "MATCH" or j["share"] == 0):
                     print(f"      {j['judge']:6s} {j['class']:12s} {j['guess'][:70]!r} :: {j['notes'][:140]!r}")
     if sample:
         clean = [x for x in rows if not any(x[k] for k in
-                 ("flagged", "R5_dissent_zero", "R6_lone_dissent", "R3_namesake_review"))]
+                 ("flagged", "R5_dissent_zero", "R6_lone_dissent", "R3_namesake_review", "R7_share_dissent"))]
         rng = random.Random(seed)
         print(f"\n==== unflagged {len(clean)}; seeded sample of {min(sample, len(clean))} for a false-negative check ====")
         for x in rng.sample(clean, min(sample, len(clean))):
