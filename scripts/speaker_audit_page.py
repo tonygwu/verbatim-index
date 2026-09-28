@@ -53,7 +53,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
 from pundits_speaker_spans import build_transcript, sidecar_path  # noqa: E402
-from pundits_verify_page import CONTEXT_WORDS, MARK, locate, name_forms, render_page, _norm  # noqa: E402
+from pundits_verify_page import CONTEXT_WORDS, MARK, locate, name_forms, play_time, render_page, _norm  # noqa: E402
 
 STUDIES = ("leaders", "predictions")
 DEFAULT_CAP = 6
@@ -74,23 +74,19 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def mark_before(raw: str, char_pos: int):
-    marks = list(MARK.finditer(raw, 0, char_pos))
-    if not marks:
-        return None
-    h, m, s = (int(x) for x in marks[-1].groups())
-    return h * 3600 + m * 60 + s
+def card(qid: str, raw: str, toks: list, a: int, z: int, duration) -> dict:
+    """One quote in context, in the shape the pundits page renders. `z` is inclusive.
 
-
-def card(qid: str, raw: str, toks: list, a: int, z: int) -> dict:
-    """One quote in context, in the shape the pundits page renders. `z` is inclusive."""
+    `t` is where the play link starts, from the shared `play_time`, so this page and
+    the pundits page cannot time a quote differently.
+    """
     b0 = max(0, a - CONTEXT_WORDS)
     last = min(len(toks) - 1, z + CONTEXT_WORDS)
 
     def strip(i, j):
         return MARK.sub("", raw[toks[i].start():toks[j].end()]).strip() if j >= i else ""
 
-    return {"qid": qid, "t": mark_before(raw, toks[a].start()), "start": b0, "end": last + 1,
+    return {"qid": qid, "t": play_time(toks, a, duration), "start": b0, "end": last + 1,
             "quote_start": a, "quote_end": z + 1, "before": strip(b0, a - 1), "text": strip(a, z),
             "after": strip(z + 1, last)}
 
@@ -136,7 +132,7 @@ def take_in_turn(entries: list[dict], cap: int | None) -> list[dict]:
     return sorted(chosen, key=lambda e: e["a"])
 
 
-def leaders_quotes(key: str, raw: str, grades: list[dict], forms: list[str], cap: int | None):
+def leaders_quotes(key: str, raw: str, grades: list[dict], forms: list[str], cap: int | None, duration):
     """Evidence quotes for one recording, and a report of what was found and cut."""
     toks = list(re.finditer(r"\S+", raw))
     shares = {g["judge"]: g["grade"].get("subject_speech_share_pct") for g in grades}
@@ -179,7 +175,7 @@ def leaders_quotes(key: str, raw: str, grades: list[dict], forms: list[str], cap
     cards, key_map = [], {}
     for e in chosen:
         qid = f"{slug}:{sid}:{e['a']}"
-        cards.append(card(qid, raw, toks, e["a"], e["z"]))
+        cards.append(card(qid, raw, toks, e["a"], e["z"], duration))
         key_map[qid] = {"key": key, "board": "leaders", "signals": sorted(e["signals"]) or ["recording_selected"],
                         "judges": e["judges"]}
     return cards, key_map, report
@@ -193,7 +189,7 @@ def char_span_to_tokens(toks: list, start: int, end: int) -> tuple[int, int]:
     return inside[0], inside[-1]
 
 
-def predictions_quotes(key: str, raw: str, records: list[dict], cap: int | None):
+def predictions_quotes(key: str, raw: str, records: list[dict], cap: int | None, duration):
     toks = list(re.finditer(r"\S+", raw))
     accepted = [r for r in records if r.get("accepted") is True]
     cards, key_map = [], {}
@@ -212,7 +208,7 @@ def predictions_quotes(key: str, raw: str, records: list[dict], cap: int | None)
         if s["quote"].strip().endswith("?"):
             signals.append("question")
         qid = r["prediction_id"]
-        cards.append(card(qid, raw, toks, a, z))
+        cards.append(card(qid, raw, toks, a, z, duration))
         v = r.get("verification") or {}
         key_map[qid] = {"key": key, "board": "predictions", "signals": signals or ["recording_selected"],
                         "judges": [{"judge": "extractor", "claimed_speaker": "subject" if r["extraction"]["gates"].get("own_voice") else "not_subject",
@@ -248,6 +244,7 @@ def build(args) -> int:
         tpath = data / "transcripts_open" / slug / f"{sid}.json"
         rec = json.loads(tpath.read_text())
         raw = rec["text"]
+        duration = rec.get("yt_duration_sec") or rec.get("duration_sec")
         inputs[str(tpath.relative_to(data))] = sha256_file(tpath)
         if args.study == "leaders":
             gpaths = sorted(p for p in (data / "grades").glob(f"*/{slug}/{sid}__*__blinded__r0.json")
@@ -261,12 +258,12 @@ def build(args) -> int:
                 inputs[str(p.relative_to(data))] = sha256_file(p)
             if not grades:
                 raise SystemExit(f"REFUSING: {key} has no valid blinded grade")
-            quotes, kmap, rep = leaders_quotes(key, raw, grades, name_forms(roster[slug]), args.cap)
+            quotes, kmap, rep = leaders_quotes(key, raw, grades, name_forms(roster[slug]), args.cap, duration)
         else:
             ppath = data / "predictions" / slug / f"{sid}.jsonl"
             records = [json.loads(line) for line in ppath.read_text().splitlines() if line.strip()]
             inputs[str(ppath.relative_to(data))] = sha256_file(ppath)
-            quotes, kmap, rep = predictions_quotes(key, raw, records, args.cap)
+            quotes, kmap, rep = predictions_quotes(key, raw, records, args.cap, duration)
         if not quotes:
             raise SystemExit(f"REFUSING: {key} yields no quote to check ({rep})")
         rows.append(recording_row(key, rec, roster[slug], quotes))
