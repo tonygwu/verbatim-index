@@ -689,7 +689,7 @@ def main(argv: list[str] | None = None) -> int:
             code, lines = pull(args.data)
         else:
             code, lines = push(args.data, daemon=args.daemon)
-    except Refusal as exc:
+    except (Refusal, RuntimeError) as exc:  # RuntimeError: data_clone_workflow's guards
         code, lines = 1, [f"REFUSING: {exc}"]
     print("\n".join(lines))
     return code

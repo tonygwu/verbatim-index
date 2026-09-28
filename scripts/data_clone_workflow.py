@@ -290,8 +290,15 @@ def active_consumers(repo: Path) -> list[dict]:
             if name == str(repo) or name.startswith(str(repo) + '/'):
                 refs.setdefault(pid, []).append(name)
     matches = []
-    for pid, (_, command) in rows.items():
+    for pid, (ppid, command) in rows.items():
         if pid in ancestors:
+            continue
+        # The invoking agent's own keep-awake: Claude Code spawns caffeinate as a
+        # CHILD of itself, with the clone as its working directory. It reads and
+        # writes nothing. A caffeinate with any other parent still counts, and the
+        # ancestor walk ends at launchd, so pid 1 (every orphan's parent) is not ours.
+        if (ppid in ancestors - {0, 1}
+                and command.split(None, 1)[0].rsplit('/', 1)[-1] == 'caffeinate'):
             continue
         if pid in refs or re.search(re.escape(str(repo)) + r'(?:/|\s|$)', command):
             matches.append({'pid': pid, 'command': command[:300], 'paths': refs.get(pid, [])[:3]})
