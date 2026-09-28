@@ -408,7 +408,8 @@ def count_records(pred_root: Path) -> tuple[int, int]:
     return len(files), sum(1 for p in files for _ in p.open())
 
 
-def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list[Path]) -> str | None:
+def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list[Path] | None,
+                    listing: set[tuple[str, str]] | None = None) -> str | None:
     """None when every input the index read is unchanged on disk; otherwise a
     message naming the input that moved. Refuses an index that predates a
     fingerprint, because such an index cannot be proved current."""
@@ -427,7 +428,9 @@ def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list
     if index["inputs_sha256"] != digest:
         return (f"record contents changed in place: counts match ({files} files, {lines} records) but "
                 f"inputs sha256 is {digest[:12]}, index says {index['inputs_sha256'][:12]}")
-    listing = listing_sha256(transcript_listing(roots))
+    # data_sync.py passes the listing it read from a commit's tree, so the check
+    # never needs the transcript files checked out.
+    listing = listing_sha256(listing if listing is not None else transcript_listing(roots))
     if index["transcripts_listing_sha256"] != listing:
         return (f"the transcript listing changed (index {index['transcripts_listing_sha256'][:12]}, "
                 f"disk {listing[:12]}); coverage counts are stale")

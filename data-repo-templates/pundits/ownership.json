@@ -1,0 +1,8 @@
+{
+ "schema": 1,
+ "study": "pundits",
+ "note": "tonygwu/verbatim-pundits-data stays single-owner: repo-3 runs its production and nothing here is shared. Every path is owner, so a contributor push is refused whole. See docs/plans/shared-data-push-2026-09-27.md.",
+ "rules": [
+  {"glob": "**", "class": "owner"}
+ ]
+}

@@ -1,0 +1,12 @@
+# Files that are rewritten whole, or in place, must never be merged line by line.
+# Verification and market consensus rewrite predictions/<slug>/<sid>.jsonl in
+# place; a line-level merge of two such rewrites yields records that no single
+# run produced. merge=binary makes git stop with a conflict instead, and
+# scripts/data_sync.py then refuses (or, for a derived file, regenerates).
+# The globs are recursive: records also live under _experiments/<run>/, several
+# directories deep (46 of 1,914 files on 2026-09-27).
+predictions/**/*.jsonl merge=binary
+predictions/**/*.meta.json merge=binary
+predictions/index.json merge=binary
+predictions/scores.json merge=binary
+predictions/scoring.json merge=binary
