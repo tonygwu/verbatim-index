@@ -6,6 +6,9 @@ repo's main itself, and this tool is what keeps that from clobbering:
 
     .venv/bin/python scripts/data_sync.py check              # may HEAD be pushed?
     .venv/bin/python scripts/data_sync.py check --no-fetch   # same, against the local ref
+    .venv/bin/python scripts/data_sync.py push               # merge, regenerate, check, push
+    .venv/bin/python scripts/data_sync.py push --daemon      # the same, from the daemon clone
+    .venv/bin/python scripts/data_sync.py pull               # take origin/main, never rebasing
 
 `check` answers one question: may this checkout push the commits it holds that
 origin/main does not? It refuses when
@@ -21,6 +24,31 @@ origin/main does not? It refuses when
     `git archive` and listing transcripts with `git ls-tree`, so an untracked or
     unstaged file on disk cannot make a stale commit look fresh.
 
+`push` (a contributor, on main, with no uncommitted tracked change) loops up to
+three times: fetch; refuse if a record file changed on both sides since the
+merge-base (git would merge its lines into records no run produced); MERGE
+origin/main, never rebase, so every SHA a run manifest pinned stays reachable;
+resolve a conflict only in a derived file, by regenerating it; regenerate the
+derived files from the merged commit and commit any change; validate every
+record the merge would add or change, refusing only on failures that are new;
+run `check`; push. Git's push is compare-and-swap on the ref, so a push that
+lost a race is rejected and the loop starts again. Any refusal restores HEAD to
+where it was before the command ran, and the report counts attempts.
+
+`push --daemon` is the same loop for the daemon clone, whose loops write
+uncommitted files into its working tree. Those may stay dirty: a merge never
+touches a path the incoming commits do not change, and other clones never push
+daemon paths. Nothing may be STAGED, because git merge aborts on a staged
+change, and the derived predictions files may not be dirty, because the tool
+rewrites them. When the push carries grades or results.json, results.json's
+grade_files_read must equal the grade files in the commit, so a results.json
+from one cycle is never committed beside the grades of the next.
+
+`pull` takes origin/main into any push-role checkout: a fast-forward, or a merge
+commit when the checkout holds commits of its own. It never rebases and never
+stashes, and when an incoming file would overwrite a dirty or untracked one it
+refuses and names the path, leaving HEAD and every file as they were.
+
 Roles, from `git config verbatim.role` in the data checkout:
   daemon       the clone that runs the daemons; may change every path
   contributor  any other clone pushing main; may change shared and derived paths
@@ -29,8 +57,11 @@ Roles, from `git config verbatim.role` in the data checkout:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import fnmatch
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -45,6 +76,11 @@ CLASSES = ("owner", "shared", "derived")
 PUSH_ROLES = {"daemon": ("owner", "shared", "derived"), "contributor": ("shared", "derived")}
 # The roots predictions/index.json counts; aggregate_predictions.py's defaults.
 TRANSCRIPT_ROOTS = ("transcripts_open", "transcripts_web")
+REPO = Path(__file__).resolve().parent.parent
+PY = sys.executable
+INDEX, SCORES, SCORING = "predictions/index.json", "predictions/scores.json", "predictions/scoring.json"
+DERIVED = (INDEX, SCORES)
+ATTEMPTS = 3
 
 
 class Refusal(Exception):
@@ -177,6 +213,274 @@ def derived_problems(data: Path, rev: str) -> list[str]:
         return problems
 
 
+# ---------------------------------------------------------------- regenerate --
+
+def placeholder_listing(data: Path, rev: str, dest: Path) -> None:
+    """An empty file per transcript the commit lists, so aggregate_predictions
+    counts the same listing without the transcripts being extracted."""
+    for slug, stem in tree_listing(data, rev):
+        (dest / slug).mkdir(parents=True, exist_ok=True)
+        (dest / slug / f"{stem}.json").write_text("")
+
+
+def run_script(*argv: str) -> None:
+    p = subprocess.run([PY, str(REPO / "scripts" / argv[0]), *argv[1:]], capture_output=True, text=True, cwd=REPO)
+    if p.returncode:
+        raise Refusal(f"{argv[0]} failed while regenerating derived files: "
+                      f"{(p.stderr.strip() or p.stdout.strip()).splitlines()[-1]}")
+
+
+def regenerate(data: Path, rev: str) -> dict[str, bytes]:
+    """The derived files as the commit rev's own inputs make them, computed in a
+    scratch tree extracted from the commit, never from the working tree."""
+    with tempfile.TemporaryDirectory(prefix="data-sync-regen-") as t:
+        tree = Path(t)
+        extract(data, rev, tree, ["predictions", "roster"])
+        if not (tree / "predictions").exists():
+            return {}
+        placeholder_listing(data, rev, tree / "listing")
+        (tree / "listing").mkdir(exist_ok=True)
+        run_script("aggregate_predictions.py", "--predictions", str(tree / "predictions"),
+                   "--roster", str(tree / "roster" / "final.json"), "--transcripts", str(tree / "listing"),
+                   "--out", str(tree / INDEX))
+        out = {INDEX: (tree / INDEX).read_bytes()}
+        if (tree / SCORING).exists():
+            cfg = json.loads((tree / SCORING).read_text())
+            if cfg.get("out") != SCORES:
+                raise Refusal(f"{SCORING} writes {cfg.get('out')!r}; the derived file is {SCORES}")
+            run_script("score_predictions.py", "--config", str(tree / SCORING))
+            out[SCORES] = (tree / SCORES).read_bytes()
+        return out
+
+
+# ---------------------------------------------------------------- validation --
+
+def validation_failures(data: Path, rev: str) -> set[tuple[str, str, str]]:
+    """Every validate_predictions failure in the commit rev, as (file, invariant,
+    detail) with scratch paths removed, so two commits' sets can be compared.
+    The transcript roots are merged, because a record's transcript may live in
+    either and validate_predictions reads one root."""
+    import predictions_lib as L
+    import validate_predictions as V
+    with tempfile.TemporaryDirectory(prefix="data-sync-val-") as t:
+        tree = Path(t)
+        extract(data, rev, tree, ["predictions", *TRANSCRIPT_ROOTS])
+        merged = tree / "merged-transcripts"
+        merged.mkdir()
+        for root in TRANSCRIPT_ROOTS:
+            for f in sorted((tree / root).glob("*/*.json")) if (tree / root).exists() else []:
+                (merged / f.parent.name).mkdir(exist_ok=True)
+                shutil.move(str(f), merged / f.parent.name / f.name)
+        pred = tree / "predictions"
+        if not pred.exists():
+            return set()
+        failures, _ = V.validate_tree(pred, merged, L.load_exclusions(str(REPO / "scripts" / "predictions_exclusions.json")),
+                                      L.load_record_schema(L.SKILL), V.known_contract_ids(pred))
+        strip = lambda text: str(text).replace(str(pred) + "/", "predictions/").replace(str(tree) + "/", "")  # noqa: E731
+        return {(strip(f["file"]), f["invariant"], strip(f["detail"])) for f in failures}
+
+
+def new_validation_failures(data: Path, base: str, head: str) -> list[str]:
+    before, after = validation_failures(data, base), validation_failures(data, head)
+    return [f"{f}: {inv}: {detail}" for f, inv, detail in sorted(after - before)]
+
+
+# ---------------------------------------------------------------------- push --
+
+def is_record(path: str) -> bool:
+    return path.startswith("predictions/") and (path.endswith(".jsonl") or path.endswith(".meta.json"))
+
+
+def changed_set(data: Path, a: str, b: str) -> set[str]:
+    return {path for _, path in changed_paths(data, a, b)}
+
+
+def tracked_dirty(data: Path) -> bool:
+    return bool(git(data, "status", "--porcelain", "--untracked-files=no").strip())
+
+
+def restore(data: Path, sha: str) -> None:
+    """Undo only the commits this command made; --keep refuses to touch local edits."""
+    if git(data, "rev-parse", "HEAD").strip() != sha:
+        subprocess.run(["git", "-C", str(data), "merge", "--abort"], capture_output=True)
+        git(data, "reset", "-q", "--keep", sha)
+
+
+def merge_origin(data: Path, base: str, lines: list[str]) -> None:
+    head = git(data, "rev-parse", "HEAD").strip()
+    if subprocess.run(["git", "-C", str(data), "merge-base", "--is-ancestor", base, head]).returncode == 0:
+        return
+    mb = git(data, "merge-base", base, head).strip()
+    both = changed_set(data, mb, head) & changed_set(data, mb, base)
+    records = sorted(p for p in both if is_record(p))
+    if records:
+        raise Refusal("a record file changed on both sides since the merge-base, and a line-level merge would "
+                      "produce records no run wrote: " + ", ".join(records) + ". Pull origin/main, redo your "
+                      "change on top of it, then push")
+    p = subprocess.run(["git", "-C", str(data), "merge", "--no-edit", "-m", f"Merge origin/main {base[:12]}", base],
+                       capture_output=True, text=True)
+    if p.returncode:
+        conflicted = git(data, "diff", "--name-only", "--diff-filter=U").split()
+        if not conflicted or any(c not in DERIVED for c in conflicted):
+            raise Refusal(f"merging origin/main {base[:12]} conflicts outside the derived files: "
+                          + ", ".join(c for c in conflicted if c not in DERIVED) or p.stderr.strip())
+        git(data, "checkout", "--ours", "--", *conflicted)  # either side; both are regenerated next
+        git(data, "add", "--", *conflicted)
+        git(data, "commit", "-q", "--no-edit")
+        lines.append(f"  merged origin/main {base[:12]}; derived conflict in {', '.join(conflicted)} "
+                     f"resolved by regenerating")
+    else:
+        lines.append(f"  merged origin/main {base[:12]}")
+
+
+def regenerate_and_commit(data: Path, lines: list[str]) -> None:
+    fresh = regenerate(data, "HEAD")
+    changed = [rel for rel, blob in fresh.items()
+               if not (data / rel).exists() or (data / rel).read_bytes() != blob]
+    if not changed:
+        lines.append("  derived files already fresh")
+        return
+    for rel in changed:
+        (data / rel).write_bytes(fresh[rel])
+    git(data, "add", "--", *changed)
+    when = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    git(data, "commit", "-q", "-m", f"Regenerate derived files ({when})",
+        "-m", "Written by scripts/data_sync.py push: " + ", ".join(changed))
+    lines.append(f"  regenerated {', '.join(changed)}")
+
+
+def test_hook(attempt: int) -> None:
+    """TEST SEAM ONLY: run a command between the fetch and the push, so the race
+    that git's compare-and-swap resolves can be reproduced. Unset in real use."""
+    cmd = os.environ.get("DATA_SYNC_TEST_BEFORE_PUSH")
+    if cmd and attempt <= int(os.environ.get("DATA_SYNC_TEST_BEFORE_PUSH_TIMES", "0")):
+        subprocess.run([cmd], env={**os.environ, "DATA_SYNC_ATTEMPT": str(attempt)}, check=True,
+                       capture_output=True)
+
+
+def staged(data: Path) -> bool:
+    return subprocess.run(["git", "-C", str(data), "diff", "--cached", "--quiet"]).returncode != 0
+
+
+def precondition(data: Path, want: str) -> str | None:
+    who = role(data)
+    if who != want:
+        return f"this mode is for verbatim.role={want}; this checkout is {who or 'unset'}"
+    branch = git(data, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if branch != "main":
+        return f"on branch {branch}; pushes to origin/main go from main"
+    if staged(data):
+        return "staged but uncommitted changes; commit or unstage them (git merge would abort on them)"
+    if want == "contributor" and tracked_dirty(data):
+        return "uncommitted changes to tracked files; commit or discard them first"
+    dirty_derived = [f for f in DERIVED if f in git(data, "status", "--porcelain", "--", f)]
+    if dirty_derived:
+        return f"{', '.join(dirty_derived)} modified in the working tree; the tool regenerates it, so discard it"
+    return None
+
+
+def push(data: Path, attempts: int = ATTEMPTS, daemon: bool = False) -> tuple[int, list[str]]:
+    lines: list[str] = []
+    why = precondition(data, "daemon" if daemon else "contributor")
+    if why:
+        return 1, [f"REFUSING: {why}"]
+    start = git(data, "rev-parse", "HEAD").strip()
+    taxonomy: dict[str, int] = {}
+    for attempt in range(1, attempts + 1):
+        lines.append(f"attempt {attempt}")
+        try:
+            git(data, "fetch", "-q", "origin")
+            base = git(data, "rev-parse", "origin/main").strip()
+            merge_origin(data, base, lines)
+            regenerate_and_commit(data, lines)
+            new = new_validation_failures(data, base, "HEAD")
+            if new:
+                raise Refusal(f"{len(new)} new validation failure(s): " + "; ".join(new[:10]))
+            code, report = check(data, fetch=False)
+            lines += [f"  {r}" for r in report]
+            if code:
+                raise Refusal("check refused the merged commit")
+            test_hook(attempt)
+            p = subprocess.run(["git", "-C", str(data), "push", "origin", "HEAD:main"], capture_output=True, text=True)
+        except Refusal as exc:
+            restore(data, start)
+            lines.append(f"REFUSING: {exc}")
+            lines.append(f"HEAD restored to {start[:12]}; nothing was pushed")
+            return 1, lines
+        if p.returncode == 0:
+            lines.append(f"  pushed {git(data, 'rev-parse', 'HEAD').strip()[:12]} to origin/main")
+            lines.append(f"attempted {attempt}, succeeded 1, failed {attempt - 1}"
+                         + (f" {json.dumps(taxonomy, sort_keys=True)}" if taxonomy else ""))
+            return 0, lines
+        kind = "non_fast_forward" if ("fetch first" in p.stderr or "non-fast-forward" in p.stderr) else "push_error"
+        taxonomy[kind] = taxonomy.get(kind, 0) + 1
+        lines.append(f"  push rejected: {kind}")
+        if kind != "non_fast_forward":
+            restore(data, start)
+            lines.append(f"REFUSING: {p.stderr.strip()}")
+            return 1, lines
+    restore(data, start)
+    lines.append(f"attempted {attempts}, succeeded 0, failed {attempts} {json.dumps(taxonomy, sort_keys=True)}")
+    lines.append(f"REFUSING: origin/main kept moving; HEAD restored to {start[:12]}; try again")
+    return 1, lines
+
+
+# ------------------------------------------------------------------- results --
+
+# deploy.sh skips these when it counts grade files; the gate counts the same way.
+GRADE_SKIP = {"_raw", "_obsolete"}
+
+
+def results_problems(data: Path, rev: str) -> list[str]:
+    """results.json in the commit must describe exactly the grades in the commit."""
+    p = subprocess.run(["git", "-C", str(data), "show", f"{rev}:results.json"], capture_output=True, text=True)
+    if p.returncode:
+        return []
+    names = git(data, "ls-tree", "-r", "--name-only", rev, "--", "grades").splitlines()
+    n = sum(1 for f in names if f.endswith(".json") and not GRADE_SKIP & set(f.split("/")))
+    read = (json.loads(p.stdout).get("diagnostics") or {}).get("grade_files_read")
+    if read is None:
+        return ["results.json lacks diagnostics.grade_files_read, so it cannot be matched to the grades"]
+    if read != n:
+        return [f"results.json says grade_files_read {read} but the commit holds {n} grade files; commit "
+                f"results.json from the same aggregate cycle as the grades"]
+    return []
+
+
+# ---------------------------------------------------------------------- pull --
+
+def overwritten_paths(stderr: str) -> list[str]:
+    """git lists the files a merge would overwrite on tab-indented lines."""
+    return [l.strip() for l in stderr.splitlines() if l.startswith("\t")]
+
+
+def pull(data: Path) -> tuple[int, list[str]]:
+    who = role(data)
+    if who not in PUSH_ROLES:
+        return 1, [f"REFUSING: verbatim.role is {who or 'unset'}; pull is for {sorted(PUSH_ROLES)}"]
+    if staged(data):
+        return 1, ["REFUSING: staged but uncommitted changes; commit or unstage them (git merge would abort on them)"]
+    git(data, "fetch", "-q", "origin")
+    base = git(data, "rev-parse", "origin/main").strip()
+    head = git(data, "rev-parse", "HEAD").strip()
+    ancestor = lambda a, b: subprocess.run(["git", "-C", str(data), "merge-base", "--is-ancestor", a, b]).returncode == 0  # noqa: E731
+    if ancestor(base, head):
+        return 0, [f"up to date: HEAD {head[:12]} already contains origin/main {base[:12]}"]
+    args = ["merge", "--ff-only", base] if ancestor(head, base) else \
+        ["merge", "--no-edit", "-m", f"Merge origin/main {base[:12]}", base]
+    p = subprocess.run(["git", "-C", str(data), *args], capture_output=True, text=True)
+    if p.returncode:
+        subprocess.run(["git", "-C", str(data), "merge", "--abort"], capture_output=True)
+        if git(data, "rev-parse", "HEAD").strip() != head:
+            git(data, "reset", "-q", "--keep", head)
+        paths = overwritten_paths(p.stderr)
+        return 1, [f"REFUSING: taking origin/main {base[:12]} would overwrite local files: "
+                   + (", ".join(paths) if paths else p.stderr.strip()),
+                   f"HEAD left at {head[:12]}; move those files aside, then pull again"]
+    how = "fast-forwarded" if args[1] == "--ff-only" else "merged"
+    return 0, [f"{how} to origin/main {base[:12]}; HEAD {git(data, 'rev-parse', 'HEAD').strip()[:12]}"]
+
+
 # --------------------------------------------------------------------- check --
 
 def check(data: Path, fetch: bool = True) -> tuple[int, list[str]]:
@@ -200,6 +504,8 @@ def check(data: Path, fetch: bool = True) -> tuple[int, list[str]]:
     lines.append(f"{ahead} commit(s) to push, {len(changes)} path change(s)")
     bad = path_violations(manifest, who, changes)
     bad += derived_problems(data, head)
+    if any(path == "results.json" or path.startswith("grades/") for _, path in changes):
+        bad += results_problems(data, head)
     if bad:
         lines += [f"REFUSED {b}" for b in bad]
         lines.append(f"REFUSING: {len(bad)} problem(s); nothing was pushed")
@@ -214,9 +520,19 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("check", help="may this checkout push HEAD to origin/main?")
     c.add_argument("--data", type=Path, default=Path("data"))
     c.add_argument("--no-fetch", action="store_true", help="read the local origin/main ref and say so")
+    u = sub.add_parser("push", help="merge origin/main, regenerate, check and push")
+    u.add_argument("--data", type=Path, default=Path("data"))
+    u.add_argument("--daemon", action="store_true", help="the daemon clone: dirty daemon files may stay")
+    g = sub.add_parser("pull", help="take origin/main by fast-forward or merge, never rebase")
+    g.add_argument("--data", type=Path, default=Path("data"))
     args = ap.parse_args(argv)
     try:
-        code, lines = check(args.data, fetch=not args.no_fetch)
+        if args.cmd == "check":
+            code, lines = check(args.data, fetch=not args.no_fetch)
+        elif args.cmd == "pull":
+            code, lines = pull(args.data)
+        else:
+            code, lines = push(args.data, daemon=args.daemon)
     except Refusal as exc:
         code, lines = 1, [f"REFUSING: {exc}"]
     print("\n".join(lines))
