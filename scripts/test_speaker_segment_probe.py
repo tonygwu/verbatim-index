@@ -139,15 +139,28 @@ def main() -> int:
         top = td / "top"
         top.mkdir()
         (top / "results.json").write_text(json.dumps([{**results[1], "outcome": "parsed", "turns": good, "errors": []}]))
-        P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged")))
+        P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged"), infra_is_final=False))
         merged = json.loads((td / "merged" / "results.json").read_text())
         check("a top-up replaces an infrastructure failure and records what it replaced",
               merged[1]["outcome"] == "parsed" and merged[1]["topped_up_from"]["errors"][-1]["error"].startswith("auth_or_quota")
               and json.loads((td / "merged" / "manifest.json").read_text())["topups"][0]["replaced"])
+        (top / "results.json").write_text(json.dumps([{**results[1], "errors": [
+            {"attempt": 1, "error": "transient_retryable: 5xx"}, {"attempt": 2, "error": "transient_retryable: 5xx"}]}]))
+        P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged3"), infra_is_final=True))
+        m3 = json.loads((td / "merged3" / "results.json").read_text())
+        check("with --infra-is-final a surviving server error counts against the arm, relabelled",
+              P.failure_label(m3[1]) == "persistent_transient_retryable")
+        (top / "results.json").write_text(json.dumps([{**results[1], "errors": [
+            {"attempt": 1, "error": "auth_or_quota: session limit"}, {"attempt": 2, "error": "auth_or_quota: session limit"}]}]))
+        P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged4"), infra_is_final=True))
+        m4 = json.loads((td / "merged4" / "results.json").read_text())
+        check("but an exhausted quota is never counted against the model, even with --infra-is-final",
+              P.failure_label(m4[1]) == "auth_or_quota")
+        (top / "results.json").write_text(json.dumps([{**results[1], "outcome": "parsed", "turns": good, "errors": []}]))
         results[1]["errors"][-1]["error"] = "empty_response: z"
         (run / "results.json").write_text(json.dumps(results))
         try:
-            P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged2")))
+            P.merge(SimpleNamespace(base=str(run), topup=str(top), out=str(td / "merged2"), infra_is_final=False))
             refused = False
         except SystemExit as exc:
             refused = "only those may be topped up" in str(exc)

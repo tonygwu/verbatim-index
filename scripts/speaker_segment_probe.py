@@ -368,6 +368,17 @@ def merge(args) -> int:
                 raise SystemExit(f"REFUSING: {k} ended in {failure_label(r) or 'a parsed answer'}, "
                                  "not an infrastructure failure; only those may be topped up")
             t = extra.pop(k)
+            if args.infra_is_final and failure_label(t) == G.E_TRANSIENT:
+                # The operator's call, 2026-09-28: a server error that survives every
+                # retry round on the same input is the service failing on that input,
+                # and counts against the arm. Relabelled, never silently dropped. An
+                # exhausted QUOTA is never converted: it is this harness's budget running
+                # out, which says nothing about the model (found when account E's
+                # session window emptied mid-top-up and four Claude calls were briefly
+                # scored as Claude failures).
+                last = t["errors"][-1]
+                t = {**t, "errors": t["errors"][:-1] + [{**last, "error": f"persistent_{failure_label(t)}: "
+                                                          + last["error"].split(":", 1)[-1][:300]}]}
             merged.append({**t, "raw": str(Path("..") / top.name / t["raw"]) if t.get("raw") else None,
                            "topped_up_from": {"run": base.name, "attempts": r["attempts"], "errors": r["errors"]}})
             replaced.append(f"{k[0]} {k[1]} r{k[2]}: {failure_label(r)} -> {failure_label(t) or 'parsed'}")
@@ -500,6 +511,8 @@ def main() -> int:
     m = sub.add_parser("merge")
     for a in ("--base", "--topup", "--out"):
         m.add_argument(a, required=True)
+    m.add_argument("--infra-is-final", action="store_true",
+                   help="an infrastructure failure still present in the top-up counts against the arm")
     s = sub.add_parser("score")
     for a in ("--run", "--answers", "--page"):
         s.add_argument(a, required=True)
