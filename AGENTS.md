@@ -966,6 +966,37 @@ said so in their notes. What the loop costs is quota and Gemini's retry budget:
 every judge read all 64,068 words of the worst one on every call, and the
 collapse cuts it to 1,803.
 
+**Can a model say who spoke each word from the caption text alone?**
+(2026-09-28) Yes, when it finishes; the difference between models is whether
+it finishes. Ground truth is the operator's word ranges from the first
+speaker-check session (`speaker_audit_page.py`): 10 recordings chosen as the
+shakiest on both boards, 2,576 labelled words, 39 quotes. Each model read a
+whole transcript with the subject's name and the recording's metadata and
+returned speaker turns (`scripts/speaker_segment_probe.py`), 2 repeats,
+under the P3 sandbox. A run that failed both attempts scores 0 on every word
+(the operator's rule); only infrastructure failures were rerun.
+
+```
+model    words r0 / r1   quotes   completed runs only   failed runs
+astra    98.7% / 99.6%   78/78    99.1%                 0 of 20
+opus     95.1% / 62.7%   64/78    99.5%                 5 of 20  (unparseable)
+fable    62.0% / 61.1%   52/78    98.9%                 8 of 20  (5 timeouts at 40 min, 2 at the 64k output cap)
+gemini   43.9% / 30.7%   30/78    99.9%                15 of 20  (truncated, empty, one persistent 5xx)
+all-subject baseline 85.7%
+```
+
+Three things to inherit. Every completed run of every model scored 98.9 to
+99.9%, including Gemini on marc-benioff/exacttarget-9game7, the recording
+where it graded the guest as the host: an explicit segmentation step gets
+right what implicit turn-finding inside grading got wrong. Every failure fell
+on a long, turn-dense transcript (8,000 to 20,000 words, 100 to 700 turns),
+so the output format, one JSON object per turn, is the likely cause and a
+compact format or chunking is the untested fix. And the run is expensive:
+Fable and Opus at max effort on those transcripts emptied the 5-hour windows
+of two Claude accounts. Raw runs, top-ups and scores are under
+`predictions/_experiments/speaker-audit-20260927/segmentation/` in the data
+repository.
+
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
 grading loop writes continuously, so any before-and-after measured against
