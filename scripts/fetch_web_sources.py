@@ -189,12 +189,45 @@ def looks_like_pdf(resp: requests.Response) -> bool:
     return "application/pdf" in ctype or resp.content[:5] == b"%PDF-"
 
 
+_HEADER_CHARSET = re.compile(r"""charset\s*=\s*["']?([^;"'\s]+)""", re.IGNORECASE)
+_META_CHARSET = re.compile(rb"""<meta\b[^>]*?charset\s*=\s*["']?\s*([A-Za-z0-9_.:-]+)""", re.IGNORECASE)
+
+
+def decode_html(resp) -> tuple[str, str, str]:
+    """(html, charset, basis). Never `resp.text`, and never errors="replace".
+
+    requests decodes a text/html body with no charset in the HTTP header as
+    ISO-8859-1. Pages that declare UTF-8 only in <meta charset> then became
+    mojibake, "we’ve" as "weâ\x80\x99ve", and a model's quote cannot ground
+    against that. Found on 13 of 94 round-3 transcripts, 2026-09-27.
+
+    Order: the HTTP header, then the page's own <meta> declaration (searched
+    in the first 64 KiB), then UTF-8 only if the bytes ARE valid UTF-8. Anything
+    else is refused, because a guessed charset is an invented text.
+    """
+    body = resp.content
+    m = _HEADER_CHARSET.search(resp.headers.get("content-type") or "")
+    if m:
+        charset, basis = m.group(1).lower(), "http_header"
+    else:
+        mm = _META_CHARSET.search(body[:65536])
+        if mm:
+            charset, basis = mm.group(1).decode("ascii").lower(), "meta_charset"
+        else:
+            charset, basis = "utf-8", "utf8_valid"
+    try:
+        return body.decode(charset, errors="strict"), charset, basis
+    except (UnicodeDecodeError, LookupError) as exc:
+        raise NotVerbatim(f"cannot decode as {charset} ({basis}): {exc}") from exc
+
+
 def extract(resp: requests.Response) -> tuple[str, str]:
     """(text, how). Raises NotVerbatim if the text cannot be trusted."""
     if looks_like_pdf(resp):
         text, order = pdf_to_text(resp.content)
         return text, f"pdftotext({order})"
-    raw = resp.text
+    raw, charset, basis = decode_html(resp)
+    enc = f"[charset={charset}/{basis}]"
     text = html_to_text(raw)
     try:
         assert_verbatim(raw, text)
@@ -209,8 +242,8 @@ def extract(resp: requests.Response) -> tuple[str, str]:
         except ValueError as exc:
             raise NotVerbatim(str(exc)) from exc
         if rich is not None and len(rich.split()) >= MIN_WORDS:
-            return rich, "web_source_text.next_data_richtext"
-    return text, "web_source_text.html_to_text"
+            return rich, f"web_source_text.next_data_richtext{enc}"
+    return text, f"web_source_text.html_to_text{enc}"
 
 
 def now_utc() -> str:

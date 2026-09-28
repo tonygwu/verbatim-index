@@ -268,10 +268,10 @@ except Exception as exc:  # noqa: BLE001
 got = run("extract shell", lambda: F.extract(Resp(200, SHELL)))
 if got is not None:
     check("extract: a too-short shell with rich text reads the rich text",
-          (SENTENCE in got[0], got[1]), (True, "web_source_text.next_data_richtext"))
+          (SENTENCE in got[0], got[1].split("[")[0]), (True, "web_source_text.next_data_richtext"))
 got = run("extract normal", lambda: F.extract(Resp(200, ARTICLE)))
 if got is not None:
-    check("extract: a normal page keeps its route", got[1], "web_source_text.html_to_text")
+    check("extract: a normal page keeps its route", got[1].split("[")[0], "web_source_text.html_to_text")
 
 # --- 6. assert_verbatim and a ">" inside a quoted attribute ----------------------
 ATTR_PAGE = ('<html><body><div class="post" data-props=\'{"note": "a > b", "html": "<span>x</span>"}\'>'
