@@ -1,5 +1,16 @@
 # Independent data clones with one production checkout
 
+> **Superseded in part, 2026-09-27.** Any clone may now push the data repo's `main`
+> itself through `scripts/data_sync.py`, and deploy the predictions site from exactly
+> origin/main. The ownership manifest decides which paths each role may push; only
+> the daemon clone pushes transcripts, grades, logs, sources, roster and results.
+> The model, the tools and the migration steps are in
+> [plans/shared-data-push-2026-09-27.md](plans/shared-data-push-2026-09-27.md), and
+> the rules agents follow are in `AGENTS.md` under "Two repositories, and who may
+> push private `main`". This document still describes experiment clones on `codex/*`
+> branches, which remain valid until a clone runs `data_sync.py adopt-main`, and the
+> review steps below still apply to anything integrated by hand.
+
 The production checkout remains at `verbatim-index/data`. Only its production
 owner, currently `repo-0`, manages that checkout's Git index, commits, and pushes.
 Each experiment clone can own a separate checkout of the same private repository.

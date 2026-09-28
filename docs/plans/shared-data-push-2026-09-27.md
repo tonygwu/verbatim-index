@@ -240,7 +240,7 @@ required changes are folded in above (each marked "Review item N").
 | P4a hook, adopt-main, contributor guard | done in code | see git log |
 | P4b role=daemon required | done: role=daemon set on repo-0 `data` and repo-3 `.data-clones/pundits` first (operator-approved 2026-09-27), then the code | see git log |
 | P5 predictions deploy from origin/main | done in code. The FIRST real deploy after it needs `--first-revision-deploy` once, because the live page carries no revision.json yet; every later deploy checks it | see git log |
-| P6 docs and migration | not started | |
+| P6 docs and migration | docs done (AGENTS.md, DATA-CLONE-WORKFLOW.md); `data_sync.py bootstrap` added; the data-side steps below wait for repo-0 and repo-3 | see git log |
 
 ### What P0 changes for the next predictions deploy
 
@@ -288,3 +288,42 @@ The score line must still read
 and apart from bookkeeping keys (`run_dir`, `run_dirs`, `settings`,
 `inputs_sha256`, and the removed `generated_at_utc`) the content equals today's
 `scores.json`. That was verified from repo-2 with the flag form on data `ec5ae558`.
+
+### P6 migration runbook
+
+Each step names who runs it. Nothing here is ordered around a daemon being
+stopped: none of it rewrites a path a loop writes.
+
+1. **repo-0, leaders data (daemon clone).** Role `daemon` is already set on
+   `verbatim-index/data` (2026-09-27). From repo-0, after `git pull --ff-only`:
+
+   ```
+   .venv/bin/python scripts/data_sync.py bootstrap --data data            # adds ownership.json + .gitattributes, alone
+   git -C data config core.hooksPath "$(pwd -P)/scripts/git-hooks/data"
+   .venv/bin/python scripts/data_sync.py check --data data                # expect "nothing to push"
+   ```
+
+2. **repo-3, pundits data (daemon clone for pundits).** Role `daemon` is already
+   set on `.data-clones/pundits`. From repo-3:
+
+   ```
+   .venv/bin/python scripts/data_sync.py bootstrap --data data-pundits --study pundits
+   git -C data-pundits config core.hooksPath "$(pwd -P)/scripts/git-hooks/data"
+   ```
+
+   The pundits manifest makes every path owner-only, so nothing changes for
+   pundits except that its pushes are now checked.
+
+3. **Every other clone, when idle** (repo-1, repo-2, and repo-3 for leaders):
+
+   ```
+   .venv/bin/python scripts/data_sync.py adopt-main              # dry run: read what it carries and skips
+   .venv/bin/python scripts/data_sync.py adopt-main --apply
+   ```
+
+   Read every `skipped` line before applying. A skipped path is work that exists
+   only on the old `codex/*` branch; that branch stays on the remote, so nothing
+   is lost, but it will not reach main unless someone integrates it.
+
+4. **The first predictions deploy after P5** passes `--first-revision-deploy`
+   once, because the live page carries no `revision.json` yet.

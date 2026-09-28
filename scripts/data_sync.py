@@ -10,6 +10,7 @@ repo's main itself, and this tool is what keeps that from clobbering:
     .venv/bin/python scripts/data_sync.py push --daemon      # the same, from the daemon clone
     .venv/bin/python scripts/data_sync.py pull               # take origin/main, never rebasing
     .venv/bin/python scripts/data_sync.py adopt-main [--apply]  # move an experiment clone onto main
+    .venv/bin/python scripts/data_sync.py bootstrap [--study pundits]  # daemon: add the manifest, once
 
 `check` answers one question: may this checkout push the commits it holds that
 origin/main does not? It refuses when
@@ -57,6 +58,12 @@ predictions/_experiments/<run> directories that main lacks, committed or
 untracked, and REPORTS every other path the old branch changed as skipped with
 its reason, so nothing is dropped silently. The old checkout is left intact.
 Without --apply it only prints the plan.
+
+`bootstrap` is the one push no manifest can check, because it is the push that
+adds the manifest. So it does exactly one thing: from the daemon clone, with
+nothing uncommitted and nothing unpushed, it adds this repository's template
+(data-repo-templates/<study>/) to a data repo that has no ownership.json, byte
+for byte, commits only those files and pushes. Everything else refuses.
 
 Roles, from `git config verbatim.role` in the data checkout:
   daemon       the clone that runs the daemons; may change every path
@@ -578,6 +585,47 @@ def adopt_main(repo: Path, apply: bool = False) -> tuple[int, list[str]]:
     return 0, lines
 
 
+# ----------------------------------------------------------------- bootstrap --
+
+TEMPLATES = REPO / "data-repo-templates"
+
+
+def bootstrap(data: Path, study: str = "leaders") -> tuple[int, list[str]]:
+    tpl = TEMPLATES / study
+    files = sorted(f.name for f in tpl.iterdir() if f.is_file()) if tpl.is_dir() else []
+    if MANIFEST not in files:
+        return 1, [f"REFUSING: no template manifest at {tpl / MANIFEST}"]
+    if role(data) != "daemon":
+        return 1, [f"REFUSING: bootstrap is for the daemon clone (verbatim.role=daemon); this checkout is "
+                   f"{role(data) or 'unset'}"]
+    if git(data, "rev-parse", "--abbrev-ref", "HEAD").strip() != "main":
+        return 1, ["REFUSING: bootstrap runs on main"]
+    git(data, "fetch", "-q", "origin")
+    base = git(data, "rev-parse", "origin/main").strip()
+    if subprocess.run(["git", "-C", str(data), "cat-file", "-e", f"{base}:{MANIFEST}"],
+                      capture_output=True).returncode == 0:
+        return 1, [f"REFUSING: origin/main {base[:12]} already carries {MANIFEST}; change it with an owner push"]
+    if git(data, "rev-parse", "HEAD").strip() != base:
+        return 1, ["REFUSING: HEAD holds unpushed commits or is behind origin/main; bootstrap must push the "
+                   "manifest alone, so pull or push those first"]
+    if tracked_dirty(data) or staged(data):
+        return 1, ["REFUSING: uncommitted tracked changes; bootstrap must commit the manifest alone"]
+    for name in files:
+        if (data / name).exists():
+            return 1, [f"REFUSING: {name} already exists, untracked, in {data}; move it aside"]
+    for name in files:
+        shutil.copyfile(tpl / name, data / name)
+    git(data, "add", "--", *files)
+    git(data, "commit", "-q", "-m", f"Add the {study} ownership manifest",
+        "-m", f"Copied byte for byte from data-repo-templates/{study}/ by scripts/data_sync.py bootstrap. "
+              f"Plan: docs/plans/shared-data-push-2026-09-27.md, phase P6.")
+    p = subprocess.run(["git", "-C", str(data), "push", "origin", "HEAD:main"], capture_output=True, text=True)
+    if p.returncode:
+        git(data, "reset", "-q", "--hard", base)
+        return 1, [f"REFUSING: push failed, local commit undone: {p.stderr.strip()}"]
+    return 0, [f"bootstrapped {', '.join(files)} onto origin/main {git(data, 'rev-parse', 'HEAD').strip()[:12]}"]
+
+
 # --------------------------------------------------------------------- check --
 
 def check(data: Path, fetch: bool = True, head_rev: str = "HEAD") -> tuple[int, list[str]]:
@@ -623,6 +671,9 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--daemon", action="store_true", help="the daemon clone: dirty daemon files may stay")
     g = sub.add_parser("pull", help="take origin/main by fast-forward or merge, never rebase")
     g.add_argument("--data", type=Path, default=Path("data"))
+    b = sub.add_parser("bootstrap", help="daemon clone: add the ownership manifest to a repo that has none")
+    b.add_argument("--data", type=Path, default=Path("data"))
+    b.add_argument("--study", default="leaders", choices=["leaders", "pundits"])
     a = sub.add_parser("adopt-main", help="move this clone's data link onto a fresh checkout of main")
     a.add_argument("--repo", type=Path, default=REPO)
     a.add_argument("--apply", action="store_true")
@@ -630,6 +681,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "check":
             code, lines = check(args.data, fetch=not args.no_fetch, head_rev=args.head)
+        elif args.cmd == "bootstrap":
+            code, lines = bootstrap(args.data, args.study)
         elif args.cmd == "adopt-main":
             code, lines = adopt_main(args.repo, apply=args.apply)
         elif args.cmd == "pull":
