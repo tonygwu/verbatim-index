@@ -310,6 +310,7 @@ def labels_from(ranges: list[dict], n: int) -> list[str | None]:
 def score(args) -> int:
     run_dir, page = Path(args.run), Path(args.page)
     results = json.loads((run_dir / "results.json").read_text())
+    manifest = json.loads((run_dir / "manifest.json").read_text())
     answers = json.loads(Path(args.answers).read_text())
     data = json.loads(re.search(r"^const D = (\{.*\});$", page.read_text(), re.M).group(1).replace("<\\/", "</"))
     quotes = {r["key"]: r["quotes"] for r in data["quote_rows"]}
@@ -321,6 +322,10 @@ def score(args) -> int:
     for key in keys:
         runs = [r for r in results if r["key"] == key]
         bad = [f"{r['arm']} r{r['repeat']}: {r['outcome']}" for r in runs if r["outcome"] != "parsed"]
+        # A run still in progress, or never started, is missing, not absent from the design.
+        have = {(r["arm"], r["repeat"]) for r in runs}
+        bad += [f"{a} r{i}: not yet run" for a in manifest["arms"] for i in range(manifest["repeats"])
+                if (a, i) not in have]
         if bad:
             report["not_scored"].append({"key": key, "reason": bad})
             continue
@@ -337,6 +342,12 @@ def score(args) -> int:
             for h, m in cmp_:
                 conf[f"{h}->{m}"] = conf.get(f"{h}->{m}", 0) + 1
             correct = sum(1 for h, m in cmp_ if h == m)
+            # Per-speaker recall, because the labelled words lean heavily toward the
+            # subject: the cards centre on quotes credited to the subject, so a model
+            # that calls every word "subject" would score high on accuracy alone.
+            recall = {s: (round(sum(1 for h, m in cmp_ if h == s and m == s) / n_s, 4) if n_s else None)
+                      for s in ("subject", "other") for n_s in [sum(1 for h, _ in cmp_ if h == s)]}
+            all_subject = round(sum(1 for h, _ in cmp_ if h == "subject") / len(cmp_), 4) if cmp_ else None
             speech = [i for i in range(len(toks)) if kinds[i] == "speech"]
             share = sum(1 for i in speech if model[i] == "subject") / len(speech)
             ann = {"key": key, "text_sha256": side["text_sha256"], "token_count": side["token_count"],
@@ -349,7 +360,8 @@ def score(args) -> int:
                     continue
                 qres.append({"qid": q["qid"], "human": h, "model": quote_review(q, side, ann)["answer"]})
             row = {"arm": r["arm"], "key": key, "repeat": r["repeat"], "words_compared": len(cmp_),
-                   "word_accuracy": round(correct / len(cmp_), 4) if cmp_ else None, "confusion": conf,
+                   "word_accuracy": round(correct / len(cmp_), 4) if cmp_ else None, "recall": recall,
+                   "baseline_all_subject": all_subject, "confusion": conf,
                    "turns": len(r["turns"]), "starts": how, "model_subject_share_pct": round(100 * share, 1),
                    "quotes": qres, "quotes_agree": sum(1 for q in qres if q["human"] == q["model"]),
                    "served_model": (r.get("telemetry") or {}).get("served_model"),
@@ -359,8 +371,13 @@ def score(args) -> int:
         rows = [x for x in report["per_run"] if x["arm"] == arm]
         n = sum(x["words_compared"] for x in rows)
         ok = sum(round(x["word_accuracy"] * x["words_compared"]) for x in rows if x["word_accuracy"] is not None)
+        per = {sp: [sum(v for k, v in x["confusion"].items() if k.startswith(sp + "->")) for x in rows] for sp in ("subject", "other")}
+        hit = {sp: [x["confusion"].get(f"{sp}->{sp}", 0) for x in rows] for sp in ("subject", "other")}
         report["arms"][arm] = {"runs_scored": len(rows), "words_compared": n,
                                "word_accuracy": round(ok / n, 4) if n else None,
+                               "subject_recall": round(sum(hit["subject"]) / sum(per["subject"]), 4) if sum(per["subject"]) else None,
+                               "other_recall": round(sum(hit["other"]) / sum(per["other"]), 4) if sum(per["other"]) else None,
+                               "baseline_all_subject": round(sum(per["subject"]) / n, 4) if n else None,
                                "quotes_agree": f"{sum(x['quotes_agree'] for x in rows)}/{sum(len(x['quotes']) for x in rows)}",
                                "excluded": [f"{r['key']} r{r['repeat']}: {r['outcome']}" for r in results
                                             if r["arm"] == arm and r["outcome"] != "parsed"]}

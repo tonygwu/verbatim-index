@@ -92,6 +92,7 @@ def main() -> int:
                 {"marker": 10, "first_words": "is clearly more power", "speaker": "other"}]
         run = td / "run"
         run.mkdir()
+        (run / "manifest.json").write_text(json.dumps({"arms": {"a1": {}, "a2": {}}, "repeats": 1}))
         results = [{"arm": "a1", "key": key, "repeat": 0, "outcome": "parsed", "turns": good},
                    {"arm": "a2", "key": key, "repeat": 0, "outcome": "parsed", "turns": late}]
         (run / "results.json").write_text(json.dumps(results))
@@ -102,6 +103,9 @@ def main() -> int:
               rows["a1"]["words_compared"] == 15)
         check("a correct segmentation scores 1.0 and agrees on the quote",
               rows["a1"]["word_accuracy"] == 1.0 and rows["a1"]["quotes_agree"] == 1)
+        check("recall is reported per speaker, beside the all-subject baseline",
+              rows["a2"]["recall"] == {"subject": 0.5, "other": 1.0} and rows["a2"]["baseline_all_subject"] == round(10 / 15, 4)
+              and rep["arms"]["a2"]["other_recall"] == 1.0 and rep["arms"]["a2"]["subject_recall"] == 0.5)
         check("a late boundary costs exactly the words it misplaced, and the quote becomes 'both'",
               rows["a2"]["confusion"].get("subject->other") == 5 and rows["a2"]["quotes"][0]["model"] == "both")
         results[1]["outcome"] = "excluded_infra"
@@ -110,6 +114,11 @@ def main() -> int:
         rep = json.loads((run / "score.json").read_text())
         check("a recording one arm failed on is scored for NO arm, and the exclusion is reported",
               rep["per_run"] == [] and rep["not_scored"] and rep["arms"]["a2"]["excluded"])
+        (run / "results.json").write_text(json.dumps(results[:1]))
+        P.score(SimpleNamespace(run=str(run), answers=str(td / "answers.json"), page=str(page), report=None))
+        rep = json.loads((run / "score.json").read_text())
+        check("a recording whose runs are not all in yet is scored for no arm",
+              rep["per_run"] == [] and "a2 r0: not yet run" in rep["not_scored"][0]["reason"])
 
     print(f"\n{'FAILED ' + str(len(FAILED)) if FAILED else 'all passed'}")
     return 1 if FAILED else 0
