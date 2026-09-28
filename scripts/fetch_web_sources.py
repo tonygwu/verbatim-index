@@ -50,7 +50,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requests  # noqa: E402
 
 import predictions_lib as L  # noqa: E402
-from web_source_text import assert_verbatim, html_to_text, letter_stream  # noqa: E402
+from web_source_text import (assert_verbatim, html_to_text, letter_stream,  # noqa: E402
+                             next_data_richtext)
 
 UA = ("verbatim-index-research/0.1 (+https://verbatim-index.tonygwu.com; "
       "contact 446441+tonygwu@users.noreply.github.com)")
@@ -68,6 +69,49 @@ PER_HOST_INTERVAL_S = 2.0
 DATE_BASES = {"stated_in_page", "publication_date"}
 
 PDFTOTEXT = shutil.which("pdftotext")
+
+# THE READER ROUTE, opt-in with --reader-fallback. Some hosts refuse a plain
+# GET (sec.gov EDGAR and happyscribe answer 403; happyscribe sits behind a
+# Cloudflare check) and some serve a JavaScript shell whose text lives in
+# embedded script data (palantir.com letters read as 7 words). The r.jina.ai
+# reader renders the page in a browser, and `X-Return-Format: html` makes it
+# hand back the rendered HTML rather than its own markdown rewrite. That HTML
+# then goes through the SAME html_to_text and assert_verbatim as any page, so
+# the reader is a transport, never an editor: a quote still has to appear
+# verbatim in text this module extracted itself. robots.txt is still checked
+# against the ORIGIN host before either route runs. The record names the route,
+# the URL actually requested and why the direct route failed.
+READER_PREFIX = "https://r.jina.ai/"
+READER_ROUTE = "reader:r.jina.ai(x-return-format=html)"
+READER_HOST = "r.jina.ai"
+# The reader's free tier allows about 20 requests a minute without a key.
+READER_INTERVAL_S = 3.5
+
+# Direct failures the reader may recover. A missing pdftotext is NOT here: that
+# is this machine's defect and the reader would only hide it.
+READER_RECOVERABLE_PREFIXES = ("http_", "fetch_error", "too_short", "not_verbatim")
+
+# A Wayback URL. The `id_` flag after the timestamp returns the archived bytes
+# as captured, without the toolbar and rewritten links Wayback injects into the
+# page, which would otherwise become part of the "transcript".
+_WAYBACK = re.compile(r"^(https?://web\.archive\.org/web/)(\d{4,14})(?:[a-z]{2}_)?/(.+)$")
+
+
+def wayback_original_bytes_url(url: str) -> str | None:
+    """The `id_` form of a Wayback URL, or None for any other URL."""
+    m = _WAYBACK.match(url)
+    if not m:
+        return None
+    return f"{m.group(1)}{m.group(2)}id_/{m.group(3)}"
+
+
+class FetchFailure(Exception):
+    """One named taxonomy category for a source that produced no record."""
+
+    def __init__(self, category: str, detail: str = "") -> None:
+        super().__init__(f"{category}: {detail}" if detail else category)
+        self.category = category
+        self.detail = detail
 
 
 class NotVerbatim(ValueError):
@@ -156,6 +200,16 @@ def extract(resp: requests.Response) -> tuple[str, str]:
         assert_verbatim(raw, text)
     except ValueError as exc:
         raise NotVerbatim(str(exc)) from exc
+    if len(text.split()) < MIN_WORDS:
+        # A Next.js shell whose body travels as rich-text script data (the
+        # palantir.com letters). Tried ONLY when the visible text is too short to
+        # be a source, so no page that already reads correctly changes route.
+        try:
+            rich = next_data_richtext(raw)
+        except ValueError as exc:
+            raise NotVerbatim(str(exc)) from exc
+        if rich is not None and len(rich.split()) >= MIN_WORDS:
+            return rich, "web_source_text.next_data_richtext"
     return text, "web_source_text.html_to_text"
 
 
@@ -215,6 +269,83 @@ class Fetcher:
     def get(self, url: str) -> requests.Response:
         self._wait(urlparse(url).netloc)
         return self.session.get(url, timeout=self.timeout)
+
+    def get_reader(self, url: str) -> requests.Response:
+        """The ORIGINAL url through the reader, returning rendered HTML."""
+        last = self._last_hit.get(READER_HOST)
+        if last is not None:
+            gap = READER_INTERVAL_S - (time.monotonic() - last)
+            if gap > 0:
+                time.sleep(gap)
+        self._last_hit[READER_HOST] = time.monotonic()
+        return self.session.get(READER_PREFIX + url, headers={"X-Return-Format": "html"},
+                                timeout=max(self.timeout, 90))
+
+
+def _attempt(get, url: str, route: str, request_url: str) -> dict:
+    """One route, start to finish. Returns the acquisition or raises FetchFailure.
+
+    The not_verbatim retry lives here so both routes get it. A not_verbatim
+    failure can be TRANSIENT: some pages serve slightly different bytes per
+    request, and conversationswithtyler.com passed, failed by ten characters,
+    then agreed exactly. Each attempt validates its OWN bytes, so a retry is
+    sound rather than a lucky second roll. Two failures is a refusal.
+    """
+    try:
+        resp = get(url)
+    except requests.RequestException as exc:
+        raise FetchFailure("fetch_error", type(exc).__name__) from exc
+    if resp.status_code != 200:
+        raise FetchFailure(f"http_{resp.status_code}")
+    text = how = None
+    retried = False
+    for attempt in (1, 2):
+        try:
+            text, how = extract(resp)
+            break
+        except NotVerbatim as exc:
+            if attempt == 2:
+                raise FetchFailure("not_verbatim", str(exc)[:200]) from exc
+            retried = True
+            try:
+                resp = get(url)
+            except requests.RequestException as exc2:
+                raise FetchFailure("not_verbatim", f"refetch failed: {type(exc2).__name__}") from exc2
+            if resp.status_code != 200:
+                raise FetchFailure("not_verbatim", f"refetch answered {resp.status_code}")
+        except RuntimeError as exc:
+            raise FetchFailure("pdf_tool_missing", str(exc)) from exc
+    n_words = len(text.split())
+    if n_words < MIN_WORDS:
+        raise FetchFailure("too_short", f"{n_words} words (min {MIN_WORDS})")
+    return {"resp": resp, "text": text, "how": how, "route": route,
+            "request_url": request_url, "direct_failure": None,
+            "not_verbatim_retried": retried}
+
+
+def acquire(fetcher, url: str, reader_fallback: bool) -> dict:
+    """Fetch one source by the direct route, then the reader if allowed.
+
+    A Wayback URL is always requested in its `id_` form. The reader is tried
+    once, only after a RECOVERABLE direct failure, and only when asked for. A
+    reader failure is reported as `<direct>+reader_<reader>`, so both reasons
+    stay visible in the taxonomy.
+    """
+    wb = wayback_original_bytes_url(url)
+    request_url = wb or url
+    route = "wayback_id_" if wb else "direct"
+    try:
+        return _attempt(fetcher.get, request_url, route, request_url)
+    except FetchFailure as direct:
+        if not reader_fallback or not direct.category.startswith(READER_RECOVERABLE_PREFIXES):
+            raise
+        try:
+            got = _attempt(fetcher.get_reader, url, READER_ROUTE, READER_PREFIX + url)
+        except FetchFailure as via:
+            raise FetchFailure(f"{direct.category}+reader_{via.category}",
+                               f"direct: {direct.detail} | reader: {via.detail}") from via
+        got["direct_failure"] = direct.category
+        return got
 
 
 class EvidenceShapeError(ValueError):
@@ -280,7 +411,7 @@ def ground_evidence(text: str, quotes) -> dict:
 
 
 def record_for(src: dict, slug: str, text: str, raw: str,
-               resp: requests.Response, run: str) -> dict:
+               resp: requests.Response, run: str, acquired: dict | None = None) -> dict:
     """A transcript record. Field names match what the pipeline already reads.
 
     `statement_date` and `statement_date_basis` are DECLARED here rather than
@@ -307,6 +438,14 @@ def record_for(src: dict, slug: str, text: str, raw: str,
         "source_class": "supplemental_web",
         "fetched_at_utc": now_utc(),
         "fetch_method": f"requests+{raw}",
+        # HOW the bytes were obtained, which fetch_method alone does not say.
+        # "direct", "wayback_id_" or READER_ROUTE; request_url is what was
+        # actually requested, and direct_failure why the direct route was not
+        # enough. `url` above stays the source's own address.
+        "fetch_route": (acquired or {}).get("route", "direct"),
+        "request_url": (acquired or {}).get("request_url", src["url"]),
+        "direct_failure": (acquired or {}).get("direct_failure"),
+        "access_declared": src.get("access"),
         "http_status": resp.status_code,
         "content_type": resp.headers.get("content-type"),
         "raw_sha256": hashlib.sha256(resp.content).hexdigest(),
@@ -327,11 +466,19 @@ def record_for(src: dict, slug: str, text: str, raw: str,
     }
 
 
-def usable(src: dict) -> tuple[bool, str]:
-    if not src.get("full_text_available"):
-        return False, "agent_said_no_full_text"
-    if src.get("access") != "open":
-        return False, f"access_{src.get('access')}"
+def usable(src: dict, allow_partial: bool = False) -> tuple[bool, str]:
+    # --allow-partial-access admits a page the discovery agent marked "partial",
+    # such as a paywalled post whose free preview carries the quotes. Only the
+    # preview is fetched and only it becomes text, so nothing unseen is claimed;
+    # the record carries access_declared so the class stays separable. Every
+    # other gate below still applies, including the identity gate.
+    if allow_partial and src.get("access") == "partial":
+        pass
+    else:
+        if not src.get("full_text_available"):
+            return False, "agent_said_no_full_text"
+        if src.get("access") != "open":
+            return False, f"access_{src.get('access')}"
     if not src.get("first_person_verified"):
         return False, "identity_not_verified"
     if not src.get("url"):
@@ -359,6 +506,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="run directory under data/predictions/_experiments/")
     ap.add_argument("--only", help="one slug, for a pilot before the sweep")
     ap.add_argument("--limit", type=int, help="stop after N successful fetches")
+    ap.add_argument("--reader-fallback", action="store_true",
+                    help="after a recoverable direct failure, fetch once through the "
+                         "r.jina.ai reader in HTML mode; the same verbatim check applies")
+    ap.add_argument("--allow-partial-access", action="store_true",
+                    help="admit sources the discovery agent marked access 'partial'")
     ap.add_argument("--dry-run", action="store_true",
                     help="resolve and report what would be fetched; no requests")
     args = ap.parse_args(argv)
@@ -382,7 +534,7 @@ def main(argv: list[str] | None = None) -> int:
         slug = data["slug"]
         counts = per_leader.setdefault(slug, Counter())
         for src in data.get("sources", []):
-            ok, why = usable(src)
+            ok, why = usable(src, allow_partial=args.allow_partial_access)
             if not ok:
                 tally[f"skipped_{why}"] += 1
                 counts[f"skipped_{why}"] += 1
@@ -399,58 +551,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  ROBOTS      {slug:18} {url}")
                 continue
             try:
-                resp = fetcher.get(url)
-            except requests.RequestException as exc:
-                tally["fetch_error"] += 1
-                counts["fetch_error"] += 1
-                print(f"  FETCH-ERR   {slug:18} {type(exc).__name__} {url}")
+                got = acquire(fetcher, url, reader_fallback=args.reader_fallback)
+            except FetchFailure as exc:
+                tally[exc.category] += 1
+                counts[exc.category] += 1
+                print(f"  FAILED      {slug:18} {exc.category}  {url}\n      {exc.detail[:200]}")
                 continue
-            if resp.status_code != 200:
-                tally[f"http_{resp.status_code}"] += 1
-                counts[f"http_{resp.status_code}"] += 1
-                print(f"  HTTP {resp.status_code}    {slug:18} {url}")
-                continue
-            # A not_verbatim failure can be TRANSIENT. The check compares two
-            # implementations over one response's bytes, and some pages serve
-            # slightly different bytes per request: a rotating element or a
-            # counter. conversationswithtyler.com passed on one fetch and failed
-            # on the next with a ten-character difference, and a third fetch
-            # agreed exactly. Each attempt validates its OWN bytes, so a retry
-            # is sound rather than a lucky second roll. Two failures is a refusal.
-            # Recorded because this repo has twice mistaken a repeated failure
-            # for a deterministic one.
-            text = how = None
-            for attempt in (1, 2):
-                try:
-                    text, how = extract(resp)
-                    break
-                except NotVerbatim as exc:
-                    if attempt == 2:
-                        tally["not_verbatim"] += 1
-                        counts["not_verbatim"] += 1
-                        print(f"  NOT-VERBATIM {slug:17} {url}\n      {str(exc)[:200]}")
-                        break
-                    tally["not_verbatim_retried"] += 1
-                    try:
-                        resp = fetcher.get(url)
-                    except requests.RequestException:
-                        tally["not_verbatim"] += 1
-                        counts["not_verbatim"] += 1
-                        break
-                except RuntimeError as exc:
-                    tally["pdf_tool_missing"] += 1
-                    counts["pdf_tool_missing"] += 1
-                    print(f"  NO PDF TOOL {slug:18} {exc}")
-                    break
-            if text is None:
-                continue
+            resp, text, how = got["resp"], got["text"], got["how"]
             n_words = len(text.split())
-            if n_words < MIN_WORDS:
-                tally["too_short"] += 1
-                counts["too_short"] += 1
-                print(f"  TOO SHORT   {slug:18} {n_words} words (min {MIN_WORDS})  {url}")
-                continue
-            rec = record_for(src, slug, text, how, resp, run=run.name)
+            if got["not_verbatim_retried"]:
+                tally["not_verbatim_retried"] += 1
+            if got["route"] != "direct":
+                tally[f"route_{got['route']}"] += 1
+                counts[f"route_{got['route']}"] += 1
+            rec = record_for(src, slug, text, how, resp, run=run.name, acquired=got)
             try:
                 date, basis = L.derive_statement_date(rec)
             except L.PredictionError as exc:
@@ -471,6 +585,8 @@ def main(argv: list[str] | None = None) -> int:
             written.append({"slug": slug, "source_id": rec["source_id"], "url": url,
                             "words": n_words, "statement_date": date,
                             "statement_date_basis": basis, "how": how,
+                            "fetch_route": got["route"], "request_url": got["request_url"],
+                            "direct_failure": got["direct_failure"],
                             "evidence_grounding": ev})
             tally["evidence_claimed"] += ev["claimed"]
             tally["evidence_grounded"] += ev["grounded"]
@@ -490,7 +606,9 @@ def main(argv: list[str] | None = None) -> int:
     # a 75% success rate into an apparent 23%. A progress line that inflates its
     # own denominator is the bare-count failure this repo forbids, arriving in
     # the report rather than in the pipeline.
-    ANNOTATIONS = {"evidence_claimed", "evidence_grounded", "dateless", "would_fetch"}
+    ANNOTATIONS = {"evidence_claimed", "evidence_grounded", "dateless", "would_fetch",
+                   "not_verbatim_retried"}
+    ANNOTATIONS |= {k for k in tally if k.startswith("route_")}
     outcomes = {k: v for k, v in tally.items() if k not in ANNOTATIONS}
     attempted = sum(outcomes.values())
     failed = attempted - tally["written"]
@@ -526,6 +644,9 @@ def main(argv: list[str] | None = None) -> int:
             "min_words": MIN_WORDS,
             "per_host_interval_s": PER_HOST_INTERVAL_S,
             "user_agent": UA,
+            "reader_fallback": args.reader_fallback,
+            "reader_route": READER_ROUTE if args.reader_fallback else None,
+            "allow_partial_access": args.allow_partial_access,
             "taxonomy": dict(sorted(tally.items())),
             "per_leader": {k: dict(sorted(v.items())) for k, v in sorted(per_leader.items())},
             "written": written,
