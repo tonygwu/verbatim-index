@@ -1346,6 +1346,18 @@ new grades incomparable with the corpus already graded.
   roster and the transcript listing, and `scores.json` fingerprints every input it read
   and is rebuilt from the committed `predictions/scoring.json`. The deploy regenerates
   nothing: `--refresh` is gone, and `data_sync.py push` regenerates both files.
+  **The scoring as-of date always moves up when predictions are added. Do not ask the operator
+  first** (operator rule, 2026-09-27). The as-of in `data/predictions/scoring.json` decides what
+  counts as past due, so an old one silently leaves out every prediction that fell due since. On
+  2026-09-27 moving it 11 days added 2 scored predictions and ranked Chamath Palihapitiya. When
+  you add predictions, in the same integration: set `as_of` to the UTC date of the commit that will
+  carry them; resolve and price every eligible prediction that became past due; re-resolve trend
+  records, because their window runs to the as-of; re-score (`data_sync.py push` regenerates `scores.json` from `scoring.json`).
+  If the commit lands after UTC midnight, the date moved, so repeat. `deploy_predictions.sh`
+  refuses when `as_of` is older than the newest commit touching `predictions/`, except commits that
+  touch only `scores.json` or `scoring.json`. The check is `scores_asof_lag()` in
+  `data_clone_workflow.py`, and it reads the commit date in UTC, never an mtime or the local clock.
+  Proof: `.venv/bin/python scripts/test_scores_asof_current.py`.
 - **Verbatim Pundits is PUBLISHED** (2026-09-16, operator-approved): two custom domains on
   one Worker, `pundits.tonygwu.com` and `verbatim-pundits.tonygwu.com`, both serving
   `site-pundits/index.html`. Deploy with

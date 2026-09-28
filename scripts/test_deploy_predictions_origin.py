@@ -44,6 +44,11 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         FAILED.append(label)
 
 
+# The shared fixture's scoring.json says as_of 2026-09-16, and deploy_predictions.sh
+# refuses an as-of older than the newest predictions commit (scores_asof_lag). Pin the
+# fixture's commit dates to that day, so the commits do not take the wall clock's date.
+os.environ["GIT_AUTHOR_DATE"] = os.environ["GIT_COMMITTER_DATE"] = "2026-09-16T12:00:00Z"
+
 spec = importlib.util.spec_from_file_location("tdsp_deploy", REPO / "scripts" / "test_data_sync_push.py")
 P = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(P)

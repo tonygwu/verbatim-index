@@ -45,7 +45,7 @@ $PY scripts/build_predictions_site.py --data-date "$DATA_DATE" --index "${PRODUC
 # What is about to ship, and whether any derived file is behind its inputs. The
 # checks live in data_clone_workflow (index_staleness, scores_staleness), which
 # imports no model harness, so data_sync.py applies exactly the same ones.
-$PY - "$PRODUCTION_DATA" <<'EOF'
+$PY - "$PRODUCTION_DATA" "$DATA_REVISION" <<'EOF'
 import json, pathlib, sys
 sys.path.insert(0, "scripts")
 import data_clone_workflow as D
@@ -75,6 +75,13 @@ if scores.exists():
         print(f"STALE scores: {why}")
         raise SystemExit("REFUSING: stale scores.json; re-run score_predictions.py --config and commit it")
     print("current: scores.json matches its config and inputs")
+    # Operator rule 2026-09-27: the as-of always moves up when predictions are added.
+    as_of = json.load(config.open())["as_of"]
+    why = D.scores_asof_lag(data, sys.argv[2], as_of)
+    if why:
+        print(why)
+        raise SystemExit("REFUSING: scores as-of is behind the predictions data")
+    print(f"current: scores as-of {as_of} is not behind the predictions data")
 EOF
 
 check_publication_unchanged

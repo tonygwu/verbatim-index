@@ -607,6 +607,33 @@ def scores_staleness(scores_path: Path, config_path: Path) -> str | None:
     return None
 
 
+def scores_asof_lag(data_root: Path, revision: str, as_of: str) -> str | None:
+    """None when the scoring as-of is not older than the newest predictions data.
+
+    Operator rule, 2026-09-27: whenever predictions are added, the as-of date
+    moves up to the day they were added, without asking. The as-of decides what
+    counts as past due, so an old one silently leaves out everything that fell
+    due since. The bar is the UTC date of the newest commit at `revision` that
+    touched `predictions/`, ignoring `scores.json` and `scoring.json`, because
+    re-scoring is not adding predictions. The date comes from the commit, never
+    from a file mtime or the local clock.
+    """
+    import datetime as _dt
+    want = _dt.date.fromisoformat(as_of)   # ValueError on a malformed date: never a silent pass
+    out = subprocess.run(
+        ["git", "-C", str(data_root), "log", "-1", "--format=%ct", revision, "--", "predictions",
+         ":(exclude)predictions/scores.json", ":(exclude)predictions/scoring.json"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    if not out:
+        raise RuntimeError(f"no commit touching predictions/ at {revision} in {data_root}")
+    newest = _dt.datetime.fromtimestamp(int(out), _dt.timezone.utc).date()
+    if want < newest:
+        return (f"scoring as_of {want} is older than the newest predictions data, committed {newest} (UTC). "
+                f"Move as_of in predictions/scoring.json to {newest} or later, resolve and price every "
+                f"prediction that became past due, re-resolve trend records whose window grew, and re-score")
+    return None
+
+
 
 
 def guard_prediction_write(repo: Path, path: Path, root: Path, study: str = 'leaders') -> None:
