@@ -637,8 +637,11 @@ def classify_cli_failure(rc: int, stdout: str, stderr: str) -> tuple[str, str]:
 
 def build_judge_prompt(rec: dict, mode: str, rubric: str, schema: str) -> str:
     ident = "BLINDED" if mode == "blinded" else "OPEN"
-    # 0 is the fetcher's "unknown" (a Happyscribe record has no date). Printing
-    # it as a number put "Approximate year: 0" in front of 29 transcripts.
+    # 0 is the fetcher's "unknown". A Happy Scribe record carries 0 even when
+    # its page states a publication date, because that date travels in
+    # statement_date, which only the predictions pipeline reads; the judge's
+    # year line is unchanged by it. Printing 0 as a number put
+    # "Approximate year: 0" in front of 29 transcripts.
     year = rec.get("declared_year") or "unknown"
     if mode == "blinded":
         identity_block = (

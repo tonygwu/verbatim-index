@@ -12,8 +12,17 @@ Two things verified before this was written, both by measurement:
   - HTTP/2 draws a Cloudflare 403 and HTTP/1.1 returns 200. The requests
     Session below is pinned to HTTP/1.1 for that reason.
 
-Output records match the YouTube fetcher's shape exactly, with
-`fetch_method: happyscribe`, so every downstream stage treats them identically.
+Output records carry the core fields the YouTube fetcher writes (the
+`declared_*` block, the word, character and timestamp counts, `duration_sec`,
+`fetched_at_utc` and `text`), with `video_id: None` and
+`fetch_method: happyscribe`, so the grading stages treat them identically. The
+shapes are not the same. A Happy Scribe record has none of YouTube's `yt_*`
+metadata, so no `yt_upload_date`. Instead it carries `hs_*` page fields,
+`text_unescaped`, and, when the page states one, a declared `statement_date`
+with basis `publication_date`, or `hs_date_unreadable` saying why it could not
+be read (see page_dates). Only the predictions pipeline reads the date. The
+leaders judge prompt is byte-identical with and without these fields, which
+scripts/test_hs_fetch_record.py checks in its YEAR section.
 Deduplication against the YouTube corpus is a SEPARATE step, in
 dedupe_transcripts.py. This script never decides what to keep; it only fetches.
 
@@ -38,7 +47,7 @@ import re
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import requests
@@ -56,7 +65,6 @@ E_HTTP = "http_error"
 E_NO_TRANSCRIPT = "no_transcript_in_page"
 E_TOO_SHORT = "below_min_words"
 E_BLOCKED = "blocked_or_ratelimited"
-E_BAD_DATE = "unreadable_publication_date"
 E_OTHER = "other"
 
 MIN_WORDS = 700
@@ -360,24 +368,71 @@ def _normalise(text: str) -> tuple[str, int]:
 
 LD_JSON = re.compile(r'<script[^>]*type=["\']?application/ld\+json["\']?[^>]*>(.*?)</script>',
                      re.S | re.I)
+# The key as JSON writes it, quotes included. The bare word also matches prose
+# and HTML comments, which name no date.
+DATE_KEY = '"datePublished"'
+# The record field, and the fetch_one status key, that says why a page's date
+# could not be read. See page_dates.
+DATE_UNREADABLE = "hs_date_unreadable"
 
 
 class PageDateError(ValueError):
-    """The page states a publication date that cannot be read as one UTC date."""
+    """The page states a date for the transcript that cannot be read as one UTC date."""
 
 
-def _date_published_values(obj) -> list:
-    """Every datePublished in one JSON-LD object, at any depth."""
+def _ld_blocks(page: str) -> tuple[list[tuple[str, object]], list[str]]:
+    """(label, parsed JSON) for each JSON-LD block, labelled ld[i] in page
+    order, and one reason for each block that names datePublished and does not
+    parse. A broken block that could hold the date must not read as "no date":
+    that would write the transcript undated and hide why. A broken block that
+    cannot hold it is skipped."""
+    blocks: list[tuple[str, object]] = []
+    broken: list[str] = []
+    for i, text in enumerate(LD_JSON.findall(page)):
+        try:
+            blocks.append((f"ld[{i}]", json.loads(text)))
+        except ValueError as exc:
+            if "datePublished" in text:
+                broken.append(f"JSON-LD block ld[{i}] names datePublished and is not valid JSON: {exc}")
+    return blocks, broken
+
+
+def _transcript_owners(obj, path: str) -> list[tuple[str, dict]]:
+    """(path, object) for every object, at any depth, whose associatedMedia
+    holds a media object with a `transcript` key. associatedMedia may be one
+    media object or a list of them, as schema.org allows both."""
+    found: list[tuple[str, dict]] = []
     if isinstance(obj, dict):
-        return [v for k, v in obj.items() if k == "datePublished"] + [
-            x for k, v in obj.items() if k != "datePublished" for x in _date_published_values(v)]
-    if isinstance(obj, list):
-        return [x for v in obj for x in _date_published_values(v)]
-    return []
+        media = obj.get("associatedMedia")
+        if any(isinstance(m, dict) and "transcript" in m
+               for m in (media if isinstance(media, list) else [media])):
+            found.append((path, obj))
+        for k, v in obj.items():
+            found.extend(_transcript_owners(v, f"{path}.{k}"))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            found.extend(_transcript_owners(v, f"{path}[{i}]"))
+    return found
 
 
-def _utc_date(value) -> str:
-    """YYYY-MM-DD in UTC of one ISO 8601 timestamp that carries its own offset.
+def _dates_published(obj, path: str) -> list[tuple[str, object]]:
+    """(path, value) for every datePublished at any depth. A JSON null states
+    that there is no value, so it is left out exactly as a missing key is."""
+    found: list[tuple[str, object]] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k != "datePublished":
+                found.extend(_dates_published(v, f"{path}.{k}"))
+            elif v is not None:
+                found.append((f"{path}.{k}", v))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            found.extend(_dates_published(v, f"{path}[{i}]"))
+    return found
+
+
+def _utc_date(value) -> date:
+    """The UTC date of one ISO 8601 timestamp that carries its own offset.
 
     A value with no offset is refused, not read as UTC or as local time. The
     archived page stamps +02:00, the UTC date moves with the offset, and
@@ -392,66 +447,127 @@ def _utc_date(value) -> str:
     if dt.tzinfo is None or dt.utcoffset() is None:
         raise PageDateError(f"datePublished {value!r} carries no UTC offset, so its UTC date "
                             f"cannot be known")
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
+    return dt.astimezone(timezone.utc).date()
 
 
-def publication_date(page: str) -> tuple[str, list[str]] | None:
-    """(UTC date, raw values) of the page's JSON-LD datePublished, or None.
+def _fetch_date(fetched_at_utc: str) -> date:
+    """The UTC date of this record's own fetched_at_utc stamp. Our own stamp
+    always carries Z, so one without an offset is a bug here, and it raises
+    ValueError rather than PageDateError."""
+    dt = datetime.fromisoformat(fetched_at_utc)
+    if dt.utcoffset() is None:
+        raise ValueError(f"fetched_at_utc {fetched_at_utc!r} carries no UTC offset")
+    return dt.astimezone(timezone.utc).date()
 
-    The episode page carries it in the same BlogPosting object whose
-    associatedMedia.transcript is the text extract_transcript reads. MEASURED
-    2026-09-28 on the archived All-In page: "datePublished":
-    "2025-09-17T23:05:00+02:00", which is 2025-09-17 in UTC. A publication date
-    is an UPPER BOUND on when the words were spoken, which is what the
-    `publication_date` basis in predictions_lib means.
 
-    None means the page states no datePublished. Nothing stands in for it: not
-    dateCreated, not the fetch time, not the clock. Several values are
-    accepted only when they name the same UTC date; otherwise, and for any
-    value that is not a timestamp with an offset, PageDateError.
-    """
-    values: list = []
-    for block in LD_JSON.findall(page):
-        try:
-            obj = json.loads(block)
-        except ValueError as exc:
-            # A broken block that could hold the date must not read as "no
-            # date": that would write the transcript as undated and hide why.
-            if "datePublished" in block:
-                raise PageDateError(f"a JSON-LD block that names datePublished is not "
-                                    f"valid JSON: {exc}") from exc
-            continue
-        values.extend(_date_published_values(obj))
-    if not values:
+def _owner_date(page: str, broken: list[str], owners: list,
+                fetched_at_utc: str) -> tuple[str, str] | None:
+    """(UTC date as YYYY-MM-DD, raw value) of the transcript owner's own
+    datePublished, or None when the page states no date for the transcript.
+    Raises PageDateError for every other case; page_dates says which."""
+    if broken:
+        raise PageDateError("; ".join(broken))
+    if DATE_KEY not in page:
         return None
-    dates = {_utc_date(v) for v in values}
-    if len(dates) != 1:
-        raise PageDateError(f"JSON-LD carries {len(values)} datePublished values on "
-                            f"{len(dates)} different UTC dates: {values}")
-    return dates.pop(), sorted(set(values))
+    if len(owners) != 1:
+        raise PageDateError(
+            f"the page names datePublished, but {len(owners)} JSON-LD objects carry a transcript "
+            f"in associatedMedia ({', '.join(p for p, _ in owners) or 'none'}), so no date can be "
+            f"tied to the stored text; exactly one must")
+    path, owner = owners[0]
+    value = owner.get("datePublished")
+    if value is None:
+        inside = sum(text.count(DATE_KEY) for text in LD_JSON.findall(page))
+        outside = page.count(DATE_KEY) - inside
+        if outside:
+            raise PageDateError(
+                f"the page names {DATE_KEY} {outside} time(s) outside any JSON-LD block this "
+                f"fetcher reads, and the object that carries the transcript ({path}) states no "
+                f"datePublished of its own")
+        return None
+    day = _utc_date(value)
+    fetched = _fetch_date(fetched_at_utc)
+    if day > fetched:
+        raise PageDateError(
+            f"datePublished {value!r} is on {day.isoformat()} in UTC, after {fetched.isoformat()}, "
+            f"the UTC date this record was fetched; a page is not read before it is published")
+    return day.isoformat(), value
 
 
-def page_meta(page: str) -> dict:
-    """Title, description and, when the page states one, the publication date.
+def page_dates(page: str, fetched_at_utc: str) -> dict:
+    """The record's date fields, read from the page's JSON-LD. Never raises
+    PageDateError.
+
+    THE DATE IS THE TRANSCRIPT'S OWN. The episode page carries it in the one
+    JSON-LD object, a BlogPosting, whose associatedMedia.transcript is the text
+    extract_transcript reads. MEASURED 2026-09-28 on the archived All-In page:
+    "datePublished": "2025-09-17T23:05:00+02:00", which is 2025-09-17 in UTC. A
+    publication date is an UPPER BOUND on when the words were spoken, which is
+    what the `publication_date` basis in predictions_lib means. Exactly one
+    object must carry the transcript, and only that object's own top-level
+    datePublished is read. A datePublished on a nested entity, such as the
+    episode in isPartOf, or in another block describes something else. Taking
+    one silently dated a transcript by its series, and the override file could
+    not correct it, because an override may not be later than the declared date.
+
+    The fields returned are some of:
+      statement_date, statement_date_basis, hs_date_published
+                          written together, from the owner's own datePublished
+      hs_date_unreadable  why the page's date for the transcript could not be read
+      hs_dates_elsewhere  every other non-null datePublished on the page, with its
+                          JSON path. Evidence for a person, never the date
+
+    No date and no reason means the transcript's object states no date, and
+    the page names none outside JSON-LD either. Nothing stands in for it: not
+    dateCreated, not the fetch time, not the clock. JSON null is no date.
+
+    AN UNREADABLE DATE DOES NOT DROP THE TRANSCRIPT (operator decision,
+    2026-09-29, option b). The leaders board grades these transcripts and never
+    reads the date, so a predictions-only field may not decide what the leaders
+    corpus admits. The record is written without statement_date and says why in
+    hs_date_unreadable, which keeps "unreadable" apart from "the page states
+    none", and main counts and names each one. These are unreadable: a value
+    that is not an ISO 8601 timestamp with an offset (a bare date has none), a
+    broken JSON-LD block that names datePublished, a page that names
+    datePublished while zero or several objects carry a transcript, a page that
+    names it only outside the JSON-LD this fetcher reads, and a date later than
+    the UTC date of the record's own fetched_at_utc.
+    """
+    blocks, broken = _ld_blocks(page)
+    owners = [o for label, obj in blocks for o in _transcript_owners(obj, label)]
+    own_path = f"{owners[0][0]}.datePublished" if len(owners) == 1 else None
+    fields: dict = {}
+    try:
+        published = _owner_date(page, broken, owners, fetched_at_utc)
+    except PageDateError as exc:
+        fields[DATE_UNREADABLE] = str(exc)
+    else:
+        if published is not None:
+            fields["statement_date"], fields["hs_date_published"] = published
+            fields["statement_date_basis"] = "publication_date"
+    elsewhere = [{"path": p, "value": v} for label, obj in blocks
+                 for p, v in _dates_published(obj, label) if p != own_path]
+    if elsewhere:
+        fields["hs_dates_elsewhere"] = elsewhere
+    return fields
+
+
+def page_meta(page: str, fetched_at_utc: str) -> dict:
+    """Title, description and the date fields from page_dates.
 
     `statement_date` and `statement_date_basis` are written only as a pair and
     only from datePublished; a page without one gets neither key, which
-    predictions_lib.own_statement_date reads as (None, "unknown"). Raises
-    PageDateError for a datePublished it cannot read.
+    predictions_lib.own_statement_date reads as (None, "unknown").
     """
     def grab(pat: str) -> str | None:
         m = re.search(pat, page, re.I | re.S)
         return htmlmod.unescape(m.group(1)).strip() if m else None
-    meta = {
+    return {
         "hs_title": grab(r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"')
                     or grab(r"<title>([^<]+)</title>"),
         "hs_description": (grab(r'<meta[^>]+name="description"[^>]+content="([^"]+)"') or "")[:1000],
+        **page_dates(page, fetched_at_utc),
     }
-    published = publication_date(page)
-    if published is not None:
-        meta["statement_date"], meta["hs_date_published"] = published
-        meta["statement_date_basis"] = "publication_date"
-    return meta
 
 
 def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
@@ -481,14 +597,13 @@ def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
         return {"status": "failed", "leader_slug": slug, "source_id": sid,
                 "error_type": E_TOO_SHORT, "detail": f"{words} words < {MIN_WORDS}"}
 
-    try:
-        meta = page_meta(r.text)
-    except PageDateError as exc:
-        # Refused rather than written undated: an undated record is
-        # indistinguishable from a page that states no date, and the date is
-        # what every prediction horizon from this recording is measured from.
-        return {"status": "failed", "leader_slug": slug, "source_id": sid,
-                "error_type": E_BAD_DATE, "detail": str(exc)[:300]}
+    # One stamp, read once: it is the record's fetched_at_utc AND the upper bound
+    # page_dates holds the publication date to, so the two can never disagree.
+    fetched_at = utcnow()
+    # Never raises for a date. An unreadable one comes back as hs_date_unreadable
+    # and the transcript is still written, because the leaders board uses it and
+    # never reads the date. See page_dates.
+    meta = page_meta(r.text, fetched_at)
     # Duration is inferred from the last timestamp, since the page states none.
     last = TS.findall(text)
     dur = None
@@ -511,14 +626,14 @@ def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
         # one here would change the judge's prompt for new transcripts only.
         # The date travels in statement_date instead, which only the
         # predictions pipeline reads. The key stays, rather than going, so the
-        # record keeps the YouTube fetcher's shape.
+        # record keeps every core field the YouTube fetcher writes.
         "declared_year": 0,
         "caption_track": "happyscribe",
         "word_count": words,
         "char_count": len(text),
         "duration_sec": dur,
         "n_timestamp_marks": n_marks,
-        "fetched_at_utc": utcnow(),
+        "fetched_at_utc": fetched_at,
         "fetch_method": "happyscribe",
         # extract_transcript unescapes on both paths since 2026-09-28. Records
         # written before then lack this key and still hold "&#39;", and their
@@ -534,8 +649,44 @@ def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
     tmp = dest.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1))
     os.replace(tmp, dest)
-    return {"status": "ok", "leader_slug": slug, "source_id": sid, "words": words,
-            "path": str(dest)}
+    status = {"status": "ok", "leader_slug": slug, "source_id": sid, "words": words,
+              "path": str(dest)}
+    if DATE_UNREADABLE in meta:
+        # A success, and still never a quiet one: it is logged here and counted
+        # and named in the summary main prints.
+        status[DATE_UNREADABLE] = meta[DATE_UNREADABLE]
+        log(f"  {slug}/{sid}: written WITHOUT a statement date: {meta[DATE_UNREADABLE]}")
+    return status
+
+
+def fetch_summary(attempted: int, results: list[dict]) -> dict:
+    """attempted / succeeded / failed with an error taxonomy, plus every record
+    written without a readable date, counted and named.
+
+    Those records are successes: the transcript is kept for the leaders board,
+    which never reads the date. They are counted apart so that a page layout
+    change that breaks the date shows up here, on the cycle it happens, and not
+    later as a column of undated predictions.
+    """
+    ok = [r for r in results if r["status"] == "ok"]
+    cached = [r for r in results if r["status"] == "cached"]
+    failed = [r for r in results if r["status"] == "failed"]
+    tax: dict[str, int] = {}
+    for r in failed:
+        tax[r["error_type"]] = tax.get(r["error_type"], 0) + 1
+    undated = [{"leader_slug": r["leader_slug"], "source_id": r["source_id"],
+                DATE_UNREADABLE: r[DATE_UNREADABLE]} for r in ok if DATE_UNREADABLE in r]
+    return {
+        "attempted": attempted,
+        "succeeded": len(ok) + len(cached),
+        "newly_fetched": len(ok),
+        "cached": len(cached),
+        "failed": len(failed),
+        "error_taxonomy": tax,
+        "written_with_unreadable_date": len(undated),
+        "unreadable_dates": undated,
+        "total_words": sum(r.get("words", 0) for r in ok),
+    }
 
 
 def main() -> int:
@@ -657,25 +808,12 @@ def main() -> int:
                 ok = sum(1 for x in results if x["status"] in ("ok", "cached"))
                 log(f"  {done}/{len(jobs)} attempted | {ok} succeeded")
 
-    ok = [r for r in results if r["status"] == "ok"]
-    cached = [r for r in results if r["status"] == "cached"]
     failed = [r for r in results if r["status"] == "failed"]
     Path(args.errors).parent.mkdir(parents=True, exist_ok=True)
     with open(args.errors, "w") as fh:
         for r in failed:
             fh.write(json.dumps(r) + "\n")
-    tax: dict[str, int] = {}
-    for r in failed:
-        tax[r["error_type"]] = tax.get(r["error_type"], 0) + 1
-    print(json.dumps({
-        "attempted": len(jobs),
-        "succeeded": len(ok) + len(cached),
-        "newly_fetched": len(ok),
-        "cached": len(cached),
-        "failed": len(failed),
-        "error_taxonomy": tax,
-        "total_words": sum(r.get("words", 0) for r in ok),
-    }, indent=2))
+    print(json.dumps(fetch_summary(len(jobs), results), indent=2))
     return 0
 
 
