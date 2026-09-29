@@ -472,6 +472,13 @@ def card_states(L, A, B) -> None:
         got = {sid: (s.get("state"), sid_of.get(s.get("reason"), s.get("reason"))) for sid, s in st.items()}
         check("STATE: every record carries the state its scores row and its deadline give",
               got == DORA_STATES, json.dumps({k: (got.get(k), v) for k, v in DORA_STATES.items() if got.get(k) != v})[:900])
+        # FOUND in review 2026-09-29: a record with a verdict and a price kept the
+        # "Not priced..." words of its state in the published record file. The card
+        # showed the right price, from outcome.p, so only the data contradicted itself.
+        priced = [sid for sid, r in pub.items() if (r.get("outcome") or {}).get("p") is not None]
+        stale = {sid: st[sid].get("price") for sid in priced if st[sid].get("price") is not None}
+        check("STATE: a record whose verdict carries a price has no price words of its own in the record file",
+              bool(priced) and not stale, json.dumps({"priced": priced, "stale": stale})[:600])
         both = len(built) == 2
         check("STATE: under the old and the new scorer strings every record has the same state and card text",
               both and all(built["old"][0][sid].get("state") == pub[sid].get("state") for sid in pub),
@@ -705,6 +712,13 @@ def card_states(L, A, B) -> None:
                  lambda d: (d["rule"].pop("trend"), d["settings"].pop("trend")), "trend rule"),
                 ("a trend rule that disagrees with the trend setting",
                  lambda d: d["settings"].update(trend=False), "rule.trend"),
+                # Final review item 2: two refusals had no test.
+                ("a failing clause named that the shared order does not name first",
+                 lambda d: [r.update(not_scored_because="not_eligible:lead_under_floor") for r in d["predictions"]
+                            if r.get("not_scored_because") == "not_eligible:specificity"],
+                 "order names"),
+                ("a scored row whose flags say it is not eligible",
+                 lambda d: d["predictions"][0]["flags"].update(eligible=False), "flags say it is not eligible"),
                 ("a corpus split of unresolvable outcomes that disagrees with the rows",
                  lambda d: d["corpus"]["unresolvable_by_eligibility"]["eligible"].update(n=5),
                  "unresolvable_by_eligibility"))):

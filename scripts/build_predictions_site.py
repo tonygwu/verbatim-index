@@ -1886,7 +1886,12 @@ def state_words(st: dict, rec: dict, row: "dict | None", scored_page: bool) -> d
     elif s != "restated":
         raise SystemExit(f"REFUSING: the page has no words for state {s!r}")
     p_row = (row or {}).get("p")
-    if p_row is not None and not outcome and s != "restated":
+    if p_row is not None and outcome:
+        # The card prints this record's price from its verdict (outcome.p), so any
+        # words set above for an unpriced record would contradict it in the
+        # published record file.
+        price = None
+    elif p_row is not None and s != "restated":
         # A price the card shows beside its verdict needs no reason. One on a record
         # with no verdict to sit beside says, in the same line, why it is not scored.
         at = js_percent(p_row) + (f" as of {said}" if said else " (the recording has no known date)")
