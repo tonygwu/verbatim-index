@@ -64,7 +64,7 @@ SOCIAL_DESC = (
 # Once the page carries a score, the card says what the page now is, in the
 # words its own intro opens with.
 SOCIAL_DESC_SCORED = (
-    "Who in tech is best at predicting the future? The public predictions of __N_PEOPLE__ tech "
+    "Who in tech or finance is best at predicting the future? The public predictions of __N_PEOPLE__ tech "
     "leaders, quoted verbatim, dated, and scored against how likely each one looked on the day "
     "it was said."
 )
@@ -1706,7 +1706,7 @@ def thesis(c: dict, n_people: int) -> str:
     table shows. It says what the score covers and what it leaves out, because
     the gap is a large part of the corpus."""
     k = c["leaders_ranked"]
-    return (f"<!-- score:start -->Who in tech is best at predicting the future? We track what {n_people} "
+    return (f"<!-- score:start -->Who in tech or finance is best at predicting the future? We track what {n_people} "
             f"tech leaders predicted in public, quoted <strong>word for word</strong> from their own talks "
             f"and interviews. When a deadline passes, we check what happened and score the call against "
             f"how likely it looked on the day it was said. A long shot that comes true earns far more "

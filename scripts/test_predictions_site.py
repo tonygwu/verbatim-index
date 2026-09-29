@@ -635,14 +635,14 @@ def main() -> int:
         thesis = re.search(r'<p class="thesis">(.*?)</p>', h2, re.S)
         th = thesis.group(1) if thesis else ""
         check("INTRO: the scored page opens with the question, a derived people count and the repo link",
-              "Who in tech is best at predicting the future?" in th
+              "Who in tech or finance is best at predicting the future?" in th
               and f"{len(names_h2)} tech leaders" in th
               and 'href="https://github.com/tonygwu/verbatim-index"' in th, th[:400])
         check("INTRO: the intro states what the score covers, from the listed people's figures",
               "8 of 9 past-due predictions could be checked" in th and "1 person has enough" in th, th[:600])
         head2 = h2[:h2.find("</head>")]
         check("INTRO: the social description matches the intro once there is a score",
-              'name="description" content="Who in tech is best at predicting the future?' in head2
+              'name="description" content="Who in tech or finance is best at predicting the future?' in head2
               and 'property="og:description" content="Who in tech' in head2, head2[-900:])
         th0 = re.search(r'<p class="thesis">(.*?)</p>', html, re.S)
         check("INTRO: with no scores file the intro stays an index and claims no score",
