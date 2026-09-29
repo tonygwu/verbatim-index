@@ -481,8 +481,9 @@ def main(argv: list[str] | None = None) -> int:
     # only --out, so --ids into a new run judges a resolved record's first window.
     cfg_path, freeze_runs = scoring_runs_for(args.scoring_config, args.predictions)
     resolutions, clash = resolutions_across(freeze_runs + [out_root])
-    log(f"trend windows: frozen from {len(resolutions)} resolutions in {len(freeze_runs)} run(s) of "
-        f"{cfg_path or 'no scoring config'} and in --out")
+    log(f"trend windows: read {len(resolutions)} resolved predictions from {len(freeze_runs)} run(s) of "
+        f"{cfg_path or 'no scoring config'} and --out; {len(clash)} resolved over different windows in "
+        f"different runs {sorted(clash)}, refused if a trend record")
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
                   resolutions=resolutions, window_conflicts=clash,
                   date_overrides=date_overrides if ov_path else None)
