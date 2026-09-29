@@ -465,6 +465,40 @@ CLAUSE_FLAGS = ("deadline_before_statement", "specificity_ok", "lead_days", "lea
 REASON_FLAGS = ("eligible",) + CLAUSE_FLAGS
 
 
+def funnel_flags(r: dict, min_lead: int) -> dict:
+    """The eligibility flags of one record that carries a deadline (attach_deadlines).
+
+    resolve_predictions.select() writes these onto every past-due record, and the
+    scorer copies them into scores.json. The page asks the same function about a
+    record scores.json does not carry (not yet due, or past due after scoring), so
+    a card never promises a check that no stage will make. Pure: reads only `r`.
+
+    The three clauses together are the operator's eligibility rule: a real forecast
+    is specific enough (ELIGIBLE_SPECIFICITY, high or medium since 2026-09-27),
+    reaches at least `min_lead` days out, and has a coherent window. A trend window
+    IS the elapsed time, so the lead floor is met by construction and specificity is
+    not what makes it testable: a trend record is eligible.
+    """
+    if r.get("_deadline") is None:
+        raise SystemExit(f"prediction {r.get('prediction_id')} has no deadline, so it has no funnel flags; "
+                         f"attach_deadlines() gives one first")
+    said = iso((r.get("source") or {}).get("statement_date"))
+    lead = lead_days(r)
+    is_trend = str(r.get("_basis") or "").startswith("trend")
+    flags = {
+        "basis": r["_basis"],
+        "deadline_before_statement": bool(said and r["_deadline"] < said),
+        "specificity_high": r["prediction"].get("specificity") == "high",
+        "specificity_ok": r["prediction"].get("specificity") in ELIGIBLE_SPECIFICITY,
+        "lead_days": lead,
+        "lead_ok": lead is not None and lead >= min_lead,
+        "trend": is_trend,
+    }
+    flags["eligible"] = is_trend or (flags["specificity_ok"] and flags["lead_ok"]
+                                     and not flags["deadline_before_statement"])
+    return flags
+
+
 def failing_clauses(flags: dict, pid: str = "?") -> list[str]:
     """Every eligibility clause these funnel flags fail, in INELIGIBLE_REASONS order.
 

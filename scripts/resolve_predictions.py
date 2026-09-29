@@ -136,26 +136,9 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
     for r in rows:
         if not r["_deadline"] or r["_deadline"] > cutoff:
             continue
-        said = P2.iso((r.get("source") or {}).get("statement_date"))
-        lead = P2.lead_days(r)
-        r["_flags"] = {
-            "basis": r["_basis"],
-            "deadline_before_statement": bool(said and r["_deadline"] < said),
-            "specificity_high": r["prediction"].get("specificity") == "high",
-            "specificity_ok": r["prediction"].get("specificity") in P2.ELIGIBLE_SPECIFICITY,
-            "lead_days": lead,
-            "lead_ok": lead is not None and lead >= min_lead,
-        }
-        # The three together are the operator's eligibility rule: a real forecast
-        # is specific enough (P2.ELIGIBLE_SPECIFICITY, high or medium since
-        # 2026-09-27), reaches at least min_lead days out, and has a coherent window.
-        is_trend = str(r.get("_basis") or "").startswith("trend")
-        r["_flags"]["trend"] = is_trend
-        # A trend window IS the elapsed time, so the lead-time floor is already
-        # satisfied by construction and specificity is not what makes it testable.
-        r["_flags"]["eligible"] = (is_trend or
-                                   (r["_flags"]["specificity_ok"] and r["_flags"]["lead_ok"]
-                                    and not r["_flags"]["deadline_before_statement"]))
+        # The operator's eligibility rule, in phase2_resolvability so the page asks
+        # the same function about a record that is not past due yet.
+        r["_flags"] = P2.funnel_flags(r, min_lead)
         out.append(r)
     out.sort(key=lambda r: (r["leader_slug"], r["prediction_id"]))
     return out
