@@ -165,7 +165,7 @@ def main() -> int:
         late = score("--restatements", str(m2), out=d / "late.json")
         lr = {r["prediction_id"]: r for r in json.loads((d / "late.json").read_text()).get("predictions", [])} if late.returncode == 0 else {}
         check("LEAD: the specific member's own statement date sets lead time; nothing is borrowed",
-              lr.get("p4", {}).get("not_scored_because") == "not_eligible"
+              lr.get("p4", {}).get("not_scored_because") == "not_eligible:lead_under_floor"
               and lr.get("p3", {}).get("not_scored_because") == "restated:p4", late.stderr[-400:] or str(lr.get("p4")))
 
         def refused(label, clusters, needle, runs=(a,)):

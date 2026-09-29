@@ -509,7 +509,11 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # production), relative to the data root like every other path here.
 # `date_overrides` names the statement-date override file
 # (predictions_lib.DATE_OVERRIDES_FILE in production), relative to the data root.
-OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides")
+# `replacements` names a replacement manifest (score_predictions.read_replacements):
+# a re-resolved or re-priced sidecar in a newer run that supersedes an older run's
+# sidecar for the same prediction. It must live under predictions/ in production,
+# because data_sync.py regenerates scores.json from predictions/ and roster/ only.
+OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements")
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
 
 
@@ -577,6 +581,8 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
         raise SystemExit(f"{path}: restatements must be a path relative to the data root")
     if "date_overrides" in cfg and not (isinstance(cfg["date_overrides"], str) and cfg["date_overrides"]):
         raise SystemExit(f"{path}: date_overrides must be a path relative to the data root")
+    if "replacements" in cfg and not (isinstance(cfg["replacements"], str) and cfg["replacements"]):
+        raise SystemExit(f"{path}: replacements must be a path relative to the data root")
     if not isinstance(cfg["trend"], bool) or not isinstance(cfg["min_lead_days"], int) \
             or not cfg["predictions"] or not cfg["runs"]:
         raise SystemExit(f"{path}: trend must be a boolean, min_lead_days an integer, and predictions "
@@ -604,6 +610,9 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
         h.update(f"restatements {hashlib.sha256((root / settings['restatements']).read_bytes()).hexdigest()}\n".encode())
     if "date_overrides" in settings:
         h.update(f"date_overrides {hashlib.sha256((root / settings['date_overrides']).read_bytes()).hexdigest()}\n".encode())
+    if "replacements" in settings:
+        # Only when named, like the two above, so every existing scores.json hashes as before.
+        h.update(f"replacements {hashlib.sha256((root / settings['replacements']).read_bytes()).hexdigest()}\n".encode())
     for run in settings["runs"]:
         for sub in SIDECAR_DIRS:
             for f in sorted((root / run / sub).glob("*/*.json")):

@@ -4,6 +4,12 @@
     .venv/bin/python scripts/resolve_predictions.py --stage resolve \
         --as-of 2026-09-15 --out data/predictions/_experiments/<run>
 
+Only ELIGIBLE records run by default; `--include-ineligible` opts out, and every
+record left out is counted by its reason. `--ids FILE` runs only the named
+records, for re-running them into a new run, and refuses any the stage would not
+run. A re-run's sidecars then need an entry in the scorer's replacement manifest
+(score_predictions.read_replacements), or the scorer refuses the duplicate.
+
 WHY THE TWO STAGES RUN ON DIFFERENT HARNESSES
 ---------------------------------------------
 This is a deliberate choice and it decides what the numbers can mean.
@@ -31,6 +37,7 @@ EVERY FAILURE GETS A TAXONOMY ENTRY, never a bare count.
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures as cf
 import datetime as dt
 import hashlib
@@ -133,6 +140,103 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
         out.append(r)
     out.sort(key=lambda r: (r["leader_slug"], r["prediction_id"]))
     return out
+
+
+# The flags ineligible_reason() reads. select() writes every one of them.
+REASON_FLAGS = ("eligible", "deadline_before_statement", "specificity_ok", "lead_days", "lead_ok")
+
+
+def ineligible_reason(pid: str, flags: dict) -> str | None:
+    """Why a past-due record is not eligible, or None when it is.
+
+    The reason is the FIRST stage of the funnel (phase2_resolvability.funnel)
+    that drops the record, in that stage's order: a window that closes before
+    it opens, then specificity, then lead time. A record with no statement date
+    has no lead time at all, so it is "undated", not "lead_under_floor". One
+    reason per record, so the counts add up; a record that fails two stages is
+    named by the earlier one.
+
+    Shared by the resolve and prior stages, which skip what it names, and by
+    score_predictions.join(), which writes it as `not_eligible:<reason>`. Flags
+    that say ineligible and name no reason are refused, never guessed at.
+    """
+    missing = [k for k in REASON_FLAGS if k not in flags]
+    if missing:
+        raise SystemExit(f"prediction {pid}'s funnel flags lack {missing}; they come from "
+                         f"resolve_predictions.select(), which writes all of {list(REASON_FLAGS)}")
+    if flags["eligible"]:
+        return None
+    if flags["deadline_before_statement"]:
+        return "deadline_before_statement"
+    if not flags["specificity_ok"]:
+        return "specificity"
+    if flags["lead_days"] is None:
+        return "undated"
+    if not flags["lead_ok"]:
+        return "lead_under_floor"
+    raise SystemExit(f"prediction {pid} is marked ineligible, but its funnel flags name no reason: {flags}")
+
+
+def read_ids(path: Path) -> list[str]:
+    """The prediction ids in an --ids file, one per line, in file order.
+
+    A blank line is skipped. A line holding anything but one id, a repeated id,
+    and a file naming nothing are refused: each usually means the list is not
+    the one the operator meant to pass.
+    """
+    if not Path(path).is_file():
+        raise SystemExit(f"--ids {path} does not exist")
+    ids: list[str] = []
+    for n, line in enumerate(Path(path).read_text().split("\n"), 1):
+        s = line.strip()
+        if not s:
+            continue
+        if len(s.split()) != 1:
+            raise SystemExit(f"--ids {path} line {n} holds {s!r}; one prediction id per line")
+        if s in ids:
+            raise SystemExit(f"--ids {path} names {s} twice")
+        ids.append(s)
+    if not ids:
+        raise SystemExit(f"--ids {path} names no prediction id")
+    return ids
+
+
+def narrow(rows: list[dict], slugs: "list[str] | None", include_ineligible: bool,
+           ids: "list[str] | None") -> tuple[list[dict], collections.Counter]:
+    """The rows a stage runs over, and the ineligible rows it left out, by reason.
+
+    Ineligible records are left out unless `include_ineligible`: the scorer never
+    scores them, so resolving or pricing them spends calls on nothing. Each one
+    left out is counted by its reason and the count is printed.
+
+    With `ids`, only the named records run, and every named record MUST run: one
+    that is not past due, belongs to another --slug, or is ineligible without
+    the opt-out is refused with its reason rather than skipped.
+    """
+    named = set(ids) if ids is not None else None
+    wanted = set(slugs) if slugs else None
+    out, left_out, why_not = [], collections.Counter(), {}
+    for r in rows:
+        pid = r["prediction_id"]
+        if named is not None and pid not in named:
+            continue
+        if wanted is not None and r["leader_slug"] not in wanted:
+            why_not[pid] = f"is {r['leader_slug']}'s, outside --slug {sorted(wanted)}"
+            continue
+        reason = ineligible_reason(pid, r["_flags"])
+        if reason is not None and not include_ineligible:
+            left_out[reason] += 1
+            why_not[pid] = f"is not eligible ({reason}); pass --include-ineligible to run it anyway"
+            continue
+        out.append(r)
+    if named is not None:
+        kept = {r["prediction_id"] for r in out}
+        refused = [f"{pid} {why_not.get(pid, 'is no accepted record past due at --as-of')}"
+                   for pid in ids if pid not in kept]
+        if refused:
+            raise SystemExit(f"--ids names {len(refused)} prediction(s) this stage will not run: "
+                             + "; ".join(refused))
+    return out, left_out
 
 
 # ---------------------------------------------------------------------------
@@ -245,8 +349,17 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--trend", action="store_true",
                     help="also score undated DIRECTIONAL claims at least "
                          "MIN_TREND_YEARS old, over the elapsed window")
+    # Eligible only is the DEFAULT (design 3.5, rescue round 4): phase2-scoring-20260915
+    # spent resolution calls on records the scorer can never score. --eligible-only
+    # still parses, so a written-down command keeps working, and means the default.
     ap.add_argument("--eligible-only", action="store_true",
-                    help="only the records that clear specificity, lead time and a coherent window")
+                    help="the default: only the records that clear specificity, lead time and a "
+                         "coherent window")
+    ap.add_argument("--include-ineligible", action="store_true",
+                    help="also run records the scorer will not score; they are left out by default")
+    ap.add_argument("--ids", type=Path, default=None,
+                    help="a file of prediction ids, one per line; run only those, and refuse any the "
+                         "stage would not run. For re-running named records into a new run")
     ap.add_argument("--slug", action="append", default=None, help="restrict to these leaders")
     ap.add_argument("--limit", type=int, default=None, help="first N jobs, for a pilot")
     ap.add_argument("--workers", type=int, default=4)
@@ -309,10 +422,13 @@ def main(argv: list[str] | None = None) -> int:
     args.predictions = args.predictions or [Path("data/predictions")]
     if Path(args.fable_bin).name == "cl":
         raise SystemExit("refusing --fable-bin cl: it injects --dangerously-skip-permissions (see CLAUDE.md)")
+    if args.eligible_only and args.include_ineligible:
+        raise SystemExit("--eligible-only and --include-ineligible contradict each other; pass one")
     try:
         cutoff = dt.date.fromisoformat(args.as_of)
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
+    ids = read_ids(args.ids) if args.ids is not None else None
 
     out_root = Path(args.out)
     ov_path, date_overrides = date_overrides_for(args.date_overrides, args.predictions)
@@ -320,12 +436,16 @@ def main(argv: list[str] | None = None) -> int:
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
                   resolutions=R.load_sidecars(out_root, "resolve"),
                   date_overrides=date_overrides if ov_path else None)
-    if args.slug:
-        rows = [r for r in rows if r["leader_slug"] in set(args.slug)]
-    if args.eligible_only:
-        rows = [r for r in rows if r["_flags"]["eligible"]]
+    rows, left_out = narrow(rows, args.slug, args.include_ineligible, ids)
+    if left_out:
+        log(f"left out {sum(left_out.values())} ineligible, by reason {json.dumps(dict(sorted(left_out.items())))}; "
+            f"pass --include-ineligible to run them")
 
     done = set(R.load_sidecars(out_root, args.stage)) if not args.redo else set()
+    if ids is not None and done & set(ids):
+        # Named, and still skipped because this run already holds a result for them.
+        log(f"--ids: {sorted(done & set(ids))} already have a {args.stage} result in {out_root}; "
+            f"pass --redo to run them again")
     todo = [r for r in rows if r["prediction_id"] not in done]
     if args.limit is not None:
         todo = todo[:args.limit]

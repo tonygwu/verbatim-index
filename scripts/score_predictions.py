@@ -30,7 +30,10 @@ WHAT COUNTS TOWARD THE PUBLISHED FIGURE
     (`phase2_resolvability.ELIGIBLE_SPECIFICITY`, widened from high alone on
     2026-09-27), at least `MIN_LEAD_DAYS` of lead time, and a deadline that does
     not precede the statement.
-Everything else is loaded, counted and reported, never silently dropped. A
+Everything else is loaded, counted and reported, never silently dropped.
+Eligibility is checked first, so an ineligible row reads
+`not_eligible:<deadline_before_statement|specificity|undated|lead_under_floor>`
+whether or not it was resolved (`resolve_predictions.ineligible_reason`). A
 person below `MIN_SCORED_TO_RANK` keeps their number in this file and does not
 get a published one, which is how `MIN_TRANSCRIPTS_TO_RANK` already works on the
 leaderboard.
@@ -45,6 +48,13 @@ accounting still adds up. A cluster may name a fresh `resolution` run that
 supersedes named older sidecars; that is the only way one prediction may have a
 resolution in two runs, and every superseded sidecar is reported. See
 `read_restatements()` for what is refused.
+
+REPLACEMENTS. A re-resolved or re-priced result lands in a new run while the old
+run's sidecar stays on disk. `--replacements` (or `replacements` in the config)
+names a manifest whose entries each give the stage, the prediction, the run
+replaced, the replacement run and the reason; the old sidecar is left out and
+reported under `replacements.replaced_sidecars`. An unlisted duplicate still
+stops the scorer. See `read_replacements()` and `load_across()`.
 """
 from __future__ import annotations
 
@@ -61,7 +71,7 @@ import phase2_resolvability as P2  # noqa: E402
 import prediction_score as PS  # noqa: E402
 import resolution_lib as R  # noqa: E402
 import predictions_lib as L  # noqa: E402
-from resolve_predictions import date_overrides_for, select  # noqa: E402
+from resolve_predictions import date_overrides_for, ineligible_reason, select  # noqa: E402
 from data_clone_workflow import (  # noqa: E402
     load_scoring_config as load_config, scoring_rel as rel, score_inputs_sha256, scores_staleness,
 )
@@ -139,14 +149,19 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
             why["restated"] += 1
             out.append(row)
             continue
-        if res is None:
+        # Eligibility FIRST (design 3.5, rescue round 4). An ineligible record is
+        # never resolved, since the resolve stage skips it, so checking for a
+        # resolution first named it "no_resolution" and it read as awaiting a check.
+        # A resolved one keeps its outcome in the row for audit.
+        unfit = ineligible_reason(pid, r["_flags"])
+        if unfit is not None:
+            row["not_scored_because"] = f"not_eligible:{unfit}"
+        elif res is None:
             row["not_scored_because"] = "no_resolution"
         elif res["outcome"] == "unresolvable":
             row["not_scored_because"] = f"unresolvable:{res['unresolvable_reason']}"
         elif pri is None:
             row["not_scored_because"] = "no_prior"
-        elif not r["_flags"]["eligible"]:
-            row["not_scored_because"] = "not_eligible"
         else:
             s = PS.score(res["outcome"] == "occurred", pri["p"], row["q"])
             row.update(points=round(s["points"], 4), rule=s["rule"], scored=True,
@@ -279,7 +294,8 @@ def drop_stale_sidecars(sidecars: dict[str, dict], date_overrides: dict, superse
 
 
 def load_across(runs: list[Path], loader, drop: "set[tuple[Path, str]] | None" = None,
-                dropped: "dict | None" = None) -> dict[str, dict]:
+                dropped: "dict | None" = None, replace: "dict[tuple[Path, str], Path] | None" = None,
+                replaced: "dict | None" = None) -> dict[str, dict]:
     """One loader applied to every run, merged by prediction_id.
 
     A prediction present in two runs is REFUSED, naming both, because letting the
@@ -290,32 +306,62 @@ def load_across(runs: list[Path], loader, drop: "set[tuple[Path, str]] | None" =
     They are left out, copied into `dropped` for the report, and each must exist:
     superseding a sidecar that is not there means the manifest describes other
     inputs than these, and that is refused rather than read as done.
+
+    `replace` maps (run, prediction_id) sidecars a replacement manifest replaces to
+    the run holding the replacement. They are left out and copied into `replaced`,
+    each must exist, and the replacement must be the sidecar actually read for
+    that prediction: dropping an old result whose replacement is missing would
+    leave the prediction silently unresolved. A sidecar named by both manifests
+    is refused, because only one of them can say why it went.
     """
     drop = {(Path(r).resolve(), pid) for r, pid in (drop or set())}
-    elsewhere = sorted({str(r) for r, _ in drop} - {str(Path(x).resolve()) for x in runs})
+    replace = {(Path(r).resolve(), pid): Path(w).resolve() for (r, pid), w in (replace or {}).items()}
+    read = {Path(x).resolve() for x in runs}
+    elsewhere = sorted({str(r) for r, _ in drop} - {str(x) for x in read})
     if elsewhere:
         raise SystemExit(f"the restatement manifest supersedes sidecars in runs that are not being read: "
                          f"{elsewhere}")
+    elsewhere = sorted({str(x) for (r, _), w in replace.items() for x in (r, w)} - {str(x) for x in read})
+    if elsewhere:
+        raise SystemExit(f"the replacement manifest names runs that are not being read: {elsewhere}")
+    both = sorted(drop & replace.keys())
+    if both:
+        raise SystemExit("sidecars superseded by both the restatement manifest and the replacement manifest: "
+                         + "; ".join(f"{pid} in {run}" for run, pid in both) + "; name each in one of them")
     out: dict[str, dict] = {}
     seen: dict[str, Path] = {}
     hit: set[tuple[Path, str]] = set()
     for run in runs:
         for pid, obj in loader(run).items():
             key = (Path(run).resolve(), pid)
-            if key in drop:
+            if key in drop or key in replace:
                 hit.add(key)
-                if dropped is not None:
-                    dropped[key] = obj
+                sink = dropped if key in drop else replaced
+                if sink is not None:
+                    sink[key] = obj
                 continue
             if pid in out:
                 raise SystemExit(f"prediction {pid} has sidecars in two runs: {seen[pid]} and {run}; "
                                  f"remove one before scoring, or name the one that supersedes the "
-                                 f"other in the restatement manifest")
+                                 f"other in the replacement manifest (the restatement manifest for a "
+                                 f"restated cluster)")
             out[pid], seen[pid] = obj, run
     missing = drop - hit
     if missing:
         raise SystemExit("the restatement manifest supersedes sidecars that do not exist: "
                          + "; ".join(f"{pid} in {run}" for run, pid in sorted(missing)))
+    missing = replace.keys() - hit
+    if missing:
+        raise SystemExit("the replacement manifest replaces sidecars that are not among those read: "
+                         + "; ".join(f"{pid} in {run}" for run, pid in sorted(missing)))
+    wrong = sorted({(pid, str(w), str(seen[pid]) if pid in out else None)
+                    for (_, pid), w in replace.items() if pid not in out or Path(seen[pid]).resolve() != w},
+                   key=lambda x: (x[0], x[1]))
+    if wrong:
+        raise SystemExit("the replacement manifest names replacements that are not the sidecar read: "
+                         + "; ".join(f"{pid} should come from {w}, "
+                                     + (f"but the one read is in {got}" if got else "and there is none there")
+                                     for pid, w, got in wrong))
     return out
 
 
@@ -451,6 +497,107 @@ def restatement_report(doc: dict, path_rel: str, sha: str, joined: list[dict], r
             "restated_rows": sum(1 for r in joined if is_restated(r))}
 
 
+# ---------------------------------------------------------------------------
+# Replacements
+# ---------------------------------------------------------------------------
+#
+# A re-resolved or re-priced result is written into a NEW run: a run is the record
+# of one pass, and an experiment clone may write only its own. The old run's
+# sidecar for that prediction stays on disk, and two sidecars for one prediction
+# stop the scorer (load_across). The restatement manifest lifts that only for a
+# restated cluster's resolution. The replacement manifest is the general way
+# past it (critique A1, rescue round 4): each entry names the stage, the
+# prediction, the run whose sidecar is replaced, the run holding its
+# replacement, and why. Anything it does not name still stops the scorer.
+
+REPLACEMENT_MANIFEST_KEYS = {"schema_version", "replacements"}
+REPLACEMENT_KEYS = {"stage", "prediction_id", "run", "replacement", "reason"}
+# The stages load_across merges across runs that a re-run can produce. Criteria
+# repairs also load across runs, and are not replaceable here until a re-run
+# needs it.
+REPLACEMENT_STAGES = ("resolve", "prior")
+
+
+def read_replacements(path: Path, root: Path, runs: list[Path]) -> dict:
+    """The manifest, checked for shape. Everything wrong is refused, never skipped.
+
+    Refused here: a missing file; an unknown or missing key; a stage other than
+    resolve or prior; an empty field; a run or replacement that is not one of
+    the scored runs; a replacement equal to the run it replaces; the same
+    (stage, prediction, run) twice; two replacements for one (stage,
+    prediction); a chain, where a replacement is itself replaced.
+    Refused later, against the data: an unknown prediction id (main), and a
+    replaced sidecar or a replacement that is not there (load_across).
+    """
+    if not Path(path).is_file():
+        raise SystemExit(f"replacement manifest {path} does not exist")
+    doc = json.loads(Path(path).read_text())
+    bad = sorted(set(doc) ^ REPLACEMENT_MANIFEST_KEYS)
+    if bad or doc.get("schema_version") != 1 or not isinstance(doc.get("replacements"), list):
+        raise SystemExit(f"{path}: a replacement manifest carries exactly {sorted(REPLACEMENT_MANIFEST_KEYS)} "
+                         f"with schema_version 1 and a list of replacements; differs at "
+                         f"{bad or 'schema_version/replacements'}")
+    run_set = {Path(r).resolve() for r in runs}
+    seen: set[tuple[str, str, Path]] = set()
+    groups: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
+    for e in doc["replacements"]:
+        if not isinstance(e, dict) or set(e) != REPLACEMENT_KEYS:
+            raise SystemExit(f"{path}: replacement {e!r} must carry exactly {sorted(REPLACEMENT_KEYS)}")
+        empty = sorted(k for k in REPLACEMENT_KEYS if not (isinstance(e[k], str) and e[k].strip()))
+        if empty:
+            raise SystemExit(f"{path}: replacement {e!r} has no {empty}; each is a non-empty string")
+        if e["stage"] not in REPLACEMENT_STAGES:
+            raise SystemExit(f"{path}: replacement of {e['prediction_id']} names stage {e['stage']!r}; "
+                             f"a replacement is one of {list(REPLACEMENT_STAGES)}")
+        old, new = (root / e["run"]).resolve(), (root / e["replacement"]).resolve()
+        for k, p in (("run", old), ("replacement", new)):
+            if p not in run_set:
+                raise SystemExit(f"{path}: replacement of {e['prediction_id']} names {k} {e[k]}, which is not "
+                                 f"one of the runs being scored")
+        if old == new:
+            raise SystemExit(f"{path}: replacement of {e['prediction_id']} names {e['run']} as both the run "
+                             f"replaced and the replacement")
+        key = (e["stage"], e["prediction_id"], old)
+        if key in seen:
+            raise SystemExit(f"{path}: the {e['stage']} sidecar of {e['prediction_id']} in {e['run']} is "
+                             f"replaced twice")
+        seen.add(key)
+        groups[(e["stage"], e["prediction_id"])].append(e)
+    for (stage, pid), es in groups.items():
+        olds = {(root / e["run"]).resolve() for e in es}
+        news = {(root / e["replacement"]).resolve() for e in es}
+        if olds & news:
+            raise SystemExit(f"{path}: the {stage} sidecar of {pid} in {sorted(str(x) for x in olds & news)} is "
+                             f"both replaced and a replacement, a chain; name the final sidecar as the "
+                             f"replacement of every earlier one")
+        if len(news) > 1:
+            raise SystemExit(f"{path}: the {stage} sidecar of {pid} has two replacements, "
+                             f"{sorted(str(x) for x in news)}; a prediction has one result per stage")
+    return doc
+
+
+def replacement_map(doc: dict, root: Path, stage: str) -> dict[tuple[Path, str], Path]:
+    """(replaced run, prediction_id) -> replacement run, for one stage."""
+    return {((root / e["run"]).resolve(), e["prediction_id"]): (root / e["replacement"]).resolve()
+            for e in doc["replacements"] if e["stage"] == stage}
+
+
+def replacement_report(doc: dict, path_rel: str, sha: str, replaced: dict[str, dict],
+                       merged: dict[str, dict], root: Path) -> dict:
+    """Every replaced sidecar, with what it said and what the replacement says."""
+    field = {"resolve": "outcome", "prior": "p"}
+    why = {(e["stage"], (root / e["run"]).resolve(), e["prediction_id"]): e for e in doc["replacements"]}
+    out = []
+    for stage in REPLACEMENT_STAGES:
+        for (run, pid), obj in replaced[stage].items():
+            e = why[(stage, run, pid)]
+            out.append({"stage": stage, "prediction_id": pid, "run": rel(run, root),
+                        "replacement": rel(root / e["replacement"], root), "reason": e["reason"],
+                        "was": obj.get(field[stage]), "now": merged[stage][pid].get(field[stage])})
+    out.sort(key=lambda x: (x["stage"], x["prediction_id"], x["run"]))
+    return {"manifest": path_rel, "manifest_sha256": sha, "replaced_sidecars": out}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=None,
@@ -470,10 +617,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="a restatement manifest; each cluster scores once, as its specific_member")
     ap.add_argument("--date-overrides", type=Path, default=None,
                     help=f"reviewed statement-date override file; default <data>/{L.DATE_OVERRIDES_FILE} when it exists")
+    ap.add_argument("--replacements", type=Path, default=None,
+                    help="a replacement manifest; each entry lets a sidecar in a newer run replace an older "
+                         "run's sidecar for the same prediction")
     args = ap.parse_args(argv)
     flags = {"--run": args.run, "--predictions": args.predictions, "--index": args.index, "--as-of": args.as_of,
              "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out,
-             "--restatements": args.restatements, "--date-overrides": args.date_overrides}
+             "--restatements": args.restatements, "--date-overrides": args.date_overrides,
+             "--replacements": args.replacements}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -485,6 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         args.as_of, args.min_lead_days, args.trend = cfg["as_of"], cfg["min_lead_days"], cfg["trend"]
         args.out = root / cfg["out"]
         args.restatements = root / cfg["restatements"] if "restatements" in cfg else None
+        args.replacements = root / cfg["replacements"] if "replacements" in cfg else None
         # A committed config names its override file, so staleness hashing covers
         # it. One that is silent while the production file exists is refused
         # rather than scored as if the overrides were not there.
@@ -507,6 +659,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.restatements is not None:
         # Only when named, so a scoring run without a manifest writes exactly what it did before.
         settings["restatements"] = rel(args.restatements, root)
+    if args.replacements is not None:
+        # Only when named, for the same reason: absent, scores.json is byte-identical to before.
+        settings["replacements"] = rel(args.replacements, root)
     ov_path, date_overrides = date_overrides_for(args.date_overrides, args.predictions)
     if ov_path is not None:
         # Only when used, so a scores.json computed without overrides is unchanged.
@@ -535,10 +690,21 @@ def main(argv: list[str] | None = None) -> int:
                                                      rel(run, root), stage, stale)
 
     manifest = read_restatements(args.restatements, root, args.run) if args.restatements is not None else None
+    swaps = read_replacements(args.replacements, root, args.run) if args.replacements is not None else None
+    if swaps is not None:
+        unknown = sorted({e["prediction_id"] for e in swaps["replacements"]} - live_ids)
+        if unknown:
+            raise SystemExit(f"the replacement manifest names {len(unknown)} prediction id(s) that are no accepted "
+                             f"record in the corpora being scored: {unknown}")
     dropped: dict = {}
+    replaced: dict[str, dict] = {stage: {} for stage in REPLACEMENT_STAGES}
     resolutions = load_across(args.run, fresh(lambda run: R.load_sidecars(run, "resolve"), "resolve"),
-                              drop=superseded_keys(manifest, root) if manifest else None, dropped=dropped)
-    priors = load_across(args.run, fresh(lambda run: R.load_sidecars(run, "prior"), "prior"))
+                              drop=superseded_keys(manifest, root) if manifest else None, dropped=dropped,
+                              replace=replacement_map(swaps, root, "resolve") if swaps else None,
+                              replaced=replaced["resolve"])
+    priors = load_across(args.run, fresh(lambda run: R.load_sidecars(run, "prior"), "prior"),
+                         replace=replacement_map(swaps, root, "prior") if swaps else None,
+                         replaced=replaced["prior"])
     restated: dict[str, str] = {}
     if manifest is not None:
         check_restatement_records(manifest, {r["prediction_id"]: r for r in loaded})
@@ -612,6 +778,10 @@ def main(argv: list[str] | None = None) -> int:
         doc["restatements"] = restatement_report(
             manifest, settings["restatements"], hashlib.sha256(args.restatements.read_bytes()).hexdigest(),
             joined, resolutions, dropped, root)
+    if swaps is not None:
+        doc["replacements"] = replacement_report(
+            swaps, settings["replacements"], hashlib.sha256(args.replacements.read_bytes()).hexdigest(),
+            replaced, {"resolve": resolutions, "prior": priors}, root)
     if ov_path is not None:
         doc["date_overrides"] = {
             "file": settings["date_overrides"],
@@ -639,6 +809,12 @@ def main(argv: list[str] | None = None) -> int:
               f"as restated, {len(rs['superseded_resolutions'])} resolution sidecars superseded")
         for x in rs["superseded_resolutions"]:
             print(f"  superseded: {x['prediction_id']} in {x['run']} ({x['outcome']}) by {x['cluster_id']}")
+    if swaps is not None:
+        rp = doc["replacements"]["replaced_sidecars"]
+        print(f"replacements: {doc['replacements']['manifest']}, {len(rp)} sidecars replaced")
+        for x in rp:
+            print(f"  replaced: {x['stage']} {x['prediction_id']} in {x['run']} ({x['was']}) by "
+                  f"{x['replacement']} ({x['now']}): {x['reason']}")
     if ov_path is not None:
         o = doc["date_overrides"]
         print(f"date overrides: {o['file']} ({len(o['entries'])} entries); superseded records "
