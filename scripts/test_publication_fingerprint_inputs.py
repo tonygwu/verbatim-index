@@ -112,17 +112,19 @@ def main() -> int:
               "hashing nothing would make a deleted gate look like an unchanged one")
         mem.write_text(json.dumps({"alpha": ["leaders"], "beta": ["predictions"]}))
 
-        print("\n[4] the predictions site is NOT fingerprinted on membership.json")
-        # build_predictions_site.py does not read membership, so binding the
-        # predictions render to it would refuse deploys for an input it never
-        # consulted. If that changes, this check is the reminder to add it.
+        print("\n[4] the predictions site IS fingerprinted on membership.json")
+        # Since 2026-09-29 build_predictions_site.py lists only people on the
+        # predictions board, so an edit between the deploy's before and after
+        # checks would change the published page with the guard still passing.
         (src / "predictions").mkdir(exist_ok=True)
         (src / "predictions" / "index.json").write_text("{}")
         p_before = D.fingerprint(src, "predictions", repo=repo)
-        mem.write_text(json.dumps({"alpha": ["leader"]}))
-        check("editing membership does not move the predictions fingerprint",
-              D.fingerprint(src, "predictions", repo=repo) == p_before,
-              "build_predictions_site.py does not read membership today")
+        mem.write_text(json.dumps({"alpha": ["leaders"]}))
+        check("taking a person off the predictions board moves the predictions fingerprint",
+              D.fingerprint(src, "predictions", repo=repo) != p_before,
+              "build_predictions_site.py reads membership since 2026-09-29")
+        check("the predictions site declares membership.json",
+              "membership.json" in D.SITE_REPO_INPUTS["predictions"], str(D.SITE_REPO_INPUTS))
         mem.write_text(json.dumps({"alpha": ["leaders"], "beta": ["predictions"]}))
 
         print("\n[5] the repo inputs are declared per site, never guessed")

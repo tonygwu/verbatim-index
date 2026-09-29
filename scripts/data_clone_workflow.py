@@ -421,14 +421,15 @@ SITE_SHELVES = {
 }
 
 #: Render inputs that live in the PUBLIC repository rather than the data
-#: checkout, per site. Declared explicitly and per site, never guessed: binding
-#: the predictions render to membership.json would refuse deploys over an input
-#: build_predictions_site.py has never read. Every key in SITE_SHELVES needs an
-#: entry here, and test_publication_fingerprint_inputs.py asserts that.
+#: checkout, per site. Declared explicitly and per site, never guessed. The
+#: predictions render reads membership.json since 2026-09-29, when the page
+#: began listing only people on the predictions board. Every key in
+#: SITE_SHELVES needs an entry here, and test_publication_fingerprint_inputs.py
+#: asserts that.
 SITE_REPO_INPUTS = {
     'leaderboard': ('membership.json',),
     'pundits': (),
-    'predictions': (),
+    'predictions': ('membership.json',),
 }
 
 

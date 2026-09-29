@@ -173,6 +173,16 @@ def build(td: Path, L, A) -> tuple[Path, Path, Path]:
     return pr, roster, pr / "index.json"
 
 
+def mem(roster: Path, off: tuple = (), drop: tuple = ()) -> Path:
+    """A membership.json beside the fixture roster: everyone on both boards, except
+    `off` (leaders only) and `drop` (absent, which the page must refuse)."""
+    slugs = [r["slug"] for r in json.loads(roster.read_text())["roster"]]
+    doc = {s: (["leaders"] if s in off else ["leaders", "predictions"]) for s in slugs if s not in drop}
+    path = roster.parent / "membership.json"
+    path.write_text(json.dumps(doc))
+    return path
+
+
 def write_year_summaries(pr: Path) -> dict:
     """A current summary for every dated cell, as `year_summaries.py --write` leaves it."""
     B, YS = load("build_predictions_site"), load("year_summaries")
@@ -446,7 +456,7 @@ def card_states(L, A, B) -> None:
 
         def render(doc: "dict | None", name: str, preds: Path = pr):
             args = [PY, str(script), "--data-date", "2026-09-10", "--index", str(preds / "index.json"),
-                    "--predictions", str(preds), "--roster", str(roster), "--out", str(td / name / "index.html")]
+                    "--predictions", str(preds), "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / name / "index.html")]
             if doc is not None:
                 (td / f"{name}.json").write_text(json.dumps(doc))
                 args += ["--scores", str(td / f"{name}.json")]
@@ -806,7 +816,7 @@ def main() -> int:
         td = Path(td)
         pr, roster, index = build(td, L, A)
         out = td / "site" / "index.html"
-        p = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr), "--roster", str(roster), "--out", str(out)],
+        p = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr), "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(out)],
                            capture_output=True, text=True, cwd=REPO)
         check("FIXTURE: builder exits 0 and writes the page", p.returncode == 0 and out.exists(), p.stdout + p.stderr[-500:])
         html = out.read_text()
@@ -820,6 +830,28 @@ def main() -> int:
                    if (r.get("state") or {}).get("state") not in ("unchecked", "no_deadline") or (r.get("state") or {}).get("price")]
         check("STATE: without a scores file every card is unchecked or has no deadline, and none carries a price line",
               not nostate and any(r["state"]["state"] == "no_deadline" for rs in pred.values() for r in rs), str(nostate[:3]))
+
+        # OFF BOARD. Operator request 2026-09-29: a person whose predictions cannot
+        # yet be scored fairly is taken off the predictions board in membership.json.
+        # The page must leave them out AND name them, never drop them silently.
+        outm = td / "offboard" / "index.html"
+        po = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--membership", str(mem(roster, off=("alan",))), "--out", str(outm)],
+                            capture_output=True, text=True, cwd=REPO)
+        htm = outm.read_text() if outm.exists() else ""
+        rows_m = [r["slug"] for r in embedded(htm, "DATA")] if htm else []
+        note_m = re.search(r'<p class="omitted" id="omitted">(.*?)</p>', htm, re.S)
+        check("OFF BOARD: a person off the predictions board has no row and is named in the note",
+              po.returncode == 0 and "alan" not in rows_m and "ada" in rows_m
+              and bool(note_m) and "Alan T" in note_m.group(1) and "checked" in note_m.group(1),
+              (po.stderr[-300:] + " rows " + str(rows_m) + " note " + (note_m.group(1) if note_m else "none"))[:700])
+        pd = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--membership", str(mem(roster, drop=("cleo",))),
+                             "--out", str(td / "dropm" / "index.html")], capture_output=True, text=True, cwd=REPO)
+        check("OFF BOARD: a person missing from membership.json refuses the build, naming them",
+              pd.returncode != 0 and "cleo" in pd.stderr + pd.stdout and "membership.json" in pd.stderr + pd.stdout,
+              (pd.stderr + pd.stdout)[-300:])
+        mem(roster)
 
         # YEAR SUMMARIES. The popover over a year square named the colour band
         # ("lightest blue: 1"). Operator request 2026-09-29: say what the person
@@ -835,13 +867,13 @@ def main() -> int:
         ydoc["entries"][k0]["inputs_sha256"] = "0" * 64
         (pr / "year_summaries.json").write_text(json.dumps(ydoc))
         py = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(td / "ystale" / "index.html")], capture_output=True, text=True, cwd=REPO)
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / "ystale" / "index.html")], capture_output=True, text=True, cwd=REPO)
         check("YEARS: a summary written for different predictions refuses the build and names the fix",
               py.returncode != 0 and "year_summaries.py --write" in py.stderr + py.stdout and k0.split("/")[0] in py.stderr + py.stdout,
               py.stderr[-300:])
         (pr / "year_summaries.json").unlink()
         py = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(td / "ystale" / "index.html")], capture_output=True, text=True, cwd=REPO)
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / "ystale" / "index.html")], capture_output=True, text=True, cwd=REPO)
         check("YEARS: a missing summaries file refuses the build", py.returncode != 0 and "missing" in py.stderr + py.stdout, py.stderr[-300:])
         write_year_summaries(pr)
         check("YEARS: a label that grades the outcome, or runs long, is refused",
@@ -890,13 +922,13 @@ def main() -> int:
         stale_file = out.parent / "predictions" / "gone.json"
         stale_file.write_text("[]")
         p2 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(out)],
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(out)],
                             capture_output=True, text=True, cwd=REPO)
         check("PAYLOAD: a file from an earlier render is deleted and named",
               p2.returncode == 0 and not stale_file.exists() and "gone.json" in p2.stdout,
               p2.stdout[-300:] + p2.stderr[-200:])
         p3 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(out)],
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(out)],
                             capture_output=True, text=True, cwd=REPO,
                             env={**__import__("os").environ, "VI_MAX_PAGE_BYTES": "1000"})
         check("PAYLOAD: a page over the crawler budget is refused",
@@ -1086,7 +1118,7 @@ def main() -> int:
         }))
         out2 = td / "site" / "scored.html"
         p2 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(out2), "--scores", str(scores)],
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(out2), "--scores", str(scores)],
                             capture_output=True, text=True, cwd=REPO)
         check("SCORE: the builder accepts a scores file and exits 0",
               p2.returncode == 0 and out2.exists(), p2.stdout + p2.stderr[-600:])
@@ -1142,7 +1174,7 @@ def main() -> int:
         tdoc["corpus"].update(past_due=8, eligible=8, scored=6)
         thin.write_text(json.dumps(tdoc))
         p5 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(td / "site" / "t.html"),
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / "site" / "t.html"),
                              "--scores", str(thin)], capture_output=True, text=True, cwd=REPO)
         n5 = {r["name"] for r in embedded((td / "site" / "t.html").read_text(), "DATA")}
         check("LIST: dropping a person's past-due count to 0 removes their row",
@@ -1190,7 +1222,7 @@ def main() -> int:
              "not_scored_because": None}]
         wide.write_text(json.dumps(wdoc))
         p4 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(td / "site" / "w.html"),
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / "site" / "w.html"),
                              "--scores", str(wide)], capture_output=True, text=True, cwd=REPO)
         check("SCORE: a scored prediction the page cannot show fails the render, naming the person",
               p4.returncode != 0 and "ada" in (p4.stdout + p4.stderr)
@@ -1205,7 +1237,7 @@ def main() -> int:
                                "ranked": True, "past_due": 9, "eligible": 9, "unresolvable": 0})
         stray.write_text(json.dumps(doc))
         p3 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-                             "--roster", str(roster), "--out", str(td / "site" / "x.html"),
+                             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / "site" / "x.html"),
                              "--scores", str(stray)], capture_output=True, text=True, cwd=REPO)
         # The drawer is what makes a published number auditable. A reader who doubts a
         # score has to be able to see the outcome, the sources it rests on and the p it
@@ -1235,7 +1267,7 @@ def main() -> int:
         # ---- 2026-09-27 operator changes: list floor, sort, column, popover, intro, prior ----
         run = lambda *extra, out_name, env=None: subprocess.run(  # noqa: E731
             [PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
-             "--roster", str(roster), "--out", str(td / "site" / out_name), *extra],
+             "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / "site" / out_name), *extra],
             capture_output=True, text=True, cwd=REPO, env=env)
 
         # LIST FLOOR. One named constant, not a list of names, so a person who
@@ -1621,7 +1653,7 @@ def main() -> int:
         bad = json.loads(index.read_text())
         bad["leaders"][0]["accepted"] = 9
         (td / "bad.json").write_text(json.dumps(bad))
-        p = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(td / "bad.json"), "--predictions", str(pr), "--roster", str(roster), "--out", str(td / "x.html")],
+        p = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(td / "bad.json"), "--predictions", str(pr), "--roster", str(roster), "--membership", str(mem(roster)), "--out", str(td / "x.html")],
                            capture_output=True, text=True, cwd=REPO)
         check("STALE: an index count that disagrees with the files fails, naming the person", p.returncode != 0 and "ada" in p.stderr, p.stderr[-300:])
 

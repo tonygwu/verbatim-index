@@ -51,6 +51,7 @@ import resolution_lib as R  # noqa: E402
 import prediction_score as PS  # noqa: E402
 import phase2_resolvability as P2  # noqa: E402
 import year_summaries as YS  # noqa: E402
+import membership as MB  # noqa: E402
 
 # The public origin, needed absolute because Open Graph and Twitter cards are
 # fetched by a crawler that has no page context to resolve a relative path
@@ -1334,10 +1335,14 @@ MIN_PAST_DUE_TO_LIST = 1
 MIN_PREDICTIONS_TO_LIST = 4
 
 
-def unlisted_reason(l: dict, sc: "dict | None", scores: dict) -> "str | None":
-    """Why this person has no row, or None when they have one. The count floor is
-    checked first, so a person with too few predictions is reported under that
-    reason whatever their past-due count is."""
+def unlisted_reason(l: dict, sc: "dict | None", scores: dict,
+                    off_board: frozenset = frozenset()) -> "str | None":
+    """Why this person has no row, or None when they have one. Being off the
+    predictions board in membership.json is checked first, then the count floor,
+    so a person with too few predictions is reported under that reason whatever
+    their past-due count is."""
+    if l["slug"] in off_board:
+        return "off_board"
     if l["accepted"] < MIN_PREDICTIONS_TO_LIST:
         return "few"
     if scores and (sc or {}).get("past_due", 0) < MIN_PAST_DUE_TO_LIST:
@@ -1356,17 +1361,19 @@ def default_order(rows: list[dict], scored: bool) -> list[dict]:
     return sorted(rows, key=lambda r: (r["score"] is None, -(r["score"] or 0), r["name"]))
 
 
-def omitted_people(index: dict, scores: dict) -> dict:
+def omitted_people(index: dict, scores: dict, off_board: frozenset = frozenset()) -> dict:
     """Everyone in the index without a row, grouped by reason, with what they said."""
-    few, none_due, accepted = [], [], 0
+    groups: dict[str, list] = {"few": [], "none_due": [], "off_board": []}
+    accepted = 0
     for l in index["leaders"]:
-        why = unlisted_reason(l, scores.get(l["slug"]), scores)
+        why = unlisted_reason(l, scores.get(l["slug"]), scores, off_board)
         if why is None:
             continue
         accepted += l["accepted"]
-        (few if why == "few" else none_due).append(l)
-    return {"few": sorted(few, key=lambda l: (l["accepted"], l["name"])),
-            "none_due": sorted(none_due, key=lambda l: l["name"]), "accepted": accepted}
+        groups[why].append(l)
+    return {"few": sorted(groups["few"], key=lambda l: (l["accepted"], l["name"])),
+            "none_due": sorted(groups["none_due"], key=lambda l: l["name"]),
+            "off_board": sorted(groups["off_board"], key=lambda l: l["name"]), "accepted": accepted}
 
 
 def _names(items: list[str]) -> str:
@@ -1388,6 +1395,14 @@ def omitted_note(om: dict) -> str:
         parts.append(f"{_names([e(l['name']) for l in om['none_due']])} "
                      f"{'has' if len(om['none_due']) == 1 else 'have'} no prediction whose deadline "
                      f"has passed yet.")
+    if om.get("off_board"):
+        # Taken off the predictions board in membership.json, by the operator's
+        # rule of 2026-09-29: too few of their predictions can be checked yet for
+        # a fair score. Their records are kept and they return when that changes.
+        parts.append(f"{_names([e(l['name']) for l in om['off_board']])} "
+                     f"{'is' if len(om['off_board']) == 1 else 'are'} left off for now: too few of "
+                     f"their predictions can be checked yet "
+                     f"to score fairly.")
     if not parts:
         return ""
     n = om["accepted"]
@@ -2164,7 +2179,8 @@ def accepted_info(u: dict, as_of: str, min_lead_days: int, open_unfit: int = 0,
 
 
 def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
-                min_lead_days: int | None = None, buckets: "dict | None" = None) -> list[dict]:
+                min_lead_days: int | None = None, buckets: "dict | None" = None,
+                off_board: frozenset = frozenset()) -> list[dict]:
     """One table row per person with enough predictions and, with scores, something due.
 
     `scores` is keyed by slug and may be empty, in which case every row shows an
@@ -2178,7 +2194,7 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
         entry = roster.get(l["slug"], {})
         h = hist.get(l["slug"], {"years": {}, "undated": 0})
         sc = scores.get(l["slug"])
-        if unlisted_reason(l, sc, scores):
+        if unlisted_reason(l, sc, scores, off_board):
             continue
         rows.append({
             # A person below the floor carries no Score and says so on hover. Never
@@ -2611,6 +2627,7 @@ def main(argv: list[str] | None = None) -> int:
     # and conflict on every concurrent push; see test_derived_determinism.py.
     ap.add_argument("--data-date", required=True, type=_iso_date,
                     help="YYYY-MM-DD, the UTC date of the data revision being published")
+    MB.add_membership_arg(ap)
     ap.add_argument("--year-summaries", default=None,
                     help="the year-square labels from year_summaries.py; default "
                          "<predictions>/year_summaries.json. Required: a cell with no current "
@@ -2621,6 +2638,15 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     index = json.loads(Path(args.index).read_text())
+    # Who is on the predictions board. The page LISTS by it and never writes by it;
+    # an index slug missing from membership.json raises in MB.on_board, never
+    # defaults to listed. This page publishes the leaders-study predictions only.
+    try:
+        board = MB.load(args.membership)
+        off_board = frozenset(l["slug"] for l in index.get("leaders", [])
+                              if not MB.on_board(board, l["slug"], "predictions"))
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSING: {exc}")
     for k in ("run_ids_seen", "contracts_seen", "leaders", "corpus", "coverage", "files_read", "records_read"):
         if k not in index:
             raise SystemExit(f"index.json lacks {k}; re-run aggregate_predictions.py")
@@ -2667,7 +2693,7 @@ def main(argv: list[str] | None = None) -> int:
             for slug, rs in sorted(by_slug.items())}
     buckets = prediction_buckets(by_slug, states) if scores_doc else None
     rows = person_rows(index, roster, hist, scores,
-                       scores_doc["rule"]["min_lead_days"] if scores_doc else None, buckets)
+                       scores_doc["rule"]["min_lead_days"] if scores_doc else None, buckets, off_board)
     check_buckets_sum(rows)
     couldnt_check = collections.Counter()
     for r in rows:
@@ -2685,7 +2711,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"NOTE: {sum(late.values())} prediction(s) were past due on {scores_doc['as_of']} but are not in "
               f"{args.scores}; the corpus grew after scoring, so they show as "
               + ", ".join(f"{lab[k]} {n}" for k, n in sorted(late.items())), file=sys.stderr)
-    omitted = omitted_people(index, scores)
+    omitted = omitted_people(index, scores, off_board)
     # Every score figure the page prints describes the people it LISTS. The
     # corpus-wide totals in the strip (predictions, transcripts) describe
     # everything the pipeline read, and the omitted note says so.
@@ -2785,7 +2811,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {args.out}  ({len(html_out) // 1024} KB; DATA {len(data_js) // 1024} KB, SRC {len(src_js) // 1024} KB, "
           f"records in {len(pred_slugs)} files beside it; {len(rows)} people listed, "
           f"{len(omitted['few'])} under the floor of {MIN_PREDICTIONS_TO_LIST} and "
-          f"{len(omitted['none_due'])} with nothing due not listed; {c['accepted']} accepted, "
+          f"{len(omitted['none_due'])} with nothing due and {len(omitted['off_board'])} off the predictions board not listed; {c['accepted']} accepted, "
           f"{loaded['rejected']} rejected not embedded; "
           f"context chars median {int(statistics.median(ctx)) if ctx else 0} max {max(ctx) if ctx else 0})")
     return 0

@@ -1327,9 +1327,14 @@ new grades incomparable with the corpus already graded.
   to answer "how many are on the board".
 - Board membership: `membership.json` at the public repo root, slug to boards
   only so no person metadata leaves the private repo, read through
-  `scripts/membership.py` and nothing else. 58 entries: the 50 on the roster
-  with both boards, the seven investors with `predictions` alone, and `cc-wei`
-  with none. Since P3 the seven are on the roster as well, so the roster holds 57
+  `scripts/membership.py` and nothing else. 58 entries: the 48 on the roster
+  with both boards, `arthur-mensch` and `yann-lecun` with `leaders` alone (taken
+  off the predictions board on 2026-09-29: too few of their predictions can be
+  checked yet to score fairly; rescue round 4, ledger VP-24), the seven investors
+  with `predictions` alone, and `cc-wei` with none. Since 2026-09-29
+  `build_predictions_site.py` reads the predictions board too, lists only people
+  on it, and names the rest in its "Not listed" note; the predictions deploy
+  fingerprints `membership.json` for that reason. Since P3 the seven are on the roster as well, so the roster holds 57
   and the leaders board holds 50; `cc-wei` is on neither. **THREE READERS READ IT, all study-scoped through
   `membership.for_study`:** `grade.py` drops an off-board transcript before a
   judge is chosen and reports `membership_dropped_by_slug`; `aggregate.py`
