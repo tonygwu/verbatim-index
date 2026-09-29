@@ -111,8 +111,12 @@ def main() -> int:
                 argv += ["--run", str(r)]
             return subprocess.run(argv + list(extra), capture_output=True, text=True)
 
+        # A counter names each scratch file, never hash(label): string hashing is
+        # seeded per process, and nothing here may depend on the seed.
+        serial = iter(range(10 ** 6))
+
         def refused(label, entries, needles, runs=(a, new), **top):
-            n = len(FAILED) * 1000 + abs(hash(label)) % 1000
+            n = next(serial)
             mp = manifest(d / f"bad-{n}.json", entries, **top)
             out = d / f"out-{n}.json"
             p = score("--replacements", str(mp), runs=runs, out=out)
@@ -126,6 +130,15 @@ def main() -> int:
               and str(a) in dup.stderr and str(new) in dup.stderr, dup.stderr[-400:])
         refused("PARTIAL MANIFEST: listing p1 alone still refuses p2's unlisted prior in two runs",
                 [entry("p1")], ["has sidecars in two runs", "p2"])
+        # The same STAGE: a manifest that lists p1's resolution must not open the
+        # door for p3's unlisted resolution in the same two runs (review 1 item 3:
+        # skipping the duplicate check whenever the stage has any entry passed
+        # every check above).
+        write(new, "p3", "resolve", outcome="not_occurred")
+        refused("PARTIAL MANIFEST, SAME STAGE: listing p1's resolution still refuses p3's unlisted "
+                "resolution in two runs", [entry("p1"), entry("p2", stage="prior")],
+                ["has sidecars in two runs", "p3"])
+        R.sidecar_path(new, "resolve", "ada", "p3").unlink()
 
         print("a listed replacement is used, and the replaced sidecar is named")
         m = manifest(d / "m.json", [entry("p1"), entry("p2", stage="prior", reason="re-priced")])

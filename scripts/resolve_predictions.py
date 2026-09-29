@@ -471,6 +471,8 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         raise SystemExit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
     ids = read_ids(args.ids) if args.ids is not None else None
+    # Hashed when read, not when the run ends hours later, so it names the list that ran.
+    ids_sha = hashlib.sha256(Path(args.ids).read_bytes()).hexdigest() if args.ids is not None else None
 
     out_root = Path(args.out)
     ov_path, date_overrides = date_overrides_for(args.date_overrides, args.predictions)
@@ -549,6 +551,13 @@ def main(argv: list[str] | None = None) -> int:
     summary = {"run_id": args.run_id, "stage": args.stage, "as_of": args.as_of,
                "selected": len(rows), "eligible": n_elig, "attempted": len(results),
                "succeeded": len(ok), "failed": len(bad), "error_taxonomy": tax,
+               # What the run was restricted to and what it left out, which stderr
+               # alone used to carry. Written even when empty or absent, so a
+               # reader can tell "none" from a summary that predates the field.
+               "include_ineligible": args.include_ineligible,
+               "left_out_ineligible": dict(sorted(left_out.items())),
+               "ids_file": str(args.ids) if args.ids is not None else None,
+               "ids_sha256": ids_sha,
                "finished_at_utc": utc_now()}
     sp = out_root / "_runs" / f"{args.run_id}.json"
     sp.parent.mkdir(parents=True, exist_ok=True)

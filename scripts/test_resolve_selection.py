@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import hashlib
 import io
 import json
 import pathlib
@@ -165,6 +166,40 @@ def main() -> int:
         check("IDS: a named id the run already resolved is SAID to be skipped, and --redo named",
               rc == 0 and "to run=0" in err and "['e2'] already have a resolve result" in err and "--redo" in err,
               f"rc={rc} {err.strip()}")
+
+    print("the run summary records what the run was restricted to and what it left out")
+    with tempfile.TemporaryDirectory() as t:
+        pred = corpus(pathlib.Path(t))
+        ids = pathlib.Path(t) / "ids.txt"
+        ids.write_text("e1\nb1\n")
+        real = RP.run_one
+        # No model: a job succeeds without a call, so main() reaches the summary.
+        RP.run_one = lambda job: {"prediction_id": job["rec"]["prediction_id"], "stage": job["stage"],
+                                  "leader_slug": job["rec"]["leader_slug"], "ok": True, "seconds": 0.0,
+                                  "summary": "occurred"}
+        runs = {}
+        try:
+            for name, extra in (("all", []), ("named", ["--ids", str(ids)])):
+                out = pathlib.Path(t) / f"run-{name}"
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    rc = RP.main(["--stage", "resolve", "--predictions", str(pred), "--out", str(out),
+                                  "--as-of", "2026-09-28", "--workdir", str(pathlib.Path(t) / "work"), *extra])
+                found = sorted((out / "_runs").glob("*.json"))
+                runs[name] = json.loads(found[0].read_text()) if rc == 0 and len(found) == 1 else {"rc": rc, "found": found}
+        finally:
+            RP.run_one = real
+        a, n = runs["all"], runs["named"]
+        check("SUMMARY: the ineligible records left out are recorded by reason",
+              a.get("left_out_ineligible") == {"deadline_before_statement": 1, "lead_under_floor": 1,
+                                               "specificity": 2, "undated": 1}, str(a))
+        check("SUMMARY: a run with no --ids says so",
+              "ids_file" in a and a.get("ids_file") is None and a.get("ids_sha256") is None, str(a))
+        check("SUMMARY: an --ids run records the file and its sha256",
+              n.get("ids_file") == str(ids)
+              and n.get("ids_sha256") == hashlib.sha256(ids.read_bytes()).hexdigest()
+              and n.get("attempted") == 2, str(n))
+        check("SUMMARY: an --ids run left nothing out, and says so rather than omitting the field",
+              n.get("left_out_ineligible") == {}, str(n))
 
     print("the resolver and the scorer both ask phase2_resolvability, so neither keeps its own order")
     with tempfile.TemporaryDirectory() as t:
