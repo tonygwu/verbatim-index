@@ -14,10 +14,18 @@
   BUCKETS    the Predictions cell's lines are derived per person, add up to the total, and refuse unknown reasons
   STATE      one state per record, computed once; the column counts the cards' states, under the scorer's
              old strings and its new not_eligible:<reason> strings alike (behaviour: check_predictions_site_ui.py)
-  CARD       each state's Outcome line; never "Not yet resolved" for a record no stage will resolve
-  PRICED     a card with no price says why; a price is dated "as of" the statement date
-  SAID       the statement date is labelled by its basis (stated, sourced, upload, publication, unknown)
-  TARGET     the extractor's horizon words show before "none stated"
+  ORDER      a record failing two clauses is named by phase2_resolvability's one order, as the scorer names it
+  CARD       each state's Outcome line; never "Not yet resolved" for a record no stage will resolve; a record
+             with no scores row takes its eligibility from phase2_resolvability.funnel_flags (SHARED); a
+             directional claim the scorer's trend rule judges later gives the date, never "Never checked"
+  PRICED     a card with no price says why; a price is dated "as of" the statement date, and its reason
+             follows the state
+  SAID       the statement date is labelled by its basis (stated, sourced, upload, publication, unknown);
+             a sourced date with no override block refuses
+  TARGET     the extractor's horizon words show before "none stated", only when they are the recording's words
+  SCORE INFO the resolver's "cannot be resolved" count is the Predictions panel's Couldn't check, and the
+             answers on records not testable anyway are named apart
+  REPLACED   sidecars a replacement manifest replaced are left out, as the scorer left them out
   ENTITY     Happy Scribe text is decoded; any entity left in a page-visible field refuses the build
   COPY       the lead-floor rule is not called an announcement in every case
   TIMESTAMP  [01:02:03] gives t 3723 and a YouTube link at that second; a null mark gives no link
@@ -282,9 +290,35 @@ def dora_records(L) -> dict[str, dict]:
              upload=None, declared=("2025-09-17", "publication_date"), text=HS_TEXT, conf=qual("I&#39;m sure"),
              criteria="By 2030-12-31, robots are on sale"),
         srec(L, "inferable", q("inferable"), horizon="inferable", yrs=20,
-             evidence="now that's out a couple of decades from now"),
+             evidence="now that's out a couple of decades from now",
+             text=f"[00:00:05] so here is the thing {q('inferable')} and now that's out a couple of decades "
+                  "from now I would say"),
         srec(L, "nodl-undated", q("nodl-undated"), target_text="in two years", upload=None),
         srec(L, "nodl-window", q("nodl-window"), target_text="soon", horizon="none"),
+        # Round-4 review fixes (2026-09-29). Each record below reached a false card.
+        # Fails specificity AND the lead floor: the one order names specificity.
+        srec(L, "vague-lead", q("vague-lead"), target="2025-04-10", specificity="low"),
+        # Not yet due and ineligible for good: no scores row, so eligibility comes
+        # from the funnel's own flags, never "It is checked after that date."
+        srec(L, "undated-due", q("undated-due"), target="2030", upload=None),
+        srec(L, "vague-due", q("vague-due"), target="2030", specificity="low"),
+        # Past due at the as-of, missing from scores.json, and under the lead floor:
+        # Not testable with its reason, never "Awaiting check".
+        srec(L, "late-lead", q("late-lead"), target="2025-04-20"),
+        # A directional claim the trend rule judges once three years have passed.
+        srec(L, "trend-later", "costs will keep falling every year", horizon="none", claim="Costs will keep falling"),
+        # A trend row not checked yet, one priced but not checked, one not testable
+        # and priced, and one that could not be settled and carries no price.
+        srec(L, "trend-open", "margins will keep rising every year", horizon="none", upload="20200101",
+             claim="Margins will keep rising"),
+        srec(L, "awaiting-priced", q("awaiting-priced"), target="2025-08"),
+        srec(L, "lead-priced", q("lead-priced"), target="2025-04-05"),
+        srec(L, "unresolvable-nop", q("unresolvable-nop"), target="2025-07"),
+        # The extractor's horizon_evidence is its own note here, not words anyone said.
+        srec(L, "inferable-notes", q("inferable-notes"), horizon="inferable", yrs=3,
+             evidence="The interviewer asks about the next few years. Three years is an approximate interpretation."),
+        # The same prediction said again later: shown under not-due, with an Also said line.
+        srec(L, "restated-b", q("restated b"), target="2030", upload="20250601"),
     ]}
 
 
@@ -300,6 +334,16 @@ DORA_STATES = {
     "not-due": ("not_due", None), "pub": ("not_due", None), "stated": ("not_due", None), "override": ("not_due", None),
     "hs-dora-talk": ("not_due", None), "inferable": ("not_due", None),
     "nodl-undated": ("no_deadline", "undated"), "nodl-window": ("no_deadline", "no_window"),
+    "vague-lead": ("not_testable", "specificity"),
+    "undated-due": ("not_due", "undated"), "vague-due": ("not_due", "specificity"),
+    "late-lead": ("not_testable", "lead_under_floor"),
+    "trend-later": ("no_deadline", "trend_later"),
+    "trend-open": ("awaiting", "not_checked"), "awaiting-priced": ("awaiting", "not_checked"),
+    "lead-priced": ("not_testable", "lead_under_floor"),
+    "unresolvable-nop": ("unresolvable", "no_public_evidence"),
+    "inferable-notes": ("not_due", None),
+    # A restated record's reason is its specific member, named here by sid.
+    "restated-b": ("restated", "not-due"),
 }
 
 
@@ -331,6 +375,14 @@ def dora_scores(recs: dict[str, dict], run: Path, new_strings: bool) -> dict:
         row("unresolvable", "2025-10-31", fl(True, 244), "unresolvable:criterion_ambiguous",
             outcome="unresolvable", p=0.4, unres="criterion_ambiguous"),
         row("no-prior", "2025-09-30", fl(True, 213), "no_prior", outcome="occurred"),
+        # Appended, so the refusal checks below keep their row indices.
+        row("vague-lead", "2025-04-10", fl(False, 40, spec_ok=False), "no_resolution", "not_eligible:specificity"),
+        row("trend-open", STATE_AS_OF, fl(True, 2448, trend=True, basis="trend: trend over 6.7y since the statement"),
+            "no_resolution"),
+        row("awaiting-priced", "2025-08-31", fl(True, 183), "no_resolution", p=0.55),
+        row("lead-priced", "2025-04-05", fl(False, 35), "no_resolution", "not_eligible:lead_under_floor", p=0.3),
+        row("unresolvable-nop", "2025-07-31", fl(True, 152), "unresolvable:no_public_evidence",
+            outcome="unresolvable", unres="no_public_evidence"),
     ]
     scored = [r for r in rows if r["scored"]]
     unres = collections.Counter(r["unresolvable_reason"] for r in rows if r["outcome"] == "unresolvable")
@@ -340,12 +392,26 @@ def dora_scores(recs: dict[str, dict], run: Path, new_strings: bool) -> dict:
             "scored_occurred": sum(r["outcome"] == "occurred" for r in scored),
             "mean_points": round(sum(r["points"] for r in scored) / len(scored), 4), "ranked": False,
             "hit_rate": round(sum(r["outcome"] == "occurred" for r in scored) / len(scored), 4)}
-    return {"as_of": STATE_AS_OF, "run_dirs": [str(run)],
-            "rule": {"clamp": 0.01, "min_scored_to_rank": 3, "min_lead_days": 60,
-                     "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)"},
-            "corpus": {"past_due": len(rows), "eligible": lead["eligible"], "scored": len(scored), "leaders_ranked": 0,
-                       "by_outcome": dict(outcomes), "unresolvable_reasons": dict(unres)},
-            "leaders": [lead], "predictions": rows}
+    doc = {"as_of": STATE_AS_OF, "run_dirs": [str(run)],
+           # Every scorer writes the trend setting it ran with; the new one also
+           # states the rule, with its minimum years, under `rule`.
+           "settings": {"as_of": STATE_AS_OF, "trend": True, "min_lead_days": 60},
+           "rule": {"clamp": 0.01, "min_scored_to_rank": 3, "min_lead_days": 60,
+                    "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)"},
+           "corpus": {"past_due": len(rows), "eligible": lead["eligible"], "scored": len(scored), "leaders_ranked": 0,
+                      "by_outcome": dict(outcomes), "unresolvable_reasons": dict(unres)},
+           "restatements": {"clusters": [{"cluster_id": "dora-c1", "specific_member": recs["not-due"]["prediction_id"],
+                                          "members": [recs["not-due"]["prediction_id"],
+                                                      recs["restated-b"]["prediction_id"]]}]},
+           "leaders": [lead], "predictions": rows}
+    if new_strings:
+        doc["rule"]["trend"] = {"enabled": True, "min_years": 3.0}
+        split = {k: [r for r in rows if r["outcome"] == "unresolvable" and r["flags"]["eligible"] is want]
+                 for k, want in (("eligible", True), ("not_eligible", False))}
+        doc["corpus"]["unresolvable_by_eligibility"] = {
+            k: {"n": len(v), "reasons": dict(collections.Counter(r["unresolvable_reason"] for r in v))}
+            for k, v in split.items()}
+    return doc
 
 
 def card_states(L, A, B) -> None:
@@ -402,7 +468,8 @@ def card_states(L, A, B) -> None:
         # Every check below reads the new-strings build, or the old one if only that built.
         pub, row, page = built.get("new") or built["old"]
         st = {sid: r.get("state") or {} for sid, r in pub.items()}
-        got = {sid: (s.get("state"), s.get("reason")) for sid, s in st.items()}
+        sid_of = {pid: sid for sid, pid in by_sid.items()}
+        got = {sid: (s.get("state"), sid_of.get(s.get("reason"), s.get("reason"))) for sid, s in st.items()}
         check("STATE: every record carries the state its scores row and its deadline give",
               got == DORA_STATES, json.dumps({k: (got.get(k), v) for k, v in DORA_STATES.items() if got.get(k) != v})[:900])
         both = len(built) == 2
@@ -410,12 +477,27 @@ def card_states(L, A, B) -> None:
               both and all(built["old"][0][sid].get("state") == pub[sid].get("state") for sid in pub),
               "only one build" if not both else
               str([sid for sid in pub if built["old"][0][sid].get("state") != pub[sid].get("state")]))
+        check("STATE: the page and its record files are byte-identical under the old and the new scorer strings",
+              both and built["old"][2] == page
+              and (td / "old" / "predictions" / "dora.json").read_bytes() == (td / "new" / "predictions" / "dora.json").read_bytes(),
+              "only one build" if not both else "the pages or the record files differ")
         want = collections.Counter(s for s, _ in DORA_STATES.values())
         check("STATE: the Predictions column counts exactly the states the cards carry, under both strings",
               both and row.get("buckets") == dict(want) and built["old"][1].get("buckets") == dict(want),
               f"new {row.get('buckets')} old {built['old'][1].get('buckets')} want {dict(want)}")
         check("STATE: a record checked but not testable counts as Not testable, not Couldn't check",
-              row.get("unres") == {"criterion_ambiguous": 1}, str(row.get("unres")))
+              row.get("unres") == {"criterion_ambiguous": 1, "no_public_evidence": 1}, str(row.get("unres")))
+        # ORDER (review items 1 and 4). The page names the clause the scorer names,
+        # from phase2_resolvability's one order, when a record fails two clauses.
+        P2 = load("phase2_resolvability")
+        check("ORDER: a record failing specificity AND the lead floor is named specificity under both string sets",
+              both and st["vague-lead"].get("reason") == "specificity"
+              and (built["old"][0]["vague-lead"].get("state") or {}).get("reason") == "specificity"
+              and P2.INELIGIBLE_REASONS.index("specificity") < P2.INELIGIBLE_REASONS.index("lead_under_floor"),
+              str((st["vague-lead"].get("reason"), both and (built["old"][0]["vague-lead"].get("state") or {}).get("reason"))))
+        check("ORDER: the page keeps no order of its own",
+              not hasattr(B, "NOT_ELIGIBLE_REASONS") and "failing_clauses" in (REPO / "scripts" / "build_predictions_site.py").read_text(),
+              "build_predictions_site still defines NOT_ELIGIBLE_REASONS")
 
         line = {sid: s.get("line") or "" for sid, s in st.items()}
         check("CARD: no card, and no line of the page, reads 'Not yet resolved'",
@@ -452,12 +534,34 @@ def card_states(L, A, B) -> None:
         check("CARD: a trend record says it was judged as a trend, over what window",
               line["trend"] == f"Judged as a trend over the 6.7 years from its statement date to {STATE_AS_OF}; "
                                "checked and scored.", line["trend"])
+        # Review 0 items 1 and 2: a record with no scores row takes its eligibility
+        # from the funnel's flags, so a card never promises a check that no stage makes.
+        check("CARD: not yet due and undated says it will not be scored, and why",
+              line["undated-due"] == ("Open until 2030-12-31, but it will not be scored: the recording has no known "
+                                      "date, so it cannot be shown to have been said at least 60 days before its "
+                                      "2030-12-31 deadline."), line["undated-due"])
+        check("CARD: not yet due and too vague says it will not be scored, and why",
+              line["vague-due"] == ("Open until 2030-12-31, but it will not be scored: rated too vague to test "
+                                    "(specificity low); a scored prediction must be high or medium."), line["vague-due"])
+        check("CARD: past due, missing from scores.json and under the lead floor is Not testable, never awaiting",
+              line["late-lead"] == "Not scored: said 50 days before its own deadline, 2025-04-20, under the 60-day floor.",
+              line["late-lead"])
+        # Review 0 item 3: scores.json says the scorer judges a directional claim as
+        # a trend, so its card may not say "Never".
+        check("CARD: a directional claim the trend rule judges later says when, never 'Never'",
+              line["trend-later"] == "Not checked yet: as a directional claim it is judged as a trend from 2028-03-01.",
+              line["trend-later"])
+        # Review 0 item 6: a trend row that is not scored.
+        check("CARD: a trend record not checked yet does not say it was judged",
+              line["trend-open"] == (f"Past its trend window, the 6.7 years from its statement date to {STATE_AS_OF}; "
+                                     "not checked yet."), line["trend-open"])
         check("CARD: the card lays out the state's line and marks a verdict that does not count",
               "st.line" in page and "st.verdict_note" in page and 'data-state="${esc(r.state.state)}"' in page,
               "outcomeRows does not read r.state")
 
         price = {sid: s.get("price") for sid, s in st.items()}
-        unpriced = [sid for sid, r in pub.items() if (r.get("outcome") or {}).get("p") is None]
+        # A restated record has no card of its own, only an Also said line under the card it repeats.
+        unpriced = [sid for sid, r in pub.items() if (r.get("outcome") or {}).get("p") is None and not r.get("restated_by")]
         check("PRICED: every card with no price says why in one line",
               all(price[sid] for sid in unpriced), str([sid for sid in unpriced if not price[sid]]))
         check("PRICED: the reason follows the state",
@@ -468,6 +572,27 @@ def card_states(L, A, B) -> None:
               and price["nodl-undated"] == ("Not priced: it never entered the scoring funnel, because the recording "
                                             "has no known date."),
               json.dumps(price)[:700])
+        check("PRICED: a record that will not be scored is not promised a price",
+              price["undated-due"] == ("Not priced: the recording has no known date, so it cannot be shown to have "
+                                       "been said at least 60 days before its 2030-12-31 deadline.")
+              and price["vague-due"] == ("Not priced: rated too vague to test (specificity low); a scored prediction "
+                                         "must be high or medium.")
+              and price["late-lead"] == "Not priced: it is under the lead floor, so it is never scored.",
+              json.dumps({k: price[k] for k in ("undated-due", "vague-due", "late-lead")}))
+        check("PRICED: a directional claim judged later is priced when it is judged",
+              price["trend-later"] == "Not priced yet: it is priced when it is judged as a trend, from 2028-03-01.",
+              str(price["trend-later"]))
+        # Review 0 item 6: the reason beside a price follows the state, and "could not
+        # be settled" is never given as the reason for no price.
+        check("PRICED: a price on a record not checked yet says it is not checked yet",
+              price["awaiting-priced"] == "Priced at 55% as of 2025-03-01, but not checked yet, so it is not scored yet.",
+              str(price["awaiting-priced"]))
+        check("PRICED: a price on a Not testable record names the clause, not 'not checked'",
+              price["lead-priced"] == ("Priced at 30% as of 2025-03-01, but not scored: said 35 days before its own "
+                                       "deadline, 2025-04-05, under the 60-day floor."), str(price["lead-priced"]))
+        check("PRICED: a record nothing public settles is not said to be unpriced because of that",
+              price["unresolvable-nop"] == "Not priced, and a price would not score it: nothing public settles it."
+              and "could not be settled" not in json.dumps(price), str(price["unresolvable-nop"]))
         check("PRICED: a price is dated as of the statement date, never 'likely on the day it was said'",
               "likely on the day it was said" not in page and "as of ${esc(r.statement_date)}" in page)
 
@@ -484,11 +609,32 @@ def card_states(L, A, B) -> None:
               (pub["stated"].get("said") or {}).get("also") == "on 2012-05-30"
               and (pub["scored"].get("said") or {}).get("also") == "on or before 2025-03-01"
               and (pub["undated-past"].get("said") or {}).get("also") is None)
+        # Review 1 item 6: a sourced date with no override block is refused, never a
+        # bare "(sourced)"; one whose source had no date of its own says so.
+        src = recs["override"]["source"]
+        bare = {k: v for k, v in src.items() if k != "statement_date_override"}
+        try:
+            B.said_label(bare, "dora's prediction X")
+            refused = "no refusal"
+        except SystemExit as exc:
+            refused = str(exc)
+        check("SAID: a sourced date with no override block refuses, naming the record",
+              refused.startswith("REFUSING") and "dora's prediction X" in refused and "statement_date_override" in refused,
+              refused)
+        nodate = dict(src, statement_date_override=dict(src["statement_date_override"], replaced_date=None,
+                                                        replaced_basis="unknown"))
+        check("SAID: a sourced date whose source carried no date of its own says so, never a bare '(sourced)'",
+              B.said_label(nodate, "x")["card"] == "1996-10-16 (sourced; the source carries no date of its own)",
+              B.said_label(nodate, "x")["card"])
 
         tgt = {sid: r.get("target") for sid, r in pub.items()}
-        check("TARGET: an inferred horizon shows the extractor's words instead of 'none stated'",
-              tgt["inferable"] == "about 20 years, inferred from: now that's out a couple of decades from now",
+        # Review 0 item 6: horizon_evidence is shown only when it is words from the
+        # recording; the extractor's own notes are never shown as what was said.
+        check("TARGET: an inferred horizon shows the recording's words instead of 'none stated'",
+              tgt["inferable"] == "about 20 years, inferred from: “now that's out a couple of decades from now”",
               str(tgt["inferable"]))
+        check("TARGET: an inferred horizon whose evidence is the extractor's note shows no note",
+              tgt["inferable-notes"] == "about 3 years, inferred", str(tgt["inferable-notes"]))
         check("TARGET: time words with no date are shown as said",
               tgt["nodl-window"] == "“soon”" and tgt["nodl-undated"] == "“in two years”",
               f"{tgt['nodl-window']} | {tgt['nodl-undated']}")
@@ -524,27 +670,114 @@ def card_states(L, A, B) -> None:
             check(f"ENTITY: an entity left in a {tag} record's {field} refuses the build, naming the record and field",
                   p.returncode != 0 and "entity" in out and bad["prediction_id"] in out and f".{field}" in out, out[-500:])
 
+        # SCORE INFO (review 1 item 3). The resolver's "cannot be resolved" count is
+        # split by eligibility, and the testable half is the Predictions panel's
+        # Couldn't check: here 2, while 1 more was answered on a Not testable record.
+        info_new = re.search(r"score: `(.*?)`,", page, re.S)
+        info_old = re.search(r"score: `(.*?)`,", built["old"][2], re.S) if both else None
+        check("SCORE INFO: the resolver's count is the Predictions panel's Couldn't check, and the rest are named",
+              bool(info_new) and "did so 2 times on predictions that could be tested" in info_new.group(1)
+              and "1 more time on a prediction that was not testable anyway" in info_new.group(1)
+              and "(for the people listed: 1 ambiguous criterion, 1 no public evidence)" in page,
+              info_new.group(1)[:900] if info_new else "no score info")
+        check("SCORE INFO: the split is the same from the rows (old file) and from the corpus block (new file)",
+              bool(info_old) and bool(info_new) and info_old.group(1) == info_new.group(1))
+
         # The strings must still agree with the flags; a disagreement is refused, never guessed.
         base = dora_scores(recs, run, True)
-        for label, mutate, needle in (
+        for n, (label, mutate, needle) in enumerate((
                 ("a not_eligible reason whose flag is not failing",
                  lambda d: d["predictions"][3].update(not_scored_because="not_eligible:specificity"), "specificity"),
                 ("an unknown not_eligible reason",
                  lambda d: d["predictions"][3].update(not_scored_because="not_eligible:mystery"), "mystery"),
+                # The needle is the new message's own words (review 1 item 4): the
+                # prediction id alone was in main's generic refusal too.
                 ("not_eligible on a row flagged eligible",
                  lambda d: d["predictions"][8].update(not_scored_because="not_eligible:lead_under_floor"),
-                 by_sid["awaiting"]),
+                 "flags say it is eligible"),
                 ("an ineligible row whose flags lack the lead time",
-                 lambda d: d["predictions"][3]["flags"].pop("lead_days"), "lead_days")):
+                 lambda d: d["predictions"][3]["flags"].pop("lead_days"), "lead_days"),
+                # Review 1 item 6: a scored row with no flags is refused, never read as {}.
+                ("a scored row with no funnel flags",
+                 lambda d: d["predictions"][0].pop("flags"), "carries no funnel flags"),
+                # Review 0 item 3: the trend rule is read, never assumed.
+                ("a scores file that states no trend rule",
+                 lambda d: (d["rule"].pop("trend"), d["settings"].pop("trend")), "trend rule"),
+                ("a trend rule that disagrees with the trend setting",
+                 lambda d: d["settings"].update(trend=False), "rule.trend"),
+                ("a corpus split of unresolvable outcomes that disagrees with the rows",
+                 lambda d: d["corpus"]["unresolvable_by_eligibility"]["eligible"].update(n=5),
+                 "unresolvable_by_eligibility"))):
             doc = copy.deepcopy(base)
             mutate(doc)
-            p = render(doc, f"bad-{abs(hash(label))}")
+            p = render(doc, f"bad-{n}")
             check(f"STATE: {label} refuses the render, naming it", p.returncode != 0 and needle in (p.stdout + p.stderr),
                   (p.stdout + p.stderr)[-400:])
 
+        # TREND OFF: with the trend rule disabled, "Never checked" is true again.
+        off = copy.deepcopy(base)
+        off["rule"]["trend"]["enabled"] = False
+        off["settings"]["trend"] = False
+        s_off, _ = B.record_states({"dora": [recs["trend-later"]]}, {**off, "predictions": [], "restatements": {}})
+        check("CARD: with the trend rule off, a directional claim with no date is never checked",
+              s_off[by_sid["trend-later"]]["state"] == "no_deadline"
+              and s_off[by_sid["trend-later"]]["line"] == "Never checked: it names no date this pipeline can read.",
+              str(s_off[by_sid["trend-later"]]))
+        # SHARED: the page asks phase2_resolvability for a record's flags and its
+        # reason, so a record with no scores row follows the funnel's own rule.
+        P2B = B.P2
+        keep = getattr(P2B, "funnel_flags", None)
+        s_sen = {by_sid["not-due"]: "phase2_resolvability has no funnel_flags"}
+        if keep is not None:
+            try:
+                P2B.funnel_flags = lambda r, m: {**keep(r, m), "specificity_ok": False, "eligible": False}
+                s_sen, _ = B.record_states({"dora": [recs["not-due"]]}, {**base, "predictions": [], "restatements": {}})
+            finally:
+                P2B.funnel_flags = keep
+        check("SHARED: a record with no scores row takes its flags from phase2_resolvability.funnel_flags",
+              (s_sen[by_sid["not-due"]] or {}).get("reason") == "specificity" if keep else False,
+              str(s_sen[by_sid["not-due"]]))
+
+        # REPLACEMENTS (funnel review 1 item 6). A replacement manifest leaves two
+        # sidecars for one prediction; the page must read the replacement, as the
+        # scorer did, and never refuse with "has sidecars in two runs".
+        run2 = td / "run2"
+        pid = by_sid["scored"]
+        for sub, doc in (("priors", {"prediction_id": pid, "leader_slug": "dora", "stage": "prior", "p": 0.7, "p_raw": 0.7,
+                                     "clamped": False, "reference_class": "r", "reasoning": "r", "harness": "fable",
+                                     "telemetry": {"canonical_model": "claude-quill-1", "requested_model": "claude-quill-1",
+                                                   "telemetry_models": ["claude-quill-1"]}}),
+                         ("resolutions", {"prediction_id": pid, "leader_slug": "dora", "stage": "resolve",
+                                          "outcome": "occurred", "harness": "astra",
+                                          "telemetry": {"requested_model": "gpt-7-nova", "served_model": "gpt-7-nova"}})):
+            (run2 / sub / "dora").mkdir(parents=True, exist_ok=True)
+            (run2 / sub / "dora" / f"{pid}.json").write_text(json.dumps(doc))
+        # The original prior priced it at 0.5, so a page that read the replaced
+        # sidecar would refuse on the p check; the row carries the replacement's 0.7.
+        orig = json.loads((run / "priors" / "dora" / f"{pid}.json").read_text())
+        (run / "priors" / "dora" / f"{pid}.json").write_text(json.dumps(dict(orig, p=0.5, p_raw=0.5)))
+        rep = copy.deepcopy(base)
+        rep["run_dirs"] = [str(run), str(run2)]
+        rep["replacements"] = {"manifest": "predictions/replacements.json", "manifest_sha256": "0" * 64,
+                               "replaced_sidecars": [
+                                   {"stage": st_, "prediction_id": pid, "run": str(run), "replacement": str(run2),
+                                    "reason": "re-run", "was": None, "now": None,
+                                    "deadline_was": "2025-12-31", "deadline_now": "2025-12-31"}
+                                   for st_ in ("prior", "resolve")]}
+        p = render(rep, "replaced")
+        out_rep = p.stdout + p.stderr
+        check("REPLACED: the page builds over a scores file that names replaced sidecars",
+              p.returncode == 0, next((x for x in out_rep.splitlines() if "REFUSING" in x or "two runs" in x),
+                                      out_rep[-500:]))
+        check("REPLACED: the page names the replacement's models and not the replaced sidecars'",
+              "'claude-quill-1': 1" in out_rep and "'gpt-7-nova': 1" in out_rep, out_rep[-500:])
+        (run / "priors" / "dora" / f"{pid}.json").write_text(json.dumps(orig))
+
     # COPY: the lead floor is not "an announcement rather than a forecast" in every case.
     info = B.score_info({"scored": 7, "past_due": 20, "leaders_ranked": 4, "unresolvable_reasons": {},
-                         "by_outcome": {"unresolvable": 3}}, {"min_lead_days": 60, "baseline_only": "x", "clamp": 0.01})
+                         "by_outcome": {"unresolvable": 3},
+                         "unresolvable_split": {"eligible": {"n": 3, "reasons": {}}, "not_eligible": {"n": 0, "reasons": {}}}},
+                        {"min_lead_days": 60, "baseline_only": "x", "clamp": 0.01})
     check("COPY: the lead-floor rule is not called an announcement in every case",
           "announcement rather than a forecast" not in info and "treats as an announcement" in info
           and "a few are real forecasts" in info, info[-500:])
@@ -803,6 +1036,7 @@ def main() -> int:
         scores.write_text(json.dumps({
             "as_of": "2026-09-14",
             "run_dirs": [str(run1)],
+            "settings": {"as_of": "2026-09-14", "trend": True, "min_lead_days": 60},
             "rule": {"clamp": 0.01, "min_scored_to_rank": 5, "min_lead_days": 60,
                      "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)"},
             "corpus": {"past_due": 10, "eligible": 10, "scored": 8, "leaders_ranked": 1,

@@ -184,15 +184,22 @@ naming the person. Only lines above zero are shown, in this order:
 | Line | A prediction lands here when |
 |---|---|
 | Scored | scores.json has it with `scored: true` |
-| Not yet due | scores.json does not have it, and its deadline is after `as_of` |
-| No deadline | scores.json does not have it, and `phase2_resolvability` reads no deadline |
-| Awaiting check | `not_scored_because` is `no_resolution` or `no_prior`; also a record past due at `as_of` that scores.json lacks, which the builder counts and prints |
-| Not testable | `not_scored_because` is `not_eligible:<clause>`, the first eligibility clause the record fails (see "Eligibility is checked first" below). Before 2026-09-29 the scorer wrote a bare `not_eligible` |
+| Not yet due | scores.json does not have it, and its deadline is after `as_of`. If `phase2_resolvability.funnel_flags` says it fails a clause, the card says it will not be scored and why |
+| No deadline | scores.json does not have it, and `phase2_resolvability` reads no deadline under the scorer's trend rule. A directional claim that rule judges later says from which date, never "never checked" |
+| Awaiting check | `not_scored_because` is `no_resolution` or `no_prior` on an eligible row; also an ELIGIBLE record past due at `as_of` that scores.json lacks, which the builder counts and prints |
+| Not testable | the row's flags say it is not eligible; the card names the first clause it fails in `phase2_resolvability.INELIGIBLE_REASONS` order, which must be the clause a `not_eligible:<clause>` string names (see "Eligibility is checked first" below). Also an ineligible record past due at `as_of` that scores.json lacks. Before 2026-09-29 the scorer wrote a bare `not_eligible` |
 | Couldn't check | `not_scored_because` is `unresolvable:<reason>`, which the scorer now writes only for an ELIGIBLE row; the reasons are split on hover and in the column's help |
 | Restated | a non-specific member of a restatement cluster in scores.json's `restatements` block, past due or not |
 
 A not-scored reason with no bucket, or a scores.json row that is no record on
-the page, refuses the render.
+the page, refuses the render. So does a row with no funnel flags, a scores file
+that states no trend rule (`rule.trend`, or `settings.trend` in a file written
+before 2026-09-29), and a `corpus.unresolvable_by_eligibility` block that the
+rows do not reproduce. The score panel's count of "cannot be resolved" answers
+is the eligible half of that split, the same number as Couldn't check, and it
+names the answers given on records that were not testable anyway. Sidecars
+listed under `replacements.replaced_sidecars` are left out when the page reads
+which models set each price and outcome, as the scorer left them out.
 
 Proof: `.venv/bin/python scripts/test_predictions_site.py`. Browser check,
 which needs Playwright and a rendered site directory:
@@ -211,8 +218,10 @@ no longer reads as "awaiting a check" for a record no stage will ever check.
 `specificity`, then `undated` (no statement date, so no lead time), then
 `lead_under_floor`. That is the order of the funnel's own stages.
 `phase2_resolvability.ineligible_reason` names it and `failing_clauses` lists
-every clause a record fails. Every reader, the resolver, the scorer and the
-page, must call those two functions and keep no order of its own. Proof: the ORDER checks in
+every clause a record fails. `funnel_flags` computes the flags themselves:
+`resolve_predictions.select` writes them onto every past-due record, and the page
+asks it about a record scores.json does not carry. Every reader, the resolver,
+the scorer and the page, must call those functions and keep no order of its own. Proof: the ORDER checks in
 `scripts/test_phase2_resolvability.py` and the SHARED checks in
 `scripts/test_resolve_selection.py`.
 
