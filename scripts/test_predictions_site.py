@@ -12,6 +12,14 @@
   INTRO      the scored intro is derived from the listed people and links the repo; the social text matches
   PRIOR      the prior explanation names the model from its sidecars and prints prediction_score's numbers
   BUCKETS    the Predictions cell's lines are derived per person, add up to the total, and refuse unknown reasons
+  STATE      one state per record, computed once; the column counts the cards' states, under the scorer's
+             old strings and its new not_eligible:<reason> strings alike (behaviour: check_predictions_site_ui.py)
+  CARD       each state's Outcome line; never "Not yet resolved" for a record no stage will resolve
+  PRICED     a card with no price says why; a price is dated "as of" the statement date
+  SAID       the statement date is labelled by its basis (stated, sourced, upload, publication, unknown)
+  TARGET     the extractor's horizon words show before "none stated"
+  ENTITY     Happy Scribe text is decoded; any entity left in a page-visible field refuses the build
+  COPY       the lead-floor rule is not called an announcement in every case
   TIMESTAMP  [01:02:03] gives t 3723 and a YouTube link at that second; a null mark gives no link
   REJECTED   a rejected candidate's quote never reaches the page; its count does
   TRIM       telemetry, gates, offsets and harness internals are not embedded
@@ -32,6 +40,7 @@
 
 from __future__ import annotations
 
+import collections
 import copy
 import importlib.util
 import json
@@ -169,6 +178,14 @@ def write_year_summaries(pr: Path) -> dict:
     return doc
 
 
+def fl(eligible: bool, lead_days, *, dbs: bool = False, spec_ok: bool = True, trend: bool = False,
+       basis: str = "stated", min_lead: int = 60) -> dict:
+    """The funnel flags score_predictions.join copies onto every row, as resolve_predictions.select writes them."""
+    return {"basis": basis, "deadline_before_statement": dbs, "eligible": eligible, "lead_days": lead_days,
+            "lead_ok": lead_days is not None and lead_days >= min_lead, "specificity_high": spec_ok,
+            "specificity_ok": spec_ok, "trend": trend}
+
+
 def embedded(html: str, name: str):
     m = re.search(rf"const {name} = (.*?);\n", html, re.S)
     return json.loads(m.group(1).replace("<\\/", "</"))
@@ -183,6 +200,354 @@ def records(out: Path) -> dict[str, list]:
     """
     d = out.parent / "predictions"
     return {f.stem: json.loads(f.read_text()) for f in sorted(d.glob("*.json"))} if d.is_dir() else {}
+
+
+# ---------------------------------------------------------------------------
+# CARD STATE (rescue round 4, root-cause design section 4). One person, dora, with
+# one record in every state the page can show. Her scores.json is written twice:
+# once with the scorer's OLD strings, where an unresolved ineligible row reads
+# `no_resolution` and a resolved one `not_eligible`, and once with the NEW
+# strings, `not_eligible:<reason>`, which the parallel funnel task introduces.
+# The page must say the same thing about every record under both.
+# ---------------------------------------------------------------------------
+
+STATE_AS_OF = "2026-09-14"
+HS_TEXT = ("[00:00:05] so here is the thing it&#39;s going to be the year of the robot in 2030 "
+           "I&#39;m sure of it and that&#39;s what we&#39;ll see")
+OVERRIDE = {"statement_date": "1996-10-16", "basis": "Opening keynote, Example Developer Conference",
+            "source_url": "https://example.org/press", "verbatim_evidence": "held October 16",
+            "confirmed_by": "operator", "confirmed_at_utc": "2026-09-28T05:19:02Z"}
+
+
+def srec(L, sid: str, quote: str, *, target=None, target_text=None, horizon="explicit", yrs=None,
+         evidence=None, specificity="high", upload="20250301", declared=None, override=None,
+         claim=None, criteria=None, conf=None, text=None) -> dict:
+    """One accepted record for dora, built by the pipeline's own make_record."""
+    text = text or f"[00:00:05] so here is the thing {quote} and that is what I think will happen"
+    r0 = {"leader_slug": "dora", "source_id": sid, "text": text, "yt_upload_date": upload,
+          "url": f"https://www.youtube.com/watch?v=v{sid}" if upload else f"https://example.org/{sid}",
+          "video_id": f"v{sid}" if upload else None, "yt_title": f"{sid} talk", "declared_venue": "Pod",
+          "declared_kind": "podcast", "word_count": 40, "duration_sec": 600}
+    if declared:
+        r0.update(statement_date=declared[0], statement_date_basis=declared[1])
+    if override:
+        r0["statement_date_override"] = override
+    cand = {"quote": quote, "gates": {g: True for g in L.GATES}, "gate_notes": "",
+            "resolution_criteria": criteria or f"By the deadline: {quote}", "normalized_claim": claim or f"Dora says {sid}",
+            "category": "technology_product", "prediction_type": "milestone", "target_date": target,
+            "target_date_text": target_text, "horizon": horizon, "horizon_years_inferred": yrs,
+            "horizon_evidence": evidence, "specificity": specificity, "subject_control": "external",
+            "confidence": conf or {"type": "none", "probability": None, "verbatim_confidence_language": None}}
+    loc = L.locate_quote(text, quote)
+    assert "start" in loc, (quote, loc)
+    prov = L.normalise_provenance("fable", {"requested_model": "claude-fable-5-1", "judge_model": "claude-fable-5-1"}, "default", "claude")
+    r = L.make_record(r0, {"name": "Dora M", "role": "CEO", "company": "Co"}, cand, loc, prov, "a" * 12, "run-x",
+                      "2026-09-10T00:00:00Z", {})
+    v = r["verification"]
+    v.update({"status": "ok", "harness": "astra", "requested_model": "gpt-6-astra", "served_model": "gpt-6-astra",
+              "served_model_verified": False, "account": "codex", "router_account_id": "codex", "contract_id": "b" * 12,
+              "run_id": "run-v", "verified_at_utc": "2026-09-10T01:00:00Z", "gates": {g: True for g in L.GATES},
+              "attribution": "subject", "claim_faithful": True, "qualifies_stated": True,
+              "verifier_resolution_criteria": "verifier says so", "notes": None, "telemetry": {}})
+    v["qualifies"] = L.verification_qualifies(v)
+    v["agreement"] = r["extraction"]["qualifies"] == v["qualifies"]
+    r["accepted"] = L.compute_accepted(r)
+    assert r["accepted"], sid
+    return r
+
+
+def dora_records(L) -> dict[str, dict]:
+    """sid -> record. Statement date 2025-03-01 (an upload) unless the record says otherwise."""
+    q = lambda sid: f"we will ship the {sid.replace('-', ' ')} widget"  # noqa: E731
+    qual = lambda s: {"type": "qualitative", "probability": None, "verbatim_confidence_language": s}  # noqa: E731
+    return {r["source_id"]: r for r in [
+        srec(L, "scored", q("scored"), target="2025-12", target_text="by the end of 2025"),
+        srec(L, "trend", "revenue will keep growing every quarter", horizon="none", upload="20200101",
+             claim="Revenue will keep growing"),
+        srec(L, "lead-resolved", q("lead-resolved"), target="2025-03-20"),
+        srec(L, "lead-unresolved", q("lead-unresolved"), target="2025-04-01"),
+        srec(L, "lead-unresolvable", q("lead-unresolvable"), target="2025-04-15"),
+        srec(L, "dbs", q("dbs"), target="2024-06"),
+        srec(L, "vague", q("vague"), target="2025-12", specificity="low"),
+        srec(L, "undated-past", q("undated-past"), target="2025-06", upload=None),
+        srec(L, "awaiting", q("awaiting"), target="2025-11"),
+        srec(L, "unresolvable", q("unresolvable"), target="2025-10"),
+        srec(L, "no-prior", q("no-prior"), target="2025-09"),
+        srec(L, "late", q("late"), target="2026-06"),
+        srec(L, "not-due", q("not-due"), target="2030"),
+        srec(L, "pub", q("pub"), target="2030", upload=None, declared=("2025-09-17", "publication_date")),
+        srec(L, "stated", q("stated"), target="2030", upload=None, declared=("2012-05-30", "stated_in_page")),
+        srec(L, "override", q("override"), target="2030", upload="20130705", override=OVERRIDE),
+        srec(L, "hs-dora-talk", "it&#39;s going to be the year of the robot in 2030", target="2030",
+             upload=None, declared=("2025-09-17", "publication_date"), text=HS_TEXT, conf=qual("I&#39;m sure"),
+             criteria="By 2030-12-31, robots are on sale"),
+        srec(L, "inferable", q("inferable"), horizon="inferable", yrs=20,
+             evidence="now that's out a couple of decades from now"),
+        srec(L, "nodl-undated", q("nodl-undated"), target_text="in two years", upload=None),
+        srec(L, "nodl-window", q("nodl-window"), target_text="soon", horizon="none"),
+    ]}
+
+
+# What each record's state must be, and its reason where the state has one.
+DORA_STATES = {
+    "scored": ("scored", None), "trend": ("scored", None),
+    "lead-resolved": ("not_testable", "lead_under_floor"), "lead-unresolved": ("not_testable", "lead_under_floor"),
+    "lead-unresolvable": ("not_testable", "lead_under_floor"),
+    "dbs": ("not_testable", "deadline_before_statement"), "vague": ("not_testable", "specificity"),
+    "undated-past": ("not_testable", "undated"),
+    "awaiting": ("awaiting", "not_checked"), "no-prior": ("awaiting", "not_priced"), "late": ("awaiting", "after_scoring"),
+    "unresolvable": ("unresolvable", "criterion_ambiguous"),
+    "not-due": ("not_due", None), "pub": ("not_due", None), "stated": ("not_due", None), "override": ("not_due", None),
+    "hs-dora-talk": ("not_due", None), "inferable": ("not_due", None),
+    "nodl-undated": ("no_deadline", "undated"), "nodl-window": ("no_deadline", "no_window"),
+}
+
+
+def dora_scores(recs: dict[str, dict], run: Path, new_strings: bool) -> dict:
+    """scores.json over dora's past-due rows, in the scorer's old or new strings."""
+    PS = load("prediction_score")
+    def row(sid, deadline, flags, why_old, why_new=None, outcome=None, p=None, scored=False, unres=None):
+        pts = round(PS.score(outcome == "occurred", p)["points"], 4) if scored else None
+        return {"prediction_id": recs[sid]["prediction_id"], "leader_slug": "dora",
+                "transcript_id": recs[sid]["transcript_id"], "statement_date": recs[sid]["source"]["statement_date"],
+                "deadline": deadline, "flags": flags, "outcome": outcome, "scored": scored, "points": pts,
+                "unresolvable_reason": unres, "resolution_reasoning": f"reasoning for {sid}" if outcome else None,
+                "sources": [{"where": "https://example.com/e", "what_it_shows": "it", "date": "2025-12-01"}] if outcome else [],
+                "p": p, "reference_class": "things like this" if p is not None else None,
+                "not_scored_because": (why_new if new_strings and why_new else why_old)}
+    rows = [
+        row("scored", "2025-12-31", fl(True, 305), None, outcome="occurred", p=0.7, scored=True),
+        row("trend", STATE_AS_OF, fl(True, 2448, trend=True, basis="trend: trend over 6.7y since the statement"),
+            None, outcome="not_occurred", p=0.6, scored=True),
+        row("lead-resolved", "2025-03-20", fl(False, 19), "not_eligible", "not_eligible:lead_under_floor",
+            outcome="occurred", p=0.85),
+        row("lead-unresolved", "2025-04-01", fl(False, 31), "no_resolution", "not_eligible:lead_under_floor"),
+        row("lead-unresolvable", "2025-04-15", fl(False, 45), "unresolvable:no_public_evidence",
+            "not_eligible:lead_under_floor", outcome="unresolvable", unres="no_public_evidence"),
+        row("dbs", "2024-06-30", fl(False, -244, dbs=True), "no_resolution", "not_eligible:deadline_before_statement"),
+        row("vague", "2025-12-31", fl(False, 305, spec_ok=False), "no_resolution", "not_eligible:specificity"),
+        row("undated-past", "2025-06-30", fl(False, None), "no_resolution", "not_eligible:undated"),
+        row("awaiting", "2025-11-30", fl(True, 274), "no_resolution"),
+        row("unresolvable", "2025-10-31", fl(True, 244), "unresolvable:criterion_ambiguous",
+            outcome="unresolvable", p=0.4, unres="criterion_ambiguous"),
+        row("no-prior", "2025-09-30", fl(True, 213), "no_prior", outcome="occurred"),
+    ]
+    scored = [r for r in rows if r["scored"]]
+    unres = collections.Counter(r["unresolvable_reason"] for r in rows if r["outcome"] == "unresolvable")
+    outcomes = collections.Counter(r["outcome"] for r in rows if r["outcome"])
+    lead = {"slug": "dora", "name": "Dora M", "past_due": len(rows), "eligible": sum(r["flags"]["eligible"] for r in rows),
+            "unresolvable": outcomes["unresolvable"], "n_scored": len(scored),
+            "scored_occurred": sum(r["outcome"] == "occurred" for r in scored),
+            "mean_points": round(sum(r["points"] for r in scored) / len(scored), 4), "ranked": False,
+            "hit_rate": round(sum(r["outcome"] == "occurred" for r in scored) / len(scored), 4)}
+    return {"as_of": STATE_AS_OF, "run_dirs": [str(run)],
+            "rule": {"clamp": 0.01, "min_scored_to_rank": 3, "min_lead_days": 60,
+                     "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)"},
+            "corpus": {"past_due": len(rows), "eligible": lead["eligible"], "scored": len(scored), "leaders_ranked": 0,
+                       "by_outcome": dict(outcomes), "unresolvable_reasons": dict(unres)},
+            "leaders": [lead], "predictions": rows}
+
+
+def card_states(L, A, B) -> None:
+    script = REPO / "scripts" / "build_predictions_site.py"
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        pr = td / "pred"
+        (pr / "dora").mkdir(parents=True)
+        recs = dora_records(L)
+        for sid, r in recs.items():
+            (pr / "dora" / f"{sid}.jsonl").write_text(L.serialise_lines([r]))
+            (pr / "dora" / f"{sid}.meta.json").write_text(json.dumps(
+                {"extract": {"status": "ok", "candidates_written": 1, "harness": "fable"}, "verify": {"status": "ok", "accepted": 1}}))
+        people = {"dora": {"name": "Dora M", "company": "Co", "role": "CEO", "sector": "AI"}}
+        (pr / "index.json").write_text(json.dumps(A.build_index(pr, people, None), indent=1, sort_keys=True))
+        write_year_summaries(pr)
+        roster = td / "roster.json"
+        roster.write_text(json.dumps({"roster": [{"slug": "dora", "name": "Dora M", "role": "CEO", "company": "Co", "sector": "AI"}]}))
+        run = td / "run"
+        by_sid = {sid: r["prediction_id"] for sid, r in recs.items()}
+        for sid, p, outcome in (("scored", 0.7, "occurred"), ("trend", 0.6, "not_occurred")):
+            pid = by_sid[sid]
+            for sub, doc in (("priors", {"prediction_id": pid, "leader_slug": "dora", "stage": "prior", "p": p, "p_raw": p,
+                                         "clamped": False, "reference_class": "r", "reasoning": "r", "harness": "fable",
+                                         "telemetry": {"canonical_model": "claude-fable-5-1", "requested_model": "claude-fable-5-1",
+                                                       "telemetry_models": ["claude-fable-5-1"]}}),
+                             ("resolutions", {"prediction_id": pid, "leader_slug": "dora", "stage": "resolve", "outcome": outcome,
+                                              "harness": "astra", "telemetry": {"requested_model": "gpt-6-astra",
+                                                                                "served_model": "gpt-6-astra"}})):
+                (run / sub / "dora").mkdir(parents=True, exist_ok=True)
+                (run / sub / "dora" / f"{pid}.json").write_text(json.dumps(doc))
+
+        def render(doc: "dict | None", name: str, preds: Path = pr):
+            args = [PY, str(script), "--data-date", "2026-09-10", "--index", str(preds / "index.json"),
+                    "--predictions", str(preds), "--roster", str(roster), "--out", str(td / name / "index.html")]
+            if doc is not None:
+                (td / f"{name}.json").write_text(json.dumps(doc))
+                args += ["--scores", str(td / f"{name}.json")]
+            return subprocess.run(args, capture_output=True, text=True, cwd=REPO)
+
+        built = {}
+        for tag, new in (("old", False), ("new", True)):
+            p = render(dora_scores(recs, run, new), tag)
+            check(f"STATE: the page builds from the scorer's {tag} strings", p.returncode == 0,
+                  (p.stdout + p.stderr)[-600:])
+            if p.returncode == 0:
+                built[tag] = ({r["transcript_id"].split("/")[1]: r for r in records(td / tag / "index.html")["dora"]},
+                              embedded((td / tag / "index.html").read_text(), "DATA")[0],
+                              (td / tag / "index.html").read_text())
+        if not built:
+            return
+        if os.environ.get("VI_KEEP_STATE_SITE") and "new" in built:
+            shutil.copytree(td / "new", Path(os.environ["VI_KEEP_STATE_SITE"]), dirs_exist_ok=True)
+        # Every check below reads the new-strings build, or the old one if only that built.
+        pub, row, page = built.get("new") or built["old"]
+        st = {sid: r.get("state") or {} for sid, r in pub.items()}
+        got = {sid: (s.get("state"), s.get("reason")) for sid, s in st.items()}
+        check("STATE: every record carries the state its scores row and its deadline give",
+              got == DORA_STATES, json.dumps({k: (got.get(k), v) for k, v in DORA_STATES.items() if got.get(k) != v})[:900])
+        both = len(built) == 2
+        check("STATE: under the old and the new scorer strings every record has the same state and card text",
+              both and all(built["old"][0][sid].get("state") == pub[sid].get("state") for sid in pub),
+              "only one build" if not both else
+              str([sid for sid in pub if built["old"][0][sid].get("state") != pub[sid].get("state")]))
+        want = collections.Counter(s for s, _ in DORA_STATES.values())
+        check("STATE: the Predictions column counts exactly the states the cards carry, under both strings",
+              both and row.get("buckets") == dict(want) and built["old"][1].get("buckets") == dict(want),
+              f"new {row.get('buckets')} old {built['old'][1].get('buckets')} want {dict(want)}")
+        check("STATE: a record checked but not testable counts as Not testable, not Couldn't check",
+              row.get("unres") == {"criterion_ambiguous": 1}, str(row.get("unres")))
+
+        line = {sid: s.get("line") or "" for sid, s in st.items()}
+        check("CARD: no card, and no line of the page, reads 'Not yet resolved'",
+              "Not yet resolved" not in page and all("Not yet resolved" not in v for v in line.values()),
+              str([sid for sid, v in line.items() if "Not yet resolved" in v]))
+        check("CARD: not yet due says it is open until its deadline",
+              line["not-due"] == "Open until 2030-12-31. It is checked after that date.", line["not-due"])
+        check("CARD: no deadline because the recording is undated quotes the speaker's time words",
+              line["nodl-undated"] == ("Never checked: the recording has no known date, so no deadline can be "
+                                       "computed from “in two years”."), line["nodl-undated"])
+        check("CARD: no deadline because it names no readable date says so",
+              line["nodl-window"] == "Never checked: it names no date this pipeline can read.", line["nodl-window"])
+        check("CARD: past due and not checked says so, from the scores file and after it",
+              line["awaiting"] == "Past its 2025-11-30 deadline; not checked yet."
+              and line["late"] == "Past its 2026-06-30 deadline; not checked yet.", f"{line['awaiting']} | {line['late']}")
+        check("CARD: under the lead floor it says how many days ahead it was said, and names the floor",
+              line["lead-resolved"] == "Not scored: said 19 days before its own deadline, 2025-03-20, under the 60-day floor."
+              and line["lead-unresolved"].startswith("Not scored: said 31 days before"), line["lead-resolved"])
+        check("CARD: a lead-floor record that was checked anyway says what happened and that it does not count",
+              (pub["lead-resolved"].get("outcome") or {}).get("verdict") == "occurred"
+              and "does not count" in (st["lead-resolved"].get("verdict_note") or "")
+              and (pub["lead-unresolvable"].get("outcome") or {}).get("verdict") == "unresolvable"
+              and "does not count" in (st["lead-unresolvable"].get("verdict_note") or ""),
+              str((st["lead-resolved"].get("verdict_note"), st["lead-unresolvable"].get("verdict_note"))))
+        check("CARD: a deadline before the statement date names both dates",
+              line["dbs"] == "Not scored: its deadline, 2024-06-30, is earlier than the date it is recorded as said, 2025-03-01.",
+              line["dbs"])
+        check("CARD: a past-due record from an undated recording says the date is unknown",
+              line["undated-past"].startswith("Not scored: the recording has no known date") and "60 days" in line["undated-past"],
+              line["undated-past"])
+        check("CARD: a too-vague record says so, with the rule it failed",
+              line["vague"] == "Not scored: rated too vague to test (specificity low); a scored prediction must be high or medium.",
+              line["vague"])
+        check("CARD: a trend record says it was judged as a trend, over what window",
+              line["trend"] == f"Judged as a trend over the 6.7 years from its statement date to {STATE_AS_OF}; "
+                               "checked and scored.", line["trend"])
+        check("CARD: the card lays out the state's line and marks a verdict that does not count",
+              "st.line" in page and "st.verdict_note" in page and 'data-state="${esc(r.state.state)}"' in page,
+              "outcomeRows does not read r.state")
+
+        price = {sid: s.get("price") for sid, s in st.items()}
+        unpriced = [sid for sid, r in pub.items() if (r.get("outcome") or {}).get("p") is None]
+        check("PRICED: every card with no price says why in one line",
+              all(price[sid] for sid in unpriced), str([sid for sid in unpriced if not price[sid]]))
+        check("PRICED: the reason follows the state",
+              price["not-due"] == "Not priced yet: a price is set when it is checked."
+              and price["awaiting"] == "Not priced yet: a price is set when it is checked."
+              and price["lead-unresolved"] == "Not priced: it is under the lead floor, so it is never scored."
+              and price["nodl-window"] == "Not priced: it never entered the scoring funnel, because it has no deadline."
+              and price["nodl-undated"] == ("Not priced: it never entered the scoring funnel, because the recording "
+                                            "has no known date."),
+              json.dumps(price)[:700])
+        check("PRICED: a price is dated as of the statement date, never 'likely on the day it was said'",
+              "likely on the day it was said" not in page and "as of ${esc(r.statement_date)}" in page)
+
+        said = {sid: (r.get("said") or {}).get("card") for sid, r in pub.items()}
+        check("SAID: an upload date is an upper bound, not checked against the event",
+              said["scored"] == "on or before 2025-03-01 (YouTube upload; not checked against the event)", str(said["scored"]))
+        check("SAID: a publication date is an upper bound", said["pub"] == "on or before 2025-09-17 (publication date)",
+              str(said["pub"]))
+        check("SAID: a date the source states is a plain date", said["stated"] == "2012-05-30", str(said["stated"]))
+        check("SAID: a sourced date is a plain date and names the upload it replaced",
+              said["override"] == "1996-10-16 (sourced; the YouTube upload is 2013-07-05)", str(said["override"]))
+        check("SAID: no date reads 'date unknown'", said["undated-past"] == "date unknown", str(said["undated-past"]))
+        check("SAID: the 'also said' line uses the same basis",
+              (pub["stated"].get("said") or {}).get("also") == "on 2012-05-30"
+              and (pub["scored"].get("said") or {}).get("also") == "on or before 2025-03-01"
+              and (pub["undated-past"].get("said") or {}).get("also") is None)
+
+        tgt = {sid: r.get("target") for sid, r in pub.items()}
+        check("TARGET: an inferred horizon shows the extractor's words instead of 'none stated'",
+              tgt["inferable"] == "about 20 years, inferred from: now that's out a couple of decades from now",
+              str(tgt["inferable"]))
+        check("TARGET: time words with no date are shown as said",
+              tgt["nodl-window"] == "“soon”" and tgt["nodl-undated"] == "“in two years”",
+              f"{tgt['nodl-window']} | {tgt['nodl-undated']}")
+        check("TARGET: a date keeps its words, and nothing at all is 'none stated'",
+              tgt["scored"] == "2025-12 — “by the end of 2025”" and tgt["trend"] == "none stated",
+              f"{tgt['scored']} | {tgt['trend']}")
+
+        hs = pub["hs-dora-talk"]
+        check("ENTITY: a Happy Scribe record's quote, context and confidence words are decoded",
+              hs["quote"] == "it's going to be the year of the robot in 2030" and hs["confidence_language"] == "I'm sure"
+              and "&#39;" not in hs["context_after"] + hs["context_before"], json.dumps(
+                  {k: hs[k] for k in ("quote", "confidence_language", "context_after")}))
+        other = dict(recs["not-due"])
+        other["source"] = dict(other["source"], quote_original="it&#39;s a widget")
+        check("ENTITY: trim leaves every other source's text byte for byte",
+              B.trim(other)["quote"] == "it&#39;s a widget", B.trim(other)["quote"])
+
+        # A page-visible field that still holds an entity refuses the build, like
+        # MAX_PAGE_BYTES: once from a source trim does not decode, once from a field
+        # of a Happy Scribe record that trim does not decode either.
+        for tag, sid, mutate, field in (
+                ("yt", "not-due", lambda r: r["source"].update(quote_original="it&#39;s a widget"), "quote"),
+                ("hs", "hs-dora-talk", lambda r: r["prediction"].update(normalized_claim="Dora&#39;s robot"), "claim")):
+            pr2 = td / f"pred-ent-{tag}"
+            shutil.copytree(pr, pr2)
+            bad = copy.deepcopy(recs[sid])
+            mutate(bad)
+            (pr2 / "dora" / f"{sid}.jsonl").write_text(L.serialise_lines([bad]))
+            (pr2 / "index.json").write_text(json.dumps(A.build_index(pr2, people, None), indent=1, sort_keys=True))
+            write_year_summaries(pr2)
+            p = render(None, f"ent-{tag}", preds=pr2)
+            out = p.stdout + p.stderr
+            check(f"ENTITY: an entity left in a {tag} record's {field} refuses the build, naming the record and field",
+                  p.returncode != 0 and "entity" in out and bad["prediction_id"] in out and f".{field}" in out, out[-500:])
+
+        # The strings must still agree with the flags; a disagreement is refused, never guessed.
+        base = dora_scores(recs, run, True)
+        for label, mutate, needle in (
+                ("a not_eligible reason whose flag is not failing",
+                 lambda d: d["predictions"][3].update(not_scored_because="not_eligible:specificity"), "specificity"),
+                ("an unknown not_eligible reason",
+                 lambda d: d["predictions"][3].update(not_scored_because="not_eligible:mystery"), "mystery"),
+                ("not_eligible on a row flagged eligible",
+                 lambda d: d["predictions"][8].update(not_scored_because="not_eligible:lead_under_floor"),
+                 by_sid["awaiting"]),
+                ("an ineligible row whose flags lack the lead time",
+                 lambda d: d["predictions"][3]["flags"].pop("lead_days"), "lead_days")):
+            doc = copy.deepcopy(base)
+            mutate(doc)
+            p = render(doc, f"bad-{abs(hash(label))}")
+            check(f"STATE: {label} refuses the render, naming it", p.returncode != 0 and needle in (p.stdout + p.stderr),
+                  (p.stdout + p.stderr)[-400:])
+
+    # COPY: the lead floor is not "an announcement rather than a forecast" in every case.
+    info = B.score_info({"scored": 7, "past_due": 20, "leaders_ranked": 4, "unresolvable_reasons": {},
+                         "by_outcome": {"unresolvable": 3}}, {"min_lead_days": 60, "baseline_only": "x", "clamp": 0.01})
+    check("COPY: the lead-floor rule is not called an announcement in every case",
+          "announcement rather than a forecast" not in info and "treats as an announcement" in info
+          and "a few are real forecasts" in info, info[-500:])
 
 
 def main() -> int:
@@ -202,6 +567,12 @@ def main() -> int:
         check("FIXTURE: DATA and SRC parse, and the records are files beside the page",
               isinstance(data, list) and isinstance(src, dict) and sorted(pred) == ["ada", "alan", "cleo"],
               f"{sorted(pred)}")
+        # Without a scores file there is no as-of date: a card may say a record has
+        # no deadline, which needs no date, but never that a check is pending or done.
+        nostate = [(r["prediction_id"], r.get("state")) for rs in pred.values() for r in rs
+                   if (r.get("state") or {}).get("state") not in ("unchecked", "no_deadline") or (r.get("state") or {}).get("price")]
+        check("STATE: without a scores file every card is unchecked or has no deadline, and none carries a price line",
+              not nostate and any(r["state"]["state"] == "no_deadline" for rs in pred.values() for r in rs), str(nostate[:3]))
 
         # YEAR SUMMARIES. The popover over a year square named the colour band
         # ("lightest blue: 1"). Operator request 2026-09-29: say what the person
@@ -452,16 +823,18 @@ def main() -> int:
                  "unresolvable_reason": None, "resolution_reasoning": "it shipped",
                  "sources": [{"where": "https://example.com/a", "what_it_shows": "shipped",
                               "date": "2026-01-02"}],
-                 "p": 0.25, "reference_class": "things like this", "points": 2.0,
-                 "not_scored_because": None},
+                 "p": 0.25, "reference_class": "things like this", "points": 2.0, "deadline": "2026-06-30",
+                 "flags": fl(True, 486), "not_scored_because": None},
+                # Every unscored row carries the funnel flags, as score_predictions.join
+                # writes them; the page reads eligibility off them for every such row.
                 {"prediction_id": pred["ada"][1]["prediction_id"], "leader_slug": "ada", "outcome": "unresolvable", "scored": False,
                  "unresolvable_reason": "criterion_ambiguous", "resolution_reasoning": "x", "sources": [],
-                 "p": None, "reference_class": None, "points": None,
-                 "not_scored_because": "unresolvable:criterion_ambiguous"},
+                 "p": None, "reference_class": None, "points": None, "deadline": "2026-06-30",
+                 "flags": fl(True, 486), "not_scored_because": "unresolvable:criterion_ambiguous"},
                 {"prediction_id": pred["cleo"][0]["prediction_id"], "leader_slug": "cleo", "outcome": "unresolvable", "scored": False,
                  "unresolvable_reason": "no_public_evidence", "resolution_reasoning": "x", "sources": [],
-                 "p": None, "reference_class": None, "points": None,
-                 "not_scored_because": "unresolvable:no_public_evidence"}],
+                 "p": None, "reference_class": None, "points": None, "deadline": "2026-06-30",
+                 "flags": fl(True, 486), "not_scored_because": "unresolvable:no_public_evidence"}],
         }))
         out2 = td / "site" / "scored.html"
         p2 = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
@@ -776,7 +1149,7 @@ def main() -> int:
         for elig, want, tag in ((False, "not_testable", "inel"), (True, "awaiting", "elig")):
             ndoc = json.loads(scores.read_text())
             ndoc["predictions"][1].update(not_scored_because="no_resolution", outcome=None,
-                                          flags={"eligible": elig})
+                                          flags=fl(elig, 486 if elig else 20))
             ndoc["corpus"]["unresolvable_reasons"].pop("criterion_ambiguous", None)
             (td / f"nores-{tag}.json").write_text(json.dumps(ndoc))
             pn = run("--scores", str(td / f"nores-{tag}.json"), out_name=f"nores-{tag}.html")
@@ -848,8 +1221,12 @@ def main() -> int:
         check("RESTATED: every record still reaches the drawer; the restated one names its specific member",
               len(ada_recs) == 4 and ada_recs.get(twin["prediction_id"], {}).get("restated_by") == spec_pid
               and "restated_by" not in ada_recs.get(spec_pid, {"restated_by": 1}), str({k: v.get("restated_by") for k, v in ada_recs.items()}))
-        check("RESTATED: the drawer lists a restated record once, under its specific member, as 'Also said on'",
-              "Also said on" in hr and "!r.restated_by" in hr and "x.restated_by === r.prediction_id" in hr, "")
+        # "Also said" carries the date's basis, like the card's Said line: an upload
+        # date reads "on or before", never "on".
+        check("RESTATED: the drawer lists a restated record once, under its specific member, as 'Also said on or before'",
+              "Also said ${esc(x.said.also)}" in hr and "!r.restated_by" in hr and "x.restated_by === r.prediction_id" in hr
+              and ada_recs.get(twin["prediction_id"], {}).get("said", {}).get("also") == "on or before 2025-03-01",
+              str(ada_recs.get(twin["prediction_id"], {}).get("said")))
         check("RESTATED: the drawer header says how many statements fold under another",
               "restates another prediction and is shown under the prediction it repeats." in hr
               and "restate another prediction and are shown under the prediction they repeat." in hr, "")
@@ -999,6 +1376,8 @@ def main() -> int:
         p = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(td / "bad.json"), "--predictions", str(pr), "--roster", str(roster), "--out", str(td / "x.html")],
                            capture_output=True, text=True, cwd=REPO)
         check("STALE: an index count that disagrees with the files fails, naming the person", p.returncode != 0 and "ada" in p.stderr, p.stderr[-300:])
+
+    card_states(L, A, B)
 
     bs = (REPO / "scripts" / "build_site.py").read_text()
     mast = bs[bs.index('<header class="mast">'):bs.index("</header>")]

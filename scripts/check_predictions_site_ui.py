@@ -6,6 +6,14 @@ test cannot: the order the table opens in, who is left out and named, the year
 square popover (text, colour, contrast, hover, keyboard and tap), the width of
 the Organisation column, no horizontal page scroll, and no console errors.
 
+CARDS opens every listed person's drawer and holds each card to the state the
+builder decided for it: the Predictions column's lines count exactly the cards'
+states, each Outcome line is the state's own line, no card reads "Not yet
+resolved", every card has a Priced at line, and Said is labelled by its basis.
+`--cards-only` runs just that, for a fixture site that reaches every state
+(VI_KEEP_STATE_SITE=<dir> .venv/bin/python scripts/test_predictions_site.py
+keeps one).
+
   python scripts/check_predictions_site_ui.py --site site-predictions \
       --absent "Clem Delangue,Tobi Lütke,Sergey Brin" --shots /tmp/pred-shots
 
@@ -16,6 +24,7 @@ so the script can be pointed at an older render to get a before figure.
 from __future__ import annotations
 
 import argparse
+import collections
 import functools
 import http.server
 import json
@@ -24,7 +33,7 @@ import sys
 import threading
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
 PASS, FAIL = [], []
 AA = 4.5
@@ -89,11 +98,114 @@ def blend(fill, opacity, bg):
     return [round(f * a + b * (1 - a)) for f, b in zip(fill[:3], bg[:3])]
 
 
+READ_DRAWER = """(slug) => {
+  const recs = Object.fromEntries(PRED[slug].map(r => [r.prediction_id, r]));
+  const cards = [...document.querySelectorAll('tr.audit .pred')].map(c => {
+    const pid = c.querySelector('.prov code').textContent, dd = {};
+    for (const dt of c.querySelectorAll('dl.kv > dt')) dd[dt.textContent] = dt.nextElementSibling.textContent.trim();
+    const r = recs[pid];
+    return {pid, state: c.dataset.state, outcome: dd['Outcome'] || '', priced: dd['Priced at'] ?? null,
+            said: dd['Said'] || '', text: c.textContent,
+            basis: r ? r.statement_date_basis : null,
+            want: r && r.state && r.said ? {state: r.state.state, line: r.state.line, said: r.said.card} : null};
+  });
+  return {cards, also: [...document.querySelectorAll('tr.audit .also li')].map(li => li.dataset.state)};
+}"""
+
+
+def card_checks(page, data: list[dict], shots: Path) -> None:
+    """Open every row's drawer and hold each card to the state the builder decided."""
+    labels = dict(page.evaluate("BUCKETS"))
+    seen, bad = collections.Counter(), collections.defaultdict(list)
+    for d in data:
+        slug = d["slug"]
+        row = page.locator(f'#tb tr.row[data-slug="{slug}"]')
+        row.scroll_into_view_if_needed()
+        row.click()
+        try:
+            page.wait_for_selector(f'tr.audit .drawer[data-slug="{slug}"]', timeout=15000)
+        except PWTimeout:  # a failed load shows its own message instead; count it as a failure and go on
+            bad["drawer"].append(f"{slug}: {page.locator('tr.audit').inner_text()[:120]!r}")
+            row.click()
+            continue
+        got = page.evaluate(READ_DRAWER, slug)
+        count = collections.Counter(c["state"] for c in got["cards"]) + collections.Counter(got["also"])
+        seen.update(count)
+        if d.get("buckets") is not None and dict(count) != d["buckets"]:
+            bad["count"].append(f"{d['name']}: cards {dict(count)} vs column {d['buckets']}")
+        for c in got["cards"]:
+            # These three hold on any build, so a page from before the states fails
+            # them instead of passing because its cards had no state to compare.
+            if "Not yet resolved" in c["text"]:
+                bad["not_yet"].append(f"{slug} {c['pid']}")
+            if d.get("buckets") is not None and not c["priced"]:
+                bad["priced"].append(f"{slug} {c['pid']} ({c['state']})")
+            if c["basis"] == "youtube_upload_date" and "YouTube upload; not checked against the event" not in c["said"]:
+                bad["said"].append(f"{slug} {c['pid']}: {c['said']!r}")
+            w = c["want"]
+            if w is None or c["state"] != w["state"]:      # a record with no state is a build from before it
+                bad["state"].append(f"{slug} {c['pid']}: card {c['state']} vs record {w and w['state']}")
+                continue
+            if not c["outcome"].startswith(w["line"]):
+                bad["line"].append(f"{slug} {c['pid']}: {c['outcome'][:80]!r}")
+            if c["said"] != w["said"]:
+                bad["said"].append(f"{slug} {c['pid']}: {c['said']!r} vs {w['said']!r}")
+        if slug == "dora" or d["name"] == "Larry Ellison":
+            page.locator("tr.audit").screenshot(path=str(shots / f"drawer-{slug}.png"))
+        row.click()                                     # close it again
+    n = sum(seen.values())
+    print(f"  measure: {n} records across {len(data)} drawers, by state: "
+          + ", ".join(f"{labels.get(k, k)} {v}" for k, v in seen.most_common()))
+    check("CARDS: every listed person's drawer loads", not bad["drawer"], "; ".join(bad["drawer"][:3]))
+    check("CARDS: the Predictions column's lines count exactly the states of the cards in the drawer",
+          not bad["count"], "; ".join(bad["count"][:3]))
+    check("CARDS: every card's state is its record's state", not bad["state"], "; ".join(bad["state"][:3]))
+    check("CARDS: every Outcome line is the state's own line", not bad["line"], "; ".join(bad["line"][:3]))
+    check("CARDS: no card reads 'Not yet resolved'", not bad["not_yet"], "; ".join(bad["not_yet"][:3]))
+    check("CARDS: every card has a Priced at line, a price or why there is none", not bad["priced"],
+          "; ".join(bad["priced"][:3]))
+    check("CARDS: Said is labelled by its basis; an upload date says it is not checked against the event",
+          not bad["said"], "; ".join(bad["said"][:3]))
+
+
+def phone_checks(browser, url: str, shots: Path) -> None:
+    """The table at phone width, and the year-square popover by tap."""
+    print("\n== phone 390px, touch ==")
+    ctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True,
+                              device_scale_factor=2)
+    page = ctx.new_page()
+    errors = []
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(url)
+    page.wait_for_load_state("networkidle")
+    sw = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+    check("WIDTH: no horizontal page scroll at 390px", sw[0] <= sw[1], str(sw))
+    org = page.eval_on_selector('th[data-k="company"]', "e => e.getBoundingClientRect().width")
+    print(f"  measure: Organisation column {org:.1f}px wide at 390px (the table scrolls inside its card)")
+    page.screenshot(path=str(shots / "phone.png"), full_page=False)
+    cell = page.locator("#tb tr.row").first.locator(".sq i.q4, .sq i.q3, .sq i.q2, .sq i.q1").first
+    cell.scroll_into_view_if_needed()
+    cell.tap()
+    page.wait_for_timeout(200)
+    st = popover_state(page)
+    opened = page.locator("tr.audit").count()
+    check("TAP: a tap on a square opens the popover and does not open the row",
+          st.get("shown") and opened == 0, f"{st.get('text')} drawers={opened}")
+    page.screenshot(path=str(shots / "phone-popover.png"), full_page=False)
+    page.locator("h1").tap()
+    check("TAP: a tap elsewhere closes it", not popover_state(page).get("shown"))
+    check("CONSOLE: no errors on phone", not errors, str(errors[:3]))
+    ctx.close()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--site", required=True, help="a rendered site directory holding index.html")
     ap.add_argument("--absent", default="", help="comma-separated names that must have no row and be named")
     ap.add_argument("--shots", required=True, help="directory for screenshots")
+    ap.add_argument("--cards-only", action="store_true",
+                    help="run only the CARDS checks, for a fixture site with no ranked people or year bands")
     args = ap.parse_args()
     shots = Path(args.shots)
     shots.mkdir(parents=True, exist_ok=True)
@@ -102,7 +214,19 @@ def main() -> int:
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
-            for scheme in ("light", "dark"):
+            if args.cards_only:
+                print("\n== cards only, desktop 1400px ==")
+                ctx = browser.new_context(viewport={"width": 1400, "height": 1000})
+                page = ctx.new_page()
+                errors: list[str] = []
+                page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(url)
+                page.wait_for_load_state("networkidle")
+                card_checks(page, page.evaluate("DATA"), shots)
+                check("CONSOLE: no errors", not errors, str(errors[:3]))
+                ctx.close()
+            for scheme in (() if args.cards_only else ("light", "dark")):
                 print(f"\n== desktop 1400px, {scheme} ==")
                 ctx = browser.new_context(viewport={"width": 1400, "height": 1000}, color_scheme=scheme)
                 page = ctx.new_page()
@@ -143,7 +267,9 @@ def main() -> int:
                           total: c.querySelector('.tot b') ? Number(c.querySelector('.tot b').textContent) : null,
                           lines: [...c.querySelectorAll('li')].map(li => [li.querySelector('span').textContent, Number(li.querySelector('b').textContent), li.title || '']),
                           align: getComputedStyle(c).textAlign, h: r.getBoundingClientRect().height}; })""")
-                order = ["Scored", "Not yet due", "No deadline", "Awaiting check", "Not testable", "Couldn't check"]
+                # The page's own order, read from it: a typed copy of this list lacked
+                # "Restated" and failed on every render that had a restatement.
+                order = [lab for _, lab in page.evaluate("BUCKETS")]
                 bad_sum = [c["name"] for c in cells if c["total"] != by[c["slug"]]["accepted"]
                            or sum(n for _, n, _ in c["lines"]) != c["total"]]
                 check("PREDICTIONS: every row's lines add up to its total, and the total is the row's count",
@@ -236,38 +362,17 @@ def main() -> int:
                       and int(s2["text"][-4:]) == int(s1["text"][-4:]) - 1, f"{s1.get('text')} -> {s2.get('text')}")
                 page.keyboard.press("Escape")
                 check("KEYBOARD: Escape closes it", not popover_state(page).get("shown"))
+                if scheme == "light":
+                    # Last in the pass: opening fifty drawers by mouse leaves a row focused,
+                    # and a script focus() after that no longer matches :focus-visible.
+                    card_checks(page, data, shots)
                 page.evaluate("window.scrollTo(0, 0)")
                 page.screenshot(path=str(shots / f"desktop-{scheme}.png"), full_page=False)
                 check(f"CONSOLE: no errors on desktop {scheme}", not errors, str(errors[:3]))
                 ctx.close()
 
-            print("\n== phone 390px, touch ==")
-            ctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True,
-                                      device_scale_factor=2)
-            page = ctx.new_page()
-            errors = []
-            page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-            page.on("pageerror", lambda e: errors.append(str(e)))
-            page.goto(url)
-            page.wait_for_load_state("networkidle")
-            sw = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
-            check("WIDTH: no horizontal page scroll at 390px", sw[0] <= sw[1], str(sw))
-            org = page.eval_on_selector('th[data-k="company"]', "e => e.getBoundingClientRect().width")
-            print(f"  measure: Organisation column {org:.1f}px wide at 390px (the table scrolls inside its card)")
-            page.screenshot(path=str(shots / "phone.png"), full_page=False)
-            cell = page.locator("#tb tr.row").first.locator(".sq i.q4, .sq i.q3, .sq i.q2, .sq i.q1").first
-            cell.scroll_into_view_if_needed()
-            cell.tap()
-            page.wait_for_timeout(200)
-            st = popover_state(page)
-            opened = page.locator("tr.audit").count()
-            check("TAP: a tap on a square opens the popover and does not open the row",
-                  st.get("shown") and opened == 0, f"{st.get('text')} drawers={opened}")
-            page.screenshot(path=str(shots / "phone-popover.png"), full_page=False)
-            page.locator("h1").tap()
-            check("TAP: a tap elsewhere closes it", not popover_state(page).get("shown"))
-            check("CONSOLE: no errors on phone", not errors, str(errors[:3]))
-            ctx.close()
+            if not args.cards_only:
+                phone_checks(browser, url, shots)
             browser.close()
     finally:
         httpd.shutdown()
