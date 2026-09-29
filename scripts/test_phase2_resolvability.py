@@ -210,9 +210,44 @@ def main() -> int:
     check("UNIT: a word count resolves through the printed table, and a digit beats it",
           derive("in the next few years")[0] == dt.date(2022, 1, 1)
           and derive("in 2 years")[0] == dt.date(2021, 1, 1), str([derive("in the next few years"), derive("in 2 years")]))
-    check("UNIT: 'this year' anchors on the statement year, not a year from the statement",
+    # "Next year" is the whole following CALENDAR year, so it closes on 31 December,
+    # not on the anniversary (design 3.5, rescue round 4). "The next year" is a
+    # twelve-month span and keeps the anniversary: the extractor writes it that way
+    # in the corpus ("in the next year" said 2020-04-16 -> 2021-04-16).
+    check("UNIT: 'this year' and 'next year' anchor on calendar years, not a year from the statement",
           derive("by the end of the year")[0] == dt.date(2019, 12, 31)
-          and derive("sometime next year")[0] == dt.date(2020, 1, 1), str([derive("by the end of the year"), derive("sometime next year")]))
+          and derive("sometime next year") == (dt.date(2020, 12, 31), "the calendar year after the statement")
+          and derive("Next year")[0] == dt.date(2020, 12, 31),
+          str([derive("by the end of the year"), derive("sometime next year"), derive("Next year")]))
+    check("UNIT: design test S3, 'sometime next year' said 2025-09-12 closes 2026-12-31",
+          P.derived_deadline({"prediction": {"horizon_years_inferred": None, "target_date_text": "sometime next year"},
+                              "source": {"statement_date": "2025-09-12"}})[0] == dt.date(2026, 12, 31))
+    check("UNIT: 'the next year' is twelve months, so it keeps the anniversary",
+          derive("over the next year")[0] == dt.date(2020, 1, 1)
+          and derive("within the next year")[0] == dt.date(2020, 1, 1),
+          str([derive("over the next year"), derive("within the next year")]))
+    # Review 0 of the round-4 funnel change, item 3: the calendar reading also caught
+    # two phrases that are not the whole year. "This time next year" is the
+    # anniversary; the extractor wrote 2026-10-28 for record 6b32b106, said
+    # 2025-10-28. The middle or first half of next year closes on 30 June; the
+    # extractor wrote 2023-06-30 for record 52535f5c.
+    check("UNIT: 'this time next year' is twelve months, so it keeps the anniversary",
+          derive("this time next year")[0] == dt.date(2020, 1, 1)
+          and P.derived_deadline({"prediction": {"horizon_years_inferred": None,
+                                                 "target_date_text": "by this time next year"},
+                                  "source": {"statement_date": "2025-10-28"}})[0] == dt.date(2026, 10, 28),
+          str(derive("this time next year")))
+    mid = ("by the middle of next year", "in the middle of next year", "the first half of next year",
+           "in the first half of next year", "mid next year", "mid-next year", "by mid next year")
+    check("UNIT: the middle and the first half of next year close on 30 June of the following year",
+          all(derive(t)[0] == dt.date(2020, 6, 30) for t in mid)
+          and len({derive(t)[1] for t in mid}) == 1, str({t: derive(t) for t in mid}))
+    check("UNIT: the second half and the end of next year still close on 31 December",
+          derive("the second half of next year")[0] == dt.date(2020, 12, 31)
+          and derive("by the end of next year")[0] == dt.date(2020, 12, 31),
+          str([derive("the second half of next year"), derive("by the end of next year")]))
+    check("UNIT: an open-ended 'next year or more' is still refused, not closed on 31 December",
+          derive("over the next year or more") == (None, "open_ended"), str(derive("over the next year or more")))
     check("UNIT: text that names no closing date is refused with its reason, never guessed at",
           derive("in my lifetime") == (None, "open_ended")
           and derive("in the next five plus years") == (None, "open_ended")
@@ -228,6 +263,44 @@ def main() -> int:
                               "source": {"statement_date": None}}) == (None, "no_statement_date"))
     check("UNIT: the pipeline's own resolved horizon wins over the text",
           derive("in the next few years", years=1)[0] == dt.date(2020, 1, 1))
+
+    # ---- ONE order of ineligibility reasons (rescue round 4, both reviews) ----
+    # The scorer named a row that fails two clauses by one order and the page by
+    # another, so a vague undated row read `specificity` in scores.json and
+    # "undated" on its card. The order is now one constant here, and the scorer,
+    # the resolver and the page all read it. These fixtures fail TWO clauses each,
+    # because a record failing one clause cannot tell two orders apart.
+    order = getattr(P, "INELIGIBLE_REASONS", None)
+    check("ORDER: one named order, deadline_before_statement, specificity, undated, lead_under_floor",
+          order == ("deadline_before_statement", "specificity", "undated", "lead_under_floor"), str(order))
+    reason = getattr(P, "ineligible_reason", None)
+    failing = getattr(P, "failing_clauses", None)
+    ok_flags = {"eligible": False, "deadline_before_statement": False, "specificity_ok": True,
+                "lead_days": 400, "lead_ok": True}
+    two = {"specificity and lead_under_floor": (dict(ok_flags, specificity_ok=False, lead_days=30, lead_ok=False),
+                                                "specificity", ["specificity", "lead_under_floor"]),
+           "specificity and undated": (dict(ok_flags, specificity_ok=False, lead_days=None, lead_ok=False),
+                                       "specificity", ["specificity", "undated"]),
+           "deadline_before_statement and specificity": (
+               dict(ok_flags, deadline_before_statement=True, specificity_ok=False, lead_days=-10, lead_ok=False),
+               "deadline_before_statement", ["deadline_before_statement", "specificity", "lead_under_floor"])}
+    for label, (flags, want, every) in two.items():
+        got = reason("x", flags) if reason else "MISSING phase2_resolvability.ineligible_reason"
+        check(f"ORDER: a record failing {label} is named {want}", got == want, f"got {got!r}")
+        got = failing(flags) if failing else "MISSING phase2_resolvability.failing_clauses"
+        check(f"ORDER: failing_clauses lists every clause it fails, in the order ({label})",
+              got == every, f"got {got!r}")
+    check("ORDER: an eligible record has no reason, whatever else its flags say",
+          reason is not None and reason("x", dict(ok_flags, eligible=True, lead_days=None, lead_ok=False)) is None)
+    for label, flags in (("ineligible flags that fail no clause", dict(ok_flags)),
+                         ("flags missing a key the rule reads", {"eligible": False})):
+        try:
+            got = reason("x", flags) if reason else "MISSING"
+        except SystemExit as exc:
+            got = f"REFUSED {exc}"
+        except Exception as exc:  # noqa: BLE001 - a crash is not a named refusal
+            got = f"CRASH {type(exc).__name__}: {exc}"
+        check(f"ORDER: REFUSE {label}, naming the prediction", str(got).startswith("REFUSED") and "x" in got, got)
 
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0

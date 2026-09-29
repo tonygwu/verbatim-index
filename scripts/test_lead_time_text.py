@@ -41,9 +41,11 @@ def main() -> int:
     # would pass this test while still being a typed number.
     rule = {"baseline_only": "points = -log2(p)", "clamp": 0.01,
             "min_lead_days": 45, "min_scored_to_rank": 3}
+    # score_info reads listed_corpus's output, which splits the resolver's
+    # "cannot be resolved" answers by eligibility (unresolvable_split).
     corpus = {"scored": 7, "past_due": 20, "leaders_ranked": 4,
-              "unresolvable_reasons": {"no_source": 2},
-              "by_outcome": {"unresolvable": 3}}
+              "unresolvable_split": {"eligible": {"n": 2, "reasons": {"no_source": 2}},
+                                     "not_eligible": {"n": 1, "reasons": {"no_source": 1}}}}
 
     # [SITE 1] the methodology paragraph, rendered unconditionally for every reader
     info = B.score_info(corpus, rule)
@@ -66,7 +68,8 @@ def main() -> int:
     if live.exists():
         got = json.loads(live.read_text())["rule"].get("min_lead_days")
         check("live scores.json records a lead time", isinstance(got, int), repr(got))
-        rendered = B.score_info(json.loads(live.read_text())["corpus"], json.loads(live.read_text())["rule"])
+        doc = json.loads(live.read_text())
+        rendered = B.score_info(B.listed_corpus(doc, {l["slug"] for l in doc["leaders"]}), doc["rule"])
         check(f"live page would say {got} days", f"{got} days" in rendered)
 
     print(f"\n{'FAILED' if FAILED else 'OK'}: {FAILED} failing check(s)")

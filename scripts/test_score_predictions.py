@@ -8,6 +8,8 @@ What this pins, each of which would change a person's published score silently:
     dropped, so the four buckets always add up to the corpus;
   - the eligibility rule is the operator's: specific, six months of lead, a window
     that does not close before it opens;
+  - eligibility is checked FIRST, so an ineligible row reads
+    `not_eligible:<reason>` whether or not it was resolved, never `no_resolution`;
   - the published figure is a MEAN, so volume earns nothing;
   - a person below the rank floor keeps their number in the file and loses it on
     the page, which is how MIN_TRANSCRIPTS_TO_RANK already works;
@@ -38,13 +40,15 @@ def check(label, ok, detail=""):
         FAILED.append(label)
 
 
-def rec(pid, slug="ada", *, eligible=True, q=None, spec="high", lead=400):
+def rec(pid, slug="ada", *, eligible=True, q=None, spec="high", lead=400, before=False):
+    # The flags resolve_predictions.select() writes, every key of them, because the
+    # scorer names WHY a row is ineligible from these and refuses flags it cannot read.
     return {
         "prediction_id": pid, "leader_slug": slug, "transcript_id": f"{slug}/t1",
         "_deadline": dt.date(2020, 12, 31),
-        "_flags": {"basis": "stated", "deadline_before_statement": False,
-                   "specificity_high": spec == "high", "lead_days": lead,
-                   "lead_ok": lead >= 180, "eligible": eligible},
+        "_flags": {"basis": "stated", "deadline_before_statement": before,
+                   "specificity_high": spec == "high", "specificity_ok": spec in ("high", "medium"),
+                   "lead_days": lead, "lead_ok": lead is not None and lead >= 60, "eligible": eligible},
         "prediction": {"normalized_claim": "c", "resolution_criteria": "crit"},
         "source": {"quote": "q", "statement_date": "2019-06-25"},
         "confidence": {"probability": q},
@@ -63,7 +67,7 @@ def pri(pid, p):
 
 
 def main() -> int:
-    rows = [rec("a"), rec("b"), rec("c"), rec("d"), rec("e", eligible=False, spec="medium"),
+    rows = [rec("a"), rec("b"), rec("c"), rec("d"), rec("e", eligible=False, spec="low"),
             rec("f"), rec("g", q=0.75)]
     resolutions = {"a": res("a", "occurred"), "b": res("b", "not_occurred"),
                    "c": res("c", "unresolvable", "no_public_evidence"),
@@ -82,14 +86,48 @@ def main() -> int:
     check("DECLINE: unresolvable is EXCLUDED, not scored as a miss",
           not by["c"]["scored"] and by["c"]["not_scored_because"] == "unresolvable:no_public_evidence"
           and by["c"]["points"] is None, str(by["c"]["not_scored_because"]))
-    check("GATE: an ineligible prediction is resolved and still not scored, with the reason kept",
-          not by["e"]["scored"] and by["e"]["not_scored_because"] == "not_eligible"
+    check("GATE: an ineligible prediction is resolved and still not scored, with the reason named",
+          not by["e"]["scored"] and by["e"]["not_scored_because"] == "not_eligible:specificity"
           and by["e"]["outcome"] == "occurred", str(by["e"]["not_scored_because"]))
     check("MISSING: a prediction with no resolution is named, never dropped",
           not by["f"]["scored"] and by["f"]["not_scored_because"] == "no_resolution")
 
     check("BUCKETS: every past-due prediction lands in exactly one bucket, and they add up",
           sum(why.values()) == len(rows) == len(joined), f"{dict(why)} over {len(rows)}")
+
+    # ---- eligibility is checked FIRST (design 3.5, test S6) ----------------
+    # An ineligible record is never resolved, so naming it "no_resolution" read as
+    # "awaiting a check" and the page needed a workaround to call it not testable.
+    # The reason is the first funnel stage that drops it.
+    gate = [rec("lead", eligible=False, lead=30), rec("undated", eligible=False, lead=None),
+            rec("back", eligible=False, lead=-20, before=True), rec("low", eligible=False, spec="low", lead=None),
+            rec("unres", eligible=False, lead=30)]
+    gj, gwhy = S.join(gate, {"unres": res("unres", "unresolvable", "no_public_evidence")},
+                      {"unres": pri("unres", 0.5)})
+    gb = {r["prediction_id"]: r for r in gj}
+    want = {"lead": "not_eligible:lead_under_floor", "undated": "not_eligible:undated",
+            "back": "not_eligible:deadline_before_statement", "low": "not_eligible:specificity",
+            "unres": "not_eligible:lead_under_floor"}
+    for pid, reason in want.items():
+        check(f"S6: {pid} is not scored because {reason}",
+              gb[pid]["not_scored_because"] == reason and not gb[pid]["scored"], str(gb[pid]["not_scored_because"]))
+    check("S6: a resolved ineligible row keeps its outcome for audit, with the eligibility reason",
+          gb["unres"]["outcome"] == "unresolvable" and gb["unres"]["unresolvable_reason"] == "no_public_evidence")
+    check("S6: the reasons are counted apart, and still add up",
+          gwhy == {"not_eligible:lead_under_floor": 2, "not_eligible:undated": 1,
+                   "not_eligible:deadline_before_statement": 1, "not_eligible:specificity": 1}, str(dict(gwhy)))
+    for label, bad in (("flags marked ineligible that name no reason", rec("x", eligible=False)),
+                       ("flags missing a key the rule reads",
+                        dict(rec("y", eligible=False, lead=30), _flags={"eligible": False, "basis": "stated"}))):
+        try:
+            S.join([bad], {}, {})
+            got = "accepted"
+        except SystemExit as exc:
+            got = f"REFUSED {exc}"
+        except Exception as exc:  # noqa: BLE001 - a crash is not a named refusal
+            got = f"CRASH {type(exc).__name__}: {exc}"
+        check(f"S6: REFUSE {label}, naming the prediction",
+              got.startswith("REFUSED") and bad["prediction_id"] in got, got)
 
     check("Q: a speaker who stated their own probability is scored by the two-probability rule",
           by["g"]["rule"] == "speaker_probability" and by["g"]["q"] == 0.75
@@ -154,8 +192,78 @@ def main() -> int:
         check("IO: sidecars round-trip through the loader the scorer uses",
               set(loaded) == set(resolutions))
 
+    corpus_split_and_trend_rule()
+
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0
+
+
+def corpus_split_and_trend_rule() -> None:
+    """Two blocks of scores.json the page reads, through the real CLI.
+
+    Eligibility first (design 3.5) relabels an ineligible row the resolver
+    answered "unresolvable" as not_eligible:<reason>, so corpus.by_outcome and
+    corpus.unresolvable_reasons, which count outcomes, no longer equal the
+    unresolvable:* rows. On production that is 118 against 93: 25 ineligible
+    rows answered anyway (review 1 item 5). `unresolvable_by_eligibility` splits
+    them. The trend rule decides which undated directional claims are judged at
+    all, so `rule.trend` states it for the page instead of the page restating it
+    (page review 0 item 3)."""
+    import phase2_resolvability as P2
+    print("scores.json splits unresolvable by eligibility and states the trend rule")
+
+    def record(pid, said, target="2020-12-31"):
+        return {"accepted": True, "leader_slug": "ada", "prediction_id": pid, "transcript_id": "ada/t1",
+                "prediction": {"target_date": target, "specificity": "high", "subject_control": "external",
+                               "category": "company_business", "horizon": "explicit", "target_date_text": "x",
+                               "horizon_years_inferred": None, "prediction_type": "binary_event",
+                               "normalized_claim": f"claim {pid}", "resolution_criteria": "crit"},
+                "source": {"statement_date": said, "quote": f"quote {pid}"},
+                "confidence": {"probability": None}, "consensus": {"status": "no_match", "exact_match": None}}
+
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        corpus = d / "predictions"
+        (corpus / "ada").mkdir(parents=True)
+        recs = [record("ok-unres", "2019-01-01"), record("ok-hit", "2019-01-01"),
+                record("lead-unres", "2020-12-01"), record("back-unres", "2021-06-01")]
+        (corpus / "ada" / "t1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+        (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada L"}]}))
+        run = d / "run"
+        outcomes = {"ok-unres": ("unresolvable", "no_public_evidence"), "ok-hit": ("occurred", None),
+                    "lead-unres": ("unresolvable", "criterion_ambiguous"),
+                    "back-unres": ("unresolvable", "deadline_incoherent")}
+        for pid, (o, why) in outcomes.items():
+            for stage, obj in (("resolve", {**res(pid, o, why), "deadline": "2020-12-31"}),
+                               ("prior", {**pri(pid, 0.5), "deadline": "2020-12-31"})):
+                fp = R.sidecar_path(run, stage, "ada", pid)
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.write_text(json.dumps({**obj, "leader_slug": "ada", "transcript_id": "ada/t1", "stage": stage}))
+        docs = {}
+        for trend in (True, False):
+            out = d / f"scores-{trend}.json"
+            argv = [sys.executable, str(ROOT / "scripts" / "score_predictions.py"), "--predictions", str(corpus),
+                    "--index", str(corpus / "index.json"), "--run", str(run), "--as-of", "2026-09-28",
+                    "--out", str(out)] + (["--trend"] if trend else [])
+            p = subprocess.run(argv, capture_output=True, text=True)
+            docs[trend] = json.loads(out.read_text()) if p.returncode == 0 else {"stderr": p.stderr[-400:]}
+        c = docs[True].get("corpus", {})
+        split = c.get("unresolvable_by_eligibility")
+        check("SPLIT: unresolvable outcomes are split into eligible and not eligible, each with its reasons",
+              split == {"eligible": {"n": 1, "reasons": {"no_public_evidence": 1}},
+                        "not_eligible": {"n": 2, "reasons": {"criterion_ambiguous": 1, "deadline_incoherent": 1}}},
+              str(split if split is not None else docs[True].get("corpus", docs[True])))
+        rows = docs[True].get("predictions", [])
+        check("SPLIT: the eligible half is exactly the rows that read unresolvable:<reason>",
+              split is not None and split["eligible"]["n"]
+              == sum(1 for r in rows if str(r["not_scored_because"]).startswith("unresolvable:")))
+        check("SPLIT: the two halves add up to the outcome count, which is unchanged",
+              split is not None and split["eligible"]["n"] + split["not_eligible"]["n"]
+              == c.get("by_outcome", {}).get("unresolvable") == 3, str(c.get("by_outcome")))
+        for trend in (True, False):
+            got = docs[trend].get("rule", {}).get("trend")
+            check(f"RULE: the trend rule is stated, enabled={trend}, with its minimum years",
+                  got == {"enabled": trend, "min_years": P2.MIN_TREND_YEARS}, str(got))
 
 
 if __name__ == "__main__":

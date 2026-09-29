@@ -222,6 +222,8 @@ def derived_problems(data: Path, rev: str) -> list[str]:
             if not config.exists():
                 problems.append("predictions/scores.json is committed without predictions/scoring.json, so its "
                                 "inputs cannot be checked")
+            elif replacements_problem(tree, json.loads(config.read_text())):
+                problems.append(replacements_problem(tree, json.loads(config.read_text())))
             else:
                 why = D.scores_staleness(scores, config)
                 if why:
@@ -259,6 +261,24 @@ def override_transcripts(tree: Path, cfg: dict) -> list[str]:
     return [f"{root}/{tid}.json" for tid in sorted(tids) for root in TRANSCRIPT_ROOTS]
 
 
+def replacements_problem(tree: Path, cfg: dict) -> str | None:
+    """Why the replacement manifest the scoring config names cannot be read from
+    the extracted tree, or None. Like override_transcripts' check: the scores are
+    regenerated from predictions/ and roster/ only, so the manifest must lie under
+    predictions/ and be in the commit. Named here rather than left to fail as a
+    raw FileNotFoundError inside the scorer's input hash."""
+    rel = cfg.get("replacements")
+    if rel is None:
+        return None
+    why = D.replacements_path_problem(rel) if isinstance(rel, str) and rel else None
+    if why:
+        return f"{SCORING} names {why}"
+    if not (tree / rel).is_file():
+        return (f"{SCORING} names replacements {rel!r}, which is not in the commit under predictions/, the only "
+                f"path the scores are regenerated from")
+    return None
+
+
 def regenerate(data: Path, rev: str) -> dict[str, bytes]:
     """The derived files as the commit rev's own inputs make them, computed in a
     scratch tree extracted from the commit, never from the working tree."""
@@ -277,6 +297,9 @@ def regenerate(data: Path, rev: str) -> dict[str, bytes]:
             cfg = json.loads((tree / SCORING).read_text())
             if cfg.get("out") != SCORES:
                 raise Refusal(f"{SCORING} writes {cfg.get('out')!r}; the derived file is {SCORES}")
+            why = replacements_problem(tree, cfg)
+            if why:
+                raise Refusal(why)
             # The scorer checks each statement-date override against its transcript,
             # so the transcripts the override file names must be in the scratch tree.
             extract(data, rev, tree, override_transcripts(tree, cfg))

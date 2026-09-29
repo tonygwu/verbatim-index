@@ -92,6 +92,19 @@ REFUSALS = (
 UNIT = re.compile(r"\b(year|month|week|day)s?\b", re.I)
 THIS_YEAR = re.compile(r"\b(this year|end of the year|end of this year|second half of this year)\b", re.I)
 NEXT_YEAR = re.compile(r"\bnext year\b", re.I)
+# "Over the next year" is a twelve-month span; "next year" alone is the following
+# calendar year. The extractor already reads them that way in the corpus: "in the
+# next year" said 2020-04-16 carries 2021-04-16, and "next year" said 2019-09-20
+# carries 2020-12-31. "This time next year" is the anniversary too: the extractor
+# wrote 2026-10-28 for 6b32b106, said 2025-10-28.
+THE_NEXT_YEAR = re.compile(r"\b(?:the|this time) next year\b", re.I)
+CALENDAR_NEXT_YEAR = "next year"   # the `how` horizon_span returns for the calendar reading
+# The middle or the first half of next year closes on 30 June of the following
+# year, not on 31 December: the extractor wrote 2023-06-30 for 52535f5c, "by the
+# middle of next year". The second half and the end of next year are the calendar
+# reading above. Review 0 of the round-4 funnel change, item 3.
+MID_NEXT_YEAR = re.compile(r"\b(?:first half|middle|mid)(?:\s+of)?[\s-]+next year\b", re.I)
+HALF_NEXT_YEAR = "first half of next year"   # the `how` horizon_span returns for 30 June
 RANGE = re.compile(r"(\d+)\s*(?:to|or|through|-|–)\s*(\d+)\s*(year|month|week|day)s?", re.I)
 NUMBER = re.compile(r"(\d+)\s*(year|month|week|day)s?", re.I)
 WORDY = re.compile(r"\b(" + "|".join(WORD_COUNTS) + r")\s+(?:more\s+)?(year|month|week|day)s?\b", re.I)
@@ -169,7 +182,11 @@ def horizon_span(text):
     if m:
         return WORD_COUNTS[m.group(1).lower()], m.group(2).lower(), "word count and unit"
     if NEXT_YEAR.search(text):
-        return 1, "year", "next year"
+        if MID_NEXT_YEAR.search(text):
+            return 1, "year", HALF_NEXT_YEAR
+        if THE_NEXT_YEAR.search(text):
+            return 1, "year", "the next year, twelve months"
+        return 1, "year", CALENDAR_NEXT_YEAR
     if not UNIT.search(text) and not re.search(r"\d", text):
         return None, None, "event_anchored"
     return None, None, "no_horizon_value"
@@ -195,6 +212,13 @@ def derived_deadline(rec):
     count, unit, how = horizon_span(text)
     if count is None:
         return None, how
+    if how == CALENDAR_NEXT_YEAR:
+        # The whole following calendar year, so the claim is false only once it is
+        # over. It used to land on the anniversary, which judged "sometime next
+        # year" said in September against the September after (design 3.5, A9).
+        return dt.date(said.year + 1, 12, 31), "the calendar year after the statement"
+    if how == HALF_NEXT_YEAR:
+        return dt.date(said.year + 1, 6, 30), "the first half of the calendar year after the statement"
     return add_span(said, count, unit), how
 
 
@@ -417,6 +441,96 @@ def funnel(rows, cutoff: dt.date, min_lead: int):
     stage(f"lead time >= {min_lead} days",
           [r for r in spec if lead_days(r) is not None and lead_days(r) >= min_lead])
     return stages
+
+
+# ---------------------------------------------------------------------------
+# Why a past-due record is not eligible: ONE order for every reader
+# ---------------------------------------------------------------------------
+#
+# The eligibility clauses, in the order funnel() above applies them: a window
+# that closes before it opens, then specificity, then lead time. Lead time splits
+# in two: a record with no statement date has no lead time at all ("undated"),
+# and one that has a date and falls short is "lead_under_floor". A record that
+# fails several clauses is named by the FIRST one here.
+#
+# One constant, because three readers name the reason: the resolve and prior
+# stages (resolve_predictions.narrow, which skips what it names), the scorer
+# (score_predictions.join, which writes `not_eligible:<reason>`) and the page.
+# FOUND 2026-09-29 by both reviews of the rescue round-4 funnel change: the
+# scorer and the page each kept an order, and they differed, so a vague undated
+# record read `not_eligible:specificity` in scores.json and "undated" on its card.
+INELIGIBLE_REASONS = ("deadline_before_statement", "specificity", "undated", "lead_under_floor")
+# The flags failing_clauses() reads. resolve_predictions.select() writes every one.
+CLAUSE_FLAGS = ("deadline_before_statement", "specificity_ok", "lead_days", "lead_ok")
+REASON_FLAGS = ("eligible",) + CLAUSE_FLAGS
+
+
+def funnel_flags(r: dict, min_lead: int) -> dict:
+    """The eligibility flags of one record that carries a deadline (attach_deadlines).
+
+    resolve_predictions.select() writes these onto every past-due record, and the
+    scorer copies them into scores.json. The page asks the same function about a
+    record scores.json does not carry (not yet due, or past due after scoring), so
+    a card never promises a check that no stage will make. Pure: reads only `r`.
+
+    The three clauses together are the operator's eligibility rule: a real forecast
+    is specific enough (ELIGIBLE_SPECIFICITY, high or medium since 2026-09-27),
+    reaches at least `min_lead` days out, and has a coherent window. A trend window
+    IS the elapsed time, so the lead floor is met by construction and specificity is
+    not what makes it testable: a trend record is eligible.
+    """
+    if r.get("_deadline") is None:
+        raise SystemExit(f"prediction {r.get('prediction_id')} has no deadline, so it has no funnel flags; "
+                         f"attach_deadlines() gives one first")
+    said = iso((r.get("source") or {}).get("statement_date"))
+    lead = lead_days(r)
+    is_trend = str(r.get("_basis") or "").startswith("trend")
+    flags = {
+        "basis": r["_basis"],
+        "deadline_before_statement": bool(said and r["_deadline"] < said),
+        "specificity_high": r["prediction"].get("specificity") == "high",
+        "specificity_ok": r["prediction"].get("specificity") in ELIGIBLE_SPECIFICITY,
+        "lead_days": lead,
+        "lead_ok": lead is not None and lead >= min_lead,
+        "trend": is_trend,
+    }
+    flags["eligible"] = is_trend or (flags["specificity_ok"] and flags["lead_ok"]
+                                     and not flags["deadline_before_statement"])
+    return flags
+
+
+def failing_clauses(flags: dict, pid: str = "?") -> list[str]:
+    """Every eligibility clause these funnel flags fail, in INELIGIBLE_REASONS order.
+
+    Pure: reads only `flags`. Flags that lack a key the clauses read are refused,
+    never read as passing."""
+    missing = [k for k in CLAUSE_FLAGS if k not in flags]
+    if missing:
+        raise SystemExit(f"prediction {pid}'s funnel flags lack {missing}; they come from "
+                         f"resolve_predictions.select(), which writes all of {list(REASON_FLAGS)}")
+    fails = {"deadline_before_statement": bool(flags["deadline_before_statement"]),
+             "specificity": not flags["specificity_ok"],
+             "undated": flags["lead_days"] is None,
+             "lead_under_floor": flags["lead_days"] is not None and not flags["lead_ok"]}
+    return [c for c in INELIGIBLE_REASONS if fails[c]]
+
+
+def ineligible_reason(pid: str, flags: dict) -> str | None:
+    """Why a past-due record is not eligible, or None when it is.
+
+    The first clause in INELIGIBLE_REASONS that the flags fail. One reason per
+    record, so the counts add up. Pure: reads only `flags`. Flags that say
+    ineligible and fail no clause, or lack a key the rule reads, are refused,
+    never guessed at."""
+    if "eligible" not in flags:
+        raise SystemExit(f"prediction {pid}'s funnel flags lack ['eligible']; they come from "
+                         f"resolve_predictions.select(), which writes all of {list(REASON_FLAGS)}")
+    fails = failing_clauses(flags, pid)
+    if flags["eligible"]:
+        return None
+    if not fails:
+        raise SystemExit(f"prediction {pid} is marked ineligible, but its funnel flags name no reason: {flags}")
+    return fails[0]
 
 
 def main() -> int:

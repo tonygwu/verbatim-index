@@ -32,11 +32,14 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
+import html
 import json
+import math
 import os
+import re
 import statistics
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -578,8 +581,6 @@ const INFO = {
   /* score:end */
 };
 
-const fmtDate = d => d ? d : "date unknown";
-
 /* One square per statement year, the same span on every row so the columns line up.
    Bands, not a linear ramp: the corpus median cell is 1 and the max is 17, so a linear
    scale would render almost every square at the lightest shade. */
@@ -661,14 +662,22 @@ const UNRES_WHY = {
   deadline_incoherent: "the deadline makes no sense against the statement date",
   after_knowledge_cutoff: "the window closed too recently for a public record",
 };
+/* The Outcome line is the record's STATE, decided once by the builder
+   (record_state) and counted by the Predictions column from the same value, so the
+   card and the column cannot disagree. The words come from the builder too; this
+   only lays them out. A verdict on a record that does not count says so beside it. */
 function outcomeRows(r){
-  const o = r.outcome;
-  if (!o) return `<dt>Outcome</dt><dd class="pending">Not yet resolved</dd>`;
-  const cls = o.verdict === "occurred" ? "yes" : o.verdict === "not_occurred" ? "no" : "pending";
-  let h = `<dt>Outcome</dt><dd><span class="verdict ${cls}">${esc(OUTCOME_LABEL[o.verdict] || o.verdict)}</span>`;
-  if (o.verdict === "unresolvable" && o.why) h += ` <span class="why">&mdash; ${esc(UNRES_WHY[o.why] || o.why)}</span>`;
-  h += `<div class="why">${esc(o.reasoning)}</div></dd>`;
-  if (o.sources && o.sources.length){
+  const st = r.state, o = r.outcome;
+  let h = `<dt>Outcome</dt><dd${o ? "" : ` class="pending"`}><div class="state">${esc(st.line)}</div>`;
+  if (o){
+    const cls = o.verdict === "occurred" ? "yes" : o.verdict === "not_occurred" ? "no" : "pending";
+    h += `<span class="verdict ${cls}">${esc(OUTCOME_LABEL[o.verdict] || o.verdict)}</span>`;
+    if (o.verdict === "unresolvable" && o.why) h += ` <span class="why">&mdash; ${esc(UNRES_WHY[o.why] || o.why)}</span>`;
+    if (st.verdict_note) h += ` <span class="why">(${esc(st.verdict_note)})</span>`;
+    h += `<div class="why">${esc(o.reasoning)}</div>`;
+  }
+  h += `</dd>`;
+  if (o && o.sources && o.sources.length){
     h += `<dt>Evidence</dt><dd><ul class="ev">` + o.sources.map(x => {
       const m = /\((https?:[^)\s]+)\)\s*$/.exec(x.where) || /^(https?:\S+)$/.exec(x.where);
       const url = m ? m[1] : null;
@@ -680,13 +689,19 @@ function outcomeRows(r){
         <div class="why">${esc(x.what_it_shows)}</div></li>`;
     }).join("") + `</ul></dd>`;
   }
-  if (o.p != null){
+  /* The prior stands on the statement date, which is often an upload date, so the
+     price is dated by that date rather than said to be "on the day it was said".
+     With no price, the state says why in one line. */
+  if (o && o.p != null){
     const pts = o.points == null ? null : (o.points >= 0 ? "+" : "\u2212") + Math.abs(o.points).toFixed(2);
-    h += `<dt>Priced at</dt><dd>${esc(pct(o.p))} likely on the day it was said`
+    h += `<dt>Priced at</dt><dd>${esc(pct(o.p))}`
+       + (r.statement_date ? ` as of ${esc(r.statement_date)}` : ` (the recording has no known date)`)
        + (o.reference_class ? ` <span class="why">&mdash; ${esc(o.reference_class)}</span>` : "")
        + (pts ? ` &middot; <b class="${o.points >= 0 ? "yes" : "no"}">${pts} points</b>` : "")
-       + (o.not_scored ? ` <span class="why">(not scored: ${esc(o.not_scored.replace(/_/g, " "))})</span>` : "")
+       + (st.state !== "scored" ? ` <span class="why">(not scored)</span>` : "")
        + `</dd>`;
+  } else if (st.price){
+    h += `<dt>Priced at</dt><dd class="pending">${esc(st.price)}</dd>`;
   }
   return h;
 }
@@ -723,8 +738,8 @@ function alsoSaid(r, all){
     const s = SRC[x.transcript_id] || {};
     const where = s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || x.transcript_id)}</a>`
                         : esc(s.title || x.transcript_id);
-    const when = x.statement_date ? `Also said on ${esc(x.statement_date)}` : "Also said, date unknown";
-    return `<li><span>${when}: <q>${esc(x.quote)}</q>
+    const when = x.said.also ? `Also said ${esc(x.said.also)}` : "Also said, date unknown";
+    return `<li data-state="${esc(x.state.state)}" data-pid="${esc(x.prediction_id)}"><span>${when}: <q>${esc(x.quote)}</q>
       <span class="why">&mdash; ${where}</span></span></li>`;
   }).join("") + `</ul>`;
 }
@@ -735,15 +750,16 @@ function predCard(r, all){
                   : `<span class="ts">${esc(r.timestamp_mark)}</span>`;
   const conf = r.confidence_type === "explicit_probability" ? `${esc(pct(r.probability))} &mdash; &ldquo;${esc(r.confidence_language)}&rdquo;`
              : r.confidence_type === "qualitative" ? `&ldquo;${esc(r.confidence_language)}&rdquo;` : "not specified";
-  const target = r.target_date ? esc(r.target_date) + (r.target_date_text ? ` &mdash; &ldquo;${esc(r.target_date_text)}&rdquo;` : "")
-               : r.target_date_text ? `&ldquo;${esc(r.target_date_text)}&rdquo;` : "none stated";
-  return `<div class="pred" data-cat="${esc(r.category)}" data-type="${esc(r.prediction_type)}" data-hor="${esc(r.horizon)}" data-ctrl="${esc(r.subject_control)}">
+  /* Said and Target are written by the builder (said_label, target_line): Said
+     is labelled by what kind of date it is, and Target shows the speaker's or the
+     extractor's words before it ever says "none stated". */
+  return `<div class="pred" data-state="${esc(r.state.state)}" data-cat="${esc(r.category)}" data-type="${esc(r.prediction_type)}" data-hor="${esc(r.horizon)}" data-ctrl="${esc(r.subject_control)}">
     <div class="claim">${esc(r.claim)}</div>
     <ul class="quotes"><li>${ts}<q>${esc(r.quote)}</q></li></ul>
     ${alsoSaid(r, all || [])}
     <dl class="kv">
-      <dt>Said</dt><dd>${esc(fmtDate(r.statement_date))}${r.statement_date ? ` <span class="why">(${esc(r.statement_date_basis.replace(/_/g, " "))})</span>` : ""}</dd>
-      <dt>Target</dt><dd>${target}${r.horizon === "inferable" && r.horizon_years_inferred != null ? ` &middot; about ${esc(r.horizon_years_inferred)} years, inferred` : ""}</dd>
+      <dt>Said</dt><dd>${esc(r.said.card)}</dd>
+      <dt>Target</dt><dd>${esc(r.target)}</dd>
       <dt>Confidence</dt><dd>${conf}</dd>
       <dt>Category</dt><dd>${esc(CAT[r.category] || r.category)} &middot; ${esc(TYPE[r.prediction_type] || r.prediction_type)} &middot; ${esc(CTRL[r.subject_control] || r.subject_control)}</dd>
       <dt>Resolves if</dt><dd>${esc(r.resolution_criteria)}<br><span class="why">Verifier's reading: ${esc(r.verifier_criteria)}</span></dd>
@@ -772,8 +788,10 @@ function cards(slug, filt){
   let h = "";
   for (const [tid, rs] of groups){
     const s = SRC[tid] || {};
+    /* The header dates the recording with the labelled Said text, the same words as
+       each card's Said line, never a bare upload date (review 0 item 5). */
     h += `<div class="tcard"><div class="hdr"><span class="t">${esc(s.title || tid)}</span>
-      <span class="meta">${esc(s.venue || "")}${rs[0].statement_date ? " &middot; " + esc(rs[0].statement_date) : ""}${s.url ? ` &middot; <a href="${esc(s.url)}" target="_blank" rel="noopener">source</a>` : ""}</span></div>`
+      <span class="meta">${esc(s.venue || "")}${s.venue ? " &middot; " : ""}${esc(rs[0].said.card)}${s.url ? ` &middot; <a href="${esc(s.url)}" target="_blank" rel="noopener">source</a>` : ""}</span></div>`
       + rs.map(r => predCard(r, all)).join("") + `</div>`;
   }
   return {html: h || `<p class="sub">No predictions match these filters.</p>`, n: recs.length};
@@ -1120,19 +1138,119 @@ def trim_market(c: dict) -> dict | None:
     return out
 
 
+# Happy Scribe serves its transcript text HTML-escaped, and the fetcher stored it
+# that way, so its quotes read "it&#39;s" on the page: the page escapes "&" once
+# more and prints the entity. MEASURED 2026-09-29 (C8): 18 accepted records, all
+# Happy Scribe, 47 field hits, all in the four fields shown_text decodes, and none
+# from any other source. Only that source is decoded. Every other source is shown
+# byte for byte, so a caption that really says "&amp;" is never silently changed.
+# This decodes what the page SHOWS only. The fetcher, and the transcript text that
+# quote offsets are counted in, are separate work (root-cause design, 1.3 and 4.5).
+HS_SOURCE_PREFIX = "hs-"
+
+
+def shown_text(rec: dict, s: "str | None") -> "str | None":
+    """A transcript-derived text field as a reader should see it."""
+    if s is None or not str(rec["source_id"]).startswith(HS_SOURCE_PREFIX):
+        return s
+    return html.unescape(s)
+
+
+# What each date basis says about when the words were said. Only a date the source
+# states, or one a reviewed override sourced, IS that day. An upload or publication
+# date is an upper bound, and until the dating stage exists nothing has checked an
+# upload against the event, so the card says that as well.
+SAID_BOUND = {"youtube_upload_date": "YouTube upload; not checked against the event",
+              "publication_date": "publication date"}
+REPLACED_DATE = {"youtube_upload_date": "YouTube upload", "publication_date": "publication date"}
+
+
+def said_label(src: dict, where: str) -> dict:
+    """The card's "Said" line and the "Also said" line, labelled by the date's basis."""
+    d, basis = src["statement_date"], src["statement_date_basis"]
+    if not d:
+        if basis != "unknown":
+            raise SystemExit(f"REFUSING: {where} has no statement date but basis {basis!r}")
+        return {"card": "date unknown", "also": None}
+    if basis == "stated_in_page":
+        return {"card": d, "also": f"on {d}"}
+    if basis == L.OVERRIDE_DATE_BASIS:
+        # predictions_lib.make_record writes the block with every sourced date. One
+        # without it cannot say what the date replaced, and a bare "(sourced)" would
+        # hide that (review 1 item 6 of the round-4 page change).
+        blk = src.get("statement_date_override")
+        if not isinstance(blk, dict) or not {"replaced_date", "replaced_basis"} <= set(blk):
+            raise SystemExit(f"REFUSING: {where} has a sourced statement date but no statement_date_override block "
+                             "saying what date it replaced; predictions_lib.make_record writes one with every "
+                             "sourced date, so re-extract the record")
+        old, was = blk["replaced_date"], blk["replaced_basis"]
+        if old and was not in REPLACED_DATE:
+            raise SystemExit(f"REFUSING: {where}'s override replaced a {was!r} date, which the Said line cannot name")
+        return {"card": (f"{d} (sourced; the {REPLACED_DATE[was]} is {old})" if old
+                         else f"{d} (sourced; the source carries no date of its own)"),
+                "also": f"on {d}"}
+    if basis in SAID_BOUND:
+        return {"card": f"on or before {d} ({SAID_BOUND[basis]})", "also": f"on or before {d}"}
+    raise SystemExit(f"REFUSING: {where} has statement_date_basis {basis!r}, and the Said line has no label for it")
+
+
+def _one_space(s: str) -> str:
+    return " ".join(s.split())
+
+
+def recording_words(rec: dict, words: "str | None") -> "str | None":
+    """`words` as a reader should see them when they are words of the recording
+    around the quote, else None.
+
+    `horizon_evidence` is written by the extractor. Usually it copies the words
+    the horizon rests on, but sometimes it is the extractor's own note. MEASURED
+    2026-09-29 on the 7 live records that show it: 4 are verbatim words of the
+    context window; 2 are notes ("The interviewer asks: ... Three years is an
+    approximate interpretation"); 1 reads like a quote but is not in the window,
+    so nothing here can check it. A card must never show a note as something that
+    was said, so only a verbatim span of the context window or the quote passes
+    (review 0 item 6 of the round-4 page change)."""
+    if not words:
+        return None
+    s = rec["source"]
+    heard = _one_space(" ".join(shown_text(rec, x) or "" for x in (s["context_before"], s["quote_original"],
+                                                                   s["context_after"])))
+    shown = shown_text(rec, words)
+    return shown if _one_space(shown) in heard else None
+
+
+def target_line(rec: dict) -> str:
+    """The card's "Target": the date with the speaker's words for it, else the words
+    alone, else the extractor's inferred horizon and the recording's words it rests
+    on. "none stated" only when the record holds none of these."""
+    p = rec["prediction"]
+    yrs, text = p["horizon_years_inferred"], p["target_date_text"]
+    inferred = f"about {yrs:g} years, inferred" if yrs is not None else None
+    if p["target_date"] or text:
+        t = (p["target_date"] + (f" — “{text}”" if text else "")) if p["target_date"] else f"“{text}”"
+        return t + (f" · {inferred}" if inferred else "")
+    if inferred:
+        heard = recording_words(rec, p["horizon_evidence"])
+        return f"{inferred} from: “{heard}”" if heard else inferred
+    return "none stated"
+
+
 def trim(rec: dict) -> dict:
     """What the page needs and nothing else. Dropped: char offsets, status, accepted, telemetry, per-gate verifier booleans, harness/run internals."""
     s, p, c, x, v = rec["source"], rec["prediction"], rec["confidence"], rec["extraction"], rec["verification"]
     return {
         "prediction_id": rec["prediction_id"], "transcript_id": rec["transcript_id"],
         "statement_date": s["statement_date"], "statement_date_basis": s["statement_date_basis"],
-        "quote": s["quote_original"], "timestamp_mark": s["timestamp_mark"], "t": ts_seconds(s["timestamp_mark"]),
-        "context_before": s["context_before"], "context_after": s["context_after"],
+        "said": said_label(s, f"{rec['leader_slug']}'s prediction {rec['prediction_id']}"),
+        "quote": shown_text(rec, s["quote_original"]), "timestamp_mark": s["timestamp_mark"], "t": ts_seconds(s["timestamp_mark"]),
+        "context_before": shown_text(rec, s["context_before"]), "context_after": shown_text(rec, s["context_after"]),
         "claim": p["normalized_claim"], "category": p["category"], "prediction_type": p["prediction_type"],
         "target_date": p["target_date"], "target_date_text": p["target_date_text"], "horizon": p["horizon"],
-        "horizon_years_inferred": p["horizon_years_inferred"], "resolution_criteria": p["resolution_criteria"],
+        "horizon_years_inferred": p["horizon_years_inferred"], "target": target_line(rec),
+        "resolution_criteria": p["resolution_criteria"],
         "specificity": p["specificity"], "subject_control": p["subject_control"],
-        "confidence_type": c["type"], "probability": c["probability"], "confidence_language": c["verbatim_confidence_language"],
+        "confidence_type": c["type"], "probability": c["probability"],
+        "confidence_language": shown_text(rec, c["verbatim_confidence_language"]),
         "extractor": model_label(x["served_model"] or x["requested_model"]),
         "verifier": model_label(v["served_model"] or v["requested_model"]),
         "verifier_criteria": v["verifier_resolution_criteria"],
@@ -1311,10 +1429,14 @@ def listed_corpus(scores_doc: dict, listed: set[str]) -> dict:
         raise SystemExit("REFUSING: scores.json's per-person figures do not add up to its corpus block "
                          + ", ".join(f"{k}: people sum to {a}, corpus says {b}" for k, (a, b) in bad.items())
                          + "; re-run score_predictions.py")
+    split = unresolvable_split(scores_doc, listed)
     mine = [l for l in L if l["slug"] in listed]
     reasons = _by_reason(unres_rows, listed)
     restated = sum(l.get("restated", 0) for l in mine)
     return {
+        # The resolver's "cannot be resolved" answers split by eligibility; the
+        # eligible half is the Predictions column's Couldn't check.
+        "unresolvable_split": split,
         # A restated statement is the same prediction as the one it repeats, so the
         # prose counts each past-due prediction once and names the restatements apart.
         "past_due": sum(l["past_due"] for l in mine) - restated,
@@ -1325,6 +1447,42 @@ def listed_corpus(scores_doc: dict, listed: set[str]) -> dict:
         "by_outcome": {"unresolvable": sum(l["unresolvable"] for l in mine)},
         "unresolvable_reasons": dict(reasons),
     }
+
+
+def unresolvable_split(scores_doc: dict, listed: set[str]) -> dict:
+    """The rows the resolver answered "unresolvable" for the listed people, split
+    into `eligible` and `not_eligible`, each with its `n` and `reasons`.
+
+    Eligibility is checked first, so an ineligible row the resolver answered
+    anyway is Not testable on the page and only the eligible half is Couldn't
+    check. MEASURED 2026-09-29 on production: 118 answers, 25 of them on records
+    that were not testable, so a figure that counted both disagreed with the
+    Predictions panel (review 1 item 3 of the round-4 page change). The split is
+    read from each row's own eligibility flag, which every scores.json carries.
+    The scorer also writes it for the whole corpus, as
+    `corpus.unresolvable_by_eligibility`, since 2026-09-29; when that block is
+    present the rows must reproduce it exactly, or the file is refused."""
+    count = {k: collections.Counter() for k in ("eligible", "not_eligible")}
+    for row in scores_doc.get("predictions", []):
+        if row.get("outcome") != "unresolvable":
+            continue
+        ok = (row.get("flags") or {}).get("eligible")
+        if not isinstance(ok, bool):
+            raise SystemExit(f"REFUSING: {row['prediction_id']} was answered unresolvable, but its scores.json row "
+                             "carries no eligibility flag, so the page cannot say which count it is in")
+        count["eligible" if ok else "not_eligible"][(row["leader_slug"], row["unresolvable_reason"])] += 1
+
+    def half(c: collections.Counter, slugs: "set[str] | None") -> dict:
+        reasons = _by_reason(c, slugs)
+        return {"n": sum(reasons.values()), "reasons": reasons}
+
+    block = scores_doc["corpus"].get("unresolvable_by_eligibility")
+    if block is not None:
+        rows_say = {k: half(c, None) for k, c in count.items()}
+        if block != rows_say:
+            raise SystemExit(f"REFUSING: scores.json's corpus.unresolvable_by_eligibility is {block}, but its rows "
+                             f"give {rows_say}; re-run score_predictions.py")
+    return {k: half(c, listed) for k, c in count.items()}
 
 
 def _by_reason(unres_rows: collections.Counter, slugs: "set[str] | None") -> dict:
@@ -1381,12 +1539,30 @@ def stage_models(scores_doc: dict, scores_path: str) -> dict:
     stale = (scores_doc.get("date_overrides") or {}).get("stale_sidecars_dropped", [])
     stale_drop = {st: {(_run_path(x["run"], scores_path), x["prediction_id"]) for x in stale if x["stage"] == st}
                   for st in ("prior", "resolve")}
-    priors = SP.load_across(dirs, lambda d: R.load_sidecars(d, "prior"), drop=stale_drop["prior"])
+    # Sidecars a replacement manifest replaced were left out by the scorer, which
+    # read the replacement instead; the page reads the same one. load_across checks
+    # that each replaced sidecar exists and that the replacement is the one read,
+    # so a manifest never makes the page refuse on "sidecars in two runs".
+    swap = {"prior": {}, "resolve": {}}
+    if "replacements" in scores_doc:
+        reps = scores_doc["replacements"].get("replaced_sidecars")
+        if not isinstance(reps, list):
+            raise SystemExit(f"REFUSING: {scores_path} has a replacements block with no replaced_sidecars list; "
+                             "re-run score_predictions.py")
+        for x in reps:
+            if x["stage"] not in swap:
+                raise SystemExit(f"REFUSING: {scores_path} replaces the {x['stage']!r} sidecar of "
+                                 f"{x['prediction_id']}; the page reads only {sorted(swap)}")
+            swap[x["stage"]][(_run_path(x["run"], scores_path), x["prediction_id"])] = \
+                _run_path(x["replacement"], scores_path)
+    priors = SP.load_across(dirs, lambda d: R.load_sidecars(d, "prior"), drop=stale_drop["prior"],
+                            replace=swap["prior"])
     # The resolutions a restatement manifest superseded were left out by the scorer,
     # and are left out here the same way; each must still be on disk.
     drop = {(_run_path(x["run"], scores_path), x["prediction_id"])
             for x in (scores_doc.get("restatements") or {}).get("superseded_resolutions", [])}
-    resol = SP.load_across(dirs, lambda d: R.load_sidecars(d, "resolve"), drop=drop | stale_drop["resolve"])
+    resol = SP.load_across(dirs, lambda d: R.load_sidecars(d, "resolve"), drop=drop | stale_drop["resolve"],
+                           replace=swap["resolve"])
     prior_m, resolve_m, unverified = collections.Counter(), collections.Counter(), 0
     for row in scores_doc.get("predictions", []):
         if not row.get("scored"):
@@ -1505,75 +1681,432 @@ def restated_members(scores_doc: dict, by_slug: dict[str, list[dict]]) -> dict[s
     return out
 
 
-def prediction_buckets(by_slug: dict[str, list[dict]], scores_doc: dict) -> tuple[dict, int]:
-    """Per person, how many accepted predictions sit in each bucket at the scoring as-of.
+# ---------------------------------------------------------------------------
+# One state per record
+# ---------------------------------------------------------------------------
+#
+# FOUND 2026-09-29 (rescue round 4): the Predictions column and the card under it
+# answered "where does this prediction stand" separately, and disagreed. The
+# column read scores.json. The card read only whether an outcome was attached,
+# and printed "Not yet resolved" for every record without one. On the live data
+# that was 206 cards, 173 with no deadline and 33 under the lead floor, and no
+# stage will ever resolve any of them. record_state now decides once, here, and
+# the column counts what it decided and the card prints it.
 
-    A prediction scores.json carries was past due at its as-of, and its
-    `scored` / `not_scored_because` decide the bucket. One it does not carry was
-    not past due, and its deadline decides: none this pipeline can read is "No
-    deadline", after the as-of is "Not yet due". The deadline comes from
-    phase2_resolvability, the same code that chose the past-due set, never from a
-    second parser here.
+# Why a record is not eligible, and in which order a record failing several
+# clauses is named, is phase2_resolvability's (INELIGIBLE_REASONS, failing_clauses,
+# ineligible_reason, funnel_flags). The resolver, the scorer and the page all ask
+# it, so a card names the clause scores.json names. FOUND 2026-09-29 by both
+# reviews of the round-4 change: the page kept its own order, and a record vague
+# AND under the lead floor read `not_eligible:specificity` in scores.json and
+# "under the 60-day floor" on its card.
+#
+# Every reason the scorer writes for a past-due row it did not score, before and
+# after the funnel change that names the eligibility clause (design section 3.5).
+ROW_REASONS = ("no_resolution", "no_prior", "not_eligible")
+ROW_REASON_PREFIXES = ("unresolvable:", "not_eligible:")
+# The funnel flags a scores.json row must carry: every clause's, and whether its
+# window is a trend window. score_predictions.join copies them onto every row.
+ROW_FLAG_KEYS = P2.REASON_FLAGS + ("trend",)
 
-    Returns the buckets and how many predictions were past due at the as-of yet
-    absent from scores.json. Those are counted as "Awaiting check", which is what
-    they are: the corpus grew after the scoring run. The count is printed.
+
+def ineligible_reason(flags: dict, why: str, where: str) -> str:
+    """Which eligibility clause an ineligible row fails, read off its funnel flags.
+
+    Before the funnel change the scorer named `no_resolution`, `not_eligible` or
+    `unresolvable:<x>` for such a row; after it, `not_eligible:<clause>`. The card
+    must not depend on which, so it is decided by the flags, through
+    phase2_resolvability's one order. A named clause the flags do not fail, or one
+    the order does not name first, refuses the render rather than being believed."""
+    named = why.split(":", 1)[1] if why.startswith("not_eligible:") else None
+    if named is not None and named not in P2.INELIGIBLE_REASONS:
+        raise SystemExit(f"REFUSING: {where} is {why!r} in scores.json, a clause the page does not know")
+    failing = P2.failing_clauses(flags, where)
+    if not failing:
+        raise SystemExit(f"REFUSING: {where} is not eligible, but none of its flags fails a clause: {flags}")
+    if named is not None and named not in failing:
+        raise SystemExit(f"REFUSING: scores.json says {where} is {why}, but its flags fail only "
+                         f"{', '.join(failing)}; the two halves of the file disagree")
+    first = P2.ineligible_reason(where, flags)
+    if named is not None and named != first:
+        raise SystemExit(f"REFUSING: scores.json names {where} {why}, but phase2_resolvability's order names "
+                         f"{first} first of {', '.join(failing)}; the file was written under another order, so "
+                         f"re-run score_predictions.py")
+    return first
+
+
+def trend_rule(scores_doc: dict) -> dict:
+    """{"enabled", "min_years"}: whether the scorer judges an undated directional
+    claim as a trend over the time since it was said, and how old it must be first.
+
+    Read from scores.json, never assumed (review 0 item 3 of the round-4 page
+    change): a card that says "never checked" about a claim the scorer will judge
+    is false. score_predictions writes `rule.trend` since 2026-09-29. A file
+    written before then records only `settings.trend`, the flag its scorer ran
+    with, and that scorer's minimum was phase2_resolvability.MIN_TREND_YEARS, which
+    no flag could change. A file stating neither is refused."""
+    rule, setting = scores_doc["rule"].get("trend"), (scores_doc.get("settings") or {}).get("trend")
+    if rule is None and setting is None:
+        raise SystemExit("REFUSING: scores.json states no trend rule, neither rule.trend nor settings.trend, so "
+                         "the page cannot say whether a directional claim with no date will be judged; "
+                         "re-run score_predictions.py")
+    if rule is not None:
+        if (not isinstance(rule, dict) or set(rule) != {"enabled", "min_years"}
+                or not isinstance(rule["enabled"], bool) or not isinstance(rule["min_years"], (int, float))):
+            raise SystemExit(f"REFUSING: scores.json's rule.trend is {rule!r}; score_predictions.py writes "
+                             "{\"enabled\": <bool>, \"min_years\": <number>}")
+        if setting is not None and setting != rule["enabled"]:
+            raise SystemExit(f"REFUSING: scores.json's rule.trend says enabled {rule['enabled']} but settings.trend "
+                             f"says {setting}; the two halves of the file disagree")
+        return dict(rule)
+    if not isinstance(setting, bool):
+        raise SystemExit(f"REFUSING: scores.json's settings.trend is {setting!r}, not true or false")
+    return {"enabled": setting, "min_years": P2.MIN_TREND_YEARS}
+
+
+def trend_start(rec: dict, min_years: float) -> "date | None":
+    """The first as-of at which the scorer's trend rule gives this record a window,
+    or None when it never will (no statement date, no direction to test, or a
+    horizon the trend rule does not read).
+
+    Asked of phase2_resolvability.attach_deadlines itself, so the page never
+    restates the rule: the date is computed, then checked to be exactly the first
+    day the rule accepts. A date that fails that check refuses the render."""
+    said = P2.iso(rec["source"]["statement_date"])
+    if said is None:
+        return None
+
+    def judged(cutoff: date) -> bool:
+        probe = [{k: v for k, v in rec.items() if not k.startswith("_")}]
+        P2.attach_deadlines(probe, derive=True, trend_cutoff=cutoff, min_trend_years=min_years)
+        return str(probe[0]["_basis"] or "").startswith("trend")
+
+    first = said + timedelta(days=math.ceil(min_years * 365.25))
+    if not judged(first):
+        # The elapsed-time test only gets easier later, so a claim not judged a year
+        # after the first date has no direction to test. One judged then is a sign
+        # that `first` is wrong, which is refused rather than printed.
+        if judged(first + timedelta(days=366)):
+            raise SystemExit(f"REFUSING: {rec['leader_slug']}'s prediction {rec['prediction_id']} is judged as a "
+                             f"trend after {first} but not on it; the page's date for the trend rule is wrong")
+        return None
+    if judged(first - timedelta(days=1)):
+        raise SystemExit(f"REFUSING: {rec['leader_slug']}'s prediction {rec['prediction_id']} is judged as a trend "
+                         f"before {first}; the page's date for the trend rule is wrong")
+    return first
+
+
+def _date_is_all_it_lacks(rec: dict) -> bool:
+    """True when the record's own horizon words would give a deadline if the recording had a date.
+
+    Asked of phase2_resolvability.derived_deadline itself with a stand-in date, so
+    the page never parses a horizon a second way. The stand-in is never shown."""
+    probe = {**rec, "source": {**rec["source"], "statement_date": "2000-01-01"}}
+    return P2.derived_deadline(probe)[0] is not None
+
+
+def _days(n: int) -> str:
+    return f"{n} day{'' if n == 1 else 's'}"
+
+
+def clause_words(why: str, st: dict, rec: dict) -> str:
+    """The eligibility clause a record fails, as a clause of a sentence."""
+    d, m, said = st["deadline"], st["min_lead"], rec["source"]["statement_date"]
+    if why == "lead_under_floor":
+        return f"said {_days(st['lead_days'])} before its own deadline, {d}, under the {m}-day floor"
+    if why == "deadline_before_statement":
+        return f"its deadline, {d}, is earlier than the date it is recorded as said, {said}"
+    if why == "undated":
+        return (f"the recording has no known date, so it cannot be shown to have been said at least {m} days "
+                f"before its {d} deadline")
+    if why == "specificity":
+        return (f"rated too vague to test (specificity {rec['prediction']['specificity']}); a scored prediction "
+                f"must be {P2.SPECIFICITY_LABEL}")
+    raise SystemExit(f"REFUSING: the page has no words for the eligibility clause {why!r}; "
+                     f"phase2_resolvability names {list(P2.INELIGIBLE_REASONS)}")
+
+
+# Why a Not testable record carries no price.
+UNFIT_PRICE = {"lead_under_floor": "Not priced: it is under the lead floor, so it is never scored.",
+               "deadline_before_statement": "Not priced: its deadline is before its statement date, so it is never scored.",
+               "undated": "Not priced: the recording has no known date, so it is never scored.",
+               "specificity": "Not priced: it is too vague to score."}
+
+
+def js_percent(p: float) -> str:
+    """p as the page's own pct() prints it: Math.round, which rounds halves up."""
+    return f"{math.floor(p * 100 + 0.5)}%"
+
+
+def state_words(st: dict, rec: dict, row: "dict | None", scored_page: bool) -> dict:
+    """The card's words for a state: the Outcome line, the note beside a verdict
+    that does not count, and, when there is no price, why. Plain text; the page
+    escapes it."""
+    s, why, d = st["state"], st["reason"], st["deadline"]
+    said = rec["source"]["statement_date"]
+    outcome = bool(row and row.get("outcome"))
+    trend = st["trend_years"] is not None
+    window = f"the {st['trend_years']} years from its statement date to {d}" if trend else None
+    past = f"Past its trend window, {window}" if trend else f"Past its {d} deadline"
+    line = note = price = None
+    if s == "unchecked":
+        line = f"Deadline {d}. Not checked: this page was built without a scoring run."
+    elif s == "not_due" and why is None:
+        line, price = f"Open until {d}. It is checked after that date.", "Not priced yet: a price is set when it is checked."
+    elif s == "not_due":
+        clause = clause_words(why, st, rec)
+        line, price = f"Open until {d}, but it will not be scored: {clause}.", f"Not priced: {clause}."
+    elif s == "no_deadline" and why == "undated":
+        p = rec["prediction"]
+        words = (f"“{p['target_date_text']}”" if p["target_date_text"]
+                 else f"its inferred horizon of about {p['horizon_years_inferred']:g} years")
+        line = f"Never checked: the recording has no known date, so no deadline can be computed from {words}."
+        price = "Not priced: it never entered the scoring funnel, because the recording has no known date."
+    elif s == "no_deadline" and why == "trend_later":
+        line = f"Not checked yet: as a directional claim it is judged as a trend from {st['trend_from']}."
+        price = f"Not priced yet: it is priced when it is judged as a trend, from {st['trend_from']}."
+    elif s == "no_deadline":
+        line = "Never checked: it names no date this pipeline can read."
+        price = "Not priced: it never entered the scoring funnel, because it has no deadline."
+    elif s == "awaiting" and why == "not_priced":
+        line = f"{past}; checked, but not priced yet, so it is not scored yet."
+        note, price = "not scored until it is priced", "Not priced yet."
+    elif s == "awaiting":
+        line, price = f"{past}; not checked yet.", "Not priced yet: a price is set when it is checked."
+    elif s == "scored":
+        line = f"Judged as a trend over {window}; checked and scored." if trend else f"{past}; checked and scored."
+    elif s == "unresolvable":
+        line = f"{past}; checked, but it could not be settled, so it is not scored."
+        # The price is set without knowing the outcome, so "it could not be settled"
+        # is no reason for there being none; it is why a price would not count.
+        price = "Not priced, and a price would not score it: nothing public settles it."
+    elif s == "not_testable":
+        line, price = f"Not scored: {clause_words(why, st, rec)}.", UNFIT_PRICE[why]
+        note = "checked anyway; it does not count toward the score" if outcome else None
+    elif s != "restated":
+        raise SystemExit(f"REFUSING: the page has no words for state {s!r}")
+    p_row = (row or {}).get("p")
+    if p_row is not None and outcome:
+        # The card prints this record's price from its verdict (outcome.p), so any
+        # words set above for an unpriced record would contradict it in the
+        # published record file.
+        price = None
+    elif p_row is not None and s != "restated":
+        # A price the card shows beside its verdict needs no reason. One on a record
+        # with no verdict to sit beside says, in the same line, why it is not scored.
+        at = js_percent(p_row) + (f" as of {said}" if said else " (the recording has no known date)")
+        if s == "awaiting":
+            price = f"Priced at {at}, but not checked yet, so it is not scored yet."
+        elif s == "not_testable":
+            price = f"Priced at {at}, but not scored: {clause_words(why, st, rec)}."
+        else:
+            raise SystemExit(f"REFUSING: {rec['leader_slug']}'s prediction {rec['prediction_id']} is priced with no "
+                             f"outcome in state {s!r}, and the page has no words for why it is not scored")
+    return {"line": line, "verdict_note": note, "price": price if scored_page else None}
+
+
+def record_state(rec: dict, row: "dict | None", as_of: "date | None", min_lead: "int | None",
+                 restated_to: "str | None" = None, trend: "dict | None" = None) -> dict:
+    """Where one accepted prediction stands, decided once, with the card's words for it.
+
+    `rec` carries `_deadline` and `_why_none` from phase2_resolvability.attach_deadlines,
+    the code that chose the past-due set, run with the scorer's trend rule. `row` is
+    its scores.json row, or None when the scorer did not carry it. `as_of` is the
+    scoring run's as-of date, or None when the page is built without a scores file,
+    and `trend` is the scores file's trend_rule(). The state is one of the
+    Predictions column's bucket keys, or `unchecked` on a page with no scoring run.
+
+    A record with no row takes its eligibility from phase2_resolvability.funnel_flags,
+    as the resolver and the scorer do (review 0 items 1 and 2 of the round-4 page
+    change): one not yet due that will never be scored says so, and one past due
+    after the scoring run is Not testable when it fails a clause, never Awaiting.
     """
-    as_of = date.fromisoformat(scores_doc["as_of"])
-    rows = {r["prediction_id"]: r for r in scores_doc.get("predictions", [])}
-    page = {r["prediction_id"]: slug for slug, recs in by_slug.items() for r in recs}
+    pid, slug = rec["prediction_id"], rec["leader_slug"]
+    where = f"{slug}'s prediction {pid}"
+    said = P2.iso(rec["source"]["statement_date"])
+    st = {"state": None, "reason": None, "deadline": None, "lead_days": None, "min_lead": min_lead,
+          "trend_years": None, "trend_from": None, "late": False}
+    if restated_to:
+        # Shown under its specific member and scored as that one, whether or not it
+        # was itself past due: one prediction, one line.
+        st.update(state="restated", reason=restated_to)
+    elif row is None:
+        d = rec["_deadline"]
+        if d is None:
+            undated = said is None and rec["_why_none"] == "no_statement_date" and _date_is_all_it_lacks(rec)
+            start = trend_start(rec, trend["min_years"]) if not undated and trend and trend["enabled"] else None
+            st.update(state="no_deadline", reason="undated" if undated else "trend_later" if start else "no_window",
+                      trend_from=start.isoformat() if start else None)
+        else:
+            st.update(deadline=d.isoformat(), lead_days=P2.lead_days(rec))
+            if str(rec["_basis"] or "").startswith("trend"):
+                st["trend_years"] = round((d - said).days / 365.25, 1)
+            if as_of is None:
+                st["state"] = "unchecked"
+            else:
+                unfit = P2.ineligible_reason(pid, P2.funnel_flags(rec, min_lead))
+                if d > as_of:
+                    st.update(state="not_due", reason=unfit)
+                else:
+                    # Past due at the as-of yet absent from scores.json: the corpus
+                    # grew after the scoring run. The funnel's own rule says whether
+                    # a check is coming.
+                    st.update(state="not_testable" if unfit else "awaiting", reason=unfit or "after_scoring",
+                              late=True)
+    else:
+        if row.get("leader_slug") != slug:
+            raise SystemExit(f"REFUSING: prediction {pid} is {slug}'s on the page "
+                             f"but {row.get('leader_slug')}'s in scores.json")
+        if not row.get("deadline"):
+            raise SystemExit(f"REFUSING: {where} is past due in scores.json, which records no deadline for it")
+        flags = row.get("flags")
+        if not isinstance(flags, dict):
+            # Read, never assumed (review 1 item 6): a row with no flags would read
+            # as dated, eligible and not a trend.
+            raise SystemExit(f"REFUSING: {where}'s scores.json row carries no funnel flags, so the page cannot say "
+                             "whether it is eligible; score_predictions.join copies them onto every row it writes, "
+                             "so re-run it")
+        missing = [k for k in ROW_FLAG_KEYS if k not in flags]
+        if missing:
+            raise SystemExit(f"REFUSING: {where}'s scores.json flags lack {missing}, so the page cannot say where "
+                             "it stands; re-run score_predictions.py")
+        if not isinstance(flags["eligible"], bool):
+            raise SystemExit(f"REFUSING: {where}'s scores.json eligibility flag is {flags['eligible']!r}, not true "
+                             "or false, so the page cannot say whether it is testable")
+        st.update(deadline=row["deadline"], lead_days=flags["lead_days"])
+        if flags["trend"]:
+            if not said:
+                raise SystemExit(f"REFUSING: {where} is a trend record in scores.json but has no statement date, "
+                                 "which a trend window is counted from")
+            st["trend_years"] = round((date.fromisoformat(row["deadline"]) - said).days / 365.25, 1)
+        why = row.get("not_scored_because")
+        if row.get("scored"):
+            if not flags["eligible"]:
+                raise SystemExit(f"REFUSING: {where} is scored in scores.json, but its flags say it is not "
+                                 "eligible; the two halves of the file disagree")
+            st["state"] = "scored"
+        elif not isinstance(why, str) or not (why in ROW_REASONS or why.startswith(ROW_REASON_PREFIXES)):
+            raise SystemExit(f"REFUSING: {where} is not scored because {why!r}, and the Predictions column "
+                             f"has no bucket for that")
+        elif not flags["eligible"]:
+            st.update(state="not_testable", reason=ineligible_reason(flags, why, where))
+        elif why.startswith("not_eligible"):
+            raise SystemExit(f"REFUSING: {where} is {why!r} in scores.json, but its flags say it is eligible; "
+                             f"the two halves of the file disagree")
+        elif why in ("no_resolution", "no_prior"):
+            st.update(state="awaiting", reason="not_checked" if why == "no_resolution" else "not_priced")
+        else:
+            st.update(state="unresolvable", reason=why.split(":", 1)[1])
+    return {**st, **state_words(st, rec, row, scored_page=as_of is not None)}
+
+
+def record_states(by_slug: dict[str, list[dict]], scores_doc: "dict | None") -> tuple[dict[str, dict], collections.Counter]:
+    """Every accepted record's state at the scoring as-of, keyed by prediction_id.
+
+    A prediction scores.json carries was past due at its as-of, and its row
+    decides. One it does not carry was not, and its deadline decides. The
+    deadline comes from phase2_resolvability, the same code that chose the
+    past-due set, run with the scorer's own trend rule, never from a second parser
+    here.
+
+    Returns the states and, by state, the predictions that were past due at the
+    as-of yet absent from scores.json, which are printed.
+    """
+    as_of = date.fromisoformat(scores_doc["as_of"]) if scores_doc else None
+    min_lead = scores_doc["rule"]["min_lead_days"] if scores_doc else None
+    trend = trend_rule(scores_doc) if scores_doc else None
+    rows = {r["prediction_id"]: r for r in (scores_doc or {}).get("predictions", [])}
+    page = {r["prediction_id"] for recs in by_slug.values() for r in recs}
     stray = [(r.get("leader_slug"), pid) for pid, r in rows.items() if pid not in page]
     if stray:
         raise SystemExit(f"REFUSING: scores.json carries {len(stray)} prediction(s) that are no record on "
                          f"this page, e.g. {stray[:3]}, so a person's buckets would not describe their "
                          "drawer; score only the corpus being rendered")
-    restated = restated_members(scores_doc, by_slug)
-    out, late = {}, 0
-    for slug, recs in by_slug.items():
+    restated = restated_members(scores_doc, by_slug) if scores_doc else {}
+    out, late = {}, collections.Counter()
+    for recs in by_slug.values():
         copies = [dict(r) for r in recs]
-        P2.attach_deadlines(copies, derive=True)
-        b, unres = collections.Counter(), collections.Counter()
+        if trend and trend["enabled"]:
+            P2.attach_deadlines(copies, derive=True, trend_cutoff=as_of, min_trend_years=trend["min_years"])
+        else:
+            P2.attach_deadlines(copies, derive=True)
         for r in copies:
-            row = rows.get(r["prediction_id"])
-            if r["prediction_id"] in restated:
-                # Shown under its specific member and scored as that one, whether or
-                # not it was itself past due: one prediction, one line.
-                b["restated"] += 1
-            elif row is not None:
-                why = row.get("not_scored_because")
-                if row.get("leader_slug") != slug:
-                    raise SystemExit(f"REFUSING: prediction {r['prediction_id']} is {slug}'s on the page "
-                                     f"but {row.get('leader_slug')}'s in scores.json")
-                if row["scored"]:
-                    b["scored"] += 1
-                elif why in ("no_resolution", "no_prior"):
-                    # The scorer names a missing resolution before it checks
-                    # eligibility, so an unresolved row may be one that is never
-                    # resolved (lead under the floor): that is Not testable, not
-                    # Awaiting check. The flag is read, never assumed.
-                    elig = (row.get("flags") or {}).get("eligible")
-                    if not isinstance(elig, bool):
-                        raise SystemExit(f"REFUSING: {slug}'s prediction {r['prediction_id']} is unresolved and "
-                                         f"scores.json carries no eligibility flag for it, so the page cannot "
-                                         f"say whether it is awaiting a check or not testable")
-                    b["awaiting" if elig else "not_testable"] += 1
-                elif why == "not_eligible":
-                    b["not_testable"] += 1
-                elif isinstance(why, str) and why.startswith("unresolvable:"):
-                    b["unresolvable"] += 1
-                    unres[why.split(":", 1)[1]] += 1
-                else:
-                    raise SystemExit(f"REFUSING: {slug}'s prediction {r['prediction_id']} is not scored "
-                                     f"because {why!r}, and the Predictions column has no bucket for that")
-            elif r["_deadline"] is None:
-                b["no_deadline"] += 1
-            elif r["_deadline"] > as_of:
-                b["not_due"] += 1
-            else:
-                b["awaiting"] += 1
-                late += 1
-        out[slug] = {"buckets": {k: b[k] for k, _ in BUCKETS if b[k]}, "unres": dict(unres)}
+            st = record_state(r, rows.get(r["prediction_id"]), as_of, min_lead, restated.get(r["prediction_id"]),
+                              trend)
+            out[r["prediction_id"]] = st
+            if st["late"]:
+                late[st["state"]] += 1
     return out, late
+
+
+def prediction_buckets(by_slug: dict[str, list[dict]], states: dict[str, dict]) -> dict:
+    """Per person, how many accepted predictions sit in each bucket: a count of
+    their records' states, so the column and the cards cannot disagree."""
+    keys = dict(BUCKETS)
+    out = {}
+    for slug, recs in by_slug.items():
+        b, unres = collections.Counter(), collections.Counter()
+        for r in recs:
+            st = states[r["prediction_id"]]
+            if st["state"] not in keys:
+                raise SystemExit(f"REFUSING: {slug}'s prediction {r['prediction_id']} is {st['state']!r}, "
+                                 "which the Predictions column has no bucket for")
+            b[st["state"]] += 1
+            if st["state"] == "unresolvable":
+                unres[st["reason"]] += 1
+        out[slug] = {"buckets": {k: b[k] for k, _ in BUCKETS if b[k]}, "unres": dict(unres)}
+    return out
+
+
+# What the page embeds of a state: the card reads these, and nothing else of it.
+STATE_KEYS = ("state", "reason", "deadline", "lead_days", "min_lead", "line", "verdict_note", "price")
+
+
+def page_record(rec: dict, st: dict) -> dict:
+    """One record as the drawer receives it: its trimmed fields and its state."""
+    out = trim(rec)
+    out["state"] = {k: st[k] for k in STATE_KEYS}
+    if st["state"] == "restated":
+        out["restated_by"] = st["reason"]
+    return out
+
+
+# A decodable HTML character reference. The semicolon is required, so "AT&T" and
+# "R&D" never match, and html.unescape must actually change it, so "&T;" does not.
+ENTITY = re.compile(r"&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
+
+
+def check_no_entities(pred: dict, src: dict, rows: list[dict]) -> None:
+    """Refuse the build when any page-visible text still holds an HTML entity.
+
+    The page escapes "&" before it prints anything, so an entity in the data is
+    printed as itself, "it&#39;s", under a person's name as their words. It is
+    checked here, in the style of MAX_PAGE_BYTES, over every string the page or
+    its record files carry, so a new source that stores escaped text is caught at
+    render rather than by a reader."""
+    hits: list[str] = []
+
+    def walk(o, where: str) -> None:
+        if isinstance(o, str):
+            found = [m.group(0) for m in ENTITY.finditer(o) if html.unescape(m.group(0)) != m.group(0)]
+            if found:
+                hits.append(f"{where} holds {found[0]}")
+        elif isinstance(o, dict):
+            for k, v in o.items():
+                walk(v, f"{where}.{k}")
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                walk(v, f"{where}[{i}]")
+
+    for slug, recs in pred.items():
+        for r in recs:
+            walk(r, f"{slug} {r['prediction_id']}")
+    walk(src, "SRC")
+    walk(rows, "DATA")
+    if hits:
+        raise SystemExit(f"REFUSING: {len(hits)} page-visible text field(s) hold an HTML entity, which the page "
+                         f"would print literally: {'; '.join(hits[:5])}. Decode it at its source, or in "
+                         f"shown_text if the source serves escaped text.")
 
 
 def check_buckets_sum(rows: list[dict]) -> None:
@@ -1585,12 +2118,29 @@ def check_buckets_sum(rows: list[dict]) -> None:
                          + "; ".join(bad))
 
 
-def accepted_info(c: dict, as_of: str, min_lead_days: int) -> str:
-    """The Predictions column's (?) panel once there is a scoring run to date it by."""
-    u = c.get("unresolvable_reasons") or {}
+def accepted_info(u: dict, as_of: str, min_lead_days: int, open_unfit: int = 0,
+                  trend_later: "tuple[int, float] | None" = None) -> str:
+    """The Predictions column's (?) panel once there is a scoring run to date it by.
+
+    `u` is the Couldn't-check split over the listed people, summed from the same
+    buckets the column shows. The scorer's corpus-wide split also counts records
+    that were checked but are not testable, which the column files under Not testable.
+    `open_unfit` counts the listed people's records not yet due that fail an
+    eligibility clause, and `trend_later` their directional claims with no date
+    that the trend rule judges later, with its minimum years; both are counted
+    from the records' own states."""
     split = ", ".join(f"{n} {UNRES_SHORT.get(k, k.replace('_', ' '))}"
-                      for k, n in sorted(u.items(), key=lambda kv: -kv[1]))
+                      for k, n in sorted(u.items(), key=lambda kv: (-kv[1], kv[0])))
     lab = dict(BUCKETS)
+    unfit = (f" {open_unfit} such prediction{' ' if open_unfit == 1 else 's '}will not be scored when "
+             f"{'it falls' if open_unfit == 1 else 'they fall'} due, for a reason listed under "
+             f"{lab['not_testable']} below; the card says which." if open_unfit else "")
+    later = ""
+    if trend_later and trend_later[0]:
+        k, yrs = trend_later
+        later = (f" {k} such prediction{' is a directional claim' if k == 1 else 's are directional claims'}, "
+                 f"which {'is' if k == 1 else 'are'} judged as a trend once {yrs:g} years have passed since "
+                 f"{'it was' if k == 1 else 'they were'} said; the card gives the date.")
     return (
         "<p><b>Predictions.</b> The total is how many forward-looking claims the pipeline accepted "
         "from this person: the extractor proposed each one and an independent verifier agreed. It is "
@@ -1598,12 +2148,14 @@ def accepted_info(c: dict, as_of: str, min_lead_days: int) -> str:
         f"<p>The lines under it say where each prediction stood as of {as_of}, the date of the last "
         "scoring run. They always add up to the total, and a line at zero is left out.</p>"
         f"<p><b>{lab['scored']}</b>: past due, checked against a cited source, and given points. "
-        f"<b>{lab['not_due']}</b>: its deadline is after {as_of}. "
-        f"<b>{lab['no_deadline']}</b>: it names no date this pipeline can read, so it never falls due. "
+        f"<b>{lab['not_due']}</b>: its deadline is after {as_of}.{unfit} "
+        f"<b>{lab['no_deadline']}</b>: it names no date this pipeline can read, or the recording has no "
+        f"known date to count from, so it has no deadline to fall due on.{later} "
         f"<b>{lab['awaiting']}</b>: past due, but not checked yet. "
         f"<b>{lab['not_testable']}</b>: past due, but too vague, said less than {min_lead_days} days "
-        "before its own deadline, or with a deadline before the day it was said. "
-        f"<b>{lab['unresolvable']}</b>: past due and looked at, but nothing public settles it"
+        "before its own deadline, from a recording with no known date, or with a deadline before the day "
+        "it was said. Some were checked anyway; the card says what happened, and it does not count. "
+        f"<b>{lab['unresolvable']}</b>: past due, testable and looked at, but nothing public settles it"
         + (f" (for the people listed: {split})" if split else "")
         + ". Hover that line for one person's split. "
         f"<b>{lab['restated']}</b>: the same prediction said again on another day. It is shown once, "
@@ -1774,11 +2326,25 @@ def score_legend(c: dict) -> str:
 
 
 def score_info(c: dict, rule: dict) -> str:
-    """The "?" panel. Every number in it comes from scores.json, never typed here."""
-    u = c.get("unresolvable_reasons") or {}
+    """The "?" panel. Every number in it comes from scores.json, never typed here.
+
+    The resolver's "cannot be resolved" count is the eligible half of
+    unresolvable_split, which is the Predictions panel's Couldn't check, and the
+    answers it gave on records that were not testable anyway are named apart, so
+    the two panels never print two counts under one label."""
+    ok, unfit = c["unresolvable_split"]["eligible"], c["unresolvable_split"]["not_eligible"]
     top = ", ".join(f"{k.replace('_', ' ')} ({v})"
-                    for k, v in sorted(u.items(), key=lambda kv: -kv[1])[:3])
-    unres = c["by_outcome"].get("unresolvable", 0)
+                    for k, v in sorted(ok["reasons"].items(), key=lambda kv: (-kv[1], kv[0]))[:3])
+    lab = dict(BUCKETS)
+    n, m = ok["n"], unfit["n"]
+    resolver = (
+        "One decides what happened and must cite a source for it; it can also answer that the claim cannot be "
+        f"resolved. For the people listed here it did so {n} time{'' if n == 1 else 's'} on "
+        f"{'a prediction' if n == 1 else 'predictions'} that could be tested"
+        f"{f' (most often {top})' if top else ''}, which the Predictions column counts as {lab['unresolvable']}"
+        + (f", and {m} more time{'' if m == 1 else 's'} on {'a prediction that was' if m == 1 else 'predictions that were'} "
+           f"not testable anyway, which it counts as {lab['not_testable']}" if m else "")
+        + ".")
     return (
         "score: `<p><b>Score is the mean points a person earned per resolved prediction.</b> Zero is "
         "the score of someone with no foresight at all, not the bottom of a range. A negative number "
@@ -1789,16 +2355,13 @@ def score_info(c: dict, rule: dict) -> str:
         "is small for a long shot and large for a near-certainty. The two are chosen so that the "
         "expected points are exactly zero at every p, which is why predicting lots of safe things "
         "cannot lift the number and spraying long shots cannot either.</p>"
-        "<p>Two separate passes produce each score, and neither sees the other. One decides what "
-        "happened and must cite a source for it; it can also answer that the claim cannot be "
-        f"resolved, and for the people listed here it did so {unres} time{'' if unres == 1 else 's'}"
-        f"{f' (most often {top})' if top else ''}. The other estimates p from the quote, the date and "
-        "the surrounding words, and is never told what happened.</p>"
+        f"<p>Two separate passes produce each score, and neither sees the other. {resolver} The other "
+        "estimates p from the quote, the date and the surrounding words, and is never told what happened.</p>"
         f"<p>{c['scored']} of {c['past_due']} past-due predictions carry a score. A prediction is left "
         "out when it could not be resolved, when it is too vague to test, or when it was said less "
-        f"than {rule['min_lead_days']} days before its own deadline, which makes it an announcement rather than a "
-        f"forecast. {c['leaders_ranked']} people have the {MIN_SCORED} resolved predictions a number "
-        "needs.</p>"
+        f"than {rule['min_lead_days']} days before its own deadline, which the pipeline treats as an "
+        "announcement; a few are real forecasts and are excluded by the same rule. "
+        f"{c['leaders_ranked']} people have the {MIN_SCORED} resolved predictions a number needs.</p>"
         + (f"<p>{c['restated']} more past-due statement{'s restate' if c['restated'] != 1 else ' restates'} "
            "a prediction already counted: the same claim, said again on another day. Each prediction is "
            "counted and scored once, as the earliest statement specific enough to settle it.</p>"
@@ -1834,7 +2397,9 @@ def attach_outcomes(pred: dict, scores_doc: dict | None) -> int:
     Only the fields a reader needs to check the number: the verdict, the reasoning,
     the cited sources, the probability it was priced at and the points it earned.
     The model telemetry, the run ids and the raw prompt hashes stay in the sidecar,
-    the same way the TRIM rule already keeps harness internals off the page.
+    the same way the TRIM rule already keeps harness internals off the page. Why a
+    record is not scored is its state, which record_state decided; the scorer's own
+    string for it is not embedded, because it changed form and the state did not.
     """
     if not scores_doc:
         return 0
@@ -1853,7 +2418,6 @@ def attach_outcomes(pred: dict, scores_doc: dict | None) -> int:
                 "p": row.get("p"),
                 "reference_class": row.get("reference_class"),
                 "points": row.get("points"),
-                "not_scored": None if row.get("scored") else row.get("not_scored_because"),
             }
             n += 1
     return n
@@ -1861,6 +2425,8 @@ def attach_outcomes(pred: dict, scores_doc: dict | None) -> int:
 
 def check_scores_are_renderable(scores_doc: dict, pred: dict) -> None:
     """Every SCORED prediction must be one the page can actually show.
+
+    `pred` is the page's records by person, raw or trimmed: only their ids are read.
 
     `scores.json` can be computed over several corpora, and the page embeds only
     the records under `--predictions`. Score a corpus the page does not carry and
@@ -2091,34 +2657,55 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{args.scores} scores {strays} who are not in index.json; "
                              f"the two inputs describe different corpora")
     scores = {l["slug"]: l for l in scores_doc["leaders"]} if scores_doc else {}
-    pred = {slug: [trim(r) for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
+    check_scores_are_renderable(scores_doc, by_slug)
+    # One state per record, decided here and nowhere else: the card prints it and the
+    # Predictions column counts it. A restated record carries restated_by, so the
+    # drawer shows it under its specific member, never as a card of its own.
+    states, late = record_states(by_slug, scores_doc)
+    pred = {slug: [page_record(r, states[r["prediction_id"]])
+                   for r in sorted(rs, key=lambda r: (r["source"]["statement_date"] or "", r["transcript_id"], L.record_sort_key(r)))]
             for slug, rs in sorted(by_slug.items())}
-    check_scores_are_renderable(scores_doc, pred)
-    # The drawer shows a restated record under its specific member, never as a card of its own.
-    for pid_, spec in (restated_members(scores_doc, by_slug) if scores_doc else {}).items():
-        for recs in pred.values():
-            for r in recs:
-                if r["prediction_id"] == pid_:
-                    r["restated_by"] = spec
-    buckets, late = prediction_buckets(by_slug, scores_doc) if scores_doc else (None, 0)
+    buckets = prediction_buckets(by_slug, states) if scores_doc else None
     rows = person_rows(index, roster, hist, scores,
                        scores_doc["rule"]["min_lead_days"] if scores_doc else None, buckets)
     check_buckets_sum(rows)
+    couldnt_check = collections.Counter()
+    for r in rows:
+        couldnt_check.update(r["unres"] or {})
     # Only the years the axis shows; a label for a trimmed early year would never be read.
     for r in rows:
         r["ysum"] = {y: ysum[r["slug"]][y] for y in r["years"]}
+    if scores_doc and "trend" not in scores_doc["rule"]:
+        tr = trend_rule(scores_doc)
+        print(f"NOTE: {args.scores} predates rule.trend, so the trend rule is its settings.trend "
+              f"({tr['enabled']}) with phase2_resolvability.MIN_TREND_YEARS ({tr['min_years']:g}), "
+              "the minimum its scorer used", file=sys.stderr)
     if late:
-        print(f"NOTE: {late} prediction(s) were past due on {scores_doc['as_of']} but are not in "
-              f"{args.scores}; the corpus grew after scoring, so they show as Awaiting check",
-              file=sys.stderr)
+        lab = dict(BUCKETS)
+        print(f"NOTE: {sum(late.values())} prediction(s) were past due on {scores_doc['as_of']} but are not in "
+              f"{args.scores}; the corpus grew after scoring, so they show as "
+              + ", ".join(f"{lab[k]} {n}" for k, n in sorted(late.items())), file=sys.stderr)
     omitted = omitted_people(index, scores)
     # Every score figure the page prints describes the people it LISTS. The
     # corpus-wide totals in the strip (predictions, transcripts) describe
     # everything the pipeline read, and the omitted note says so.
-    cl = listed_corpus(scores_doc, {r["slug"] for r in rows}) if scores_doc else None
+    listed = {r["slug"] for r in rows}
+    cl = listed_corpus(scores_doc, listed) if scores_doc else None
+    if cl is not None:
+        # The score panel's count of "cannot be resolved" is the Predictions panel's
+        # Couldn't check, from two readings of one file; they must agree.
+        ok = cl["unresolvable_split"]["eligible"]
+        if ok["n"] != sum(couldnt_check.values()) or ok["reasons"] != dict(couldnt_check):
+            raise SystemExit(f"REFUSING: for the people listed, scores.json's rows give {ok['n']} eligible "
+                             f"unresolvable answers {ok['reasons']}, but the Predictions column counts "
+                             f"{sum(couldnt_check.values())} Couldn't check {dict(couldnt_check)}")
+    open_states = [states[r["prediction_id"]] for slug in listed for r in by_slug.get(slug, [])]
+    open_unfit = sum(1 for s in open_states if s["state"] == "not_due" and s["reason"])
+    trend_later = sum(1 for s in open_states if s["state"] == "no_deadline" and s["reason"] == "trend_later")
     models = stage_models(scores_doc, args.scores) if scores_doc else None
     n_outcomes = attach_outcomes(pred, scores_doc)
     src = src_map(loaded["accepted"])
+    check_no_entities(pred, src, rows)
     c = index["corpus"]
     ex = " / ".join(model_label(m) for m in c["extractor_models"]) or "none yet"
     ve = " / ".join(model_label(m) for m in c["verifier_models"]) or "none yet"
@@ -2144,7 +2731,8 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__OMITTED__", omitted_note(omitted))
         .replace("__BUCKETS__", safe_json([list(b) for b in BUCKETS]))
         .replace("__UNRES_SHORT__", safe_json(UNRES_SHORT))
-        .replace("__ACCEPTED_INFO__", accepted_info(cl, scores_doc["as_of"], scores_doc["rule"]["min_lead_days"])
+        .replace("__ACCEPTED_INFO__", accepted_info(dict(couldnt_check), scores_doc["as_of"], scores_doc["rule"]["min_lead_days"],
+                                                    open_unfit, (trend_later, trend_rule(scores_doc)["min_years"]))
                  if scores_doc else ACCEPTED_INFO_EMPTY)
         .replace("__REPO_URL__", REPO_URL)
         .replace("__SITE_URL__", SITE_URL)
