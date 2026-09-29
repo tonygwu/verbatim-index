@@ -210,9 +210,24 @@ def main() -> int:
     check("UNIT: a word count resolves through the printed table, and a digit beats it",
           derive("in the next few years")[0] == dt.date(2022, 1, 1)
           and derive("in 2 years")[0] == dt.date(2021, 1, 1), str([derive("in the next few years"), derive("in 2 years")]))
-    check("UNIT: 'this year' anchors on the statement year, not a year from the statement",
+    # "Next year" is the whole following CALENDAR year, so it closes on 31 December,
+    # not on the anniversary (design 3.5, rescue round 4). "The next year" is a
+    # twelve-month span and keeps the anniversary: the extractor writes it that way
+    # in the corpus ("in the next year" said 2020-04-16 -> 2021-04-16).
+    check("UNIT: 'this year' and 'next year' anchor on calendar years, not a year from the statement",
           derive("by the end of the year")[0] == dt.date(2019, 12, 31)
-          and derive("sometime next year")[0] == dt.date(2020, 1, 1), str([derive("by the end of the year"), derive("sometime next year")]))
+          and derive("sometime next year") == (dt.date(2020, 12, 31), "the calendar year after the statement")
+          and derive("Next year")[0] == dt.date(2020, 12, 31),
+          str([derive("by the end of the year"), derive("sometime next year"), derive("Next year")]))
+    check("UNIT: design test S3, 'sometime next year' said 2025-09-12 closes 2026-12-31",
+          P.derived_deadline({"prediction": {"horizon_years_inferred": None, "target_date_text": "sometime next year"},
+                              "source": {"statement_date": "2025-09-12"}})[0] == dt.date(2026, 12, 31))
+    check("UNIT: 'the next year' is twelve months, so it keeps the anniversary",
+          derive("over the next year")[0] == dt.date(2020, 1, 1)
+          and derive("within the next year")[0] == dt.date(2020, 1, 1),
+          str([derive("over the next year"), derive("within the next year")]))
+    check("UNIT: an open-ended 'next year or more' is still refused, not closed on 31 December",
+          derive("over the next year or more") == (None, "open_ended"), str(derive("over the next year or more")))
     check("UNIT: text that names no closing date is refused with its reason, never guessed at",
           derive("in my lifetime") == (None, "open_ended")
           and derive("in the next five plus years") == (None, "open_ended")

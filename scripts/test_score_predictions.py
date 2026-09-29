@@ -8,6 +8,8 @@ What this pins, each of which would change a person's published score silently:
     dropped, so the four buckets always add up to the corpus;
   - the eligibility rule is the operator's: specific, six months of lead, a window
     that does not close before it opens;
+  - eligibility is checked FIRST, so an ineligible row reads
+    `not_eligible:<reason>` whether or not it was resolved, never `no_resolution`;
   - the published figure is a MEAN, so volume earns nothing;
   - a person below the rank floor keeps their number in the file and loses it on
     the page, which is how MIN_TRANSCRIPTS_TO_RANK already works;
@@ -38,13 +40,15 @@ def check(label, ok, detail=""):
         FAILED.append(label)
 
 
-def rec(pid, slug="ada", *, eligible=True, q=None, spec="high", lead=400):
+def rec(pid, slug="ada", *, eligible=True, q=None, spec="high", lead=400, before=False):
+    # The flags resolve_predictions.select() writes, every key of them, because the
+    # scorer names WHY a row is ineligible from these and refuses flags it cannot read.
     return {
         "prediction_id": pid, "leader_slug": slug, "transcript_id": f"{slug}/t1",
         "_deadline": dt.date(2020, 12, 31),
-        "_flags": {"basis": "stated", "deadline_before_statement": False,
-                   "specificity_high": spec == "high", "lead_days": lead,
-                   "lead_ok": lead >= 180, "eligible": eligible},
+        "_flags": {"basis": "stated", "deadline_before_statement": before,
+                   "specificity_high": spec == "high", "specificity_ok": spec in ("high", "medium"),
+                   "lead_days": lead, "lead_ok": lead is not None and lead >= 60, "eligible": eligible},
         "prediction": {"normalized_claim": "c", "resolution_criteria": "crit"},
         "source": {"quote": "q", "statement_date": "2019-06-25"},
         "confidence": {"probability": q},
@@ -63,7 +67,7 @@ def pri(pid, p):
 
 
 def main() -> int:
-    rows = [rec("a"), rec("b"), rec("c"), rec("d"), rec("e", eligible=False, spec="medium"),
+    rows = [rec("a"), rec("b"), rec("c"), rec("d"), rec("e", eligible=False, spec="low"),
             rec("f"), rec("g", q=0.75)]
     resolutions = {"a": res("a", "occurred"), "b": res("b", "not_occurred"),
                    "c": res("c", "unresolvable", "no_public_evidence"),
@@ -82,14 +86,48 @@ def main() -> int:
     check("DECLINE: unresolvable is EXCLUDED, not scored as a miss",
           not by["c"]["scored"] and by["c"]["not_scored_because"] == "unresolvable:no_public_evidence"
           and by["c"]["points"] is None, str(by["c"]["not_scored_because"]))
-    check("GATE: an ineligible prediction is resolved and still not scored, with the reason kept",
-          not by["e"]["scored"] and by["e"]["not_scored_because"] == "not_eligible"
+    check("GATE: an ineligible prediction is resolved and still not scored, with the reason named",
+          not by["e"]["scored"] and by["e"]["not_scored_because"] == "not_eligible:specificity"
           and by["e"]["outcome"] == "occurred", str(by["e"]["not_scored_because"]))
     check("MISSING: a prediction with no resolution is named, never dropped",
           not by["f"]["scored"] and by["f"]["not_scored_because"] == "no_resolution")
 
     check("BUCKETS: every past-due prediction lands in exactly one bucket, and they add up",
           sum(why.values()) == len(rows) == len(joined), f"{dict(why)} over {len(rows)}")
+
+    # ---- eligibility is checked FIRST (design 3.5, test S6) ----------------
+    # An ineligible record is never resolved, so naming it "no_resolution" read as
+    # "awaiting a check" and the page needed a workaround to call it not testable.
+    # The reason is the first funnel stage that drops it.
+    gate = [rec("lead", eligible=False, lead=30), rec("undated", eligible=False, lead=None),
+            rec("back", eligible=False, lead=-20, before=True), rec("low", eligible=False, spec="low", lead=None),
+            rec("unres", eligible=False, lead=30)]
+    gj, gwhy = S.join(gate, {"unres": res("unres", "unresolvable", "no_public_evidence")},
+                      {"unres": pri("unres", 0.5)})
+    gb = {r["prediction_id"]: r for r in gj}
+    want = {"lead": "not_eligible:lead_under_floor", "undated": "not_eligible:undated",
+            "back": "not_eligible:deadline_before_statement", "low": "not_eligible:specificity",
+            "unres": "not_eligible:lead_under_floor"}
+    for pid, reason in want.items():
+        check(f"S6: {pid} is not scored because {reason}",
+              gb[pid]["not_scored_because"] == reason and not gb[pid]["scored"], str(gb[pid]["not_scored_because"]))
+    check("S6: a resolved ineligible row keeps its outcome for audit, with the eligibility reason",
+          gb["unres"]["outcome"] == "unresolvable" and gb["unres"]["unresolvable_reason"] == "no_public_evidence")
+    check("S6: the reasons are counted apart, and still add up",
+          gwhy == {"not_eligible:lead_under_floor": 2, "not_eligible:undated": 1,
+                   "not_eligible:deadline_before_statement": 1, "not_eligible:specificity": 1}, str(dict(gwhy)))
+    for label, bad in (("flags marked ineligible that name no reason", rec("x", eligible=False)),
+                       ("flags missing a key the rule reads",
+                        dict(rec("y", eligible=False, lead=30), _flags={"eligible": False, "basis": "stated"}))):
+        try:
+            S.join([bad], {}, {})
+            got = "accepted"
+        except SystemExit as exc:
+            got = f"REFUSED {exc}"
+        except Exception as exc:  # noqa: BLE001 - a crash is not a named refusal
+            got = f"CRASH {type(exc).__name__}: {exc}"
+        check(f"S6: REFUSE {label}, naming the prediction",
+              got.startswith("REFUSED") and bad["prediction_id"] in got, got)
 
     check("Q: a speaker who stated their own probability is scored by the two-probability rule",
           by["g"]["rule"] == "speaker_probability" and by["g"]["q"] == 0.75
