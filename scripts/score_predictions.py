@@ -33,7 +33,7 @@ WHAT COUNTS TOWARD THE PUBLISHED FIGURE
 Everything else is loaded, counted and reported, never silently dropped.
 Eligibility is checked first, so an ineligible row reads
 `not_eligible:<deadline_before_statement|specificity|undated|lead_under_floor>`
-whether or not it was resolved (`resolve_predictions.ineligible_reason`). A
+whether or not it was resolved (`phase2_resolvability.ineligible_reason`). A
 person below `MIN_SCORED_TO_RANK` keeps their number in this file and does not
 get a published one, which is how `MIN_TRANSCRIPTS_TO_RANK` already works on the
 leaderboard.
@@ -71,7 +71,7 @@ import phase2_resolvability as P2  # noqa: E402
 import prediction_score as PS  # noqa: E402
 import resolution_lib as R  # noqa: E402
 import predictions_lib as L  # noqa: E402
-from resolve_predictions import date_overrides_for, ineligible_reason, select  # noqa: E402
+from resolve_predictions import date_overrides_for, select  # noqa: E402
 from data_clone_workflow import (  # noqa: E402
     load_scoring_config as load_config, scoring_rel as rel, score_inputs_sha256, scores_staleness,
 )
@@ -153,7 +153,9 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
         # never resolved, since the resolve stage skips it, so checking for a
         # resolution first named it "no_resolution" and it read as awaiting a check.
         # A resolved one keeps its outcome in the row for audit.
-        unfit = ineligible_reason(pid, r["_flags"])
+        # The one rule and order the resolver and the page also read
+        # (phase2_resolvability.INELIGIBLE_REASONS).
+        unfit = P2.ineligible_reason(pid, r["_flags"])
         if unfit is not None:
             row["not_scored_because"] = f"not_eligible:{unfit}"
         elif res is None:

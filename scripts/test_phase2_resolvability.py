@@ -244,6 +244,44 @@ def main() -> int:
     check("UNIT: the pipeline's own resolved horizon wins over the text",
           derive("in the next few years", years=1)[0] == dt.date(2020, 1, 1))
 
+    # ---- ONE order of ineligibility reasons (rescue round 4, both reviews) ----
+    # The scorer named a row that fails two clauses by one order and the page by
+    # another, so a vague undated row read `specificity` in scores.json and
+    # "undated" on its card. The order is now one constant here, and the scorer,
+    # the resolver and the page all read it. These fixtures fail TWO clauses each,
+    # because a record failing one clause cannot tell two orders apart.
+    order = getattr(P, "INELIGIBLE_REASONS", None)
+    check("ORDER: one named order, deadline_before_statement, specificity, undated, lead_under_floor",
+          order == ("deadline_before_statement", "specificity", "undated", "lead_under_floor"), str(order))
+    reason = getattr(P, "ineligible_reason", None)
+    failing = getattr(P, "failing_clauses", None)
+    ok_flags = {"eligible": False, "deadline_before_statement": False, "specificity_ok": True,
+                "lead_days": 400, "lead_ok": True}
+    two = {"specificity and lead_under_floor": (dict(ok_flags, specificity_ok=False, lead_days=30, lead_ok=False),
+                                                "specificity", ["specificity", "lead_under_floor"]),
+           "specificity and undated": (dict(ok_flags, specificity_ok=False, lead_days=None, lead_ok=False),
+                                       "specificity", ["specificity", "undated"]),
+           "deadline_before_statement and specificity": (
+               dict(ok_flags, deadline_before_statement=True, specificity_ok=False, lead_days=-10, lead_ok=False),
+               "deadline_before_statement", ["deadline_before_statement", "specificity", "lead_under_floor"])}
+    for label, (flags, want, every) in two.items():
+        got = reason("x", flags) if reason else "MISSING phase2_resolvability.ineligible_reason"
+        check(f"ORDER: a record failing {label} is named {want}", got == want, f"got {got!r}")
+        got = failing(flags) if failing else "MISSING phase2_resolvability.failing_clauses"
+        check(f"ORDER: failing_clauses lists every clause it fails, in the order ({label})",
+              got == every, f"got {got!r}")
+    check("ORDER: an eligible record has no reason, whatever else its flags say",
+          reason is not None and reason("x", dict(ok_flags, eligible=True, lead_days=None, lead_ok=False)) is None)
+    for label, flags in (("ineligible flags that fail no clause", dict(ok_flags)),
+                         ("flags missing a key the rule reads", {"eligible": False})):
+        try:
+            got = reason("x", flags) if reason else "MISSING"
+        except SystemExit as exc:
+            got = f"REFUSED {exc}"
+        except Exception as exc:  # noqa: BLE001 - a crash is not a named refusal
+            got = f"CRASH {type(exc).__name__}: {exc}"
+        check(f"ORDER: REFUSE {label}, naming the prediction", str(got).startswith("REFUSED") and "x" in got, got)
+
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0
 

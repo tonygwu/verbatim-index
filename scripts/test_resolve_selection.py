@@ -13,11 +13,14 @@ Design 3.5 and critique A1 of the rescue round-4 root-cause review
     with the reason, never skipped.
 
 Runs the real `resolve_predictions.main` in `--dry-run` on a fixture corpus, so
-no model is called, and the real `ineligible_reason` the scorer also uses.
+no model is called, and the real `phase2_resolvability.ineligible_reason`,
+which the resolver, the scorer and the page all read, so the three name one
+reason in one order (`phase2_resolvability.INELIGIBLE_REASONS`).
 """
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import io
 import json
 import pathlib
@@ -28,7 +31,9 @@ import tempfile
 ROOT = pathlib.Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
                                    capture_output=True, text=True, check=True).stdout.strip())
 sys.path.insert(0, str(ROOT / "scripts"))
+import phase2_resolvability as P2  # noqa: E402
 import resolve_predictions as RP  # noqa: E402
+import score_predictions as S  # noqa: E402
 
 FAILED = []
 
@@ -59,6 +64,7 @@ def corpus(tmp: pathlib.Path) -> pathlib.Path:
                 rec("lead", said="2020-12-01"),               # 30 days before its deadline
                 rec("low", spec="low"),                        # specificity below the floor
                 rec("back", said="2021-06-01"),                # deadline before the statement
+                rec("vague", said="2020-12-01", spec="low"),   # TWO clauses: too vague AND 30 days out
                 rec("nodate", said=None),                      # stated deadline, no statement date
                 rec("future", target="2099-12-31")],           # not past due at all
         "bob": [rec("b1", slug="bob")],
@@ -89,20 +95,11 @@ def main() -> int:
              "specificity": dict(base, specificity_ok=False, lead_days=30, lead_ok=False),
              "undated": dict(base, lead_days=None, lead_ok=False),
              "lead_under_floor": dict(base, lead_days=30, lead_ok=False)}
+    reason = getattr(P2, "ineligible_reason", lambda *a: "MISSING phase2_resolvability.ineligible_reason")
     for want, flags in cases.items():
-        got = getattr(RP, "ineligible_reason", lambda *a: "MISSING ineligible_reason")("x", flags)
+        got = reason("x", flags)
         check(f"{want}", got == want, f"got {got!r} from {flags}")
-    check("an eligible record has no reason",
-          getattr(RP, "ineligible_reason", lambda *a: "MISSING")("x", dict(base, eligible=True)) is None)
-    for label, flags in (("flags marked ineligible that name no reason", dict(base)),
-                         ("flags missing a key the rule reads", {"eligible": False})):
-        try:
-            got = RP.ineligible_reason("x", flags)
-        except SystemExit as exc:
-            got = f"REFUSED {exc}"
-        except Exception as exc:  # noqa: BLE001 - a crash is not a named refusal
-            got = f"CRASH {type(exc).__name__}: {exc}"
-        check(f"REFUSE: {label}, naming the prediction", got.startswith("REFUSED") and "x" in got, got)
+    check("an eligible record has no reason", reason("x", dict(base, eligible=True)) is None)
 
     with tempfile.TemporaryDirectory() as t:
         pred = corpus(pathlib.Path(t))
@@ -111,18 +108,18 @@ def main() -> int:
         rc, _, err = dry(pred)
         check("DEFAULT: 3 selected, all eligible (e1, e2, b1)",
               rc == 0 and "selected=3 (3 eligible)" in err, f"rc={rc} {err.strip()}")
-        check("DEFAULT: the ineligible ones are counted by reason, never dropped silently",
-              "left out 4 ineligible" in err and all(k in err for k in
-                                                     ("deadline_before_statement", "specificity",
-                                                      "undated", "lead_under_floor")), err.strip())
+        check("DEFAULT: the ineligible ones are counted by reason, never dropped silently, and the "
+              "two-clause record is named by the FIRST clause in the order, specificity",
+              'left out 5 ineligible, by reason {"deadline_before_statement": 1, "lead_under_floor": 1, '
+              '"specificity": 2, "undated": 1}' in err, err.strip())
         rc2, _, err2 = dry(pred, "--eligible-only")
         check("DEFAULT: --eligible-only still parses and means the default",
               rc2 == 0 and "selected=3 (3 eligible)" in err2, f"rc={rc2} {err2.strip()}")
 
         print("--include-ineligible opts out")
         rc, _, err = dry(pred, "--include-ineligible")
-        check("OPT OUT: every past-due record is selected, 7 of them, 3 eligible",
-              rc == 0 and "selected=7 (3 eligible)" in err and "left out" not in err, f"rc={rc} {err.strip()}")
+        check("OPT OUT: every past-due record is selected, 8 of them, 3 eligible",
+              rc == 0 and "selected=8 (3 eligible)" in err and "left out" not in err, f"rc={rc} {err.strip()}")
         rc, _, err = dry(pred, "--include-ineligible", "--eligible-only")
         check("OPT OUT: asking for both is refused rather than one silently winning",
               isinstance(rc, str) and "--include-ineligible" in rc and "--eligible-only" in rc, str(rc))
@@ -141,6 +138,10 @@ def main() -> int:
         check("IDS: an id the stage would not run is REFUSED, each with its reason",
               isinstance(rc, str) and "lead" in rc and "lead_under_floor" in rc and "--include-ineligible" in rc
               and "future" in rc and "nope" in rc and "past due" in rc, str(rc))
+        ids.write_text("vague\n")
+        rc, _, _ = dry(pred, "--ids", str(ids))
+        check("IDS: the two-clause record is refused as specificity, the order's first clause it fails",
+              isinstance(rc, str) and "vague is not eligible (specificity)" in rc, str(rc))
         ids.write_text("lead\n")
         rc, _, err = dry(pred, "--ids", str(ids), "--include-ineligible")
         check("IDS: an ineligible id runs when the opt-out is given",
@@ -164,6 +165,27 @@ def main() -> int:
         check("IDS: a named id the run already resolved is SAID to be skipped, and --redo named",
               rc == 0 and "to run=0" in err and "['e2'] already have a resolve result" in err and "--redo" in err,
               f"rc={rc} {err.strip()}")
+
+    print("the resolver and the scorer both ask phase2_resolvability, so neither keeps its own order")
+    with tempfile.TemporaryDirectory() as t:
+        pred = corpus(pathlib.Path(t))
+        rows = RP.select([pred], dt.date(2026, 9, 28), 60)
+        real = getattr(P2, "ineligible_reason", None)
+        # A sentinel in the shared module. Whichever caller still carries its own
+        # copy of the rule keeps naming real clauses and fails here.
+        P2.ineligible_reason = lambda pid, flags: None if flags["eligible"] else "SENTINEL"
+        try:
+            _, left_out = RP.narrow(rows, None, False, None)
+            _, why = S.join(rows, {}, {})
+        finally:
+            if real is None:
+                del P2.ineligible_reason
+            else:
+                P2.ineligible_reason = real
+        check("SHARED: resolve_predictions.narrow names what phase2_resolvability.ineligible_reason names",
+              dict(left_out) == {"SENTINEL": 5}, str(dict(left_out)))
+        check("SHARED: score_predictions.join names what phase2_resolvability.ineligible_reason names",
+              why.get("not_eligible:SENTINEL") == 5, str(dict(why)))
 
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0

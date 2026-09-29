@@ -142,41 +142,6 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
     return out
 
 
-# The flags ineligible_reason() reads. select() writes every one of them.
-REASON_FLAGS = ("eligible", "deadline_before_statement", "specificity_ok", "lead_days", "lead_ok")
-
-
-def ineligible_reason(pid: str, flags: dict) -> str | None:
-    """Why a past-due record is not eligible, or None when it is.
-
-    The reason is the FIRST stage of the funnel (phase2_resolvability.funnel)
-    that drops the record, in that stage's order: a window that closes before
-    it opens, then specificity, then lead time. A record with no statement date
-    has no lead time at all, so it is "undated", not "lead_under_floor". One
-    reason per record, so the counts add up; a record that fails two stages is
-    named by the earlier one.
-
-    Shared by the resolve and prior stages, which skip what it names, and by
-    score_predictions.join(), which writes it as `not_eligible:<reason>`. Flags
-    that say ineligible and name no reason are refused, never guessed at.
-    """
-    missing = [k for k in REASON_FLAGS if k not in flags]
-    if missing:
-        raise SystemExit(f"prediction {pid}'s funnel flags lack {missing}; they come from "
-                         f"resolve_predictions.select(), which writes all of {list(REASON_FLAGS)}")
-    if flags["eligible"]:
-        return None
-    if flags["deadline_before_statement"]:
-        return "deadline_before_statement"
-    if not flags["specificity_ok"]:
-        return "specificity"
-    if flags["lead_days"] is None:
-        return "undated"
-    if not flags["lead_ok"]:
-        return "lead_under_floor"
-    raise SystemExit(f"prediction {pid} is marked ineligible, but its funnel flags name no reason: {flags}")
-
-
 def read_ids(path: Path) -> list[str]:
     """The prediction ids in an --ids file, one per line, in file order.
 
@@ -223,7 +188,9 @@ def narrow(rows: list[dict], slugs: "list[str] | None", include_ineligible: bool
         if wanted is not None and r["leader_slug"] not in wanted:
             why_not[pid] = f"is {r['leader_slug']}'s, outside --slug {sorted(wanted)}"
             continue
-        reason = ineligible_reason(pid, r["_flags"])
+        # The one rule and order the scorer and the page also read
+        # (phase2_resolvability.INELIGIBLE_REASONS).
+        reason = P2.ineligible_reason(pid, r["_flags"])
         if reason is not None and not include_ineligible:
             left_out[reason] += 1
             why_not[pid] = f"is not eligible ({reason}); pass --include-ineligible to run it anyway"

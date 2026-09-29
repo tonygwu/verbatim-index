@@ -432,6 +432,62 @@ def funnel(rows, cutoff: dt.date, min_lead: int):
     return stages
 
 
+# ---------------------------------------------------------------------------
+# Why a past-due record is not eligible: ONE order for every reader
+# ---------------------------------------------------------------------------
+#
+# The eligibility clauses, in the order funnel() above applies them: a window
+# that closes before it opens, then specificity, then lead time. Lead time splits
+# in two: a record with no statement date has no lead time at all ("undated"),
+# and one that has a date and falls short is "lead_under_floor". A record that
+# fails several clauses is named by the FIRST one here.
+#
+# One constant, because three readers name the reason: the resolve and prior
+# stages (resolve_predictions.narrow, which skips what it names), the scorer
+# (score_predictions.join, which writes `not_eligible:<reason>`) and the page.
+# FOUND 2026-09-29 by both reviews of the rescue round-4 funnel change: the
+# scorer and the page each kept an order, and they differed, so a vague undated
+# record read `not_eligible:specificity` in scores.json and "undated" on its card.
+INELIGIBLE_REASONS = ("deadline_before_statement", "specificity", "undated", "lead_under_floor")
+# The flags failing_clauses() reads. resolve_predictions.select() writes every one.
+CLAUSE_FLAGS = ("deadline_before_statement", "specificity_ok", "lead_days", "lead_ok")
+REASON_FLAGS = ("eligible",) + CLAUSE_FLAGS
+
+
+def failing_clauses(flags: dict, pid: str = "?") -> list[str]:
+    """Every eligibility clause these funnel flags fail, in INELIGIBLE_REASONS order.
+
+    Pure: reads only `flags`. Flags that lack a key the clauses read are refused,
+    never read as passing."""
+    missing = [k for k in CLAUSE_FLAGS if k not in flags]
+    if missing:
+        raise SystemExit(f"prediction {pid}'s funnel flags lack {missing}; they come from "
+                         f"resolve_predictions.select(), which writes all of {list(REASON_FLAGS)}")
+    fails = {"deadline_before_statement": bool(flags["deadline_before_statement"]),
+             "specificity": not flags["specificity_ok"],
+             "undated": flags["lead_days"] is None,
+             "lead_under_floor": flags["lead_days"] is not None and not flags["lead_ok"]}
+    return [c for c in INELIGIBLE_REASONS if fails[c]]
+
+
+def ineligible_reason(pid: str, flags: dict) -> str | None:
+    """Why a past-due record is not eligible, or None when it is.
+
+    The first clause in INELIGIBLE_REASONS that the flags fail. One reason per
+    record, so the counts add up. Pure: reads only `flags`. Flags that say
+    ineligible and fail no clause, or lack a key the rule reads, are refused,
+    never guessed at."""
+    if "eligible" not in flags:
+        raise SystemExit(f"prediction {pid}'s funnel flags lack ['eligible']; they come from "
+                         f"resolve_predictions.select(), which writes all of {list(REASON_FLAGS)}")
+    fails = failing_clauses(flags, pid)
+    if flags["eligible"]:
+        return None
+    if not fails:
+        raise SystemExit(f"prediction {pid} is marked ineligible, but its funnel flags name no reason: {flags}")
+    return fails[0]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--predictions", type=pathlib.Path, default=ROOT / "data" / "predictions")
