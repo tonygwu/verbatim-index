@@ -142,12 +142,15 @@ def main() -> int:
         check("LISTED: p3, which no entry names, is untouched",
               rows.get("p3", {}).get("outcome") == "occurred" and rows.get("p3", {}).get("p") == 0.5)
         blk = doc.get("replacements", {})
-        check("REPORT: scores.json names every replaced sidecar with run, replacement, reason, before and after",
+        check("REPORT: scores.json names every replaced sidecar with run, replacement, reason, before and after, "
+              "and the window each judged",
               blk.get("replaced_sidecars") == [
                   {"stage": "prior", "prediction_id": "p2", "run": "run-a", "replacement": "run-new",
-                   "reason": "re-priced", "was": 0.5, "now": 0.8},
+                   "reason": "re-priced", "was": 0.5, "now": 0.8,
+                   "deadline_was": "2020-12-31", "deadline_now": "2020-12-31"},
                   {"stage": "resolve", "prediction_id": "p1", "run": "run-a", "replacement": "run-new",
-                   "reason": "second look", "was": "occurred", "now": "not_occurred"}],
+                   "reason": "second look", "was": "occurred", "now": "not_occurred",
+                   "deadline_was": "2020-12-31", "deadline_now": "2020-12-31"}],
               json.dumps(blk.get("replaced_sidecars")))
         check("REPORT: the manifest path and its sha256 are recorded, and settings name it",
               blk.get("manifest") == "m.json" and len(blk.get("manifest_sha256") or "") == 64

@@ -584,9 +584,32 @@ def replacement_map(doc: dict, root: Path, stage: str) -> dict[tuple[Path, str],
             for e in doc["replacements"] if e["stage"] == stage}
 
 
+def moved_windows(replaced: dict, resolutions: dict[str, dict], swaps: "dict | None",
+                  root: Path) -> dict[str, list[str]]:
+    """Predictions whose replacement resolution judged another window than the one it replaces.
+
+    Each entry names both windows and their runs, for select(), which refuses a
+    TREND record among them: its window froze at its first resolution (operator
+    decision, 2026-09-27), and a re-run over a grown window would score it, or,
+    at an as-of before the new window closes, drop it without a word. Both
+    happened on a scratch copy of production before this check (b489520cc1561d1e).
+    """
+    if not swaps:
+        return {}
+    to = replacement_map(swaps, root, "resolve")
+    out = {}
+    for (run, pid), old in replaced.items():
+        now = (resolutions.get(pid) or {}).get("deadline")
+        if old.get("deadline") != now:
+            out[pid] = [f"{old.get('deadline')} in {rel(run, root)} (replaced)",
+                        f"{now} in {rel(to[(run, pid)], root)} (its replacement)"]
+    return out
+
+
 def replacement_report(doc: dict, path_rel: str, sha: str, replaced: dict[str, dict],
                        merged: dict[str, dict], root: Path) -> dict:
-    """Every replaced sidecar, with what it said and what the replacement says."""
+    """Every replaced sidecar, with what it said and what the replacement says,
+    and the window each judged or priced (`deadline_was`, `deadline_now`)."""
     field = {"resolve": "outcome", "prior": "p"}
     why = {(e["stage"], (root / e["run"]).resolve(), e["prediction_id"]): e for e in doc["replacements"]}
     out = []
@@ -595,7 +618,8 @@ def replacement_report(doc: dict, path_rel: str, sha: str, replaced: dict[str, d
             e = why[(stage, run, pid)]
             out.append({"stage": stage, "prediction_id": pid, "run": rel(run, root),
                         "replacement": rel(root / e["replacement"], root), "reason": e["reason"],
-                        "was": obj.get(field[stage]), "now": merged[stage][pid].get(field[stage])})
+                        "was": obj.get(field[stage]), "now": merged[stage][pid].get(field[stage]),
+                        "deadline_was": obj.get("deadline"), "deadline_now": merged[stage][pid].get("deadline")})
     out.sort(key=lambda x: (x["stage"], x["prediction_id"], x["run"]))
     return {"manifest": path_rel, "manifest_sha256": sha, "replaced_sidecars": out}
 
@@ -724,8 +748,12 @@ def main(argv: list[str] | None = None) -> int:
                              f"{pid} prior {priors[pid].get('deadline')} resolution "
                              f"{resolutions[pid].get('deadline')}" for pid in split))
     # Resolved trend records keep the window their resolution judged; see select().
+    # That is the window of their FIRST resolution, so a replacement that judged
+    # another window is named here and refused in select() if the record is a
+    # trend record, before the as-of could drop it. A dated record may move.
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend, resolutions=resolutions,
-                  date_overrides=ov_in)
+                  date_overrides=ov_in, window_conflicts=moved_windows(replaced["resolve"], resolutions,
+                                                                       swaps, root))
     repairs = load_across(args.run, fresh(R.load_repairs, "criteria_repair"))
     applied, unrepairable = R.apply_repairs(rows, repairs)
 
@@ -815,8 +843,8 @@ def main(argv: list[str] | None = None) -> int:
         rp = doc["replacements"]["replaced_sidecars"]
         print(f"replacements: {doc['replacements']['manifest']}, {len(rp)} sidecars replaced")
         for x in rp:
-            print(f"  replaced: {x['stage']} {x['prediction_id']} in {x['run']} ({x['was']}) by "
-                  f"{x['replacement']} ({x['now']}): {x['reason']}")
+            print(f"  replaced: {x['stage']} {x['prediction_id']} in {x['run']} ({x['was']}, to "
+                  f"{x['deadline_was']}) by {x['replacement']} ({x['now']}, to {x['deadline_now']}): {x['reason']}")
     if ov_path is not None:
         o = doc["date_overrides"]
         print(f"date overrides: {o['file']} ({len(o['entries'])} entries); superseded records "

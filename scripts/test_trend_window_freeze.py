@@ -192,8 +192,173 @@ def main() -> int:
               bool(why) and "trend-resolved" in why and "2026-09-20" in why and FROZEN in why
               and not why.startswith("CRASH"), str(why))
 
+    older_runs()
+    replaced_windows()
+
     print(f"\n{'FAILED ' + str(len(FAILED)) if FAILED else 'all passed'}")
     return 1 if FAILED else 0
+
+
+# ---------------------------------------------------------------------------
+# The freeze holds across RUNS (both reviews of the round-4 funnel change)
+# ---------------------------------------------------------------------------
+#
+# The first version froze a window only from the resolutions in the run a stage
+# writes to (--out). `--ids` re-runs named records into a NEW run, so a trend
+# record resolved in an older run was judged there up to the new as-of: on
+# production, b489520cc1561d1e was resolved to 2026-09-14 in
+# phase2-scoring-20260915, and a dry run with --ids into a fresh run at as-of
+# 2026-09-29 built "Deadline: 2026-09-29 -- THIS IS A TREND WINDOW". The scorer
+# then took both new sidecars through a replacement manifest and scored the grown
+# window, or, at an as-of before it, dropped the record without a word.
+
+NEW_AS_OF = "2026-09-29"
+
+
+def scoring_config(pred: pathlib.Path, runs: list[str]) -> pathlib.Path:
+    cfg = pred / "scoring.json"
+    cfg.write_text(json.dumps({"as_of": "2026-09-28", "trend": True, "min_lead_days": 60,
+                               "predictions": ["predictions"], "runs": runs,
+                               "index": "predictions/index.json", "out": "predictions/scores.json"}))
+    return cfg
+
+
+def dry(pred: pathlib.Path, stage: str, *extra: str) -> tuple[str, str]:
+    """(prompt, stderr) of a --dry-run into a NEW run; a refusal comes back as the stderr."""
+    buf, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            RP.main(["--stage", stage, "--predictions", str(pred), "--out", str(pred / "_experiments" / "new"),
+                     "--as-of", NEW_AS_OF, "--trend", "--dry-run", *extra])
+    except SystemExit as exc:
+        return "", f"REFUSED {exc}"
+    except Exception as exc:  # noqa: BLE001 - a crash is not a named refusal
+        return "", f"CRASH {type(exc).__name__}: {exc}"
+    return buf.getvalue(), err.getvalue()
+
+
+def deadline_line(prompt: str) -> str:
+    return next((ln for ln in prompt.splitlines() if ln.startswith("Deadline:")), "(no Deadline line)")
+
+
+def older_runs() -> None:
+    print("--ids into a NEW run keeps the window of a resolution in an OLDER run")
+    with tempfile.TemporaryDirectory() as t:
+        pred = corpus(pathlib.Path(t), *good_sidecars())
+        ids = pathlib.Path(t) / "ids.txt"
+        ids.write_text("trend-resolved\n")
+        scoring_config(pred, ["predictions/_experiments/run"])
+        for stage in ("resolve", "prior"):
+            prompt, err = dry(pred, stage, "--ids", str(ids))
+            line = deadline_line(prompt)
+            check(f"{stage}: the prompt judges the window its first resolution froze, {FROZEN}, "
+                  f"not the new as-of", FROZEN in line and NEW_AS_OF not in line and "to run=1" in err,
+                  f"{line} / {err.strip()[-300:]}")
+        prompt, err = dry(pred, "resolve", "--ids", str(ids), "--scoring-config", str(pred / "nowhere.json"))
+        check("an explicit --scoring-config that does not exist is refused, naming it",
+              err.startswith("REFUSED") and "nowhere.json" in err, err[-300:])
+        # load_scoring_config reads paths relative to the config's grandparent, so a
+        # config at <tmp>/cfg/scoring.json names the same runs as the default one.
+        (pred / "scoring.json").rename(pathlib.Path(t) / "cfg.json")
+        (pathlib.Path(t) / "cfg").mkdir()
+        (pathlib.Path(t) / "cfg.json").rename(pathlib.Path(t) / "cfg" / "scoring.json")
+        prompt, err = dry(pred, "resolve", "--ids", str(ids), "--scoring-config",
+                          str(pathlib.Path(t) / "cfg" / "scoring.json"))
+        check("an explicit --scoring-config is read in place of the default",
+              FROZEN in deadline_line(prompt) and NEW_AS_OF not in deadline_line(prompt),
+              f"{deadline_line(prompt)} / {err.strip()[-300:]}")
+        scoring_config(pred, ["predictions/_experiments/run", "predictions/_experiments/gone"])
+        prompt, err = dry(pred, "resolve", "--ids", str(ids))
+        check("a run the scoring config names that does not exist is refused, naming it",
+              err.startswith("REFUSED") and "gone" in err, err[-300:])
+
+        print("two runs that disagree about a trend record's window are refused, never picked between")
+        two = pred / "_experiments" / "run2"
+        (two / "resolutions" / "ada").mkdir(parents=True)
+        (two / "resolutions" / "ada" / "trend-resolved.json").write_text(
+            json.dumps(resolution("trend-resolved", "2026-09-20")))
+        scoring_config(pred, ["predictions/_experiments/run", "predictions/_experiments/run2"])
+        prompt, err = dry(pred, "resolve", "--ids", str(ids))
+        check("refused, naming the prediction, both windows and both runs",
+              err.startswith("REFUSED") and "trend-resolved" in err and FROZEN in err and "2026-09-20" in err
+              and "run2" in err, err[-400:])
+        # A DATED record resolved over two windows is not frozen by either; its
+        # deadline comes from its own words. The statement-date override path writes
+        # exactly that (16d47e6dbb109466 in production), so it must not refuse.
+        (two / "resolutions" / "ada" / "trend-resolved.json").unlink()
+        (two / "resolutions" / "ada" / "dated.json").write_text(json.dumps(resolution("dated", "2013-09-30")))
+        ids.write_text("dated\n")
+        prompt, err = dry(pred, "resolve", "--ids", str(ids))
+        check("a dated record resolved over two different deadlines is not refused, and keeps its own",
+              "2020-12-31" in deadline_line(prompt) and "to run=1" in err, f"{deadline_line(prompt)} / {err[-300:]}")
+
+
+def score_runs(pred: pathlib.Path, as_of: str, runs: list[str], *extra: str) -> tuple[str | None, dict]:
+    """(refusal or None, scores.json) from the real scorer over several runs."""
+    out = pred.parent / f"scores-{as_of}-{len(FAILED)}-{len(extra)}.json"
+    argv = ["--predictions", str(pred), "--index", str(pred / "index.json"), "--as-of", as_of, "--trend",
+            "--out", str(out), *extra]
+    for r in runs:
+        argv += ["--run", str(pred / "_experiments" / r)]
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            SP.main(argv)
+    except SystemExit as exc:
+        return str(exc), {}
+    except Exception as exc:  # noqa: BLE001 - a crash is not a named refusal
+        return f"CRASH {type(exc).__name__}: {exc}", {}
+    return None, json.loads(out.read_text())
+
+
+def replaced_windows() -> None:
+    print("the scorer refuses a trend-row replacement whose window differs from the one it replaces")
+    with tempfile.TemporaryDirectory() as t:
+        pred = corpus(pathlib.Path(t), *good_sidecars())
+        new = pred / "_experiments" / "new"
+        for stage, obj in (("resolutions", resolution("trend-resolved", NEW_AS_OF, "not_occurred")),
+                           ("priors", prior("trend-resolved", NEW_AS_OF, 0.4))):
+            (new / stage / "ada").mkdir(parents=True)
+            (new / stage / "ada" / "trend-resolved.json").write_text(json.dumps(obj))
+        manifest = pred / "replacements.json"
+        manifest.write_text(json.dumps({"schema_version": 1, "replacements": [
+            {"stage": s, "prediction_id": "trend-resolved", "run": "predictions/_experiments/run",
+             "replacement": "predictions/_experiments/new", "reason": "second look"} for s in ("resolve", "prior")]}))
+        for as_of, what in ((NEW_AS_OF, "a grown window"), ("2026-09-28", "a window past the as-of, which "
+                                                                          "would drop the record silently")):
+            why, doc = score_runs(pred, as_of, ["run", "new"], "--replacements", str(manifest))
+            row = {r["prediction_id"]: r for r in doc.get("predictions", [])}.get("trend-resolved")
+            check(f"as-of {as_of}, {what}: refused, naming the prediction and both windows",
+                  bool(why) and not why.startswith("CRASH") and "trend-resolved" in why and FROZEN in why
+                  and NEW_AS_OF in why, str(why) if why else f"accepted; row deadline {row and row['deadline']}")
+
+        print("a replacement that keeps the frozen window is scored, and the report shows both windows")
+        for stage, obj in (("resolutions", resolution("trend-resolved", FROZEN, "not_occurred")),
+                           ("priors", prior("trend-resolved", FROZEN, 0.4))):
+            (new / stage / "ada" / "trend-resolved.json").write_text(json.dumps(obj))
+        why, doc = score_runs(pred, NEW_AS_OF, ["run", "new"], "--replacements", str(manifest))
+        row = {r["prediction_id"]: r for r in doc.get("predictions", [])}.get("trend-resolved") or {}
+        check("accepted, scored on the replacement over the frozen window",
+              why is None and row.get("deadline") == FROZEN and row.get("outcome") == "not_occurred"
+              and row.get("scored"), str(why or row))
+        rep = (doc.get("replacements") or {}).get("replaced_sidecars") or []
+        check("replacement_report shows the deadline before and after for each replaced sidecar",
+              [(x.get("stage"), x.get("deadline_was"), x.get("deadline_now")) for x in rep]
+              == [("prior", FROZEN, FROZEN), ("resolve", FROZEN, FROZEN)], json.dumps(rep))
+
+        print("a DATED record's replacement may change its window: only a trend window is frozen")
+        for stage, obj in (("resolutions", resolution("dated", "2021-06-30", "occurred")),
+                           ("priors", prior("dated", "2021-06-30", 0.5))):
+            (new / stage / "ada" / "dated.json").write_text(json.dumps(obj))
+        manifest.write_text(json.dumps({"schema_version": 1, "replacements": [
+            {"stage": s, "prediction_id": p, "run": "predictions/_experiments/run",
+             "replacement": "predictions/_experiments/new", "reason": "second look"}
+            for s in ("resolve", "prior") for p in ("trend-resolved", "dated")]}))
+        why, doc = score_runs(pred, NEW_AS_OF, ["run", "new"], "--replacements", str(manifest))
+        rep = {(x["stage"], x["prediction_id"]): x for x in (doc.get("replacements") or {}).get("replaced_sidecars", [])}
+        check("accepted, and the report says the dated record's window moved",
+              why is None and (rep.get(("resolve", "dated")) or {}).get("deadline_was") == "2020-12-31"
+              and (rep.get(("resolve", "dated")) or {}).get("deadline_now") == "2021-06-30",
+              str(why or rep.get(("resolve", "dated"))))
 
 
 if __name__ == "__main__":

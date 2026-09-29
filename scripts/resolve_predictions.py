@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import predictions_lib as L  # noqa: E402
 import phase2_resolvability as P2  # noqa: E402
 import resolution_lib as R  # noqa: E402
+from data_clone_workflow import load_scoring_config  # noqa: E402
 from grade import (  # noqa: E402
     E_CLI, E_TIMEOUT, account_label, call_astra, call_fable, extract_json,
 )
@@ -81,7 +82,8 @@ def utc_now() -> str:
 
 def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
            resolutions: dict | None = None,
-           date_overrides: "dict | None" = None, superseded: "list | None" = None) -> list[dict]:
+           date_overrides: "dict | None" = None, superseded: "list | None" = None,
+           window_conflicts: "dict[str, list[str]] | None" = None) -> list[dict]:
     """Past-due accepted predictions, each carrying the funnel's deadline and flags.
 
     The deadline comes from `phase2_resolvability`, never from a second parser
@@ -94,13 +96,30 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
     2026-09-27). A later cutoff does not move it, so no stage prices, re-resolves
     or scores it over a window that grew. An unresolved trend record still runs
     to `cutoff`, and a dated record is untouched.
+
+    `window_conflicts` names predictions whose resolution sidecars record more
+    than one window, each entry "<deadline> in <run>". A TREND record among them
+    is refused before the cutoff is applied, so a grown window can neither be
+    judged nor drop the record silently: nothing here picks which window came
+    first. A dated record's deadline comes from its own words, not a sidecar, so
+    it is unaffected. The resolver fills this from every run it reads
+    (resolutions_across), the scorer from the sidecars a replacement manifest
+    replaces.
     """
     rows = P2.load(pred_dir, date_overrides=date_overrides, superseded=superseded)
     # The trend window is opt-in and dated by the caller's cutoff, never the clock.
     P2.attach_deadlines(rows, derive=True, trend_cutoff=(cutoff if trend else None))
     for r in rows:
+        if not str(r.get("_basis") or "").startswith("trend"):
+            continue
+        clash = (window_conflicts or {}).get(r["prediction_id"])
+        if clash:
+            raise SystemExit(f"trend prediction {r['prediction_id']}'s window froze at its first resolution, and "
+                             f"its resolution sidecars record different windows: {'; '.join(clash)}. A re-run of "
+                             f"a resolved trend record judges that same window (operator decision, 2026-09-27); "
+                             f"re-run it over the first window, or remove the sidecar that judged another")
         res = (resolutions or {}).get(r["prediction_id"])
-        if res is None or not str(r.get("_basis") or "").startswith("trend"):
+        if res is None:
             continue
         try:
             frozen = dt.date.fromisoformat(str(res.get("deadline")))
@@ -140,6 +159,58 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
         out.append(r)
     out.sort(key=lambda r: (r["leader_slug"], r["prediction_id"]))
     return out
+
+
+SCORING_CONFIG_FILE = Path("predictions") / "scoring.json"
+
+
+def scoring_runs_for(arg: "Path | None", predictions: list[Path]) -> "tuple[Path | None, list[Path]]":
+    """(config path, runs) of the scoring config, whose resolutions freeze trend windows.
+
+    A trend record's window freezes at its FIRST resolution, in whichever run
+    wrote it (operator decision, 2026-09-27). The first version read only --out,
+    so --ids into a new run judged a record resolved in an older run up to the
+    new as-of. The runs are the scoring config's, which are every run the
+    published scores read. Found like date_overrides_for: an explicit file must
+    exist, and the production default, <data>/predictions/scoring.json beside
+    the first --predictions, is read whenever it exists. A run it names that is
+    not on disk is refused, because its windows cannot be read.
+    """
+    root = Path(predictions[0]).resolve().parent
+    path = Path(arg) if arg is not None else root / SCORING_CONFIG_FILE
+    if not path.exists():
+        if arg is not None:
+            raise SystemExit(f"--scoring-config {arg} does not exist")
+        return None, []
+    cfg_root, cfg = load_scoring_config(path)
+    runs = [cfg_root / r for r in cfg["runs"]]
+    gone = [str(r) for r in runs if not r.is_dir()]
+    if gone:
+        raise SystemExit(f"{path} names runs that do not exist: {gone}; their resolutions freeze trend "
+                         f"windows, so they must be read")
+    return path, runs
+
+
+def resolutions_across(runs: list[Path]) -> "tuple[dict[str, dict], dict[str, list[str]]]":
+    """(one resolution per prediction, predictions whose runs record different windows).
+
+    A prediction resolved in several runs is kept once. When the runs record
+    different deadlines it is also named in the second dict, each deadline with
+    its run, and select() refuses it if it is a trend record. Nothing here picks
+    which run came first. A run named twice is read once.
+    """
+    first: dict[str, dict] = {}
+    where: dict[str, list[tuple[str, str]]] = collections.defaultdict(list)
+    seen: set[Path] = set()
+    for run in runs:
+        if Path(run).resolve() in seen:
+            continue
+        seen.add(Path(run).resolve())
+        for pid, obj in R.load_sidecars(Path(run), "resolve").items():
+            first.setdefault(pid, obj)
+            where[pid].append((str(obj.get("deadline")), str(run)))
+    clash = {pid: [f"{d} in {run}" for d, run in ws] for pid, ws in where.items() if len({d for d, _ in ws}) > 1}
+    return first, clash
 
 
 def read_ids(path: Path) -> list[str]:
@@ -344,6 +415,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--date-overrides", type=Path, default=None,
                     help=f"reviewed statement-date override file; default <data>/{L.DATE_OVERRIDES_FILE} "
                          f"beside the first --predictions when it exists")
+    ap.add_argument("--scoring-config", type=Path, default=None,
+                    help=f"the scoring config whose runs, with --out, freeze every resolved trend record's "
+                         f"window at its first resolution; default <data>/{SCORING_CONFIG_FILE} beside the "
+                         f"first --predictions when it exists")
     return ap
 
 
@@ -400,8 +475,14 @@ def main(argv: list[str] | None = None) -> int:
     out_root = Path(args.out)
     ov_path, date_overrides = date_overrides_for(args.date_overrides, args.predictions)
     log(f"date overrides: {ov_path or 'none'} ({len(date_overrides)} entries)")
+    # Trend windows freeze from the resolutions in EVERY run the scores read, not
+    # only --out, so --ids into a new run judges a resolved record's first window.
+    cfg_path, freeze_runs = scoring_runs_for(args.scoring_config, args.predictions)
+    resolutions, clash = resolutions_across(freeze_runs + [out_root])
+    log(f"trend windows: frozen from {len(resolutions)} resolutions in {len(freeze_runs)} run(s) of "
+        f"{cfg_path or 'no scoring config'} and in --out")
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
-                  resolutions=R.load_sidecars(out_root, "resolve"),
+                  resolutions=resolutions, window_conflicts=clash,
                   date_overrides=date_overrides if ov_path else None)
     rows, left_out = narrow(rows, args.slug, args.include_ineligible, ids)
     if left_out:
