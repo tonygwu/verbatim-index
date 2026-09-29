@@ -95,9 +95,16 @@ NEXT_YEAR = re.compile(r"\bnext year\b", re.I)
 # "Over the next year" is a twelve-month span; "next year" alone is the following
 # calendar year. The extractor already reads them that way in the corpus: "in the
 # next year" said 2020-04-16 carries 2021-04-16, and "next year" said 2019-09-20
-# carries 2020-12-31.
-THE_NEXT_YEAR = re.compile(r"\bthe next year\b", re.I)
+# carries 2020-12-31. "This time next year" is the anniversary too: the extractor
+# wrote 2026-10-28 for 6b32b106, said 2025-10-28.
+THE_NEXT_YEAR = re.compile(r"\b(?:the|this time) next year\b", re.I)
 CALENDAR_NEXT_YEAR = "next year"   # the `how` horizon_span returns for the calendar reading
+# The middle or the first half of next year closes on 30 June of the following
+# year, not on 31 December: the extractor wrote 2023-06-30 for 52535f5c, "by the
+# middle of next year". The second half and the end of next year are the calendar
+# reading above. Review 0 of the round-4 funnel change, item 3.
+MID_NEXT_YEAR = re.compile(r"\b(?:first half|middle|mid)(?:\s+of)?[\s-]+next year\b", re.I)
+HALF_NEXT_YEAR = "first half of next year"   # the `how` horizon_span returns for 30 June
 RANGE = re.compile(r"(\d+)\s*(?:to|or|through|-|–)\s*(\d+)\s*(year|month|week|day)s?", re.I)
 NUMBER = re.compile(r"(\d+)\s*(year|month|week|day)s?", re.I)
 WORDY = re.compile(r"\b(" + "|".join(WORD_COUNTS) + r")\s+(?:more\s+)?(year|month|week|day)s?\b", re.I)
@@ -175,6 +182,8 @@ def horizon_span(text):
     if m:
         return WORD_COUNTS[m.group(1).lower()], m.group(2).lower(), "word count and unit"
     if NEXT_YEAR.search(text):
+        if MID_NEXT_YEAR.search(text):
+            return 1, "year", HALF_NEXT_YEAR
         if THE_NEXT_YEAR.search(text):
             return 1, "year", "the next year, twelve months"
         return 1, "year", CALENDAR_NEXT_YEAR
@@ -208,6 +217,8 @@ def derived_deadline(rec):
         # over. It used to land on the anniversary, which judged "sometime next
         # year" said in September against the September after (design 3.5, A9).
         return dt.date(said.year + 1, 12, 31), "the calendar year after the statement"
+    if how == HALF_NEXT_YEAR:
+        return dt.date(said.year + 1, 6, 30), "the first half of the calendar year after the statement"
     return add_span(said, count, unit), how
 
 

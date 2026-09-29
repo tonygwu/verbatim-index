@@ -226,6 +226,26 @@ def main() -> int:
           derive("over the next year")[0] == dt.date(2020, 1, 1)
           and derive("within the next year")[0] == dt.date(2020, 1, 1),
           str([derive("over the next year"), derive("within the next year")]))
+    # Review 0 of the round-4 funnel change, item 3: the calendar reading also caught
+    # two phrases that are not the whole year. "This time next year" is the
+    # anniversary; the extractor wrote 2026-10-28 for record 6b32b106, said
+    # 2025-10-28. The middle or first half of next year closes on 30 June; the
+    # extractor wrote 2023-06-30 for record 52535f5c.
+    check("UNIT: 'this time next year' is twelve months, so it keeps the anniversary",
+          derive("this time next year")[0] == dt.date(2020, 1, 1)
+          and P.derived_deadline({"prediction": {"horizon_years_inferred": None,
+                                                 "target_date_text": "by this time next year"},
+                                  "source": {"statement_date": "2025-10-28"}})[0] == dt.date(2026, 10, 28),
+          str(derive("this time next year")))
+    mid = ("by the middle of next year", "in the middle of next year", "the first half of next year",
+           "in the first half of next year", "mid next year", "mid-next year", "by mid next year")
+    check("UNIT: the middle and the first half of next year close on 30 June of the following year",
+          all(derive(t)[0] == dt.date(2020, 6, 30) for t in mid)
+          and len({derive(t)[1] for t in mid}) == 1, str({t: derive(t) for t in mid}))
+    check("UNIT: the second half and the end of next year still close on 31 December",
+          derive("the second half of next year")[0] == dt.date(2020, 12, 31)
+          and derive("by the end of next year")[0] == dt.date(2020, 12, 31),
+          str([derive("the second half of next year"), derive("by the end of next year")]))
     check("UNIT: an open-ended 'next year or more' is still refused, not closed on 31 December",
           derive("over the next year or more") == (None, "open_ended"), str(derive("over the next year or more")))
     check("UNIT: text that names no closing date is refused with its reason, never guessed at",
