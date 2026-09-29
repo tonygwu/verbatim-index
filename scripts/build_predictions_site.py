@@ -47,6 +47,7 @@ import score_predictions as SP  # noqa: E402
 import resolution_lib as R  # noqa: E402
 import prediction_score as PS  # noqa: E402
 import phase2_resolvability as P2  # noqa: E402
+import year_summaries as YS  # noqa: E402
 
 # The public origin, needed absolute because Open Graph and Twitter cards are
 # fetched by a crawler that has no page context to resolve a relative path
@@ -951,10 +952,9 @@ document.addEventListener("keydown", e => {
    What a square encodes: how many of this person's accepted predictions carry a
    statement date in that year. Its colour is a band of that count, blue for 1
    and 2-3, rust for 4-7 and 8 or more, grey for none. The popover says the year
-   and the count in words, in the square's own colour. */
+   and the count in words, in the square's own colour, and under it a few words
+   saying what the person predicted that year, written by year_summaries.py. */
 const AA = 4.5;                                        // WCAG AA for normal text
-const BAND_WORDS = {"": "no shade: none that year", q1: "lightest blue: 1", q2: "blue: 2\u20133",
-                    q3: "light rust: 4\u20137", q4: "rust: 8 or more"};
 const sqtip = document.getElementById("sqtip");
 let sqCur = null, sqBy = null, touchTap = false;
 const rgbOf = s => (s.match(/[\d.]+/g) || []).map(Number);
@@ -1003,7 +1003,7 @@ function sqShow(cell, by){
   const b = band(n);
   const what = n === 0 ? `No predictions in ${y}` : `${n} prediction${n === 1 ? "" : "s"} in ${y}`;
   sqtip.innerHTML = `<div class="l1"><i class="sw ${b}"></i><span class="tx">${esc(what)}</span></div>`
-    + `<div class="l2">${person ? esc(person.name) + " &middot; " : ""}${esc(BAND_WORDS[b])}</div>`;
+    + `<div class="l2">${esc(n && person ? (person.ysum || {})[y] || "" : person ? person.name : "")}</div>`;
   sqtip.hidden = false;
   /* The square's colour as it appears on the popover: its fill, at its own
      opacity, over the popover background. That is the swatch's colour too. */
@@ -2045,6 +2045,10 @@ def main(argv: list[str] | None = None) -> int:
     # and conflict on every concurrent push; see test_derived_determinism.py.
     ap.add_argument("--data-date", required=True, type=_iso_date,
                     help="YYYY-MM-DD, the UTC date of the data revision being published")
+    ap.add_argument("--year-summaries", default=None,
+                    help="the year-square labels from year_summaries.py; default "
+                         "<predictions>/year_summaries.json. Required: a cell with no current "
+                         "label refuses the build rather than showing a stale one")
     ap.add_argument("--scores", default=None,
                     help="scores.json from score_predictions.py; without it the Score column "
                          "renders empty and the page says why, which is the honest default")
@@ -2064,6 +2068,11 @@ def main(argv: list[str] | None = None) -> int:
         by_slug.setdefault(r["leader_slug"], []).append(r)
     check_index_matches_disk(index, by_slug)
     hist, span = statement_years(by_slug)
+    try:
+        ysum = YS.summaries_for_page(by_slug, Path(args.year_summaries) if args.year_summaries
+                                     else Path(args.predictions) / YS.SUMMARIES_FILE.name)
+    except YS.SummaryError as exc:
+        raise SystemExit(f"REFUSING: {exc}")
     scores_doc = json.loads(Path(args.scores).read_text()) if args.scores else None
     if scores_doc is not None:
         for k in ("corpus", "leaders", "rule", "as_of"):
@@ -2095,6 +2104,9 @@ def main(argv: list[str] | None = None) -> int:
     rows = person_rows(index, roster, hist, scores,
                        scores_doc["rule"]["min_lead_days"] if scores_doc else None, buckets)
     check_buckets_sum(rows)
+    # Only the years the axis shows; a label for a trimmed early year would never be read.
+    for r in rows:
+        r["ysum"] = {y: ysum[r["slug"]][y] for y in r["years"]}
     if late:
         print(f"NOTE: {late} prediction(s) were past due on {scores_doc['as_of']} but are not in "
               f"{args.scores}; the corpus grew after scoring, so they show as Awaiting check",

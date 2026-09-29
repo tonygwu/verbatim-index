@@ -152,7 +152,21 @@ def build(td: Path, L, A) -> tuple[Path, Path, Path]:
                                "alan": {"name": "Alan T", "company": "Lab", "role": "Founder", "sector": "AI"},
                                "cleo": {"name": "Cleo F", "company": "Few", "role": "CTO", "sector": "AI"}}, None)
     (pr / "index.json").write_text(json.dumps(index, indent=1, sort_keys=True))
+    write_year_summaries(pr)
     return pr, roster, pr / "index.json"
+
+
+def write_year_summaries(pr: Path) -> dict:
+    """A current summary for every dated cell, as `year_summaries.py --write` leaves it."""
+    B, YS = load("build_predictions_site"), load("year_summaries")
+    by_slug: dict = {}
+    for r in B.load_records(pr)["accepted"]:
+        by_slug.setdefault(r["leader_slug"], []).append(r)
+    entries = {YS.key(s, y): {"summary": f"{s} predicted things in {y}", "inputs_sha256": YS.cell_digest(recs), "n": len(recs)}
+               for s, ys in YS.cells(by_slug).items() for y, recs in ys.items()}
+    doc = {"schema_version": 1, "entries": entries}
+    (pr / "year_summaries.json").write_text(json.dumps(doc))
+    return doc
 
 
 def embedded(html: str, name: str):
@@ -188,6 +202,44 @@ def main() -> int:
         check("FIXTURE: DATA and SRC parse, and the records are files beside the page",
               isinstance(data, list) and isinstance(src, dict) and sorted(pred) == ["ada", "alan", "cleo"],
               f"{sorted(pred)}")
+
+        # YEAR SUMMARIES. The popover over a year square named the colour band
+        # ("lightest blue: 1"). Operator request 2026-09-29: say what the person
+        # predicted that year instead, in a few words a model wrote.
+        YS = load("year_summaries")
+        cells_ok = all(r.get("ysum") == {y: f"{r['slug']} predicted things in {y}" for y in r["years"]} for r in data)
+        check("YEARS: every row carries the summary of each year it shows", cells_ok and any(r["years"] for r in data),
+              json.dumps([(r["slug"], r["years"], r.get("ysum")) for r in data])[:400])
+        check("YEARS: the popover shows the summary, never the colour band's name",
+              "lightest blue" not in html and "BAND_WORDS" not in html and "ysum" in html)
+        ydoc = json.loads((pr / "year_summaries.json").read_text())
+        k0 = sorted(ydoc["entries"])[0]
+        ydoc["entries"][k0]["inputs_sha256"] = "0" * 64
+        (pr / "year_summaries.json").write_text(json.dumps(ydoc))
+        py = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(td / "ystale" / "index.html")], capture_output=True, text=True, cwd=REPO)
+        check("YEARS: a summary written for different predictions refuses the build and names the fix",
+              py.returncode != 0 and "year_summaries.py --write" in py.stderr + py.stdout and k0.split("/")[0] in py.stderr + py.stdout,
+              py.stderr[-300:])
+        (pr / "year_summaries.json").unlink()
+        py = subprocess.run([PY, str(script), "--data-date", "2026-09-10", "--index", str(index), "--predictions", str(pr),
+                             "--roster", str(roster), "--out", str(td / "ystale" / "index.html")], capture_output=True, text=True, cwd=REPO)
+        check("YEARS: a missing summaries file refuses the build", py.returncode != 0 and "missing" in py.stderr + py.stdout, py.stderr[-300:])
+        write_year_summaries(pr)
+        check("YEARS: a label that grades the outcome, or runs long, is refused",
+              YS.check_answer({"2020": "Tesla robots on sale, which came true"}, ["2020"])
+              and YS.check_answer({"2020": " ".join(["word"] * 11)}, ["2020"])
+              and YS.check_answer({"2020": "fine"}, ["2020", "2021"])
+              and not YS.check_answer({"2020": "Humanoid robots on sale at Tesla"}, ["2020"]))
+        # FOUND 2026-09-29: the first live run failed 32 of 53 people, every one on
+        # length, because the prompt stated the word cap and not the character cap.
+        pr_txt = YS.build_prompt("Ada L", {"2020": [{"prediction": {"normalized_claim": "x"}}]})
+        check("YEARS: the prompt states every limit the checker enforces",
+              f"{YS.PROMPT_WORDS} words" in pr_txt and f"{YS.PROMPT_CHARS} characters" in pr_txt
+              and YS.PROMPT_WORDS <= YS.MAX_WORDS and YS.PROMPT_CHARS <= YS.MAX_CHARS, pr_txt[:300])
+        r0 = {"prediction_id": "a", "prediction": {"normalized_claim": "x"}}
+        check("YEARS: the cell digest moves when a claim is re-extracted",
+              YS.cell_digest([r0]) != YS.cell_digest([{**r0, "prediction": {"normalized_claim": "y"}}]))
 
         # COVERAGE. The drawer says "extraction ran on X of Y of their
         # transcripts". X counted every meta, withdrawn transcripts included,
