@@ -122,6 +122,7 @@ ORIGIN_SITES = ('predictions',)
 # What the page reads plus what its index counts: all must be committed.
 ORIGIN_CLEAN_PATHS = {'predictions': ['predictions', 'roster/final.json', 'transcripts_open', 'transcripts_web']}
 LIVE_REVISION_URL = 'https://verbatim-predictions.tonygwu.com/revision.json'
+DEPLOY_UA = 'verbatim-index-deploy/1.0 (+https://verbatim-index.tonygwu.com)'
 
 
 def origin_publication_source(repo: Path, source: Path | None, revision: str | None, site: str,
@@ -183,7 +184,9 @@ def live_revision_error(source: Path, revision: str, first: bool) -> str | None:
     import urllib.request
     url = os.environ.get('VI_LIVE_REVISION_URL', LIVE_REVISION_URL)
     try:
-        req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache'})
+        # A named agent: since 2026-09-29 the site's bot filter answers 403 to
+        # urllib's default "Python-urllib/3.x", which refused every deploy.
+        req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'User-Agent': DEPLOY_UA})
         with urllib.request.urlopen(req, timeout=20) as resp:
             live = json.loads(resp.read())['data_revision']
     except Exception as exc:  # noqa: BLE001 - any failure to read is a refusal, reported whole
