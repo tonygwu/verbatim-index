@@ -112,6 +112,38 @@ with tempfile.TemporaryDirectory() as td:
         raised = True
     check("a malformed as-of raises, never passes", raised, True)
 
+# EXPERIMENT FOLDERS. FOUND 2026-09-29: committing a research folder that no
+# scoring run reads (rescue-round4) moved the bar a day, and moving as_of to it
+# would have resolved a record whose deadline came from a wrong upload date.
+# An experiment folder is new predictions only when scoring.json names it.
+with tempfile.TemporaryDirectory() as td:
+    repo = Path(td) / "data"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    commit(repo, "predictions/alex/a.jsonl", "{}\n", "2026-09-27T10:00:00Z")
+    commit(repo, "predictions/scoring.json",
+           json.dumps({"as_of": "2026-09-27", "runs": ["predictions/_experiments/named-run"]}), "2026-09-27T11:00:00Z")
+    e1 = commit(repo, "predictions/_experiments/other-run/findings/x.json", "{}", "2026-09-29T12:00:00Z")
+    check("a later commit touching only an experiment folder no scoring run reads does not move the bar",
+          scores_asof_lag(repo, e1, "2026-09-27"), None)
+    e2 = commit(repo, "predictions/_experiments/named-run/resolutions/alex/p.json", "{}", "2026-09-29T13:00:00Z")
+    check("a later commit inside a run scoring.json names moves the bar",
+          scores_asof_lag(repo, e2, "2026-09-27") is not None, True)
+    check("and the run's own UTC date passes", scores_asof_lag(repo, e2, "2026-09-29"), None)
+    e3 = commit(repo, "predictions/_experiments/named-run-2/x.json", "{}", "2026-09-30T13:00:00Z")
+    check("a folder whose name merely starts with a named run's name is not that run",
+          scores_asof_lag(repo, e3, "2026-09-29"), None)
+    git(repo, "rm", "-q", "predictions/scoring.json")
+    git(repo, "commit", "-q", "-m", "drop scoring.json", when="2026-09-30T14:00:00Z")
+    e4 = commit(repo, "predictions/_experiments/other-run/y.json", "{}", "2026-09-30T15:00:00Z")
+    try:
+        scores_asof_lag(repo, e4, "2026-09-29")
+        raised = "no refusal"
+    except RuntimeError as exc:
+        raised = str(exc)
+    check("with no scoring.json to name the runs, an experiment commit refuses rather than guessing",
+          "scoring.json" in raised, True)
+
 deploy = (HERE / "deploy_predictions.sh").read_text()
 check("deploy_predictions.sh calls scores_asof_lag and refuses on it",
       "scores_asof_lag(" in deploy and "REFUSING: scores as-of" in deploy, True)

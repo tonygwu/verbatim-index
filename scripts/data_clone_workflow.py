@@ -667,29 +667,59 @@ def scores_asof_lag(data_root: Path, revision: str, as_of: str) -> str | None:
     moves up to the day they were added, without asking. The as-of decides what
     counts as past due, so an old one silently leaves out everything that fell
     due since. The bar is the UTC date of the newest commit at `revision` that
-    touched `predictions/`, ignoring `scores.json` and `scoring.json`, because
-    re-scoring is not adding predictions, and `year_summaries.json`, the
-    page's year-square labels, which are written FROM predictions and add none.
-    The date comes from the commit, never from a file mtime or the local clock.
+    added predictions data. These are NOT predictions data, and never move it:
+    `scores.json` and `scoring.json`, because re-scoring is not adding
+    predictions; `year_summaries.json`, the page's year-square labels, written
+    FROM predictions; and an experiment folder under `predictions/_experiments/`
+    that no run named in `scoring.json` (at that revision) lives in, because
+    nothing that scores reads it. FOUND 2026-09-29: committing the rescue-round4
+    research folder moved the bar a day, and moving as_of to it would have
+    resolved a record whose deadline came from a wrong upload date. A run that
+    scoring.json names still counts, whatever its folder. The date comes from
+    the commit, never from a file mtime or the local clock.
     """
     import datetime as _dt
     want = _dt.date.fromisoformat(as_of)   # ValueError on a malformed date: never a silent pass
-    out = subprocess.run(
-        ["git", "-C", str(data_root), "log", "-1", "--format=%ct", revision, "--", "predictions",
+    log = subprocess.run(
+        ["git", "-C", str(data_root), "log", "--format=%x00%ct", "--name-only", "--diff-merges=first-parent", revision, "--", "predictions",
          ":(exclude)predictions/scores.json", ":(exclude)predictions/scoring.json",
          ":(exclude)predictions/year_summaries.json"],
-        check=True, capture_output=True, text=True).stdout.strip()
-    if not out:
-        raise RuntimeError(f"no commit touching predictions/ at {revision} in {data_root}")
-    newest = _dt.datetime.fromtimestamp(int(out), _dt.timezone.utc).date()
+        check=True, capture_output=True, text=True).stdout
+    runs = None
+
+    def named_runs() -> list[str]:
+        shown = subprocess.run(["git", "-C", str(data_root), "show", f"{revision}:predictions/scoring.json"],
+                               capture_output=True, text=True)
+        if shown.returncode != 0:
+            raise RuntimeError(f"no predictions/scoring.json at {revision} in {data_root}, so an experiment "
+                               f"folder cannot be told apart from a scoring run")
+        found = json.loads(shown.stdout).get("runs")
+        if not isinstance(found, list) or not all(isinstance(r, str) for r in found):
+            raise RuntimeError(f"predictions/scoring.json at {revision} has no list of runs")
+        return [r.rstrip("/") + "/" for r in found]
+
+    newest = None
+    for block in log.split("\0")[1:]:
+        stamp, _, names = block.partition("\n")
+        paths = [n for n in names.splitlines() if n.strip()]
+        for path in paths:
+            if path.startswith("predictions/_experiments/"):
+                if runs is None:
+                    runs = named_runs()
+                if not any(path.startswith(r) for r in runs):
+                    continue
+            newest = _dt.datetime.fromtimestamp(int(stamp), _dt.timezone.utc).date()
+            break
+        if newest is not None:
+            break
+    if newest is None:
+        raise RuntimeError(f"no commit adding predictions data at {revision} in {data_root}")
     if want < newest:
         return (f"scoring as_of {want} is older than the newest predictions data, committed {newest} (UTC). "
                 f"Move as_of in predictions/scoring.json to {newest} or later, resolve and price every "
                 f"prediction that became past due, including newly qualifying trend records (a resolved "
                 f"trend record keeps its window), and re-score")
     return None
-
-
 
 
 def guard_prediction_write(repo: Path, path: Path, root: Path, study: str = 'leaders') -> None:

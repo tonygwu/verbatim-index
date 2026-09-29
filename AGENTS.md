@@ -1401,8 +1401,11 @@ new grades incomparable with the corpus already graded.
   a prior and a resolution that name different windows. Proof:
   `.venv/bin/python scripts/test_trend_window_freeze.py`.
   If the commit lands after UTC midnight, the date moved, so repeat. `deploy_predictions.sh`
-  refuses when `as_of` is older than the newest commit touching `predictions/`, except commits that
-  touch only `scores.json` or `scoring.json`. The check is `scores_asof_lag()` in
+  refuses when `as_of` is older than the newest commit that added predictions data under
+  `predictions/`. Not predictions data: `scores.json`, `scoring.json`, `year_summaries.json`, and an
+  experiment folder under `predictions/_experiments/` that no run named in `scoring.json` lives in
+  (since 2026-09-29, when a research folder moved the bar and a move would have resolved a mis-dated
+  record). The check is `scores_asof_lag()` in
   `data_clone_workflow.py`, and it reads the commit date in UTC, never an mtime or the local clock.
   Proof: `.venv/bin/python scripts/test_scores_asof_current.py`.
 - **Verbatim Pundits is PUBLISHED** (2026-09-16, operator-approved): two custom domains on
