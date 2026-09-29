@@ -192,8 +192,78 @@ def main() -> int:
         check("IO: sidecars round-trip through the loader the scorer uses",
               set(loaded) == set(resolutions))
 
+    corpus_split_and_trend_rule()
+
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0
+
+
+def corpus_split_and_trend_rule() -> None:
+    """Two blocks of scores.json the page reads, through the real CLI.
+
+    Eligibility first (design 3.5) relabels an ineligible row the resolver
+    answered "unresolvable" as not_eligible:<reason>, so corpus.by_outcome and
+    corpus.unresolvable_reasons, which count outcomes, no longer equal the
+    unresolvable:* rows. On production that is 118 against 93: 25 ineligible
+    rows answered anyway (review 1 item 5). `unresolvable_by_eligibility` splits
+    them. The trend rule decides which undated directional claims are judged at
+    all, so `rule.trend` states it for the page instead of the page restating it
+    (page review 0 item 3)."""
+    import phase2_resolvability as P2
+    print("scores.json splits unresolvable by eligibility and states the trend rule")
+
+    def record(pid, said, target="2020-12-31"):
+        return {"accepted": True, "leader_slug": "ada", "prediction_id": pid, "transcript_id": "ada/t1",
+                "prediction": {"target_date": target, "specificity": "high", "subject_control": "external",
+                               "category": "company_business", "horizon": "explicit", "target_date_text": "x",
+                               "horizon_years_inferred": None, "prediction_type": "binary_event",
+                               "normalized_claim": f"claim {pid}", "resolution_criteria": "crit"},
+                "source": {"statement_date": said, "quote": f"quote {pid}"},
+                "confidence": {"probability": None}, "consensus": {"status": "no_match", "exact_match": None}}
+
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        corpus = d / "predictions"
+        (corpus / "ada").mkdir(parents=True)
+        recs = [record("ok-unres", "2019-01-01"), record("ok-hit", "2019-01-01"),
+                record("lead-unres", "2020-12-01"), record("back-unres", "2021-06-01")]
+        (corpus / "ada" / "t1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+        (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada L"}]}))
+        run = d / "run"
+        outcomes = {"ok-unres": ("unresolvable", "no_public_evidence"), "ok-hit": ("occurred", None),
+                    "lead-unres": ("unresolvable", "criterion_ambiguous"),
+                    "back-unres": ("unresolvable", "deadline_incoherent")}
+        for pid, (o, why) in outcomes.items():
+            for stage, obj in (("resolve", {**res(pid, o, why), "deadline": "2020-12-31"}),
+                               ("prior", {**pri(pid, 0.5), "deadline": "2020-12-31"})):
+                fp = R.sidecar_path(run, stage, "ada", pid)
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.write_text(json.dumps({**obj, "leader_slug": "ada", "transcript_id": "ada/t1", "stage": stage}))
+        docs = {}
+        for trend in (True, False):
+            out = d / f"scores-{trend}.json"
+            argv = [sys.executable, str(ROOT / "scripts" / "score_predictions.py"), "--predictions", str(corpus),
+                    "--index", str(corpus / "index.json"), "--run", str(run), "--as-of", "2026-09-28",
+                    "--out", str(out)] + (["--trend"] if trend else [])
+            p = subprocess.run(argv, capture_output=True, text=True)
+            docs[trend] = json.loads(out.read_text()) if p.returncode == 0 else {"stderr": p.stderr[-400:]}
+        c = docs[True].get("corpus", {})
+        split = c.get("unresolvable_by_eligibility")
+        check("SPLIT: unresolvable outcomes are split into eligible and not eligible, each with its reasons",
+              split == {"eligible": {"n": 1, "reasons": {"no_public_evidence": 1}},
+                        "not_eligible": {"n": 2, "reasons": {"criterion_ambiguous": 1, "deadline_incoherent": 1}}},
+              str(split if split is not None else docs[True].get("corpus", docs[True])))
+        rows = docs[True].get("predictions", [])
+        check("SPLIT: the eligible half is exactly the rows that read unresolvable:<reason>",
+              split is not None and split["eligible"]["n"]
+              == sum(1 for r in rows if str(r["not_scored_because"]).startswith("unresolvable:")))
+        check("SPLIT: the two halves add up to the outcome count, which is unchanged",
+              split is not None and split["eligible"]["n"] + split["not_eligible"]["n"]
+              == c.get("by_outcome", {}).get("unresolvable") == 3, str(c.get("by_outcome")))
+        for trend in (True, False):
+            got = docs[trend].get("rule", {}).get("trend")
+            check(f"RULE: the trend rule is stated, enabled={trend}, with its minimum years",
+                  got == {"enabled": trend, "min_years": P2.MIN_TREND_YEARS}, str(got))
 
 
 if __name__ == "__main__":

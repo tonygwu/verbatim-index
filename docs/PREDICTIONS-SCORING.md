@@ -187,8 +187,8 @@ naming the person. Only lines above zero are shown, in this order:
 | Not yet due | scores.json does not have it, and its deadline is after `as_of` |
 | No deadline | scores.json does not have it, and `phase2_resolvability` reads no deadline |
 | Awaiting check | `not_scored_because` is `no_resolution` or `no_prior`; also a record past due at `as_of` that scores.json lacks, which the builder counts and prints |
-| Not testable | `not_scored_because` is `not_eligible` |
-| Couldn't check | `not_scored_because` is `unresolvable:<reason>`; the reasons are split on hover and in the column's help |
+| Not testable | `not_scored_because` is `not_eligible:<clause>`, the first eligibility clause the record fails (see "Eligibility is checked first" below). Before 2026-09-29 the scorer wrote a bare `not_eligible` |
+| Couldn't check | `not_scored_because` is `unresolvable:<reason>`, which the scorer now writes only for an ELIGIBLE row; the reasons are split on hover and in the column's help |
 | Restated | a non-specific member of a restatement cluster in scores.json's `restatements` block, past due or not |
 
 A not-scored reason with no bucket, or a scores.json row that is no record on
@@ -197,6 +197,55 @@ the page, refuses the render.
 Proof: `.venv/bin/python scripts/test_predictions_site.py`. Browser check,
 which needs Playwright and a rendered site directory:
 `python scripts/check_predictions_site_ui.py --site <dir> --absent "<names>" --shots <dir>`.
+
+## Eligibility is checked first, and named in one order, 2026-09-29
+
+Rescue round 4, design 3.5, and the reviews of the funnel change.
+`score_predictions.join` checks eligibility before anything else, so an
+ineligible row reads `not_eligible:<clause>` whether or not it was resolved. The
+resolve and prior stages skip ineligible records by default, so "no resolution"
+no longer reads as "awaiting a check" for a record no stage will ever check.
+
+**One order.** A record that fails several clauses is named by the first of
+`phase2_resolvability.INELIGIBLE_REASONS`: `deadline_before_statement`, then
+`specificity`, then `undated` (no statement date, so no lead time), then
+`lead_under_floor`. That is the order of the funnel's own stages.
+`phase2_resolvability.ineligible_reason` names it and `failing_clauses` lists
+every clause a record fails. Every reader, the resolver, the scorer and the
+page, must call those two functions and keep no order of its own. Proof: the ORDER checks in
+`scripts/test_phase2_resolvability.py` and the SHARED checks in
+`scripts/test_resolve_selection.py`.
+
+**What changed in the counts.** `corpus.by_outcome` and
+`corpus.unresolvable_reasons` count what the resolver answered, so they still
+include the ineligible rows it answered before the default changed. On the
+production data of 2026-09-28 that is 118 unresolvable outcomes, and only 93
+rows read `unresolvable:<reason>`. `corpus.unresolvable_by_eligibility` splits
+them: `eligible` (93) and `not_eligible` (25), each with its `n` and its
+`reasons`. The eligible half is the page's "Couldn't check".
+
+**The trend rule is in the file.** `rule.trend` is `{"enabled", "min_years"}`:
+whether an undated directional claim is judged over the window since it was
+said, and how many years must pass first (`phase2_resolvability.MIN_TREND_YEARS`).
+It is there so the page can state the rule from the file rather than restate it.
+
+**Replacements.** A re-resolved or re-priced sidecar in a newer run replaces an
+older run's only through the manifest named by the optional `replacements` key
+of `predictions/scoring.json` (`score_predictions.read_replacements`). The
+manifest must lie under `predictions/`, because `data_sync.py` regenerates the
+scores from `predictions/` and `roster/` only; `load_scoring_config` and
+`data_sync.py` refuse any other path by name. `replacements.replaced_sidecars`
+reports each replaced sidecar with its outcome or p before and after, and the
+window it judged before and after (`deadline_was`, `deadline_now`).
+
+**A trend window freezes across runs.** A resolved trend record keeps the window
+of its first resolution in ANY run the scoring config names, not only in the run
+a stage writes to. `resolve_predictions.py` reads every run of
+`<data>/predictions/scoring.json` (or `--scoring-config`), so `--ids` into a new
+run judges the old window, and it refuses a trend record whose runs record
+different windows. The scorer refuses a replacement resolution of a trend record
+that judged another window than the one it replaces. A dated record's
+replacement may move its window. Proof: `scripts/test_trend_window_freeze.py`.
 
 ## Restatements score once, decided 2026-09-28
 

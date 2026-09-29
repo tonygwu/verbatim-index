@@ -173,6 +173,29 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
     return out, why
 
 
+def unresolvable_split(rows: list[dict]) -> dict:
+    """Rows the resolver answered "unresolvable", split by eligibility, each half with its reasons.
+
+    Eligibility is checked first (join), so an INELIGIBLE row the resolver
+    answered anyway reads not_eligible:<reason>, and only the eligible half reads
+    unresolvable:<reason>. corpus.by_outcome and corpus.unresolvable_reasons
+    count outcomes, so they keep both halves: on production 118, of which 25
+    are ineligible (review 1 item 5 of the round-4 funnel change). A restated
+    row carries no outcome of its own and is in neither half. An unresolvable
+    row with no reason is refused; validate_resolution never writes one.
+    """
+    out = {}
+    for key, want in (("eligible", True), ("not_eligible", False)):
+        rs = [r for r in rows if r["outcome"] == "unresolvable" and bool(r["flags"]["eligible"]) is want]
+        blank = [r["prediction_id"] for r in rs if not r["unresolvable_reason"]]
+        if blank:
+            raise SystemExit(f"unresolvable resolutions with no unresolvable_reason: {blank}; "
+                             f"resolution_lib.validate_resolution refuses those, so these sidecars were not "
+                             f"written by the resolve stage")
+        out[key] = {"n": len(rs), "reasons": dict(collections.Counter(r["unresolvable_reason"] for r in rs))}
+    return out
+
+
 def is_restated(r: dict) -> bool:
     return str(r.get("not_scored_because") or "").startswith("restated:")
 
@@ -778,6 +801,10 @@ def main(argv: list[str] | None = None) -> int:
             "clamp": PS.CLAMP,
             "min_scored_to_rank": MIN_SCORED_TO_RANK,
             "min_lead_days": args.min_lead_days,
+            # Whether an undated DIRECTIONAL claim is judged over the window since it
+            # was said, and how old it must be first (phase2_resolvability.trend_window),
+            # so the page states the rule rather than restating it.
+            "trend": {"enabled": args.trend, "min_years": P2.MIN_TREND_YEARS},
             "baseline_only": "points = -log2(p) if it happened, else (p/(1-p))*log2(p)",
             "speaker_probability": "points = log2(q/p) if it happened, else log2((1-q)/(1-p))",
             "expected_points_at_every_p": 0.0,
@@ -791,6 +818,7 @@ def main(argv: list[str] | None = None) -> int:
             "priors_present": len(priors),
             "by_outcome": dict(outcomes),
             "unresolvable_reasons": dict(reasons),
+            "unresolvable_by_eligibility": unresolvable_split(joined),
             "resolution_confidence": dict(conf),
             "resolved_with_no_source": nosrc,
             "scored": len(scored),
@@ -831,6 +859,9 @@ def main(argv: list[str] | None = None) -> int:
           f"-> {c['scored']} scored across {c['leaders_ranked']} ranked leaders")
     print(f"outcomes: {json.dumps(c['by_outcome'], sort_keys=True)}")
     print(f"unresolvable: {json.dumps(c['unresolvable_reasons'], sort_keys=True)}")
+    u = c["unresolvable_by_eligibility"]
+    print(f"  of which eligible {u['eligible']['n']} {json.dumps(u['eligible']['reasons'], sort_keys=True)}, "
+          f"not eligible {u['not_eligible']['n']} {json.dumps(u['not_eligible']['reasons'], sort_keys=True)}")
     print(f"not scored: {json.dumps(c['not_scored_because'], sort_keys=True)}")
     print(f"criteria repaired: {applied} applied, {unrepairable} unrepairable")
     if manifest is not None:
