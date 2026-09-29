@@ -56,6 +56,7 @@ E_HTTP = "http_error"
 E_NO_TRANSCRIPT = "no_transcript_in_page"
 E_TOO_SHORT = "below_min_words"
 E_BLOCKED = "blocked_or_ratelimited"
+E_BAD_DATE = "unreadable_publication_date"
 E_OTHER = "other"
 
 MIN_WORDS = 700
@@ -309,6 +310,12 @@ def extract_transcript(page: str) -> tuple[str, int]:
     move and silently loses all 576 position markers, which are what lets a
     judge cite where in an appearance a passage sits. So the JSON field is the
     primary path and the HTML block is only a fallback.
+
+    Both paths return UNESCAPED text. The JSON string is itself HTML-escaped
+    ("we&#39;re"), so decoding the JSON is only half the job. FOUND 2026-09-28:
+    this path skipped the unescape, and "&#39;" reached the corpus, the
+    extractor's quotes and the published prediction cards. Records written
+    before that date keep their escaped text; see `text_unescaped` in fetch_one.
     """
     marker = '"transcript":'
     idx = page.find(marker)
@@ -320,7 +327,7 @@ def extract_transcript(page: str) -> tuple[str, int]:
             try:
                 raw, _ = json.JSONDecoder().raw_decode(page[q:])
                 if isinstance(raw, str) and len(raw.split()) > 200:
-                    return _normalise(raw)
+                    return _normalise(htmlmod.unescape(raw))
             except ValueError:
                 pass
 
@@ -351,15 +358,100 @@ def _normalise(text: str) -> tuple[str, int]:
     return text, n_marks
 
 
+LD_JSON = re.compile(r'<script[^>]*type=["\']?application/ld\+json["\']?[^>]*>(.*?)</script>',
+                     re.S | re.I)
+
+
+class PageDateError(ValueError):
+    """The page states a publication date that cannot be read as one UTC date."""
+
+
+def _date_published_values(obj) -> list:
+    """Every datePublished in one JSON-LD object, at any depth."""
+    if isinstance(obj, dict):
+        return [v for k, v in obj.items() if k == "datePublished"] + [
+            x for k, v in obj.items() if k != "datePublished" for x in _date_published_values(v)]
+    if isinstance(obj, list):
+        return [x for v in obj for x in _date_published_values(v)]
+    return []
+
+
+def _utc_date(value) -> str:
+    """YYYY-MM-DD in UTC of one ISO 8601 timestamp that carries its own offset.
+
+    A value with no offset is refused, not read as UTC or as local time. The
+    archived page stamps +02:00, the UTC date moves with the offset, and
+    assuming a zone is the guess that the rule against the local clock forbids.
+    """
+    if not isinstance(value, str):
+        raise PageDateError(f"datePublished {value!r} is not a string")
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise PageDateError(f"datePublished {value!r} is not an ISO 8601 timestamp") from exc
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        raise PageDateError(f"datePublished {value!r} carries no UTC offset, so its UTC date "
+                            f"cannot be known")
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def publication_date(page: str) -> tuple[str, list[str]] | None:
+    """(UTC date, raw values) of the page's JSON-LD datePublished, or None.
+
+    The episode page carries it in the same BlogPosting object whose
+    associatedMedia.transcript is the text extract_transcript reads. MEASURED
+    2026-09-28 on the archived All-In page: "datePublished":
+    "2025-09-17T23:05:00+02:00", which is 2025-09-17 in UTC. A publication date
+    is an UPPER BOUND on when the words were spoken, which is what the
+    `publication_date` basis in predictions_lib means.
+
+    None means the page states no datePublished. Nothing stands in for it: not
+    dateCreated, not the fetch time, not the clock. Several values are
+    accepted only when they name the same UTC date; otherwise, and for any
+    value that is not a timestamp with an offset, PageDateError.
+    """
+    values: list = []
+    for block in LD_JSON.findall(page):
+        try:
+            obj = json.loads(block)
+        except ValueError as exc:
+            # A broken block that could hold the date must not read as "no
+            # date": that would write the transcript as undated and hide why.
+            if "datePublished" in block:
+                raise PageDateError(f"a JSON-LD block that names datePublished is not "
+                                    f"valid JSON: {exc}") from exc
+            continue
+        values.extend(_date_published_values(obj))
+    if not values:
+        return None
+    dates = {_utc_date(v) for v in values}
+    if len(dates) != 1:
+        raise PageDateError(f"JSON-LD carries {len(values)} datePublished values on "
+                            f"{len(dates)} different UTC dates: {values}")
+    return dates.pop(), sorted(set(values))
+
+
 def page_meta(page: str) -> dict:
+    """Title, description and, when the page states one, the publication date.
+
+    `statement_date` and `statement_date_basis` are written only as a pair and
+    only from datePublished; a page without one gets neither key, which
+    predictions_lib.own_statement_date reads as (None, "unknown"). Raises
+    PageDateError for a datePublished it cannot read.
+    """
     def grab(pat: str) -> str | None:
         m = re.search(pat, page, re.I | re.S)
         return htmlmod.unescape(m.group(1)).strip() if m else None
-    return {
+    meta = {
         "hs_title": grab(r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"')
                     or grab(r"<title>([^<]+)</title>"),
         "hs_description": (grab(r'<meta[^>]+name="description"[^>]+content="([^"]+)"') or "")[:1000],
     }
+    published = publication_date(page)
+    if published is not None:
+        meta["statement_date"], meta["hs_date_published"] = published
+        meta["statement_date_basis"] = "publication_date"
+    return meta
 
 
 def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
@@ -389,7 +481,14 @@ def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
         return {"status": "failed", "leader_slug": slug, "source_id": sid,
                 "error_type": E_TOO_SHORT, "detail": f"{words} words < {MIN_WORDS}"}
 
-    meta = page_meta(r.text)
+    try:
+        meta = page_meta(r.text)
+    except PageDateError as exc:
+        # Refused rather than written undated: an undated record is
+        # indistinguishable from a page that states no date, and the date is
+        # what every prediction horizon from this recording is measured from.
+        return {"status": "failed", "leader_slug": slug, "source_id": sid,
+                "error_type": E_BAD_DATE, "detail": str(exc)[:300]}
     # Duration is inferred from the last timestamp, since the page states none.
     last = TS.findall(text)
     dur = None
@@ -405,6 +504,14 @@ def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
         "declared_title": meta.get("hs_title") or cand["episode"],
         "declared_venue": cand["show"],
         "declared_kind": "podcast",
+        # Still 0, which both judge-prompt builders (grade.py and
+        # grading_contract.py) print as "unknown", even when the page states a
+        # publication date. The year is a GRADING input: every Happy Scribe
+        # transcript on the leaders board was graded with no year, so writing
+        # one here would change the judge's prompt for new transcripts only.
+        # The date travels in statement_date instead, which only the
+        # predictions pipeline reads. The key stays, rather than going, so the
+        # record keeps the YouTube fetcher's shape.
         "declared_year": 0,
         "caption_track": "happyscribe",
         "word_count": words,
@@ -413,6 +520,11 @@ def fetch_one(cand: dict, slug: str, out_dir: Path, session: requests.Session,
         "n_timestamp_marks": n_marks,
         "fetched_at_utc": utcnow(),
         "fetch_method": "happyscribe",
+        # extract_transcript unescapes on both paths since 2026-09-28. Records
+        # written before then lack this key and still hold "&#39;", and their
+        # quote offsets were measured against that escaped text. The key lets a
+        # read-time view unescape only the old records, never a new one twice.
+        "text_unescaped": True,
         "hs_show": cand["show"],
         "hs_episode": cand["episode"],
         **meta,
