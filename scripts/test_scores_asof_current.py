@@ -86,6 +86,13 @@ with tempfile.TemporaryDirectory() as td:
     check("a later commit touching only scores.json/scoring.json does not move the bar",
           scores_asof_lag(repo, r2, "2026-09-27"), None)
 
+    # The year-square labels are display text generated FROM predictions, not
+    # predictions. FOUND 2026-09-29: committing them moved the bar a day and
+    # would have refused the deploy that publishes them.
+    r2b = commit(repo, "predictions/year_summaries.json", "{}", "2026-09-29T11:00:00Z")
+    check("a later commit touching only year_summaries.json does not move the bar",
+          scores_asof_lag(repo, r2b, "2026-09-27"), None)
+
     # Data outside predictions/ (the leaders board) does not move it either.
     r3 = commit(repo, "grades/x.json", "{}", "2026-09-30T10:00:00Z")
     check("a later commit outside predictions/ does not move the bar", scores_asof_lag(repo, r3, "2026-09-27"), None)

@@ -641,14 +641,16 @@ def scores_asof_lag(data_root: Path, revision: str, as_of: str) -> str | None:
     counts as past due, so an old one silently leaves out everything that fell
     due since. The bar is the UTC date of the newest commit at `revision` that
     touched `predictions/`, ignoring `scores.json` and `scoring.json`, because
-    re-scoring is not adding predictions. The date comes from the commit, never
-    from a file mtime or the local clock.
+    re-scoring is not adding predictions, and `year_summaries.json`, the
+    page's year-square labels, which are written FROM predictions and add none.
+    The date comes from the commit, never from a file mtime or the local clock.
     """
     import datetime as _dt
     want = _dt.date.fromisoformat(as_of)   # ValueError on a malformed date: never a silent pass
     out = subprocess.run(
         ["git", "-C", str(data_root), "log", "-1", "--format=%ct", revision, "--", "predictions",
-         ":(exclude)predictions/scores.json", ":(exclude)predictions/scoring.json"],
+         ":(exclude)predictions/scores.json", ":(exclude)predictions/scoring.json",
+         ":(exclude)predictions/year_summaries.json"],
         check=True, capture_output=True, text=True).stdout.strip()
     if not out:
         raise RuntimeError(f"no commit touching predictions/ at {revision} in {data_root}")
