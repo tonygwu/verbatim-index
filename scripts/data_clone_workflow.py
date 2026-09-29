@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -511,8 +511,9 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # (predictions_lib.DATE_OVERRIDES_FILE in production), relative to the data root.
 # `replacements` names a replacement manifest (score_predictions.read_replacements):
 # a re-resolved or re-priced sidecar in a newer run that supersedes an older run's
-# sidecar for the same prediction. It must live under predictions/ in production,
-# because data_sync.py regenerates scores.json from predictions/ and roster/ only.
+# sidecar for the same prediction. It must live under predictions/, because
+# data_sync.py regenerates scores.json from predictions/ and roster/ only; a path
+# anywhere else is refused by name (replacements_path_problem).
 OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements")
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
 
@@ -566,6 +567,20 @@ def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list
     return None
 
 
+def replacements_path_problem(rel: str) -> str | None:
+    """Why a scoring config's `replacements` path is not under predictions/, or None.
+
+    data_sync.py regenerates scores.json in a scratch tree holding only
+    predictions/ and roster/ from the commit, so a manifest anywhere else scored
+    here and then failed there with a raw FileNotFoundError (review 0 item 4 of
+    the round-4 funnel change). Read by load_scoring_config and data_sync.py."""
+    parts = PurePosixPath(rel).parts
+    if PurePosixPath(rel).is_absolute() or ".." in parts or len(parts) < 2 or parts[0] != "predictions":
+        return (f"replacements {rel!r} must lie under predictions/, because data_sync.py regenerates "
+                f"scores.json from predictions/ and roster/ only")
+    return None
+
+
 def load_scoring_config(path: Path) -> tuple[Path, dict]:
     """(data root, config). The root is the config file's grandparent, since the
     config lives at <data>/predictions/scoring.json and its paths are relative to
@@ -583,6 +598,8 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
         raise SystemExit(f"{path}: date_overrides must be a path relative to the data root")
     if "replacements" in cfg and not (isinstance(cfg["replacements"], str) and cfg["replacements"]):
         raise SystemExit(f"{path}: replacements must be a path relative to the data root")
+    if "replacements" in cfg and replacements_path_problem(cfg["replacements"]):
+        raise SystemExit(f"{path}: {replacements_path_problem(cfg['replacements'])}")
     if not isinstance(cfg["trend"], bool) or not isinstance(cfg["min_lead_days"], int) \
             or not cfg["predictions"] or not cfg["runs"]:
         raise SystemExit(f"{path}: trend must be a boolean, min_lead_days an integer, and predictions "

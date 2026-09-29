@@ -222,13 +222,17 @@ def main() -> int:
         cfg_path = corpus / "scoring.json"
         base_cfg = {"as_of": "2026-09-16", "trend": False, "min_lead_days": 60, "predictions": ["predictions"],
                     "runs": ["run-a", "run-new"], "index": "predictions/index.json", "out": "predictions/scores.json"}
-        cfg_path.write_text(json.dumps(dict(base_cfg, replacements="m.json")))
+        # In production the manifest lives under predictions/, because data_sync.py
+        # regenerates scores.json from predictions/ and roster/ only.
+        pm = corpus / "replacements.json"
+        pm.write_text(m.read_text())
+        cfg_path.write_text(json.dumps(dict(base_cfg, replacements="predictions/replacements.json")))
         run_cfg = lambda: subprocess.run([sys.executable, str(ROOT / "scripts" / "score_predictions.py"),
                                           "--config", str(cfg_path)], capture_output=True, text=True)
         c = run_cfg()
         cdoc = json.loads((corpus / "scores.json").read_text()) if c.returncode == 0 else {}
         check("CONFIG: an optional replacements key is read from scoring.json",
-              c.returncode == 0 and cdoc.get("settings", {}).get("replacements") == "m.json"
+              c.returncode == 0 and cdoc.get("settings", {}).get("replacements") == "predictions/replacements.json"
               and {r["prediction_id"]: r for r in cdoc.get("predictions", [])}.get("p1", {}).get("outcome") == "not_occurred",
               c.stderr[-400:])
         check("CONFIG: 'replacements' is one of the optional config keys",
@@ -241,7 +245,7 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001 - reported as a failed check, not a crash of the test
                 return f"REFUSED {type(exc).__name__}: {exc}"
         fresh = staleness()
-        m.write_text(m.read_text().replace("second look", "second look, re-read"))
+        pm.write_text(pm.read_text().replace("second look", "second look, re-read"))
         stale = staleness()
         check("CONFIG: scores.json is fresh, then stale once the manifest's bytes change",
               fresh is None and stale is not None and not stale.startswith("REFUSED")
@@ -258,11 +262,25 @@ def main() -> int:
         blank = run_cfg()
         check("CONFIG: an empty path is refused as a path, not as an unknown key",
               blank.returncode != 0 and "replacements must be a path" in blank.stderr, blank.stderr[-300:])
-        cfg_path.write_text(json.dumps(dict(base_cfg, replacements="nowhere.json")))
+        cfg_path.write_text(json.dumps(dict(base_cfg, replacements="predictions/nowhere.json")))
         miss = run_cfg()
         check("CONFIG: a manifest that does not exist is refused, naming it",
               miss.returncode != 0 and "nowhere.json" in miss.stderr and "Traceback" not in miss.stderr,
               miss.stderr[-300:])
+        # Review 0 item 4 and review 1 item 7 of the round-4 funnel change: a
+        # manifest outside predictions/ scored here and then failed data_sync.py
+        # with a raw FileNotFoundError, because the scratch tree it regenerates in
+        # holds only predictions/ and roster/. Refused by name instead.
+        for bad in ("m.json", "predictions/../m.json", "/abs/predictions/m.json", "predictions"):
+            cfg_path.write_text(json.dumps(dict(base_cfg, replacements=bad)))
+            out = run_cfg()
+            check(f"CONFIG: a manifest path outside predictions/ ({bad!r}) is refused by name",
+                  out.returncode != 0 and "must lie under predictions/" in out.stderr and bad in out.stderr
+                  and "Traceback" not in out.stderr, out.stderr[-300:])
+            got = staleness()
+            check(f"CONFIG: scores_staleness refuses it the same way ({bad!r}), not with a raw error",
+                  str(got).startswith("REFUSED") and "must lie under predictions/" in str(got)
+                  and "FileNotFoundError" not in str(got), str(got)[-300:])
 
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0
