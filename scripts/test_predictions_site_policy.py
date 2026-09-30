@@ -71,6 +71,10 @@ def main() -> int:
             ("lead-fc", dict(target="2025-03-20", target_text="this month")),
             ("lead-ann", dict(target="2025-03-25", target_text="this month")),
             ("stated", dict(target="2025-10", target_text="by October")),
+            # Not yet due, said 46 days before their deadline: the lead test decides them before they fall due.
+            ("lead-open-new", dict(target="2026-10", target_text="next month", upload="20260915")),
+            ("lead-open-fc", dict(target="2026-10", target_text="next month", upload="20260915")),
+            ("lead-open-ann", dict(target="2026-10", target_text="next month", upload="20260915")),
         ]
         recs = {sid: T.srec(L, sid, q(sid), **kw) for sid, kw in spec}
         for sid, r in recs.items():
@@ -140,6 +144,8 @@ def main() -> int:
         # An implied window sets no lower bound, so the outcome-blind lead test decides it.
         side(board, "imp-scored", "lead_test", dl["imp-scored"])
         side(board, "lead-ann", "lead_test", dl["lead-ann"], label="own_plan_announcement")
+        side(board, "lead-open-fc", "lead_test", dl["lead-open-fc"])
+        side(board, "lead-open-ann", "lead_test", dl["lead-open-ann"], label="own_plan_announcement")
         hrun = pred / "_experiments" / "half"
         side(hrun, "imp-scored", "resolve", half[0]["_deadline"], outcome="not_occurred", implied_scale=0.5)
         side(hrun, "imp-scored", "prior", half[0]["_deadline"], implied_scale=0.5)
@@ -178,13 +184,49 @@ def main() -> int:
         want = {"imp-scored": "scored", "imp-open": "not_due", "screened": "no_deadline", "early-now": "scored",
                 "early-late": "scored", "pub": "not_testable", "pub-rev": "scored", "wd": "withdrawn",
                 "wd-open": "withdrawn",
-                "lead-fc": "scored", "lead-ann": "not_testable", "stated": "scored"}
+                "lead-fc": "scored", "lead-ann": "not_testable", "stated": "scored",
+                "lead-open-new": "not_due", "lead-open-fc": "not_due", "lead-open-ann": "not_due"}
         got = {sid: st[sid]["state"] for sid in want}
         check("STATES: each record carries the state its row, its window and the manifest give", got == want,
               json.dumps({k: (got[k], v) for k, v in want.items() if got[k] != v}))
         check("BUCKETS: the Predictions column counts those states, withdrawn in its own bucket, and adds up",
-              row.get("buckets") == {"scored": 6, "not_due": 1, "no_deadline": 1, "not_testable": 2, "withdrawn": 2}
-              and sum(row["buckets"].values()) == row["accepted"] == 12, json.dumps(row.get("buckets")))
+              row.get("buckets") == {"scored": 6, "not_due": 4, "no_deadline": 1, "not_testable": 2, "withdrawn": 2}
+              and sum(row["buckets"].values()) == row["accepted"] == 15, json.dumps(row.get("buckets")))
+
+        print("the lead test on records not yet due (review 2026-09-30, item 12c)")
+        sdoc = json.loads((pred / "scores.json").read_text())
+        check("LABELS: scores.json carries every lead-test label it read, due or not",
+              (sdoc.get("lead_test_labels") or {}).get(pid["lead-open-fc"]) == "world_forecast"
+              and sdoc["lead_test_labels"].get(pid["lead-open-ann"]) == "own_plan_announcement"
+              and pid["lead-open-new"] not in sdoc["lead_test_labels"], json.dumps(sdoc.get("lead_test_labels")))
+        check("PENDING: an unlabelled record under the floor says the check has not decided it yet",
+              "only if an outcome-blind check finds it a forecast" in st["lead-open-new"]["line"],
+              st["lead-open-new"]["line"])
+        check("LABELLED: a record the check calls a forecast reads as an ordinary open record, never pending",
+              st["lead-open-fc"]["line"].startswith("Open until") and "It is checked after that date" in st["lead-open-fc"]["line"]
+              and "outcome-blind" not in st["lead-open-fc"]["line"] and "pending" not in (st["lead-open-fc"].get("lead_test") or {}),
+              st["lead-open-fc"]["line"] + json.dumps(st["lead-open-fc"].get("lead_test")))
+        check("LABELLED: a record the check calls an announcement says it will not be scored, and why",
+              "will not be scored" in st["lead-open-ann"]["line"] and "announcement" in st["lead-open-ann"]["line"]
+              and "only if an outcome-blind check" not in st["lead-open-ann"]["line"], st["lead-open-ann"]["line"])
+        for label, doc2, needle in (
+                ("REFUSE: a scores.json with the lead test on and no labels",
+                 {k: v for k, v in sdoc.items() if k != "lead_test_labels"}, "lead_test_labels"),
+                ("REFUSE: a lead-test label outside the four kinds",
+                 dict(sdoc, lead_test_labels=dict(sdoc["lead_test_labels"], **{pid["lead-open-new"]: "forecast"})),
+                 pid["lead-open-new"])):
+            bad = td / "scores_bad.json"
+            bad.write_text(json.dumps(doc2))
+            pb = subprocess.run([sys.executable, str(REPO / "scripts" / "build_predictions_site.py"), "--data-date",
+                                 "2026-09-30", "--index", str(pred / "index.json"), "--predictions", str(pred),
+                                 "--roster", str(roster), "--membership", str(T.mem(roster)),
+                                 "--out", str(td / "site_bad" / "index.html"), "--scores", str(bad)],
+                                capture_output=True, text=True, cwd=REPO)
+            check(label, pb.returncode != 0 and needle in pb.stderr and "REFUSING" in pb.stderr, pb.stderr[-400:])
+        check("IMPLIED: a not-yet-due implied row names no lead in days, which its words never gave",
+              "days before it" not in st["imp-open"]["line"] and "It names no time at all" in st["imp-open"]["line"]
+              and st["imp-open"]["line"].count("names no") == 1,
+              st["imp-open"]["line"])
 
         print("implied windows")
         check("TARGET: a scored implied record reads 'judged over 3 years, to 2024-03-01 (implied window)'",

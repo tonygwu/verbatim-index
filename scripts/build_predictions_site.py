@@ -1886,14 +1886,21 @@ LEAD_TEST_WORDS = {"own_plan_announcement": "an outcome-blind check reads it as 
                    "relay": "an outcome-blind check reads it as someone else's published schedule, repeated"}
 
 
+def implied_lead_words(st: dict) -> str:
+    """An implied row's lead rule as a clause. The rule for a record with no time words
+    already says it names none, so it is not prefixed a second time."""
+    rule = st["implied"]["lead_rule"]
+    return rule if rule.startswith("it names no") else f"it names no date of its own, and {rule}"
+
+
 def clause_words(why: str, st: dict, rec: dict) -> str:
     """The eligibility clause a record fails, as a clause of a sentence."""
     d, m, said = st["deadline"], st["min_lead"], rec["source"]["statement_date"]
-    if why == "lead_under_floor" and st.get("implied"):
-        # An implied window is imposed, so its lead is the shortest reading of the words.
-        return f"it names no date of its own, and {st['implied']['lead_rule']}"
     if why == "lead_under_floor":
-        base = f"said {_days(st['lead_days'])} before its own deadline, {d}, under the {m}-day floor"
+        # An implied window is imposed, so its lead is the shortest reading of the words,
+        # never the days from the statement to the deadline this pipeline set.
+        base = (implied_lead_words(st) if st.get("implied")
+                else f"said {_days(st['lead_days'])} before its own deadline, {d}, under the {m}-day floor")
         lt = st.get("lead_test") or {}
         if lt.get("label") in LEAD_TEST_WORDS:
             return f"{base}, and {LEAD_TEST_WORDS[lt['label']]}"
@@ -1963,8 +1970,15 @@ def state_words(st: dict, rec: dict, row: "dict | None", scored_page: bool) -> d
         line = f"Called early on {early['as_of']}: {verdict}; not priced yet, so it is not scored yet."
         note, price = "not scored until it is priced", "Not priced yet."
     elif s == "not_due" and why == "lead_under_floor" and "pending" in (st.get("lead_test") or {}):
-        line = (f"Open until {d}. It was said {_days(st['lead_days'])} before it, under the {st['min_lead']}-day floor, "
-                f"so it is scored only if an outcome-blind check finds it a forecast rather than an announcement.")
+        if st.get("implied"):
+            rule = implied_lead_words(st)
+            line = (f"Open until {d}. {rule[0].upper()}{rule[1:]}."
+                    + ("" if "outcome-blind check" in rule else
+                       " It is scored only if an outcome-blind check finds it a forecast rather than an announcement."))
+        else:
+            line = (f"Open until {d}. It was said {_days(st['lead_days'])} before it, under the {st['min_lead']}-day "
+                    f"floor, so it is scored only if an outcome-blind check finds it a forecast rather than an "
+                    f"announcement.")
         price = "Not priced yet: a price is set when it is checked."
     elif s == "not_due" and why is None:
         line, price = f"Open until {d}{win}. It is checked after that date.", "Not priced yet: a price is set when it is checked."
@@ -2092,12 +2106,17 @@ def record_state(rec: dict, row: "dict | None", as_of: "date | None", min_lead: 
             if as_of is None:
                 st["state"] = "unchecked"
             else:
-                flags = P2.funnel_flags(rec, min_lead)
+                # With the lead test on, the labels scores.json carries decide, as they do for
+                # a scored row; a record is pending only while no label exists (review
+                # 2026-09-30, item 12c).
+                # Off, the call is the one made before the lead test existed.
+                flags = (P2.funnel_flags(rec, min_lead, lead_labels=policy["lead_labels"]) if policy.get("lead_test")
+                         else P2.funnel_flags(rec, min_lead))
                 if flags.get("implied"):
                     st["implied"] = flags["implied"]
-                if policy.get("lead_test") and P2.failing_clauses(flags, pid) == ["lead_under_floor"]:
-                    # Not labelled yet: only the lead-test stage labels it, outcome-blind.
-                    st["lead_test"] = {"pending": True}
+                if "lead_test" in flags:
+                    label = flags["lead_test"]["label"]
+                    st["lead_test"] = {"label": label} if label else {"pending": True}
                 unfit = P2.ineligible_reason(pid, flags)
                 if d > as_of:
                     st.update(state="not_due", reason=unfit)
@@ -2194,6 +2213,16 @@ def record_states(by_slug: dict[str, list[dict]], scores_doc: "dict | None") -> 
     rule = (scores_doc or {}).get("rule") or {}
     policy = {"implied": bool((rule.get("implied") or {}).get("enabled")), "lead_test": bool(rule.get("lead_test")),
               "withdrawn": ((scores_doc or {}).get("withdrawn") or {}).get("entries") or {}}
+    if policy["lead_test"]:
+        labels = scores_doc.get("lead_test_labels")
+        if not isinstance(labels, dict):
+            raise SystemExit("REFUSING: scores.json turns the lead test on but carries no lead_test_labels, so the "
+                             "page cannot tell a labelled record from a pending one; re-run score_predictions.py")
+        odd = sorted(pid for pid, lab in labels.items() if lab not in R.LEAD_TEST_LABELS)
+        if odd:
+            raise SystemExit(f"REFUSING: scores.json carries lead-test labels outside {list(R.LEAD_TEST_LABELS)} "
+                             f"for {odd[:6]}")
+        policy["lead_labels"] = labels
     if policy["implied"] and rule["implied"].get("table_sha256") != P2.implied_table_sha256():
         raise SystemExit("REFUSING: scores.json judged implied windows by another table than this code's; the page "
                          "would give not-yet-due records windows the scorer did not use")

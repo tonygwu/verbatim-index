@@ -1249,6 +1249,10 @@ def main(argv: list[str] | None = None) -> int:
             "unlabelled": sorted(r["prediction_id"] for r in under if not r["flags"]["lead_test"]["label"]),
             "scored_as_forecast": sum(1 for r in under if r["scored"]),
         }
+        # Every label this board read, due or not. The lead-test stage labels records
+        # before they fall due, and scores.json has no row for those, so without this
+        # the page would call a labelled record "pending" (review 2026-09-30, item 12c).
+        doc["lead_test_labels"] = {pid: lead_tests[pid]["label"] for pid in sorted(lead_tests)}
     if args.early_calls:
         doc["rule"]["early_calls"] = True
         doc["corpus"]["stale_sidecars"] = window_stale
