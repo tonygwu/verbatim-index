@@ -1636,3 +1636,28 @@ new grades incomparable with the corpus already graded.
   for cache and compatibility checks. A stale cache never triggers an automatic
   paid rerun. The bounded release-2 pilot and its frozen inputs are documented
   in `docs/PREDICTIONS-RERUN-2026-09-12.md`.
+  Since release `predictions-2.3` (2026-09-30) it also pins the header template,
+  `STATEMENT_DATE_HEADER.json`, as `contracts.header`: the date line is prompt
+  text outside both specs, so editing it is `policy_release_mismatch`. The line
+  says how the date is known, and an unchecked upload or publication date is
+  labelled an upper bound only. Both models return `statement_date_doubt`; a
+  `recording_older_than_stated` doubt, a placeholder year in a field that names
+  no year, or a relative year the funnel's parser reads as earlier sets
+  `date_hold`, and a held 2.3 record is not accepted. A 2.2 record keeps its
+  published `accepted` flag. Proof: `.venv/bin/python scripts/test_predictions_release23.py`.
+- Recording dates (rescue round 4, operator decision VD-8 (c)):
+  `scripts/date_recordings.py --run-dir data/predictions/_experiments/dating-<name>`
+  is a dry run until `--run`, which SPENDS QUOTA. One agent per recording,
+  `--harness gemini` by default (Codex quota, operator 2026-09-29), names the event
+  and its date range with sources. `dating_lib.py`, with no model, must find each
+  cited excerpt with a date inside the range on the fetched page, never on the
+  recording's own page, any YouTube page or the transcript's url. It writes the
+  run's own `overrides.json` and `queue.json`, never production's override file.
+  An agent entry re-verifies on every load from its proposal's sha256 and the
+  window kept around each excerpt. Proof: `scripts/test_dating.py`,
+  `scripts/test_date_recordings.py`.
+- Tier R case evals: `scripts/eval_prediction_cases.py --gold
+  data/predictions/_eval/cases-20260929` replays the operator's audited cases
+  offline; `--smoke` runs the Buddy Media `already_public` case first;
+  `PREDICT_LIVE=1 ... --live` spends quota (`--estimate` first). The gold file is
+  private data. Proof: `scripts/test_eval_prediction_cases.py`.

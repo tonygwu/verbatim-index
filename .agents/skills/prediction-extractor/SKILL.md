@@ -91,6 +91,8 @@ Phase 2, not built:  resolution  ->  scoring  ->  forecasting leaderboard
 .venv/bin/python scripts/validate_predictions.py
 .venv/bin/python scripts/aggregate_predictions.py
 PREDICT_LIVE=1 .venv/bin/python scripts/eval_predictions.py --out <tmp>
+.venv/bin/python scripts/date_recordings.py --run-dir data/predictions/_experiments/dating-<name>        # dry run
+.venv/bin/python scripts/eval_prediction_cases.py --gold data/predictions/_eval/cases-20260929 --smoke   # offline
 ```
 
 `docs/PREDICTIONS.md` holds the architecture, the schema, the known limits and the Phase 2 boundary.
