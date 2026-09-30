@@ -748,7 +748,7 @@ def _searched_errors(obj: dict) -> list[str]:
     listed = obj.get("searched")
     if not isinstance(listed, list):
         return [f"searched is {listed!r}, not a list of the queries run"]
-    distinct = {str(q).strip().lower() for q in listed if str(q).strip()}
+    distinct = {normalise_query(q) for q in listed if normalise_query(q)}
     if len(distinct) < MIN_SEARCHES:
         return [f"searched lists {len(distinct)} distinct queries; every outcome needs at least {MIN_SEARCHES}"]
     return []
@@ -794,21 +794,35 @@ def validate_resolution(obj: dict, expect_id: str, said: "str | None") -> list[s
     return errs
 
 
-def validate_effort(obj: dict, telemetry: dict) -> list[str]:
-    """The harness's own count of web searches must reach the floor and cover what `searched` lists.
+def normalise_query(q) -> str:
+    """One search query as compared: case, curly quotes and runs of spaces do not make a new query."""
+    s = str(q).casefold().translate(str.maketrans({"\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'"}))
+    return " ".join(s.split())
 
-    `searched` is the model's account of its effort; the telemetry is the harness's
-    (grade.call_astra records tool_use_counts.web_search). A count the telemetry
-    does not carry is refused, never assumed."""
-    n = ((telemetry or {}).get("tool_use_counts") or {}).get("web_search")
-    if not isinstance(n, int) or isinstance(n, bool):
-        return ["telemetry records no tool_use_counts.web_search, so the research effort cannot be shown"]
+
+def distinct_queries(queries) -> int:
+    return len({normalise_query(q) for q in queries if normalise_query(q)})
+
+
+def validate_effort(obj: dict, telemetry: dict) -> list[str]:
+    """The floor on what the HARNESS searched, for every outcome, and `searched` checked against it.
+
+    The telemetry is grade.web_search_actions: every query of every completed
+    search action. A page open is not a search, and one action carrying three
+    queries is three (review 2026-09-30: counting items refused 24 hits of 129
+    calls for the wrong reason). `searched` is the model's own account; each entry
+    must be a query the harness ran, compared by normalise_query. Telemetry without
+    the record is refused, never assumed."""
+    ws = (telemetry or {}).get("web_search")
+    if not isinstance(ws, dict) or not isinstance(ws.get("queries"), list):
+        return ["telemetry records no web_search block of queries run, so the research effort cannot be shown"]
+    ran = {normalise_query(q) for q in ws["queries"] if normalise_query(q)}
     errs = []
-    if n < MIN_SEARCHES:
-        errs.append(f"the harness ran {n} web searches; every outcome needs at least {MIN_SEARCHES}")
-    listed = len({str(q).strip().lower() for q in obj.get("searched") or [] if str(q).strip()})
-    if listed > n:
-        errs.append(f"searched lists {listed} queries, but the harness ran {n} web searches")
+    if len(ran) < MIN_SEARCHES:
+        errs.append(f"the harness ran {len(ran)} distinct search queries; every outcome needs at least {MIN_SEARCHES}")
+    never = [q for q in obj.get("searched") or [] if normalise_query(q) and normalise_query(q) not in ran]
+    if never:
+        errs.append(f"searched lists queries the harness never ran: {never[:4]}")
     return errs
 
 

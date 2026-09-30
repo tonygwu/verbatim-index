@@ -197,14 +197,21 @@ def main() -> int:
               any("searched" in e for e in errs), str(errs))
     check("SCHEMA: searched and already_public are required keys",
           {"searched", "already_public"} <= set(R.RESOLUTION_SCHEMA["required"]))
-    tel_ok = {"tool_use_counts": {"web_search": 3}}
-    check("EFFORT: the harness's own count of three searches passes", R.validate_effort(ok, tel_ok) == [])
-    check("EFFORT: fewer than three searches in the telemetry is refused, for an 'occurred' too",
-          R.validate_effort(ok, {"tool_use_counts": {"web_search": 2}}) != [])
-    check("EFFORT: telemetry with no search count is refused, never assumed",
-          R.validate_effort(ok, {"tool_use_counts": {}}) != [] and R.validate_effort(ok, {}) != [])
-    check("EFFORT: listing more searches than the harness ran is refused",
-          R.validate_effort(resolution(searched=["a", "b", "c", "d", "e"]), tel_ok) != [])
+    # The harness's record, as grade.web_search_actions writes it (test_resolution_effort.py
+    # drives the real call_astra over a codex stream of the real shape).
+    ws = lambda qs: {"web_search": {"search_actions": 1, "other_actions": 0,  # noqa: E731
+                                    "search_actions_without_queries": 0, "queries": qs}}
+    tel_ok = ws(ok["searched"])
+    check("EFFORT: the harness ran the three queries listed: passes", R.validate_effort(ok, tel_ok) == [],
+          str(R.validate_effort(ok, tel_ok)))
+    two = resolution(searched=ok["searched"][:2])
+    check("EFFORT: the harness ran two queries, and the answer lists exactly those two: refused on the floor "
+          "alone, for an 'occurred' too", any("2 distinct" in e for e in R.validate_effort(two, ws(ok["searched"][:2]))),
+          str(R.validate_effort(two, ws(ok["searched"][:2]))))
+    check("EFFORT: telemetry with no web_search record is refused, never assumed",
+          R.validate_effort(ok, {"tool_use_counts": {"web_search": 9}}) != [] and R.validate_effort(ok, {}) != [])
+    check("EFFORT: listing a query the harness never ran is refused",
+          R.validate_effort(resolution(searched=ok["searched"] + ["made up"]), tel_ok) != [])
 
     print("already public before the statement (Buddy Media, 2203621a4e46691a)")
     buddy = resolution(prediction_id="2203621a4e46691a", outcome="occurred",
