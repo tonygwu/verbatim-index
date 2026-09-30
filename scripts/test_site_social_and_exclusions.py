@@ -163,6 +163,9 @@ with tempfile.TemporaryDirectory() as td:
           'name="twitter:card" content="summary_large_image"' in h)
     for nm in ("twitter:title", "twitter:description", "twitter:image"):
         check(f"has {nm}", f'name="{nm}"' in h)
+    for nm in ("twitter:site", "twitter:creator"):
+        check(f"{nm} attributes the card to @tonygwu",
+              f'name="{nm}" content="@tonygwu"' in h)
     check("has a canonical url", 'rel="canonical"' in h)
     check("has a meta description", 'name="description"' in h)
 

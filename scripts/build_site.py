@@ -55,6 +55,8 @@ TEMPLATE = r"""<!DOCTYPE html>
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Verbatim Index. __SOCIAL_TITLE__">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@tonygwu">
+<meta name="twitter:creator" content="@tonygwu">
 <meta name="twitter:title" content="__SOCIAL_TITLE__">
 <meta name="twitter:description" content="__SOCIAL_DESC__">
 <meta name="twitter:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
