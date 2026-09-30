@@ -254,15 +254,38 @@ def main() -> int:
               and all("pairstale" in b for b in D.scores_blockers(doc)),
               p.stderr[-300:])
 
+        print("an already-public row the resolver could not settle")
+        before = doc["corpus"]["unresolvable_by_eligibility"]
+        fp = R.sidecar_path(run, "resolve", "ada", "pub")
+        kept_pub = fp.read_text()
+        fp.write_text(json.dumps(dict(json.loads(kept_pub), outcome="unresolvable", confidence="low",
+                                      unresolvable_reason="no_public_evidence")))
+        p, doc = score(policy_releases=["legacy", REL], implied_windows=sha, lead_test=True)
+        pub = {r["prediction_id"]: r for r in doc.get("predictions", [])}.get("pub", {})
+        check("SET ASIDE: an already-public row the resolver called unresolvable reads already_public, and "
+              "unresolvable_by_eligibility does not count it",
+              p.returncode == 0 and pub.get("not_scored_because") == "already_public"
+              and doc["corpus"]["unresolvable_by_eligibility"] == before,
+              p.stderr[-300:] + json.dumps(before) + json.dumps(doc.get("corpus", {}).get("unresolvable_by_eligibility")))
+        fp.write_text(kept_pub)
+
         print("config validation")
         for k, v in (("implied_windows", "abc"), ("implied_windows", 1), ("policy_releases", "legacy"),
-                     ("policy_releases", [])):
+                     ("policy_releases", []), ("early_calls", False), ("lead_test", False),
+                     ("early_calls", "true"), ("lead_test", 1)):
             cfg_path.write_text(json.dumps({**base, k: v}))
             try:
                 D.load_scoring_config(cfg_path)
                 check(f"CONFIG: {k}={v!r} is refused", False)
             except SystemExit as e:
                 check(f"CONFIG: {k}={v!r} is refused", k in str(e), str(e))
+        for k in ("early_calls", "lead_test"):
+            cfg_path.write_text(json.dumps({**base, k: True}))
+            try:
+                D.load_scoring_config(cfg_path)
+                check(f"CONFIG: {k}=True is accepted", True)
+            except SystemExit as e:
+                check(f"CONFIG: {k}=True is accepted", False, str(e))
         check("CONFIG: the new keys are optional keys", {"implied_windows", "policy_releases"} <= set(D.OPTIONAL_CONFIG_KEYS))
 
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")

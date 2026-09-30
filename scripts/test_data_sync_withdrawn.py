@@ -95,6 +95,15 @@ def main() -> int:
               bool(err) and err.startswith("REFUSED") and "predictions/withdrawn_predictions.json" in err
               and "not in the commit" in err, str(err))
 
+        print("BUILT WITHOUT: a config naming the manifest over an index built without it")
+        c = T.clone(td, remote, "without")
+        name_manifest(c, "predictions/withdrawn_predictions.json", pid)
+        T.commit(c, "name the manifest, keep the index built without it")
+        got, err = attempt(S.derived_problems, c, "HEAD")
+        check("BUILT WITHOUT: check reports that the index ignores the withdrawals, naming the manifest",
+              err is None and any("built without it" in p and "predictions/withdrawn_predictions.json" in p for p in got),
+              str(err or got))
+
         print("REGEN: a committed manifest regenerates, fingerprinted in both derived files")
         c = T.clone(td, remote, "ok")
         name_manifest(c, "predictions/withdrawn_predictions.json", pid)

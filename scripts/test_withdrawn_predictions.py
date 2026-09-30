@@ -197,6 +197,21 @@ def main() -> int:
             except SystemExit as e:
                 check(f"CONFIG: withdrawn {bad!r} outside predictions/ is refused", "withdrawn" in str(e), str(e))
 
+        print("a withdrawn row the resolver could not settle")
+        fp = R.sidecar_path(run, "resolve", "larry-ellison", PID)
+        kept_res = fp.read_text()
+        fp.write_text(json.dumps(dict(json.loads(kept_res), outcome="unresolvable", confidence="low",
+                                      unresolvable_reason="no_public_evidence")))
+        p, doc = score(withdrawn="predictions/withdrawn_predictions.json")
+        w = {x["prediction_id"]: x for x in doc.get("predictions", [])}.get(PID, {})
+        u = doc.get("corpus", {}).get("unresolvable_by_eligibility", {})
+        check("SET ASIDE: a withdrawn row the resolver called unresolvable reads withdrawn, and neither half of "
+              "unresolvable_by_eligibility counts it",
+              p.returncode == 0 and w.get("not_scored_because") == "withdrawn:not_a_forecast"
+              and u.get("eligible", {}).get("n") == 0 and u.get("not_eligible", {}).get("n") == 0,
+              p.stderr[-300:] + json.dumps(u))
+        fp.write_text(kept_res)
+
         print("aggregate_predictions, when told")
         def agg(*extra):
             out = root / f"index{len(extra)}.json"
