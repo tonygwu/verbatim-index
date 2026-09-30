@@ -75,6 +75,13 @@ if scores.exists():
         print(f"STALE scores: {why}")
         raise SystemExit("REFUSING: stale scores.json; re-run score_predictions.py --config and commit it")
     print("current: scores.json matches its config and inputs")
+    # Current is not enough: a board with rows dropped as stale sidecars would
+    # publish those drops without anyone choosing them (critique 3 A5).
+    blockers = D.scores_blockers(json.load(scores.open()))
+    if blockers:
+        print("; ".join(blockers))
+        raise SystemExit("REFUSING: scores.json carries rows it could not score for a reason that must be "
+                         "cleared before publication")
     # Operator rule 2026-09-27: the as-of always moves up when predictions are added.
     as_of = json.load(config.open())["as_of"]
     why = D.scores_asof_lag(data, sys.argv[2], as_of)

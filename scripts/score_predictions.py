@@ -104,15 +104,22 @@ def speaker_q(rec: dict) -> float | None:
 
 
 def join(rows: list[dict], resolutions: dict, priors: dict,
-         restated: "dict[str, str] | None" = None) -> tuple[list[dict], collections.Counter]:
+         restated: "dict[str, str] | None" = None,
+         stale: "set[str] | None" = None) -> tuple[list[dict], collections.Counter]:
     """One row per past-due prediction, with its points where all the parts exist.
 
     `restated` maps a non-specific cluster member to its specific member. Such a
     row keeps its identity and its funnel flags, carries none of its own outcome
     or p in the scored fields (so no count sees one event twice), and records its
-    own verdict under `own_outcome` / `own_p` for audit."""
+    own verdict under `own_outcome` / `own_p` for audit.
+
+    `stale` names predictions whose sidecar judged another window than the
+    funnel's (stale_sidecars); each reads `stale_sidecar:deadline_changed`. A
+    resolution that found the thing `already_public` before the statement keeps
+    its outcome and reads `already_public`: the words were no forecast."""
     out, why = [], collections.Counter()
     restated = restated or {}
+    stale = stale or set()
     for r in rows:
         pid = r["prediction_id"]
         res, pri = resolutions.get(pid), priors.get(pid)
@@ -144,6 +151,9 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
             "q": speaker_q(r),
             "points": None, "rule": None, "scored": False, "not_scored_because": None,
         }
+        if (res or {}).get("already_public"):
+            # Only a sidecar under a release carries the field, so a legacy row is unchanged.
+            row["already_public"] = res["already_public"]
         if own is not None:
             row.update(own, not_scored_because=f"restated:{restated[pid]}", restated_by=restated[pid])
             why["restated"] += 1
@@ -158,8 +168,12 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
         unfit = P2.ineligible_reason(pid, r["_flags"])
         if unfit is not None:
             row["not_scored_because"] = f"not_eligible:{unfit}"
+        elif pid in stale:
+            row["not_scored_because"] = "stale_sidecar:deadline_changed"
         elif res is None:
             row["not_scored_because"] = "no_resolution"
+        elif res.get("already_public"):
+            row["not_scored_because"] = "already_public"
         elif res["outcome"] == "unresolvable":
             row["not_scored_because"] = f"unresolvable:{res['unresolvable_reason']}"
         elif pri is None:
@@ -316,6 +330,57 @@ def drop_stale_sidecars(sidecars: dict[str, dict], date_overrides: dict, superse
             continue
         out[pid] = obj
     return out
+
+
+def stale_sidecars(rows: list[dict], sidecars: "dict[str, dict[str, dict]]") -> list[dict]:
+    """Sidecars of an implied-window row that judged another window than the funnel's.
+
+    Checked only where a policy of 2026-09-29 set the window (an `_implied`
+    row), because every other row's deadline comes from its own words and the
+    existing prior-against-resolution check covers it. A table changed after its
+    records were judged makes their sidecars stale here, one row at a time,
+    rather than stopping every push (critique 3 A5)."""
+    out = []
+    for r in rows:
+        if "_implied" not in r:
+            continue
+        want = r["_deadline"].isoformat()
+        for stage, have in sidecars.items():
+            obj = have.get(r["prediction_id"])
+            if obj is not None and obj.get("deadline") != want:
+                out.append({"prediction_id": r["prediction_id"], "stage": stage,
+                            "sidecar_deadline": obj.get("deadline"), "deadline": want})
+    return out
+
+
+def release_counts(sidecars: "dict[str, dict[str, dict]]", allowed: "list[str] | None") -> dict:
+    """Sidecars by stage and resolution-policy release; refuses a release the board may not carry.
+
+    `allowed` is the config's `policy_releases`, or None when the key is absent,
+    which permits only legacy sidecars: a board never silently mixes two
+    resolver policies (critique 3 A2)."""
+    known = {R.LEGACY_RELEASE, *R.KNOWN_RELEASES}
+    never = sorted(set(allowed or []) - known)
+    if never:
+        raise SystemExit(f"policy_releases names {never}, which no release of resolution_lib ever cut; "
+                         f"known releases are {sorted(known)}")
+    counts: dict[str, collections.Counter] = {}
+    for stage, have in sidecars.items():
+        counts[stage] = collections.Counter(obj.get("policy_release") or R.LEGACY_RELEASE for obj in have.values())
+    seen = {rel for c in counts.values() for rel in c}
+    unknown = sorted(seen - known)
+    if unknown:
+        raise SystemExit(f"sidecars name resolution-policy releases {unknown} that no release of resolution_lib "
+                         f"ever cut; known releases are {sorted(known)}")
+    refused = sorted(seen - set(allowed or [R.LEGACY_RELEASE]))
+    if refused:
+        who = {rel: sorted(pid for have in sidecars.values() for pid, obj in have.items()
+                           if (obj.get("policy_release") or R.LEGACY_RELEASE) == rel)[:5] for rel in refused}
+        raise SystemExit(f"sidecars were written under resolution-policy release(s) {refused}, which this board's "
+                         f"policy_releases {'names only ' + str(allowed) if allowed else 'does not name (absent: legacy only)'}; "
+                         f"e.g. {who}. Name every release the board carries, so two policies are never mixed "
+                         f"silently")
+    return {stage: dict(sorted(c.items())) for stage, c in counts.items()}
 
 
 def load_across(runs: list[Path], loader, drop: "set[tuple[Path, str]] | None" = None,
@@ -669,11 +734,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--replacements", type=Path, default=None,
                     help="a replacement manifest; each entry lets a sidecar in a newer run replace an older "
                          "run's sidecar for the same prediction")
+    ap.add_argument("--implied-windows", default=None, metavar="TABLE_SHA256",
+                    help="judge records with no deadline over the implied-window table with this sha256 (VD-6)")
+    ap.add_argument("--policy-release", action="append", default=None, dest="policy_releases",
+                    help="a resolution-policy release the board may carry; repeat it. Absent: legacy only")
     args = ap.parse_args(argv)
     flags = {"--run": args.run, "--predictions": args.predictions, "--index": args.index, "--as-of": args.as_of,
              "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out,
              "--restatements": args.restatements, "--date-overrides": args.date_overrides,
-             "--replacements": args.replacements}
+             "--replacements": args.replacements, "--implied-windows": args.implied_windows,
+             "--policy-release": args.policy_releases}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -686,6 +756,8 @@ def main(argv: list[str] | None = None) -> int:
         args.out = root / cfg["out"]
         args.restatements = root / cfg["restatements"] if "restatements" in cfg else None
         args.replacements = root / cfg["replacements"] if "replacements" in cfg else None
+        args.implied_windows = cfg.get("implied_windows")
+        args.policy_releases = cfg.get("policy_releases")
         # A committed config names its override file, so staleness hashing covers
         # it. One that is silent while the production file exists is refused
         # rather than scored as if the overrides were not there.
@@ -715,6 +787,17 @@ def main(argv: list[str] | None = None) -> int:
     if ov_path is not None:
         # Only when used, so a scores.json computed without overrides is unchanged.
         settings["date_overrides"] = rel(ov_path, root)
+    # The 2026-09-29 policies, each only when named, like the keys above.
+    if args.implied_windows is not None:
+        settings["implied_windows"] = args.implied_windows
+        if args.implied_windows != P2.implied_table_sha256():
+            raise SystemExit(f"the config judges implied windows by table {args.implied_windows[:12]}, but the table "
+                             f"in this code hashes to {P2.implied_table_sha256()[:12]}; the table is fixed before any "
+                             f"record is judged over it (VD-6), so a changed table is a new decision: name its "
+                             f"sha256 in scoring.json deliberately")
+    if args.policy_releases is not None:
+        settings["policy_releases"] = list(args.policy_releases)
+    implied = 1.0 if args.implied_windows is not None else None
 
     try:
         cutoff = dt.date.fromisoformat(args.as_of)
@@ -776,11 +859,13 @@ def main(argv: list[str] | None = None) -> int:
     # trend record, before the as-of could drop it. A dated record may move.
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend, resolutions=resolutions,
                   date_overrides=ov_in, window_conflicts=moved_windows(replaced["resolve"], resolutions,
-                                                                       swaps, root))
+                                                                       swaps, root), implied=implied)
     repairs = load_across(args.run, fresh(R.load_repairs, "criteria_repair"))
     applied, unrepairable = R.apply_repairs(rows, repairs)
+    releases = release_counts({"resolve": resolutions, "prior": priors}, args.policy_releases)
+    window_stale = stale_sidecars(rows, {"resolve": resolutions, "prior": priors}) if implied is not None else []
 
-    joined, why = join(rows, resolutions, priors, restated)
+    joined, why = join(rows, resolutions, priors, restated, stale={s["prediction_id"] for s in window_stale})
     index = json.loads(args.index.read_text())
     names = {l["slug"]: l["name"] for l in index["leaders"]}
     leaders = per_leader(joined, names, with_restated=manifest is not None)
@@ -831,6 +916,12 @@ def main(argv: list[str] | None = None) -> int:
         "leaders": leaders,
         "predictions": joined,
     }
+    if implied is not None:
+        doc["rule"]["implied"] = {"enabled": True, "table_sha256": args.implied_windows}
+        doc["corpus"]["implied_windows"] = sum(1 for r in rows if "_implied" in r)
+        doc["corpus"]["stale_sidecars"] = window_stale
+    if args.policy_releases is not None:
+        doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
     if manifest is not None:
         doc["corpus"]["restated"] = sum(1 for r in joined if is_restated(r))
         doc["restatements"] = restatement_report(

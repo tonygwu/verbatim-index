@@ -874,6 +874,9 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 
 POLICY_RELEASE = ("resolution-2026-09-30", "88a0ae81bfbc4e72cfaf8ecb6c3615acdd1dee36561a5ab37aa1dfdb9d4453de")
 LEGACY_RELEASE = "legacy"
+# Every release ever cut, oldest first, so a board scored after the next release
+# can still name this one. A sidecar naming anything else is refused.
+KNOWN_RELEASES = ("resolution-2026-09-30",)
 
 
 def _policy_fixture() -> dict:

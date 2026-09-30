@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""The scorer under the 2026-09-29 policies, each behind an OPTIONAL scoring.json key.
+
+Critique 3 A5 of the rescue round-4 design: landing a funnel policy in code
+before its data would either block every clone's push or move the board with
+nobody choosing to. So every new policy is an optional key, and absent means
+exactly today's behaviour. This file pins, end to end through
+score_predictions.py --config:
+  - `implied_windows` names the implied table's sha256 (VD-6). The scorer judges
+    records with no deadline over the table's window, refuses a config whose sha
+    is not the table in the code, and never moves a trend record already
+    resolved. A sidecar whose window is not the funnel's is a COUNTED per-row
+    exclusion, `stale_sidecar:deadline_changed`, never a stop (A5), and the
+    deploy refuses while any are counted (data_clone_workflow.scores_blockers);
+  - `policy_releases` names the resolution-policy releases a board may carry. A
+    sidecar written under a release the config does not name is refused, so a
+    board never silently mixes two resolver policies (critique 3 A2); the counts
+    per release and stage are reported;
+  - a resolution that found the thing `already_public` before the statement is
+    kept, reported, and not scored (operator, 2026-09-29);
+  - with none of the keys, a sidecar-free corpus scores byte-identically to the
+    code before this change (the production check is in the branch report).
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+ROOT = pathlib.Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                                   capture_output=True, text=True, check=True).stdout.strip())
+sys.path.insert(0, str(ROOT / "scripts"))
+import data_clone_workflow as D  # noqa: E402
+import phase2_resolvability as P2  # noqa: E402
+import resolution_lib as R  # noqa: E402
+
+FAILED = []
+REL = R.POLICY_RELEASE[0]
+
+
+def check(label, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {label}" + (f"\n        {detail}" if not ok and detail else ""))
+    if not ok:
+        FAILED.append(label)
+
+
+def rec(pid, *, said="2021-03-01", target=None, tdt=None, cat="market_industry", ctrl="external",
+        claim=None, quote=None, spec="medium"):
+    return {
+        "accepted": True, "leader_slug": "ada", "prediction_id": pid, "transcript_id": "ada/t1",
+        "prediction": {"target_date": target, "target_date_text": tdt, "horizon_years_inferred": None,
+                       "specificity": spec, "subject_control": ctrl, "category": cat, "prediction_type": "milestone",
+                       "horizon": "none", "normalized_claim": claim or f"claim {pid}", "resolution_criteria": "crit"},
+        "source": {"statement_date": said, "quote": quote or f"quote {pid}"},
+        "confidence": {"probability": None}, "consensus": {"status": "no_match", "exact_match": None},
+    }
+
+
+def write(run, pid, stage, deadline, **kw):
+    if stage == "resolve":
+        obj = {"prediction_id": pid, "leader_slug": "ada", "transcript_id": "ada/t1", "stage": "resolve",
+               "outcome": "occurred", "confidence": "high", "unresolvable_reason": None, "reasoning": "r",
+               "sources": [{"where": "u", "what_it_shows": "w", "date": None}], "deadline": deadline}
+    else:
+        obj = {"prediction_id": pid, "leader_slug": "ada", "transcript_id": "ada/t1", "stage": "prior",
+               "p": 0.5, "p_raw": 0.5, "clamped": False, "reference_class": "rc", "reasoning": "r",
+               "deadline": deadline}
+    obj.update(kw)
+    fp = R.sidecar_path(run, stage, "ada", pid)
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(json.dumps(obj))
+
+
+def main() -> int:
+    sha = P2.implied_table_sha256()
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        corpus = root / "predictions"
+        (corpus / "ada").mkdir(parents=True)
+        recs = [
+            rec("dated", target="2022-12-31"),                              # a stated deadline
+            rec("imp", claim="Level 4 trucks will be deployed commercially."),  # implied: 5 years -> 2026-03-01
+            rec("impown", cat="company_business", ctrl="own"),               # implied: 1 year, own, no words
+            rec("stale", quote="it will come soon"),                         # implied: 1 year -> 2022-03-01
+            rec("trend", said="2019-01-15", claim="Margins will continue to go up.",
+                cat="company_business", ctrl="own"),                          # a trend record, already resolved
+            rec("pub", target="2023-06-30"),                                  # already public
+        ]
+        (corpus / "ada" / "t1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+        (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada L"}]}))
+        run = root / "predictions" / "_experiments" / "run-a"
+        write(run, "dated", "resolve", "2022-12-31"); write(run, "dated", "prior", "2022-12-31")
+        write(run, "imp", "resolve", "2026-03-01", outcome="not_occurred"); write(run, "imp", "prior", "2026-03-01", p=0.3)
+        write(run, "stale", "resolve", "2023-03-01"); write(run, "stale", "prior", "2023-03-01")
+        tflags = {"basis": "trend: trend over 5.0y since the statement", "trend": True}
+        write(run, "trend", "resolve", "2024-02-01", funnel_flags=tflags)
+        write(run, "trend", "prior", "2024-02-01", funnel_flags=tflags, p=0.6)
+        write(run, "pub", "resolve", "2023-06-30", policy_release=REL,
+              already_public={"date": "2021-02-20", "where": "https://example.com/deal", "what_it_shows": "agreed"})
+        write(run, "pub", "prior", "2023-06-30")
+        cfg_path = corpus / "scoring.json"
+        base = {"as_of": "2026-09-28", "trend": True, "min_lead_days": 60, "predictions": ["predictions"],
+                "runs": ["predictions/_experiments/run-a"], "index": "predictions/index.json",
+                "out": "predictions/scores.json"}
+
+        def score(**extra):
+            cfg_path.write_text(json.dumps({**base, **extra}))
+            out = corpus / "scores.json"
+            if out.exists():
+                out.unlink()
+            p = subprocess.run([sys.executable, str(ROOT / "scripts" / "score_predictions.py"), "--config", str(cfg_path)],
+                               capture_output=True, text=True)
+            doc = json.loads(out.read_text()) if p.returncode == 0 else {}
+            return p, doc
+
+        print("policy_releases: a board never silently mixes resolver policies")
+        p, _ = score()
+        check("RELEASE: a sidecar under a release the config does not name is refused, naming it",
+              p.returncode != 0 and REL in p.stderr and "policy_releases" in p.stderr, p.stderr[-400:])
+        p, _ = score(policy_releases=["legacy", "resolution-1999-01-01"])
+        check("RELEASE: a release id no code ever cut is refused in the config",
+              p.returncode != 0 and "resolution-1999-01-01" in p.stderr, p.stderr[-400:])
+        p, doc = score(policy_releases=["legacy", REL])
+        check("RELEASE: named, the board is scored", p.returncode == 0, p.stderr[-600:])
+        check("RELEASE: scores.json counts sidecars per stage and release",
+              doc.get("policy_releases", {}).get("counts") == {"prior": {"legacy": 5}, "resolve": {"legacy": 4, REL: 1}},
+              json.dumps(doc.get("policy_releases")))
+        rows = {r["prediction_id"]: r for r in doc.get("predictions", [])}
+
+        print("already public before the statement")
+        pub = rows.get("pub", {})
+        check("ALREADY PUBLIC: kept with its outcome and source, and not scored",
+              pub.get("not_scored_because") == "already_public" and pub.get("outcome") == "occurred"
+              and pub.get("already_public", {}).get("date") == "2021-02-20" and not pub.get("scored"), json.dumps(pub)[:400])
+        check("ALREADY PUBLIC: counted by its reason", doc.get("corpus", {}).get("not_scored_because", {}).get("already_public") == 1,
+              json.dumps(doc.get("corpus", {}).get("not_scored_because")))
+
+        print("implied windows switched OFF: the records the funnel cannot date stay out")
+        check("OFF: no implied row is past due, and no implied field is written",
+              set(rows) == {"dated", "trend", "pub"} and "implied" not in doc.get("rule", {})
+              and "stale_sidecars" not in doc.get("corpus", {}), f"{sorted(rows)} {doc.get('rule')}")
+        trend_off = rows.get("trend", {}).get("points")
+
+        print("implied windows switched ON")
+        p, _ = score(policy_releases=["legacy", REL], implied_windows="0" * 64)
+        check("SHA: a config naming another table is refused, naming both hashes",
+              p.returncode != 0 and "0" * 12 in p.stderr and sha[:12] in p.stderr, p.stderr[-400:])
+        p, doc = score(policy_releases=["legacy", REL], implied_windows=sha)
+        check("ON: exits 0", p.returncode == 0, p.stderr[-600:])
+        rows = {r["prediction_id"]: r for r in doc.get("predictions", [])}
+        imp = rows.get("imp", {})
+        check("ON: a record with no deadline is judged over its implied window, and scores both ways",
+              imp.get("deadline") == "2026-03-01" and imp.get("scored") and imp.get("outcome") == "not_occurred"
+              and imp["flags"].get("implied", {}).get("row") == "claim: everything else", json.dumps(imp)[:500])
+        check("ON: an implied record about the speaker's own company, with no words, is not a lead",
+              rows.get("impown", {}).get("not_scored_because") == "not_eligible:lead_under_floor",
+              json.dumps(rows.get("impown"))[:300])
+        st = rows.get("stale", {})
+        check("STALE: a sidecar judged over another window is a counted exclusion, not a stop",
+              st.get("not_scored_because") == "stale_sidecar:deadline_changed" and not st.get("scored"),
+              json.dumps(st)[:400])
+        check("STALE: scores.json names it with both windows",
+              doc.get("corpus", {}).get("stale_sidecars") == [
+                  {"prediction_id": "stale", "stage": "resolve", "sidecar_deadline": "2023-03-01", "deadline": "2022-03-01"},
+                  {"prediction_id": "stale", "stage": "prior", "sidecar_deadline": "2023-03-01", "deadline": "2022-03-01"}],
+              json.dumps(doc.get("corpus", {}).get("stale_sidecars")))
+        check("STALE: the deploy refuses while any stale sidecar is counted",
+              D.scores_blockers(doc) and "stale" in D.scores_blockers(doc)[0], str(D.scores_blockers(doc)))
+        deploy = (ROOT / "scripts" / "deploy_predictions.sh").read_text()
+        check("STALE: deploy_predictions.sh asks scores_blockers after the freshness check, and refuses on it",
+              "D.scores_blockers(" in deploy and deploy.index("D.scores_blockers(") > deploy.index("D.scores_staleness(")
+              and "REFUSING: scores.json" in deploy.split("D.scores_blockers(")[1][:400], "not wired")
+        check("GRANDFATHER: the resolved trend record keeps its window and its points",
+              rows.get("trend", {}).get("deadline") == "2024-02-01" and rows["trend"].get("points") == trend_off
+              and trend_off is not None, json.dumps(rows.get("trend"))[:300])
+        check("RULE: scores.json states the implied rule and the table it was judged by",
+              doc.get("rule", {}).get("implied") == {"enabled": True, "table_sha256": sha},
+              json.dumps(doc.get("rule", {}).get("implied")))
+        check("SETTINGS: the key is part of the settings, so scores_staleness sees a change",
+              doc.get("settings", {}).get("implied_windows") == sha)
+        check("FRESH: scores.json is current against its config", D.scores_staleness(corpus / "scores.json", cfg_path) is None,
+              str(D.scores_staleness(corpus / "scores.json", cfg_path)))
+        (run / "resolutions" / "ada" / "stale.json").unlink()
+        (run / "priors" / "ada" / "stale.json").unlink()
+        p, doc = score(policy_releases=["legacy", REL], implied_windows=sha)
+        check("STALE: with the stale sidecars gone the count is empty and the deploy check passes",
+              p.returncode == 0 and doc["corpus"].get("stale_sidecars") == [] and D.scores_blockers(doc) == [],
+              p.stderr[-300:])
+
+        print("config validation")
+        for k, v in (("implied_windows", "abc"), ("implied_windows", 1), ("policy_releases", "legacy"),
+                     ("policy_releases", [])):
+            cfg_path.write_text(json.dumps({**base, k: v}))
+            try:
+                D.load_scoring_config(cfg_path)
+                check(f"CONFIG: {k}={v!r} is refused", False)
+            except SystemExit as e:
+                check(f"CONFIG: {k}={v!r} is refused", k in str(e), str(e))
+        check("CONFIG: the new keys are optional keys", {"implied_windows", "policy_releases"} <= set(D.OPTIONAL_CONFIG_KEYS))
+
+    print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
+    return 1 if FAILED else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

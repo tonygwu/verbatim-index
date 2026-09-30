@@ -518,7 +518,15 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # sidecar for the same prediction. It must live under predictions/, because
 # data_sync.py regenerates scores.json from predictions/ and roster/ only; a path
 # anywhere else is refused by name (replacements_path_problem).
-OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements")
+#
+# The 2026-09-29 policies, each OFF when its key is absent (critique 3 A5 of the
+# rescue round-4 design): flip a key in the same data commit that adds the
+# results it needs, so no push of unrelated data moves the board.
+# `implied_windows` names the sha256 of phase2_resolvability.IMPLIED_TABLE (VD-6);
+# the scorer refuses any other table. `policy_releases` names every resolution-
+# policy release the board may carry, "legacy" for sidecars written before
+# releases existed; absent, only legacy sidecars may be scored.
+OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements", "implied_windows", "policy_releases")
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
 
 
@@ -604,6 +612,15 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
         raise SystemExit(f"{path}: replacements must be a path relative to the data root")
     if "replacements" in cfg and replacements_path_problem(cfg["replacements"]):
         raise SystemExit(f"{path}: {replacements_path_problem(cfg['replacements'])}")
+    if "implied_windows" in cfg and not (isinstance(cfg["implied_windows"], str)
+                                         and re.fullmatch(r"[0-9a-f]{64}", cfg["implied_windows"])):
+        raise SystemExit(f"{path}: implied_windows must be the sha256 of the implied-window table "
+                         f"(phase2_resolvability.implied_table_sha256()), not {cfg['implied_windows']!r}")
+    if "policy_releases" in cfg and not (isinstance(cfg["policy_releases"], list) and cfg["policy_releases"]
+                                         and all(isinstance(x, str) and x for x in cfg["policy_releases"])
+                                         and len(set(cfg["policy_releases"])) == len(cfg["policy_releases"])):
+        raise SystemExit(f"{path}: policy_releases must be a non-empty list of distinct release ids, "
+                         f"\"legacy\" for sidecars written before releases existed; not {cfg['policy_releases']!r}")
     if not isinstance(cfg["trend"], bool) or not isinstance(cfg["min_lead_days"], int) \
             or not cfg["predictions"] or not cfg["runs"]:
         raise SystemExit(f"{path}: trend must be a boolean, min_lead_days an integer, and predictions "
@@ -661,6 +678,23 @@ def scores_staleness(scores_path: Path, config_path: Path) -> str | None:
         return (f"an input changed since scores.json was computed (scores {doc['inputs_sha256'][:12]}, "
                 f"disk {now[:12]}): a record, a sidecar or the index")
     return None
+
+
+def scores_blockers(doc: dict) -> list[str]:
+    """Why a CURRENT scores.json must still not be published, or [] when nothing blocks it.
+
+    A sidecar judged over another window than the funnel's is a counted per-row
+    exclusion in the scorer, so a push that regenerates scores.json never stops
+    on it (critique 3 A5 of the rescue round-4 design). Publishing such a board
+    would drop those rows without anyone choosing to, so the deploy refuses until
+    they are re-run or their sidecars removed."""
+    out = []
+    stale = (doc.get("corpus") or {}).get("stale_sidecars") or []
+    if stale:
+        ids = sorted({s["prediction_id"] for s in stale})
+        out.append(f"{len(stale)} stale sidecar(s) judged another window than the funnel's, for {len(ids)} "
+                   f"prediction(s) {ids[:8]}; re-run them, or remove the sidecars, before publishing")
+    return out
 
 
 def scores_asof_lag(data_root: Path, revision: str, as_of: str) -> str | None:
