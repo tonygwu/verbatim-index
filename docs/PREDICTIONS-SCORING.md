@@ -367,7 +367,9 @@ years. A speaker horizon longer than 5 years is refused, not capped.
 Conditional, ordering and recurring claims get no window. The screen uses the
 extractor's `claim_form` when the record has it (release 2.3 adds it), and a
 regular expression on the claim otherwise. An event-anchored claim gets no window
-either. The lead of an implied row is the SHORTEST reading of its words. Words
+either, and neither does "this year" or "next year" said on a date range that
+crosses 31 December (`range_crosses_new_year`, refused in `attach_deadlines`
+itself so the table and its hash are unchanged). The lead of an implied row is the SHORTEST reading of its words. Words
 with no lower bound, and a class row, count as under the lead floor, so the lead
 test decides them. A resolved trend record keeps its frozen window with the key
 on. Every resolver and prior prompt of an implied row carries the same "HOW THIS

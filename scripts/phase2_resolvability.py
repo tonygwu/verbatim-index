@@ -592,6 +592,16 @@ def attach_deadlines(rows, derive: bool, trend_cutoff: "dt.date | None" = None,
             # and 2.3 versions of one record agree; a number the speaker said still
             # wins, because it is not a vague word.
             tdt = r["prediction"].get("target_date_text") or ""
+            if L.relative_phrase_crosses_new_year(r):
+                # "this year" or "next year" said on a range of days across 31 December
+                # names a different year for each end. derived_deadline refuses it, and
+                # no implied window may stand in for it either (final review item 4).
+                # Refused here, in code, so IMPLIED_TABLE and its pinned sha256 are
+                # unchanged; checked before the phrase rows, which skip the funnel's
+                # own reading.
+                refusals[L.RANGE_CROSSES_NEW_YEAR] += 1
+                r["_deadline"], r["_basis"], r["_why_none"] = None, None, L.RANGE_CROSSES_NEW_YEAR
+                continue
             # With a phrase row in target_date_text and no number, the table decides
             # outright, a window or a refusal; otherwise the funnel's own reading first.
             phrase = not re.search(r"\d", tdt) and bool(implied_phrase_rows(tdt))
