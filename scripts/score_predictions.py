@@ -106,7 +106,7 @@ def speaker_q(rec: dict) -> float | None:
 
 def join(rows: list[dict], resolutions: dict, priors: dict,
          restated: "dict[str, str] | None" = None,
-         stale: "set[str] | None" = None,
+         stale: "dict[str, str] | None" = None,
          early_used: "dict[str, dict] | None" = None,
          withdrawn: "dict[str, dict] | None" = None) -> tuple[list[dict], collections.Counter]:
     """One row per past-due prediction, with its points where all the parts exist.
@@ -116,8 +116,10 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
     or p in the scored fields (so no count sees one event twice), and records its
     own verdict under `own_outcome` / `own_p` for audit.
 
-    `stale` names predictions whose sidecar judged another window than the
-    funnel's (stale_sidecars); each reads `stale_sidecar:deadline_changed`. A
+    `stale` maps a prediction to its stale-sidecar reason: another window than
+    the funnel's (`stale_sidecar:deadline_changed`, stale_sidecars), or a prior
+    that did not read today's prompt beside a resolution under a release
+    (`stale_sidecar:prior_prompt_changed`, prior_prompt_stale). A
     resolution that found the thing `already_public` before the statement keeps
     its outcome and reads `already_public`: the words were no forecast.
 
@@ -128,7 +130,7 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
     still to run)."""
     out, why = [], collections.Counter()
     restated = restated or {}
-    stale = stale or set()
+    stale = stale or {}
     early_used = early_used or {}
     withdrawn = withdrawn or {}
     for r in rows:
@@ -194,7 +196,7 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
         if unfit is not None:
             row["not_scored_because"] = f"not_eligible:{unfit}"
         elif pid in stale:
-            row["not_scored_because"] = "stale_sidecar:deadline_changed"
+            row["not_scored_because"] = stale[pid]
         elif res is None:
             row["not_scored_because"] = "no_resolution"
         elif res.get("already_public") and (r.get("source") or {}).get("statement_date_basis") in EXACT_DATE_BASES:
@@ -254,7 +256,8 @@ def implied_sensitivity(sens: dict[str, list[str]], root: Path, args, cutoff: dt
                                   resolutions=resolutions, date_overrides=ov_in, implied=scale, lead_labels=labels)
                 if "_implied" in r]
         stale = stale_sidecars(rows, {"resolve": res, "prior": pri})
-        got, _ = join(rows, res, pri, restated, stale={s["prediction_id"] for s in stale}, withdrawn=withdrawn)
+        got, _ = join(rows, res, pri, restated, stale={s["prediction_id"]: "stale_sidecar:deadline_changed"
+                                                     for s in stale}, withdrawn=withdrawn)
         people = per_leader(kept + got, names)
         missing = collections.Counter(r["leader_slug"] for r in got if r["not_scored_because"] in ("no_resolution", "no_prior"))
         ranks = _ranks(people)
@@ -462,6 +465,31 @@ def stale_sidecars(rows: list[dict], sidecars: "dict[str, dict[str, dict]]",
             if obj is not None and obj.get("deadline") != want:
                 out.append({"prediction_id": r["prediction_id"], "stage": stage,
                             "sidecar_deadline": obj.get("deadline"), "deadline": want})
+    return out
+
+
+def prior_prompt_stale(rows: list[dict], resolutions: dict[str, dict], priors: dict[str, dict]) -> list[dict]:
+    """Priors that did not read today's prompt, beside a resolution under a release.
+
+    A resolution written under a resolution-policy release judged the record with
+    its HOW THIS RECORD IS JUDGED block; a legacy prior priced it without one. The
+    two then price and settle different questions (review 2026-09-30, item 3: 21
+    eligible unresolvable rows carry a block their legacy prior never saw). So the
+    prior's recorded prompt_sha256 must equal the prompt build_prior_prompt makes
+    today, or the row is stale. `rows` must not yet carry criteria repairs, since
+    the prior stage never applied them. A legacy resolution is not checked, so a
+    board of legacy sidecars is unchanged."""
+    import hashlib
+    out = []
+    for r in rows:
+        pid = r["prediction_id"]
+        res, pri = resolutions.get(pid), priors.get(pid)
+        if res is None or pri is None or (res.get("policy_release") or R.LEGACY_RELEASE) == R.LEGACY_RELEASE:
+            continue
+        now = hashlib.sha256(R.build_prior_prompt(r, r["_deadline"]).encode()).hexdigest()
+        if pri.get("prompt_sha256") != now:
+            out.append({"prediction_id": pid, "stage": "prior", "why": "prior_prompt_changed",
+                        "sidecar_prompt_sha256": pri.get("prompt_sha256"), "prompt_sha256": now})
     return out
 
 
@@ -1104,6 +1132,9 @@ def main(argv: list[str] | None = None) -> int:
                                         lead_labels=labels)
                       if r["prediction_id"] in decided]
         early_used.update({r["prediction_id"]: {"not_due": True} for r in early_rows})
+    # Before repairs: the prior stage built its prompt from the unrepaired record.
+    paired_stale = prior_prompt_stale(rows + early_rows, {**resolutions, **{p: decided[p] for p in early_used}},
+                                      priors)
     repairs = load_across(args.run, fresh(R.load_repairs, "criteria_repair"))
     applied, unrepairable = R.apply_repairs(rows + early_rows, repairs)
     stages = {"resolve": resolutions, "prior": priors}
@@ -1120,7 +1151,11 @@ def main(argv: list[str] | None = None) -> int:
     effective.update({pid: decided[pid] for pid in early_used})
     everything = sorted(rows + early_rows, key=lambda r: (r["leader_slug"], r["prediction_id"])) if early_rows else rows
 
-    joined, why = join(everything, effective, priors, restated, stale={s["prediction_id"] for s in window_stale},
+    stale_why = {s["prediction_id"]: "stale_sidecar:deadline_changed" for s in window_stale}
+    # Another window is the more basic defect, so its reason wins where a row has both.
+    stale_why.update({s["prediction_id"]: "stale_sidecar:prior_prompt_changed" for s in paired_stale
+                      if s["prediction_id"] not in stale_why})
+    joined, why = join(everything, effective, priors, restated, stale=stale_why,
                        early_used=early_used, withdrawn=withdrawn)
     index = json.loads(args.index.read_text())
     names = {l["slug"]: l["name"] for l in index["leaders"]}
@@ -1180,6 +1215,8 @@ def main(argv: list[str] | None = None) -> int:
         doc["corpus"]["stale_sidecars"] = window_stale
     if args.policy_releases is not None:
         doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
+    if paired_stale or "stale_sidecars" in doc["corpus"]:
+        doc["corpus"]["stale_sidecars"] = doc["corpus"].get("stale_sidecars", []) + paired_stale
     review = sorted(r["prediction_id"] for r in joined if r.get("already_public_review"))
     if review:
         # Scored, and reported by the deploy until someone dates the recording.

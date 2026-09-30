@@ -24,6 +24,7 @@ score_predictions.py --config:
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -91,6 +92,10 @@ def main() -> int:
             # The Buddy Media shape: dated by an upload years after the words, so a report
             # before the upload proves nothing about the speech. Reviewed, never excluded.
             rec("pubrev", said="2019-02-27", target="2022-02-27", basis="youtube_upload_date"),
+            # A resolution under the release beside a prior priced on another prompt, and one beside
+            # a prior priced on today's prompt (review 2026-09-30, item 3).
+            rec("pairstale", target="2022-06-30", claim="Revenue will reach about 5 billion in 2022."),
+            rec("pairok", target="2022-09-30"),
         ]
         (corpus / "ada" / "t1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
         (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada L"}]}))
@@ -108,6 +113,16 @@ def main() -> int:
               already_public={"date": "2012-06-04", "where": "https://www.salesforce.com/news/press-releases/2012/06/04/",
                               "what_it_shows": "Salesforce signs a definitive agreement to acquire Buddy Media"})
         write(run, "pubrev", "prior", "2022-02-27")
+        import resolve_predictions as RP  # noqa: E402
+        today = {r["prediction_id"]: hashlib.sha256(R.build_prior_prompt(r, r["_deadline"]).encode()).hexdigest()
+                 for r in RP.select(corpus, dt.date(2026, 9, 28), 60, trend=True)}
+        write(run, "pairstale", "resolve", "2022-06-30", policy_release=REL)
+        write(run, "pairstale", "prior", "2022-06-30", prompt_sha256="0" * 64)           # a legacy prior
+        write(run, "pairok", "resolve", "2022-09-30", policy_release=REL)
+        write(run, "pairok", "prior", "2022-09-30", prompt_sha256=today["pairok"], policy_release=REL)
+        # A resolution under the release needs its prior priced on today's prompt, as a real prior run records.
+        for pid, dl in (("pub", "2023-06-30"), ("pubrev", "2022-02-27")):
+            write(run, pid, "prior", dl, prompt_sha256=today[pid])
         # An implied window sets no lower bound on when, so each implied record is under the
         # lead floor and the outcome-blind lead test decides it (VD-7 c; review 2026-09-30).
         for pid, dl in (("imp", "2026-03-01"), ("stale", "2022-03-01")):
@@ -141,7 +156,8 @@ def main() -> int:
         p, doc = score(policy_releases=["legacy", REL])
         check("RELEASE: named, the board is scored", p.returncode == 0, p.stderr[-600:])
         check("RELEASE: scores.json counts sidecars per stage and release",
-              doc.get("policy_releases", {}).get("counts") == {"prior": {"legacy": 6}, "resolve": {"legacy": 4, REL: 2}},
+              doc.get("policy_releases", {}).get("counts") == {"prior": {"legacy": 7, REL: 1},
+                                                              "resolve": {"legacy": 4, REL: 4}},
               json.dumps(doc.get("policy_releases")))
         rows = {r["prediction_id"]: r for r in doc.get("predictions", [])}
 
@@ -160,15 +176,34 @@ def main() -> int:
               doc.get("corpus", {}).get("already_public_review") == ["pubrev"],
               json.dumps(doc.get("corpus", {}).get("already_public_review")))
         notes = D.scores_review_notes(doc)
-        check("REVIEW: the deploy reports them, without refusing", notes and "pubrev" in notes[0]
-              and D.scores_blockers(doc) == [], str(notes))
+        check("REVIEW: the deploy reports them, without refusing on them",
+              notes and "pubrev" in notes[0] and not any("pubrev" in b for b in D.scores_blockers(doc)),
+              str(notes) + str(D.scores_blockers(doc)))
         deploy = (ROOT / "scripts" / "deploy_predictions.sh").read_text()
         check("REVIEW: deploy_predictions.sh prints scores_review_notes", "D.scores_review_notes(" in deploy)
 
+        print("a resolution under the release needs a prior that read today's prompt")
+        ps = rows.get("pairstale", {})
+        check("PAIRING: beside a prior priced on another prompt, the row is a stale sidecar, not a score",
+              ps.get("not_scored_because") == "stale_sidecar:prior_prompt_changed" and not ps.get("scored"),
+              json.dumps(ps)[:300])
+        check("PAIRING: beside a prior priced on today's prompt, the row scores", rows.get("pairok", {}).get("scored"),
+              json.dumps(rows.get("pairok"))[:300])
+        st = [x for x in doc.get("corpus", {}).get("stale_sidecars", []) if x["prediction_id"] == "pairstale"]
+        check("PAIRING: scores.json names both prompt hashes, and the deploy refuses",
+              st == [{"prediction_id": "pairstale", "stage": "prior", "why": "prior_prompt_changed",
+                      "sidecar_prompt_sha256": "0" * 64, "prompt_sha256": today["pairstale"]}]
+              and any("stale" in b for b in D.scores_blockers(doc)), json.dumps(st))
+        check("PAIRING: a legacy resolution beside a legacy prior is never checked, so today's board is unchanged",
+              rows.get("dated", {}).get("scored") is True, json.dumps(rows.get("dated"))[:200])
+
         print("implied windows switched OFF: the records the funnel cannot date stay out")
         check("OFF: no implied row is past due, and no implied field is written",
-              set(rows) == {"dated", "trend", "pub", "pubrev"} and "implied" not in doc.get("rule", {})
-              and "stale_sidecars" not in doc.get("corpus", {}), f"{sorted(rows)} {doc.get('rule')}")
+              set(rows) == {"dated", "trend", "pub", "pubrev", "pairstale", "pairok"}
+              and "implied" not in doc.get("rule", {})
+              and not any("implied" in x["flags"] for x in doc.get("predictions", []))
+              and all(x.get("why") == "prior_prompt_changed" for x in doc["corpus"].get("stale_sidecars", [])),
+              f"{sorted(rows)} {doc.get('rule')}")
         trend_off = rows.get("trend", {}).get("points")
 
         print("implied windows switched ON")
@@ -190,7 +225,7 @@ def main() -> int:
               st.get("not_scored_because") == "stale_sidecar:deadline_changed" and not st.get("scored"),
               json.dumps(st)[:400])
         check("STALE: scores.json names it with both windows",
-              doc.get("corpus", {}).get("stale_sidecars") == [
+              [x for x in doc.get("corpus", {}).get("stale_sidecars", []) if x["prediction_id"] == "stale"] == [
                   {"prediction_id": "stale", "stage": "resolve", "sidecar_deadline": "2023-03-01", "deadline": "2022-03-01"},
                   {"prediction_id": "stale", "stage": "prior", "sidecar_deadline": "2023-03-01", "deadline": "2022-03-01"}],
               json.dumps(doc.get("corpus", {}).get("stale_sidecars")))
@@ -213,8 +248,10 @@ def main() -> int:
         (run / "resolutions" / "ada" / "stale.json").unlink()
         (run / "priors" / "ada" / "stale.json").unlink()
         p, doc = score(policy_releases=["legacy", REL], implied_windows=sha, lead_test=True)
-        check("STALE: with the stale sidecars gone the count is empty and the deploy check passes",
-              p.returncode == 0 and doc["corpus"].get("stale_sidecars") == [] and D.scores_blockers(doc) == [],
+        check("STALE: with the stale sidecars gone no window-stale row is left, and the deploy names only the "
+              "prior-prompt one",
+              p.returncode == 0 and [x["prediction_id"] for x in doc["corpus"].get("stale_sidecars", [])] == ["pairstale"]
+              and all("pairstale" in b for b in D.scores_blockers(doc)),
               p.stderr[-300:])
 
         print("config validation")

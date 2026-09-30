@@ -115,6 +115,10 @@ def main() -> int:
             fp.write_text(json.dumps(base))
 
         board = pred / "_experiments" / "board"
+        # A resolution or an early call under the release needs its prior priced on today's prompt.
+        import hashlib  # noqa: E402
+        today = {x["prediction_id"]: hashlib.sha256(R.build_prior_prompt(x, x["_deadline"]).encode()).hexdigest()
+                 for x in rows if x["_deadline"] is not None}
         for sid in ("imp-scored", "pub", "pub-rev", "wd", "lead-fc", "lead-ann", "stated"):
             side(board, sid, "resolve", dl[sid])
             side(board, sid, "prior", dl[sid])
@@ -123,13 +127,15 @@ def main() -> int:
         # The same report against an UPLOAD date proves nothing about the day of speech: scored, sent to review.
         side(board, "pub-rev", "resolve", dl["pub-rev"], policy_release=REL, already_public={
             "date": "2025-02-20", "where": "https://example.com/already", "what_it_shows": "the launch date was set"})
+        for sid in ("pub", "pub-rev"):
+            side(board, sid, "prior", dl[sid], prompt_sha256=today[pid[sid]])
         # A withdrawn prediction the resolver could not settle is Withdrawn, not Couldn't check:
         # the scorer's eligible-unresolvable split and the page's column must agree on it.
         side(board, "wd", "resolve", dl["wd"], outcome="unresolvable", unresolvable_reason="no_public_evidence",
              sources=[])
         for sid in ("early-now", "early-late"):
             side(board, sid, "early", dl[sid])
-            side(board, sid, "prior", dl[sid])
+            side(board, sid, "prior", dl[sid], prompt_sha256=today[pid[sid]])
         side(board, "lead-fc", "lead_test", dl["lead-fc"])
         # An implied window sets no lower bound, so the outcome-blind lead test decides it.
         side(board, "imp-scored", "lead_test", dl["imp-scored"])

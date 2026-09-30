@@ -211,6 +211,14 @@ def main() -> int:
         write(run, "nopri", "early", "2027-06-30")
         write(run, "stale", "early", "2027-03-31"); write(run, "stale", "prior", "2027-03-31")
         write(run, "past", "resolve", "2021-12-31"); write(run, "past", "prior", "2021-12-31")
+        # An early call is written under the release, so its prior must be priced on today's prompt,
+        # the at-deadline prompt, as a real `--stage prior --not-due` run records (review 2026-09-30).
+        import hashlib  # noqa: E402
+        today = {r["prediction_id"]: hashlib.sha256(R.build_prior_prompt(r, r["_deadline"]).encode()).hexdigest()
+                 for due in ("past", "not_due") for r in RP.select(corpus, dt.date(2026, 9, 28), 60, due=due)}
+        for pid, dl in (("opt", "2026-12-31"), ("late", "2026-06-30"), ("both", "2026-06-30"), ("miss", "2027-06-30")):
+            write(run, pid, "prior", dl, p=0.1 if pid == "opt" else 0.7 if pid == "miss" else 0.25,
+                  prompt_sha256=today[pid])
         cfg_path = corpus / "scoring.json"
         base = {"as_of": "2026-09-28", "trend": False, "min_lead_days": 60, "predictions": ["predictions"],
                 "runs": ["predictions/_experiments/run-a", "predictions/_experiments/run-b"],
