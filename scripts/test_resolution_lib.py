@@ -110,30 +110,34 @@ def main() -> int:
     # ---- resolution validation ------------------------------------------
     ok = {"prediction_id": "abc123", "outcome": "occurred", "confidence": "high",
           "sources": [{"what_it_shows": "shipped", "where": "https://x/", "date": "2020-03-01"}],
-          "unresolvable_reason": None, "reasoning": "It shipped in March 2020."}
+          "unresolvable_reason": None, "reasoning": "It shipped in March 2020.",
+          # Since release resolution-2026-09-30 every outcome lists its searches and
+          # says whether the thing was already public before the statement.
+          "searched": ["engine ship date", "Analytical engine 2020", "Analytical annual report"],
+          "already_public": None}
     check("SCHEMA: a well-formed resolution passes both the schema and the extra rules",
-          R.validate_resolution(ok, "abc123") == [] and
+          R.validate_resolution(ok, "abc123", "2019-06-25") == [] and
           __import__("predictions_lib").check_schema(ok, R.RESOLUTION_SCHEMA) == [],
-          str(R.validate_resolution(ok, "abc123")))
+          str(R.validate_resolution(ok, "abc123", "2019-06-25")))
 
     nosrc = dict(ok, sources=[])
     check("EVIDENCE: an outcome that cites nothing is REJECTED, so recall cannot enter as fact",
-          any("cites no source" in e for e in R.validate_resolution(nosrc, "abc123")),
-          str(R.validate_resolution(nosrc, "abc123")))
+          any("cites no source" in e for e in R.validate_resolution(nosrc, "abc123", "2019-06-25")),
+          str(R.validate_resolution(nosrc, "abc123", "2019-06-25")))
     unres = dict(ok, outcome="unresolvable", sources=[], unresolvable_reason="no_public_evidence")
     check("DECLINE: unresolvable with a reason and no source is ACCEPTED, because declining is an answer",
-          R.validate_resolution(unres, "abc123") == [], str(R.validate_resolution(unres, "abc123")))
+          R.validate_resolution(unres, "abc123", "2019-06-25") == [], str(R.validate_resolution(unres, "abc123", "2019-06-25")))
     check("DECLINE: unresolvable without a reason is rejected",
           any("no unresolvable_reason" in e for e in
-              R.validate_resolution(dict(unres, unresolvable_reason=None), "abc123")))
+              R.validate_resolution(dict(unres, unresolvable_reason=None), "abc123", "2019-06-25")))
     check("DECLINE: a decided outcome may not also carry an unresolvable reason",
           any("carries unresolvable_reason" in e for e in
-              R.validate_resolution(dict(ok, unresolvable_reason="no_public_evidence"), "abc123")))
+              R.validate_resolution(dict(ok, unresolvable_reason="no_public_evidence"), "abc123", "2019-06-25")))
     check("SCHEMA: an invented reason is refused by the enum rather than stored",
           __import__("predictions_lib").check_schema(
               dict(unres, unresolvable_reason="i_did_not_look"), R.RESOLUTION_SCHEMA) != [])
     check("ID: a resolution answering about another prediction is refused",
-          any("prediction_id" in e for e in R.validate_resolution(ok, "zzz")))
+          any("prediction_id" in e for e in R.validate_resolution(ok, "zzz", "2019-06-25")))
 
     # ---- prior validation and clamping ----------------------------------
     pok = {"prediction_id": "abc123", "p": 0.3, "reference_class": "roadmap items", "reasoning": "why"}
@@ -144,7 +148,7 @@ def main() -> int:
 
     mk = lambda p: R.prior_record(rec(), d, dict(pok, p=p), run_id="r", harness="fable", account="a",
                                   telemetry={}, assessed_at="2026-09-15T00:00:00Z",
-                                  prompt_sha="deadbeef", leaks=[])
+                                  prompt_sha="deadbeef", leaks=[], release="r", code_revision="c")
     check("CLAMP: a certainty is clamped to 0.99 and the record SAYS it was clamped",
           mk(1.0)["p"] == 0.99 and mk(1.0)["p_raw"] == 1.0 and mk(1.0)["clamped"] is True,
           str({k: mk(1.0)[k] for k in ("p", "p_raw", "clamped")}))
@@ -163,7 +167,8 @@ def main() -> int:
         p1.parent.mkdir(parents=True)
         p1.write_text(json.dumps(R.resolution_record(
             rec(), d, ok, run_id="r", harness="astra", account="codex_b", telemetry={},
-            resolved_at="2026-09-15T00:00:00Z", as_of="2026-09-15")))
+            resolved_at="2026-09-15T00:00:00Z", as_of="2026-09-15", prompt_sha="p", release="r",
+            code_revision="c")))
         loaded = R.load_sidecars(root, "resolve")
         check("LOAD: a written sidecar reads back under its prediction_id",
               list(loaded) == ["abc123"] and loaded["abc123"]["outcome"] == "occurred")

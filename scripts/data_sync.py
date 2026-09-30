@@ -218,10 +218,18 @@ def derived_problems(data: Path, rev: str) -> list[str]:
         if why:
             problems.append(f"predictions/index.json is stale in the commit: {why}")
         scores, config = tree / "predictions" / "scores.json", tree / "predictions" / "scoring.json"
+        cfg = json.loads(config.read_text()) if config.exists() else {}
+        if withdrawn_problem(tree, cfg):
+            problems.append(withdrawn_problem(tree, cfg))
+        elif cfg.get("withdrawn") and not json.loads(idx_path.read_text()).get("withdrawn_sha256"):
+            problems.append(f"{SCORING} names the withdrawal manifest {cfg['withdrawn']!r}, but predictions/index.json "
+                            f"was built without it, so its counts ignore the withdrawals")
         if scores.exists():
             if not config.exists():
                 problems.append("predictions/scores.json is committed without predictions/scoring.json, so its "
                                 "inputs cannot be checked")
+            elif withdrawn_problem(tree, cfg):
+                pass
             elif replacements_problem(tree, json.loads(config.read_text())):
                 problems.append(replacements_problem(tree, json.loads(config.read_text())))
             else:
@@ -279,6 +287,22 @@ def replacements_problem(tree: Path, cfg: dict) -> str | None:
     return None
 
 
+def withdrawn_problem(tree: Path, cfg: dict) -> str | None:
+    """Why the withdrawal manifest the scoring config names cannot be read from the
+    extracted tree, or None. Like replacements_problem: it must lie under
+    predictions/ and be in the commit (ledger VD-9)."""
+    rel = cfg.get("withdrawn")
+    if rel is None:
+        return None
+    why = D.predictions_path_problem("withdrawn", rel)
+    if why:
+        return f"{SCORING} names {why}"
+    if not (tree / rel).is_file():
+        return (f"{SCORING} names withdrawn {rel!r}, which is not in the commit under predictions/, the only "
+                f"path the derived files are regenerated from")
+    return None
+
+
 def regenerate(data: Path, rev: str) -> dict[str, bytes]:
     """The derived files as the commit rev's own inputs make them, computed in a
     scratch tree extracted from the commit, never from the working tree."""
@@ -289,9 +313,16 @@ def regenerate(data: Path, rev: str) -> dict[str, bytes]:
             return {}
         placeholder_listing(data, rev, tree / "listing")
         (tree / "listing").mkdir(exist_ok=True)
+        cfg = json.loads((tree / SCORING).read_text()) if (tree / SCORING).exists() else {}
+        why = withdrawn_problem(tree, cfg)
+        if why:
+            raise Refusal(why)
+        # The withdrawal manifest reaches the index only when the scoring config
+        # names it, so the index and the scores read the same one.
+        withdrawn = ["--withdrawn", str(tree / cfg["withdrawn"])] if cfg.get("withdrawn") else []
         run_script("aggregate_predictions.py", "--predictions", str(tree / "predictions"),
                    "--roster", str(tree / "roster" / "final.json"), "--transcripts", str(tree / "listing"),
-                   "--out", str(tree / INDEX))
+                   "--out", str(tree / INDEX), *withdrawn)
         out = {INDEX: (tree / INDEX).read_bytes()}
         if (tree / SCORING).exists():
             cfg = json.loads((tree / SCORING).read_text())

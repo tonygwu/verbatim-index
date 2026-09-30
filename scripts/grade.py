@@ -561,6 +561,41 @@ def count_tool_events(events: list[dict]) -> dict[str, int]:
     return counts
 
 
+def web_search_actions(events: list[dict]) -> dict:
+    """What a codex judge searched, from its completed web_search items.
+
+    A web_search ITEM is not one search. MEASURED 2026-09-30 on the 129 raw
+    resolver responses in the data repository: of 691 completed items, 405 carry
+    more than one query in `action.queries`, and a page open is an item too, with
+    `action.type == "other"` and no query. Counting items refused 28 of 129
+    calls under the effort floor, 24 of them hits. This keeps every query of
+    every completed `search` action, in order, repeats included, uncapped (the
+    older `web_search_queries` keeps the first 10 display strings), and counts
+    page opens apart. A search action that names no queries list is counted, never
+    guessed at.
+    """
+    out = {"search_actions": 0, "other_actions": 0, "search_actions_without_queries": 0, "queries": []}
+    for e in events:
+        item = e.get("item") or {}
+        if e.get("type") != "item.completed" or item.get("type") != "web_search":
+            continue
+        action = item.get("action") or {}
+        if action.get("type") != "search":
+            out["other_actions"] += 1
+            continue
+        out["search_actions"] += 1
+        # Two real shapes: a `queries` list (632 of 691 items measured), or one
+        # `query` (59). Anything else is counted, never guessed at.
+        queries = action.get("queries")
+        if not isinstance(queries, list) and isinstance(action.get("query"), str) and action["query"].strip():
+            queries = [action["query"]]
+        if not isinstance(queries, list) or not queries:
+            out["search_actions_without_queries"] += 1
+            continue
+        out["queries"].extend(str(q) for q in queries)
+    return out
+
+
 def stamp_failure(rec: dict) -> dict:
     """Put the time on a failure record, in UTC, before it is written.
 
@@ -1096,6 +1131,9 @@ def call_astra(prompt: str, timeout: int, workdir: Path,
             if e.get("type") == "item.completed"
             and (e.get("item") or {}).get("type") == "web_search"
         ][:10],
+        # Every query actually searched, uncapped, and the page opens apart: what
+        # the resolver's effort floor counts (resolution_lib.validate_effort).
+        "web_search": web_search_actions(events),
     }
     if telemetry["reasoning_output_tokens"] in (None, 0):
         raise RuntimeError(f"{E_MODEL_MISMATCH}: no reasoning tokens reported; "
