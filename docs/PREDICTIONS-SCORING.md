@@ -330,3 +330,177 @@ keynote, 1996-10-16, uploaded 2013-07-05. Re-extracted, the claim reads "within
 the next couple of months after October 16, 1996", deadline 1996-12-31. It was
 priced blind at p = 0.40 and resolved `unresolvable: no_public_evidence`, so it
 still does not score.
+
+## The 2026-09-30 policies: six keys, two stages, one release
+
+Operator decisions VD-5 (c), VD-6 (a), VD-7 (c) and VD-9, with the review fixes of
+2026-09-30. Each policy is OFF while its key is absent from
+`predictions/scoring.json`. With no new key set, scores.json is byte-identical to
+the one the code before these policies wrote: `cmp` against the committed
+production scores.json, rerun after every review fix. Switch a key on in the same
+data commit that adds the sidecars it needs, so no push of unrelated data moves
+the board.
+
+### The six keys
+
+| key | value | what it switches on |
+|---|---|---|
+| `implied_windows` | the sha256 of `phase2_resolvability.IMPLIED_TABLE` | a window for a record that names no date (VD-6) |
+| `policy_releases` | a non-empty list of release ids, `"legacy"` for sidecars from before releases | which resolver policies the board may carry |
+| `early_calls` | `true` | early calls score now (VD-5) |
+| `lead_test` | `true` | the outcome-blind lead test decides records under the lead floor (VD-7) |
+| `withdrawn` | a path under `predictions/` | the operator's withdrawal manifest (VD-9) |
+| `implied_sensitivity` | `{"half": [runs], "double": [runs]}`, with `implied_windows` | each person's score at half and double every implied window |
+
+`load_scoring_config` refuses any other value. `early_calls` and `lead_test` are
+`true` or absent. To switch one off, remove the key, because `false` is refused.
+
+**Implied windows.** The table's sha256 today is
+`dbe262799451bc0fbc096e083bfb8dff8f0d073b08aeac3bc3e6d6ea2163ed0e`, and the scorer
+and the page refuse a config that names another. Phrase rows match the target-date
+text and the quote: "coming weeks" or "next few weeks" is 3 months, shortest
+reading 2 weeks; "coming months" is 12 months, shortest reading 2 months; "soon"
+is 1 year and "eventually" is 5 years, and neither of those two has a lower bound.
+Without a phrase, a class row applies: the speaker's own company or product 1
+year, another company 3 years, policy or regulation 3 years, everything else 5
+years. A speaker horizon longer than 5 years is refused, not capped.
+Conditional, ordering and recurring claims get no window. The screen uses the
+extractor's `claim_form` when the record has it (release 2.3 adds it), and a
+regular expression on the claim otherwise. An event-anchored claim gets no window
+either. The lead of an implied row is the SHORTEST reading of its words. Words
+with no lower bound, and a class row, count as under the lead floor, so the lead
+test decides them. A resolved trend record keeps its frozen window with the key
+on. Every resolver and prior prompt of an implied row carries the same "HOW THIS
+RECORD IS JUDGED" block, byte-identical in both.
+
+**Policy releases.** Every sidecar written by this code records `policy_release`,
+`prompt_sha256` and `code_revision`. A sidecar with no release counts as
+`legacy`. With the key absent, only legacy sidecars may be scored, and a sidecar
+under a release the key does not name is refused by name.
+`policy_releases.counts` in scores.json counts sidecars per stage and release. A
+resolution or an early call under a release must pair with a prior whose
+`prompt_sha256` equals today's `build_prior_prompt` hash. Otherwise the row is a
+stale-sidecar exclusion, `prior_prompt_changed`, counted and named.
+
+**Early calls.** The scorer reads each run's `early/`. A decided early call,
+`occurred` or `not_occurred`, scores now, and `still_open` does not score.
+`corpus.early_calls` counts them, splits the scored ones by outcome
+(`scored_by_outcome`), lists the calls past their deadline that wait for the fresh
+check (`awaiting_fresh_check`), and lists decided calls that match no row
+(`without_a_row`). Once the deadline passes, a fresh resolution replaces the early
+call only through the replacement manifest, stage `"early"`. The same run may hold
+both. The prior is priced over the full window, with the prompt the deadline will
+use, byte for byte.
+
+**Lead test.** The scorer reads each run's `lead_tests/`. A record whose ONLY
+failing clause is the lead floor is eligible when its label is `world_forecast` or
+`own_results_forecast`. It stays out when the label is `own_plan_announcement` or
+`relay`, or when no label exists. scores.json carries every label it read, due or
+not, in `lead_test_labels`, so the page calls a record "pending" only while it
+has no label. `corpus.lead_test` counts the past-due ones by label.
+
+**Withdrawn.** `predictions/withdrawn_predictions.json`, in the shape
+`{"schema_version": 1, "note", "withdrawn": {prediction_id: {"reason", "detail",
+"evidence", "transcript_id", "decided_by", "decided_at_utc"}}}`. The loader
+refuses an unknown prediction, a transcript that does not hold it, and a missing
+or unknown key. A withdrawn row reads `withdrawn:<reason>` before any other
+reason. It never counts as eligible, and never as a record the resolver could not
+settle. The index fingerprints the manifest (`withdrawn_sha256`), and
+`data_sync.py check` names an index built without it.
+
+**Implied sensitivity.** The runs come from `resolve_predictions.py
+--implied-windows <sha> --implied-scale half|double`, and each run holds only that
+scale's sidecars. A board run named here is refused. A scale with any missing
+resolution, missing prior or stale sidecar is `complete: false`. It then ranks
+nobody, a person short at that scale shows no mean, and the page says
+"incomplete" instead of a figure.
+
+**Fingerprints.** `score_inputs_sha256` hashes the withdrawal manifest only when
+`withdrawn` is set, `early/` only when `early_calls` is set, `lead_tests/` only
+when `lead_test` is set, and the sensitivity runs only when
+`implied_sensitivity` is set. With none set, the digest equals the digest the
+code before these policies computed, even with early or lead-test sidecars on
+disk. Proof: `scripts/test_score_fingerprint_stages.py`.
+
+### The two stages
+
+`resolve_predictions.py --stage early` checks eligible records that are NOT yet
+due, with no minimum distance to the deadline. `occurred` needs a cited source
+dated after the statement that shows the thing has happened in full. A state AT
+the deadline is never settled early. `not_occurred` needs a basis:
+`cannot_happen` (a cited source shows it can no longer happen), or `target_moved`
+(the subject itself publicly moved its own target past the deadline). Every other
+case is `still_open`. Price the prior of an early call with `--stage prior
+--not-due`.
+
+`resolve_predictions.py --stage lead_test` labels, outcome-blind, every record
+whose only failing clause is the lead floor, due or not. The prompt is blind like
+the prior: no resolution and no date of today reach it. It says that either the
+record names a date soon after it was said, or it names no date and its words set
+the window.
+
+### Resolver rules in release `resolution-2026-09-30`
+
+- The deadline bounds the EVENT, not the evidence. A source published after the
+  deadline settles the claim when what it reports happened on or before it.
+- A stated pace, a tolerance for "about", a period and a fiscal year are judged by
+  the rules in the "HOW THIS RECORD IS JUDGED" block.
+- Every outcome needs at least three distinct search queries. The count comes from
+  the harness's own telemetry, search actions only, and a page opened is not a
+  search (`grade.web_search_actions`). Every query in `searched` must be one the
+  harness ran. On the 129 raw resolver responses from before this rule, it would
+  refuse 32 of 56 `occurred`, 6 of 40 `not_occurred` and 2 of 33
+  `unresolvable`.
+- `already_public` is `{date, where, what_it_shows}`, dated strictly before the
+  statement date, or before the first day of a date range. A same-day report is
+  refused. The row is excluded as `already_public` only when the statement date
+  is exact (`stated_in_page` or `sourced_override`). Against an upload or
+  publication date the report proves nothing about the day of speech, so the row
+  scores and the deploy prints a REVIEW line for it.
+
+### Cutting a release
+
+The resolver, prior, early and lead-test prompts, the judged rules, the schemas
+and the effort floor are hashed together (`resolution_lib._policy_parts`), and
+`POLICY_RELEASE` pins the hash. Every stage calls `check_policy_release()` before
+it spends a call, so an edit that was not released is refused. To cut a release:
+
+1. Change the text.
+2. Run `.venv/bin/python scripts/test_resolution_policy.py`. The pin check fails
+   and prints the new sha256.
+3. Give the release a new id, `resolution-<UTC date>`. Put the id and the sha256
+   in `resolution_lib.POLICY_RELEASE` and `test_resolution_policy.PINNED_RELEASE`,
+   and append the id to `resolution_lib.KNOWN_RELEASES`.
+4. Name the id in `policy_releases` in the same data commit that adds the first
+   sidecars written under it.
+
+Re-pin an id only while no sidecar anywhere carries it. `resolution-2026-09-30`
+was re-pinned during review, from `2775493e52d5` to `daf8df3e1cdb`, while a
+search of the data checkout found 0 files naming it.
+
+### What the deploy refuses
+
+`deploy_predictions.sh` prints every `scores_review_notes` line, then refuses
+while `scores_blockers` names anything:
+
+- a stale sidecar, judged over another window or priced on another prompt;
+- an incomplete implied-sensitivity scale;
+- an early call past its deadline that waits for the fresh check;
+- a decided early call that matches no row.
+
+### Rollout: every pushing clone pulls this code before the first key
+
+Every clone that pushes predictions data must pull this code before anyone adds
+one of the six keys to `predictions/scoring.json`. The code before these policies
+refuses an unknown config key. So from the first key on, an old clone's
+`data_sync.py push` stops, because it regenerates scores.json on every
+predictions push, and its pre-push hook refuses the same way. An old clone's
+resolver also writes sidecars with no release, which a board that names only new
+releases refuses. Until the first key, old and new code compute the same
+scores.json and the same `inputs_sha256`, so clones on either code may push.
+
+Proof: `scripts/test_implied_windows.py`, `test_resolution_policy.py`,
+`test_resolution_effort.py`, `test_score_policy.py`, `test_early_calls.py`,
+`test_lead_test.py`, `test_withdrawn_predictions.py`,
+`test_data_sync_withdrawn.py`, `test_implied_sensitivity.py`,
+`test_score_fingerprint_stages.py` and `test_predictions_site_policy.py`.
