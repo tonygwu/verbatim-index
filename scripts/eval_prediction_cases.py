@@ -102,6 +102,13 @@ def _set(rec: dict, changes: dict) -> dict:
         node[last] = v
     if "source.statement_date" in (changes or {}) and "source.statement_date_basis" not in (changes or {}):
         r["source"]["statement_date_basis"] = L.OVERRIDE_DATE_BASIS
+    if "source.statement_date" in (changes or {}):
+        # The case's date is the gold day of speech. A range block stored on the record
+        # describes the date it replaced, and predictions_lib.statement_date_earliest
+        # would read it as this date's range (final review item 1).
+        for block in ("statement_date_override", "statement_date_check"):
+            if f"source.{block}" not in changes:
+                r["source"].pop(block, None)
     return r
 
 

@@ -1328,6 +1328,26 @@ def relative_phrase_deadline(said: str, text: str | None) -> _date | None:
     return None
 
 
+def statement_date_earliest(rec: dict) -> str | None:
+    """The first day of a PREDICTION RECORD's date range, or None when it carries no range.
+
+    A record carries its range inside the block that set its date: the sourced
+    correction (source.statement_date_override) first, then the dating check that
+    confirmed the transcript's own date (source.statement_date_check). There is no
+    third place: the record schema forbids a bare source.statement_date_earliest,
+    so reading one would read a key no real record has (final review of the
+    combined branch, 2026-09-30, item 1). Every stage that needs the first day
+    reads it here: the New Year rule below, the already_public bound and the Said
+    line of every Phase 2 prompt (resolution_lib).
+    """
+    src = rec.get("source") or {}
+    for block in ("statement_date_override", "statement_date_check"):
+        first = (src.get(block) or {}).get("statement_date_earliest")
+        if first is not None:
+            return first
+    return None
+
+
 def relative_phrase_crosses_new_year(rec: dict) -> str | None:
     """Why "this year" or "next year" cannot be resolved on this record, or None.
 
@@ -1344,8 +1364,7 @@ def relative_phrase_crosses_new_year(rec: dict) -> str | None:
         return None
     if not (REL_THIS_YEAR.search(text) or REL_NEXT_YEAR.search(text)):
         return None
-    earliest = ((src.get("statement_date_override") or {}).get("statement_date_earliest")
-                or (src.get("statement_date_check") or {}).get("statement_date_earliest"))
+    earliest = statement_date_earliest(rec)
     if earliest and earliest[:4] != said[:4]:
         return f"{text!r} said between {earliest} and {said} names a different year for each end"
     return None

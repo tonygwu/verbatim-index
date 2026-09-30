@@ -28,6 +28,7 @@ design (sections 3.3 and 3.4), with the critiques' fixes applied:
 """
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 import pathlib
@@ -39,6 +40,7 @@ ROOT = pathlib.Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
 sys.path.insert(0, str(ROOT / "scripts"))
 import predictions_lib as L  # noqa: E402
 import resolution_lib as R  # noqa: E402
+import test_predictions_release23 as T23  # noqa: E402 -- builds records the way production does
 
 FAILED = []
 
@@ -232,15 +234,21 @@ def main() -> int:
     same = R.validate_resolution(buddy, "2203621a4e46691a", "2012-05-29")
     check("ALREADY PUBLIC: a report dated ON the statement date is refused: it must be strictly before",
           any("already_public" in e for e in same), str(same))
-    ranged = rec(said="2012-05-30")
-    ranged["source"]["statement_date_earliest"] = "2012-05-28"
+    # A ranged record as production builds one: the range travels INSIDE the override
+    # block, since the record schema forbids a bare source.statement_date_earliest
+    # (final review item 1; test_statement_range.py covers the check block too).
+    ranged = T23.record(T23.with_override(T23.UPLOAD, T23.operator_entry(
+        "2012-05-30", statement_date_earliest="2012-05-28", precision="days")))
+    check("ALREADY PUBLIC: the ranged fixture is a record production could write (it passes the record schema)",
+          L.check_schema(ranged, L.load_record_schema()) == [] and "statement_date_earliest" not in ranged["source"],
+          str(L.check_schema(ranged, L.load_record_schema())))
     check("ALREADY PUBLIC: with a date range the bound is its EARLIEST day",
           R.statement_bound(ranged) == "2012-05-28" and R.statement_bound(rec(said="2012-05-30")) == "2012-05-30",
           f"{R.statement_bound(ranged)}")
     check("ALREADY PUBLIC: a report inside the range is refused against its earliest day",
           any("already_public" in e for e in R.validate_resolution(buddy, "2203621a4e46691a", R.statement_bound(ranged))))
-    bad_range = rec(said="2012-05-30")
-    bad_range["source"]["statement_date_earliest"] = "May 2012"
+    bad_range = copy.deepcopy(ranged)
+    bad_range["source"]["statement_date_override"]["statement_date_earliest"] = "May 2012"
     try:
         R.statement_bound(bad_range)
         check("ALREADY PUBLIC: a malformed statement_date_earliest is refused, never ignored", False)

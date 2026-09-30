@@ -35,7 +35,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import predictions_lib as L  # noqa: E402 -- the one reader of a record's date range
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -138,7 +142,8 @@ def prompt_facts(rec: dict, deadline: "dt.date | None") -> dict:
         "company": spk.get("company") or "",
         "statement_date": src.get("statement_date") or "",
         # The first day of a date range, when the record carries one; shown on the Said line.
-        "statement_date_earliest": src.get("statement_date_earliest") or "",
+        # Read from the block that set the date, never a bare source key (final review item 1).
+        "statement_date_earliest": L.statement_date_earliest(rec) or "",
         "venue": src.get("venue") or "",
         "title": src.get("title") or "",
         "quote": src.get("quote") or "",
@@ -774,10 +779,11 @@ def _searched_errors(obj: dict) -> list[str]:
 
 def statement_bound(rec: dict) -> "str | None":
     """The day an `already_public` report must come strictly before: the FIRST day of
-    the record's date range when it carries one (statement_date_earliest, which the
-    dating work adds), else its statement date. A malformed first day is refused."""
+    the record's date range when it carries one (predictions_lib.statement_date_earliest,
+    which reads the override block, then the check block), else its statement date.
+    A malformed first day is refused."""
     src = rec.get("source") or {}
-    first = src.get("statement_date_earliest")
+    first = L.statement_date_earliest(rec)
     if first is None:
         return src.get("statement_date")
     try:
