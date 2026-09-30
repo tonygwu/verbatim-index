@@ -381,9 +381,10 @@ def run_one(job: dict) -> dict:
             raise RuntimeError(f"{E_SCHEMA}: {'; '.join(errs[:4])}")
         said = (rec.get("source") or {}).get("statement_date")
         if stage == "resolve":
-            errs = R.validate_resolution(obj, pid, said) + R.validate_effort(obj, tel)
+            errs = R.validate_resolution(obj, pid, R.statement_bound(rec)) + R.validate_effort(obj, tel)
         elif stage == "early":
-            errs = R.validate_early(obj, pid, said, args.as_of) + R.validate_effort(obj, tel)
+            errs = (R.validate_early(obj, pid, said, args.as_of, earliest=R.statement_bound(rec))
+                    + R.validate_effort(obj, tel))
         elif stage == "lead_test":
             errs = R.validate_lead_test(obj, pid)
         else:

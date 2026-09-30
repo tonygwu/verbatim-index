@@ -48,13 +48,13 @@ def check(label, ok, detail=""):
 
 
 def rec(pid, *, said="2021-03-01", target=None, tdt=None, cat="market_industry", ctrl="external",
-        claim=None, quote=None, spec="medium"):
+        claim=None, quote=None, spec="medium", basis="stated_in_page"):
     return {
         "accepted": True, "leader_slug": "ada", "prediction_id": pid, "transcript_id": "ada/t1",
         "prediction": {"target_date": target, "target_date_text": tdt, "horizon_years_inferred": None,
                        "specificity": spec, "subject_control": ctrl, "category": cat, "prediction_type": "milestone",
                        "horizon": "none", "normalized_claim": claim or f"claim {pid}", "resolution_criteria": "crit"},
-        "source": {"statement_date": said, "quote": quote or f"quote {pid}"},
+        "source": {"statement_date": said, "statement_date_basis": basis, "quote": quote or f"quote {pid}"},
         "confidence": {"probability": None}, "consensus": {"status": "no_match", "exact_match": None},
     }
 
@@ -87,7 +87,10 @@ def main() -> int:
             rec("stale", quote="it will come soon"),                         # implied: 1 year -> 2022-03-01
             rec("trend", said="2019-01-15", claim="Margins will continue to go up.",
                 cat="company_business", ctrl="own"),                          # a trend record, already resolved
-            rec("pub", target="2023-06-30"),                                  # already public
+            rec("pub", target="2023-06-30"),                                  # already public, exact date
+            # The Buddy Media shape: dated by an upload years after the words, so a report
+            # before the upload proves nothing about the speech. Reviewed, never excluded.
+            rec("pubrev", said="2019-02-27", target="2022-02-27", basis="youtube_upload_date"),
         ]
         (corpus / "ada" / "t1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
         (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada L"}]}))
@@ -101,6 +104,10 @@ def main() -> int:
         write(run, "pub", "resolve", "2023-06-30", policy_release=REL,
               already_public={"date": "2021-02-20", "where": "https://example.com/deal", "what_it_shows": "agreed"})
         write(run, "pub", "prior", "2023-06-30")
+        write(run, "pubrev", "resolve", "2022-02-27", policy_release=REL,
+              already_public={"date": "2012-06-04", "where": "https://www.salesforce.com/news/press-releases/2012/06/04/",
+                              "what_it_shows": "Salesforce signs a definitive agreement to acquire Buddy Media"})
+        write(run, "pubrev", "prior", "2022-02-27")
         # An implied window sets no lower bound on when, so each implied record is under the
         # lead floor and the outcome-blind lead test decides it (VD-7 c; review 2026-09-30).
         for pid, dl in (("imp", "2026-03-01"), ("stale", "2022-03-01")):
@@ -134,7 +141,7 @@ def main() -> int:
         p, doc = score(policy_releases=["legacy", REL])
         check("RELEASE: named, the board is scored", p.returncode == 0, p.stderr[-600:])
         check("RELEASE: scores.json counts sidecars per stage and release",
-              doc.get("policy_releases", {}).get("counts") == {"prior": {"legacy": 5}, "resolve": {"legacy": 4, REL: 1}},
+              doc.get("policy_releases", {}).get("counts") == {"prior": {"legacy": 6}, "resolve": {"legacy": 4, REL: 2}},
               json.dumps(doc.get("policy_releases")))
         rows = {r["prediction_id"]: r for r in doc.get("predictions", [])}
 
@@ -145,10 +152,22 @@ def main() -> int:
               and pub.get("already_public", {}).get("date") == "2021-02-20" and not pub.get("scored"), json.dumps(pub)[:400])
         check("ALREADY PUBLIC: counted by its reason", doc.get("corpus", {}).get("not_scored_because", {}).get("already_public") == 1,
               json.dumps(doc.get("corpus", {}).get("not_scored_because")))
+        rv = rows.get("pubrev", {})
+        check("REVIEW: against an upload date the report is kept and flagged for review, and the row still scores",
+              rv.get("scored") is True and rv.get("already_public_review") is True
+              and rv.get("already_public", {}).get("date") == "2012-06-04", json.dumps(rv)[:400])
+        check("REVIEW: scores.json counts the rows sent to review",
+              doc.get("corpus", {}).get("already_public_review") == ["pubrev"],
+              json.dumps(doc.get("corpus", {}).get("already_public_review")))
+        notes = D.scores_review_notes(doc)
+        check("REVIEW: the deploy reports them, without refusing", notes and "pubrev" in notes[0]
+              and D.scores_blockers(doc) == [], str(notes))
+        deploy = (ROOT / "scripts" / "deploy_predictions.sh").read_text()
+        check("REVIEW: deploy_predictions.sh prints scores_review_notes", "D.scores_review_notes(" in deploy)
 
         print("implied windows switched OFF: the records the funnel cannot date stay out")
         check("OFF: no implied row is past due, and no implied field is written",
-              set(rows) == {"dated", "trend", "pub"} and "implied" not in doc.get("rule", {})
+              set(rows) == {"dated", "trend", "pub", "pubrev"} and "implied" not in doc.get("rule", {})
               and "stale_sidecars" not in doc.get("corpus", {}), f"{sorted(rows)} {doc.get('rule')}")
         trend_off = rows.get("trend", {}).get("points")
 

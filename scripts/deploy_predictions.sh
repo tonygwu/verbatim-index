@@ -77,6 +77,8 @@ if scores.exists():
     print("current: scores.json matches its config and inputs")
     # Current is not enough: a board with rows dropped as stale sidecars would
     # publish those drops without anyone choosing them (critique 3 A5).
+    for note in D.scores_review_notes(json.load(scores.open())):
+        print(note)
     blockers = D.scores_blockers(json.load(scores.open()))
     if blockers:
         print("; ".join(blockers))

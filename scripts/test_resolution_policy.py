@@ -42,7 +42,7 @@ import resolution_lib as R  # noqa: E402
 
 FAILED = []
 
-PINNED_RELEASE = ("resolution-2026-09-30", "86726df37752cda719c8f727c5932409862e198e6e321d7c3ba03927bde87e16")
+PINNED_RELEASE = ("resolution-2026-09-30", "2775493e52d581d85231354a080ce46a1d060b3fe62d1a3e841288b3f758138f")
 
 
 def check(label, ok, detail=""):
@@ -229,6 +229,30 @@ def main() -> int:
           str(L.check_schema(buddy, R.RESOLUTION_SCHEMA)) + str(R.validate_resolution(buddy, "2203621a4e46691a", "2012-05-30")))
     late = R.validate_resolution(buddy, "2203621a4e46691a", "2012-05-28")
     check("ALREADY PUBLIC: a date after the statement date is refused", any("already_public" in e for e in late), str(late))
+    same = R.validate_resolution(buddy, "2203621a4e46691a", "2012-05-29")
+    check("ALREADY PUBLIC: a report dated ON the statement date is refused: it must be strictly before",
+          any("already_public" in e for e in same), str(same))
+    ranged = rec(said="2012-05-30")
+    ranged["source"]["statement_date_earliest"] = "2012-05-28"
+    check("ALREADY PUBLIC: with a date range the bound is its EARLIEST day",
+          R.statement_bound(ranged) == "2012-05-28" and R.statement_bound(rec(said="2012-05-30")) == "2012-05-30",
+          f"{R.statement_bound(ranged)}")
+    check("ALREADY PUBLIC: a report inside the range is refused against its earliest day",
+          any("already_public" in e for e in R.validate_resolution(buddy, "2203621a4e46691a", R.statement_bound(ranged))))
+    bad_range = rec(said="2012-05-30")
+    bad_range["source"]["statement_date_earliest"] = "May 2012"
+    try:
+        R.statement_bound(bad_range)
+        check("ALREADY PUBLIC: a malformed statement_date_earliest is refused, never ignored", False)
+    except ValueError as e:
+        check("ALREADY PUBLIC: a malformed statement_date_earliest is refused, never ignored", "May 2012" in str(e), str(e))
+    for name, task in (("resolver", R.RESOLVER_TASK), ("early", R.EARLY_TASK)):
+        flat = " ".join(task.split())
+        check(f"PROMPT ({name}): the already-public report must be dated strictly before the statement date",
+              "strictly before the statement date" in flat and "on or before the statement date" not in flat, flat[-1500:])
+    rp = R.build_resolver_prompt(ranged, d, "2026-09-30")
+    check("PROMPT: a record with a date range shows the range on its Said line",
+          "Said on:         between 2012-05-28 and 2012-05-30" in rp, [l for l in rp.splitlines() if "Said on" in l])
     check("ALREADY PUBLIC: an undated record cannot carry it",
           any("already_public" in e for e in R.validate_resolution(buddy, "2203621a4e46691a", None)))
     bad = dict(buddy, already_public=dict(buddy["already_public"], date="May 29, 2012"))

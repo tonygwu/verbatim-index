@@ -759,6 +759,21 @@ def scores_blockers(doc: dict) -> list[str]:
     return out
 
 
+def scores_review_notes(doc: dict) -> list[str]:
+    """What the deploy prints without refusing: rows scored with a question open.
+
+    A resolver report that the thing was already public before an UPLOAD or
+    PUBLICATION date proves nothing about the day of speech, so the row is scored
+    and listed here until the recording is dated (review 2026-09-30)."""
+    out = []
+    review = (doc.get("corpus") or {}).get("already_public_review") or []
+    if review:
+        out.append(f"REVIEW: {len(review)} scored prediction(s) carry a report that the thing was public before an "
+                   f"upload or publication date, which may be later than the words: {review[:8]}; date the "
+                   f"recordings to decide")
+    return out
+
+
 def scores_asof_lag(data_root: Path, revision: str, as_of: str) -> str | None:
     """None when the scoring as-of is not older than the newest predictions data.
 

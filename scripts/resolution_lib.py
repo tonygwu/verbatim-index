@@ -137,6 +137,8 @@ def prompt_facts(rec: dict, deadline: "dt.date | None") -> dict:
         "role": spk.get("role") or "",
         "company": spk.get("company") or "",
         "statement_date": src.get("statement_date") or "",
+        # The first day of a date range, when the record carries one; shown on the Said line.
+        "statement_date_earliest": src.get("statement_date_earliest") or "",
         "venue": src.get("venue") or "",
         "title": src.get("title") or "",
         "quote": src.get("quote") or "",
@@ -268,12 +270,19 @@ def _block(f: dict) -> str:
     return _block_body(f) + (f"\nHOW THIS RECORD IS JUDGED\n{f['judged']}" if f.get("judged") else "")
 
 
+def _said(f: dict) -> str:
+    first = f.get("statement_date_earliest")
+    if first and first != f["statement_date"]:
+        return f"between {first} and {f['statement_date']}"
+    return f["statement_date"]
+
+
 def _block_body(f: dict) -> str:
     who = ", ".join(x for x in (f["role"], f["company"]) if x)
     return f"""PREDICTION {f["prediction_id"]}
 
 Speaker:         {f["speaker"]}{f" ({who})" if who else ""}
-Said on:         {f["statement_date"]}
+Said on:         {_said(f)}
 Where:           {f["title"]}{f" [{f['venue']}]" if f["venue"] else ""}
 Deadline:        {f["deadline"]}   {f["deadline_note"]}
 Category:        {f["category"]}
@@ -347,7 +356,8 @@ RULES
 
 6. SEARCH BEFORE YOU ANSWER, WHATEVER THE ANSWER. Run at least three web searches
    with different queries before you answer, and list every query you ran in
-   "searched", in the order you ran them. Where the claim is about a company,
+   "searched", in the order you ran them, copied exactly as you ran it. Opening a
+   page is not a search. Where the claim is about a company,
    include its own filings, releases and reports, and news dated near the deadline.
    This holds for every answer: "occurred" needs a source that shows the event, or
    the period's figure, on or before the deadline; "not_occurred" needs a source
@@ -367,10 +377,12 @@ RULES
 8. ALREADY PUBLIC BEFORE IT WAS SAID. Check whether the event itself, or a credible
    report that it had been agreed, decided or scheduled, was already public BEFORE
    the statement date. If it was, fill "already_public" with the earliest such
-   source: its date, which is on or before the statement date, where it is, and
-   what it shows. A rumour, or another person's forecast, is not enough; a report
-   that the deal was agreed, the product announced or the date set is. Still
-   answer the outcome as usual. If you find no such report, "already_public" is null.
+   source: its date, which is strictly before the statement date (before the first
+   day, when the Said line gives a range), where it is, and what it shows. A report
+   dated the same day does not count. A rumour, or another person's forecast, is not
+   enough; a report that the deal was agreed, the product announced or the date set
+   is. Still answer the outcome as usual. If you find no such report, "already_public"
+   is null.
 
 9. HOW THIS RECORD IS JUDGED. When the prediction below carries a section with that
    heading, apply it exactly. The assessor who estimated the prediction's
@@ -465,13 +477,15 @@ RULES
 
 6. SEARCH BEFORE YOU ANSWER, WHATEVER THE ANSWER. Run at least three web searches
    with different queries before you answer, and list every query you ran in
-   "searched", in the order you ran them.
+   "searched", in the order you ran them, copied exactly as you ran it. Opening a
+   page is not a search.
 
 7. ALREADY PUBLIC BEFORE IT WAS SAID. Check whether the event itself, or a credible
    report that it had been agreed, decided or scheduled, was already public BEFORE
    the statement date. If it was, fill "already_public" with the earliest such
-   source: its date, which is on or before the statement date, where it is, and
-   what it shows. Otherwise "already_public" is null.
+   source: its date, which is strictly before the statement date (before the first
+   day, when the Said line gives a range), where it is, and what it shows. A report
+   dated the same day does not count. Otherwise "already_public" is null.
 
 8. HOW THIS RECORD IS JUDGED. When the prediction below carries a section with that
    heading, apply it exactly.
@@ -500,10 +514,12 @@ def build_early_prompt(rec: dict, deadline: dt.date, today: str) -> str:
             f"{'=' * 70}\n{_block(f)}{'=' * 70}\n\nAnswer with the JSON object now.\n")
 
 
-def validate_early(obj: dict, expect_id: str, said: "str | None", today: str) -> list[str]:
+def validate_early(obj: dict, expect_id: str, said: "str | None", today: str,
+                   earliest: "str | None" = None) -> list[str]:
     """Rules the schema cannot express for an early call. A decided answer needs a
     source dated after the statement and on or before today, and a not_occurred
-    names its basis; still_open names none."""
+    names its basis; still_open names none. `earliest` is statement_bound(rec),
+    the day an already_public report must precede; it defaults to `said`."""
     errs: list[str] = []
     if obj.get("prediction_id") != expect_id:
         errs.append(f"prediction_id {obj.get('prediction_id')!r} != {expect_id!r}")
@@ -527,7 +543,7 @@ def validate_early(obj: dict, expect_id: str, said: "str | None", today: str) ->
                 errs.append(f"an early {outcome} needs a source dated after the statement date {lo} and on or "
                             f"before today {hi}; the dates cited are {[str(x) for x in dated] or 'none'}")
     errs += _searched_errors(obj)
-    errs += already_public_errors(obj, said)
+    errs += already_public_errors(obj, earliest if earliest is not None else said)
     return errs
 
 
@@ -754,8 +770,27 @@ def _searched_errors(obj: dict) -> list[str]:
     return []
 
 
+def statement_bound(rec: dict) -> "str | None":
+    """The day an `already_public` report must come strictly before: the FIRST day of
+    the record's date range when it carries one (statement_date_earliest, which the
+    dating work adds), else its statement date. A malformed first day is refused."""
+    src = rec.get("source") or {}
+    first = src.get("statement_date_earliest")
+    if first is None:
+        return src.get("statement_date")
+    try:
+        dt.date.fromisoformat(str(first))
+    except ValueError:
+        raise ValueError(f"prediction {rec.get('prediction_id')}: statement_date_earliest {first!r} is not "
+                         f"YYYY-MM-DD") from None
+    return str(first)
+
+
 def already_public_errors(obj: dict, said: "str | None") -> list[str]:
-    """A report dated AFTER the statement cannot show the thing was public before it."""
+    """A report dated ON or after the statement cannot show the thing was public before it.
+
+    `said` is statement_bound(rec). The same day is refused too: a report
+    published that day may have followed the words (review 2026-09-30)."""
     ap = obj.get("already_public")
     if ap is None:
         return []
@@ -765,9 +800,9 @@ def already_public_errors(obj: dict, said: "str | None") -> list[str]:
         return [f"already_public date {ap.get('date')!r} is not YYYY-MM-DD"]
     if not said:
         return ["already_public is given, but the record has no statement date to compare it with"]
-    if when > dt.date.fromisoformat(str(said)[:10]):
-        return [f"already_public date {when} is after the statement date {said}; a report after the statement "
-                f"cannot show the thing was public before it"]
+    if when >= dt.date.fromisoformat(str(said)[:10]):
+        return [f"already_public date {when} is not strictly before the statement date {said}; a report on or "
+                f"after the statement cannot show the thing was public before it"]
     return []
 
 
@@ -1144,7 +1179,7 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # Cutting a release: change the text, run test_resolution_policy.py, and put the
 # new id and sha256 below and in that test.
 
-POLICY_RELEASE = ("resolution-2026-09-30", "86726df37752cda719c8f727c5932409862e198e6e321d7c3ba03927bde87e16")
+POLICY_RELEASE = ("resolution-2026-09-30", "2775493e52d581d85231354a080ce46a1d060b3fe62d1a3e841288b3f758138f")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.

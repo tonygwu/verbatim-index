@@ -1986,6 +1986,13 @@ def state_words(st: dict, rec: dict, row: "dict | None", scored_page: bool) -> d
         note, price = "not scored until it is priced", "Not priced yet."
     elif s == "awaiting":
         line, price = f"{past}; not checked yet.", "Not priced yet: a price is set when it is checked."
+    elif s == "scored" and st.get("already_public"):
+        # Scored, with an open question: the recording is dated by an upload or a
+        # publication, so an earlier report proves nothing about the day of speech.
+        ap = st["already_public"]
+        line = f"{past}; checked and scored."
+        note = (f"under review: a report dated {ap['date']} may show it was public before it was said, but the "
+                f"recording's date is an upload or publication date, so that is not decided")
     elif s == "scored" and imp:
         line = f"Judged over an implied window of {imp['window_words']}, to {d}; checked and scored."
     elif s == "scored":

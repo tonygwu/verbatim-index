@@ -63,7 +63,9 @@ def main() -> int:
             ("screened", dict(target=None, horizon="none", claim="If regulators approve, the merger will close.")),
             ("early-now", dict(target="2027-06", target_text="by mid 2027")),
             ("early-late", dict(target="2026-06", target_text="by mid 2026")),
-            ("pub", dict(target="2025-12", target_text="by the end of 2025")),
+            ("pub", dict(target="2025-12", target_text="by the end of 2025", upload=None,
+                         declared=("2025-03-01", "stated_in_page"))),
+            ("pub-rev", dict(target="2025-12", target_text="by the end of 2025")),
             ("wd", dict(target="2025-11", target_text="by November")),
             ("wd-open", dict(target="2030", target_text="by 2030")),
             ("lead-fc", dict(target="2025-03-20", target_text="this month")),
@@ -113,10 +115,13 @@ def main() -> int:
             fp.write_text(json.dumps(base))
 
         board = pred / "_experiments" / "board"
-        for sid in ("imp-scored", "pub", "wd", "lead-fc", "lead-ann", "stated"):
+        for sid in ("imp-scored", "pub", "pub-rev", "wd", "lead-fc", "lead-ann", "stated"):
             side(board, sid, "resolve", dl[sid])
             side(board, sid, "prior", dl[sid])
         side(board, "pub", "resolve", dl["pub"], policy_release=REL, already_public={
+            "date": "2025-02-20", "where": "https://example.com/already", "what_it_shows": "the launch date was set"})
+        # The same report against an UPLOAD date proves nothing about the day of speech: scored, sent to review.
+        side(board, "pub-rev", "resolve", dl["pub-rev"], policy_release=REL, already_public={
             "date": "2025-02-20", "where": "https://example.com/already", "what_it_shows": "the launch date was set"})
         # A withdrawn prediction the resolver could not settle is Withdrawn, not Couldn't check:
         # the scorer's eligible-unresolvable split and the page's column must agree on it.
@@ -165,14 +170,15 @@ def main() -> int:
         st = {sid: r["state"] for sid, r in pub.items()}
         row = T.embedded(page, "DATA")[0]
         want = {"imp-scored": "scored", "imp-open": "not_due", "screened": "no_deadline", "early-now": "scored",
-                "early-late": "scored", "pub": "not_testable", "wd": "withdrawn", "wd-open": "withdrawn",
+                "early-late": "scored", "pub": "not_testable", "pub-rev": "scored", "wd": "withdrawn",
+                "wd-open": "withdrawn",
                 "lead-fc": "scored", "lead-ann": "not_testable", "stated": "scored"}
         got = {sid: st[sid]["state"] for sid in want}
         check("STATES: each record carries the state its row, its window and the manifest give", got == want,
               json.dumps({k: (got[k], v) for k, v in want.items() if got[k] != v}))
         check("BUCKETS: the Predictions column counts those states, withdrawn in its own bucket, and adds up",
-              row.get("buckets") == {"scored": 5, "not_due": 1, "no_deadline": 1, "not_testable": 2, "withdrawn": 2}
-              and sum(row["buckets"].values()) == row["accepted"] == 11, json.dumps(row.get("buckets")))
+              row.get("buckets") == {"scored": 6, "not_due": 1, "no_deadline": 1, "not_testable": 2, "withdrawn": 2}
+              and sum(row["buckets"].values()) == row["accepted"] == 12, json.dumps(row.get("buckets")))
 
         print("implied windows")
         check("TARGET: a scored implied record reads 'judged over 3 years, to 2024-03-01 (implied window)'",
@@ -204,6 +210,10 @@ def main() -> int:
               st["pub"]["reason"] == "already_public" and "already public" in st["pub"]["line"]
               and "2025-02-20" in st["pub"]["line"] and "https://example.com/already" in json.dumps(pub["pub"]),
               st["pub"]["line"])
+        check("CARD: against an upload date the earlier report is shown and the scored verdict is flagged for review",
+              st["pub-rev"]["state"] == "scored" and "review" in (st["pub-rev"]["verdict_note"] or "")
+              and pub["pub-rev"].get("already_public", {}).get("date") == "2025-02-20",
+              json.dumps(st["pub-rev"])[:400])
         check("CARD: a withdrawn prediction gives the reason and the detail, with the evidence on the record",
               "Withdrawn" in st["wd"]["line"] and "not a forecast" in st["wd"]["line"]
               and pub["wd"].get("withdrawn", {}).get("evidence") == ["https://example.com/news"], st["wd"]["line"])

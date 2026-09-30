@@ -165,6 +165,8 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
         if (res or {}).get("already_public"):
             # Only a sidecar under a release carries the field, so a legacy row is unchanged.
             row["already_public"] = res["already_public"]
+            if (r.get("source") or {}).get("statement_date_basis") not in EXACT_DATE_BASES:
+                row["already_public_review"] = True
         if pid in early_used:
             row["early_called"] = True
             row["early"] = {k: res.get(k) for k in ("as_of", "outcome", "not_occurred_basis", "run_id")}
@@ -195,7 +197,11 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
             row["not_scored_because"] = "stale_sidecar:deadline_changed"
         elif res is None:
             row["not_scored_because"] = "no_resolution"
-        elif res.get("already_public"):
+        elif res.get("already_public") and (r.get("source") or {}).get("statement_date_basis") in EXACT_DATE_BASES:
+            # Excluded only against a date that IS the day of speech. Against an upload
+            # or publication date the report proves nothing about the speech, so the
+            # row is scored and sent to review (review 2026-09-30: Buddy Media's
+            # 2012 announcement against its 2019 upload date).
             row["not_scored_because"] = "already_public"
         elif res["outcome"] == "unresolvable":
             row["not_scored_because"] = f"unresolvable:{res['unresolvable_reason']}"
@@ -262,6 +268,11 @@ def implied_sensitivity(sens: dict[str, list[str]], root: Path, args, cutoff: dt
                         for l in people},
         }
     return out
+
+
+# The statement-date bases that ARE the day of speech. Any other (an upload or a
+# publication date) is an upper bound only.
+EXACT_DATE_BASES = ("stated_in_page", "sourced_override")
 
 
 def set_aside(r: dict) -> bool:
@@ -1169,6 +1180,10 @@ def main(argv: list[str] | None = None) -> int:
         doc["corpus"]["stale_sidecars"] = window_stale
     if args.policy_releases is not None:
         doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
+    review = sorted(r["prediction_id"] for r in joined if r.get("already_public_review"))
+    if review:
+        # Scored, and reported by the deploy until someone dates the recording.
+        doc["corpus"]["already_public_review"] = review
     if args.implied_sensitivity is not None:
         doc["implied_sensitivity"] = implied_sensitivity(
             settings["implied_sensitivity"], root, args, cutoff, resolutions, ov_in, joined, names, labels, withdrawn,
