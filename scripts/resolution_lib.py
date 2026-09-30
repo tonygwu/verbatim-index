@@ -59,29 +59,49 @@ UNRESOLVABLE_REASONS = (
 # is asserting certainty, and a log score of a wrong certainty is infinite.
 P_MIN, P_MAX = 0.01, 0.99
 
+SOURCES_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["what_it_shows", "where", "date"],
+        "properties": {
+            "what_it_shows": {"type": "string", "minLength": 1},
+            "where": {"type": "string", "minLength": 1},
+            "date": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        },
+    },
+}
+
+# The searches a resolution ran, in order. Required for EVERY outcome (critique 1
+# point 6 of the rescue round-4 design: the effort floor must not bind only the
+# refusals, which were already the most searched answers).
+SEARCHED_SCHEMA = {"type": "array", "items": {"type": "string", "minLength": 1}}
+MIN_SEARCHES = 3
+
+# "Already public before the statement" (operator, 2026-09-29): the earliest
+# report, dated on or before the statement date, that the event had happened or
+# been agreed, decided or scheduled. The field names are pinned: a live smoke
+# eval reads them.
+ALREADY_PUBLIC_SCHEMA = {"anyOf": [{"type": "null"}, {
+    "type": "object", "additionalProperties": False, "required": ["date", "where", "what_it_shows"],
+    "properties": {"date": {"type": "string", "minLength": 1}, "where": {"type": "string", "minLength": 1},
+                   "what_it_shows": {"type": "string", "minLength": 1}}}]}
+
 RESOLUTION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["prediction_id", "outcome", "confidence", "reasoning", "sources", "unresolvable_reason"],
+    "required": ["prediction_id", "outcome", "confidence", "reasoning", "sources", "unresolvable_reason",
+                 "searched", "already_public"],
     "properties": {
         "prediction_id": {"type": "string", "minLength": 1},
         "outcome": {"enum": list(OUTCOMES)},
         "confidence": {"enum": ["high", "medium", "low"]},
         "reasoning": {"type": "string", "minLength": 1},
         "unresolvable_reason": {"anyOf": [{"enum": list(UNRESOLVABLE_REASONS)}, {"type": "null"}]},
-        "sources": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["what_it_shows", "where", "date"],
-                "properties": {
-                    "what_it_shows": {"type": "string", "minLength": 1},
-                    "where": {"type": "string", "minLength": 1},
-                    "date": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-                },
-            },
-        },
+        "sources": SOURCES_SCHEMA,
+        "searched": SEARCHED_SCHEMA,
+        "already_public": ALREADY_PUBLIC_SCHEMA,
     },
 }
 
@@ -129,19 +149,126 @@ def prompt_facts(rec: dict, deadline: "dt.date | None") -> dict:
         "deadline": deadline.isoformat() if deadline else "(no closing date this pipeline could read)",
         # Says where the deadline came from, because rule 7 turns on it: a TREND
         # window is this pipeline's evaluation span, not something the speaker said.
+        # An IMPLIED window points at the judged block, which both prompts carry,
+        # never at a rule number only the resolver has (critique 3 E3).
         "deadline_note": (
             "-- THIS IS A TREND WINDOW, not a date the speaker gave. See rule 7."
             if str(rec.get("_basis") or "").startswith("trend")
+            else "-- an implied window of %s, not a date the speaker gave; see HOW THIS RECORD IS JUDGED"
+            % rec["_implied"]["window_words"] if rec.get("_implied")
             else '(from the speaker\'s own wording: "%s")' % (pred.get("target_date_text") or "")),
         "target_date_text": pred.get("target_date_text") or "",
         "category": pred.get("category") or "",
+        # Authored here, from the record's own fields, and identical in every stage
+        # that reads prompt_facts. Empty for a record with no trigger.
+        "judged": judged_block(rec),
     }
+
+
+# ---------------------------------------------------------------------------
+# How this record is judged: one block, in every stage's prompt
+# ---------------------------------------------------------------------------
+#
+# Critique 1 point 12 of the rescue round-4 design: rules the resolver applies
+# (a tolerance for "about", a fiscal year, a stated pace, an imposed window) must
+# reach the prior too, or the prior prices one question and the resolver settles
+# another, which is how a 2021 genome-cost claim priced at p=0.02 was paid +5.64
+# (PRIOR_TREND_RULE). Each rule below is triggered by the record's own fields,
+# never by anything a stage found, and the resulting text sits verbatim in the
+# resolver, prior and early prompts. A record with no trigger gets no block, so
+# its prior prompt is byte-identical to the one existing priors were priced with.
+# Every text is authored, so none may carry outcome vocabulary (prior_prompt_leaks).
+
+_NUM = (r"(?:\$|US\$|€|£)?(?:\d|one\b|two\b|three\b|four\b|five\b|six\b|seven\b|eight\b|nine\b|ten\b|twenty\b|"
+        r"thirty\b|forty\b|fifty\b|a hundred|a thousand|a million|a billion|half\b|a third|a quarter)")
+_FIGURE = (r"\b(?:revenue|revenues|sales|profit|profits|profitable|profitability|margin|margins|earnings|income|"
+           r"EBITDA|cash flow|growth|GDP|bookings|shipments|deliveries|share of)\b")
+JUDGED_RULES = {
+    "implied": {
+        "text": ("AN IMPLIED WINDOW. The speaker named no date. This pipeline judges the claim over a fixed "
+                 "window of {window} from the statement date to the deadline shown, set by a table fixed "
+                 "before any record was judged ({why}). The claim holds only if the thing comes about within "
+                 "that window; the same thing coming about after the deadline does not count. Judge it, and "
+                 "price it, within the window, not eventually."),
+    },
+    "approximate": {
+        "fields": ["claim", "criterion"],
+        "pattern": (r"\b(?:about|around|roughly|approximately|almost|nearly|close to|some)\s+" + _NUM
+                    + r"|\ba couple\b|\b(?:hundreds|thousands|dozens)\b"),
+        "text": ("APPROXIMATE NUMBERS. When the claim names an approximate number: 'about', 'around', "
+                 "'roughly' and 'approximately' X are met within 10% of X; 'almost' or 'nearly' X is met from "
+                 "90% of X up to X; 'a couple' means two; 'hundreds' means 200 or more. Another tolerance "
+                 "applies only where the speaker's own words set one."),
+    },
+    "pace": {
+        "fields": ["claim", "criterion", "target_date_text"],
+        "pattern": (r"\b(?:(?:per|each|every)\s+(?:day|week|month|quarter)|a (?:day|week)\b|daily|weekly|"
+                    r"at a (?:rate|pace) of)"),
+        "text": ("A STATED PACE OR SCHEDULE. When the speaker states a pace or a schedule ('ten more each day "
+                 "until all 50 are out'), the pace is part of the claim: it holds only if the schedule held, "
+                 "not merely the end state. Everything released at once, early or late, meets the end state "
+                 "and breaks the schedule."),
+    },
+    "period": {
+        "fields": ["claim", "criterion"],
+        "pattern": (r"(?=[\s\S]*" + _FIGURE + r")[\s\S]*\b(?:fiscal|FY\s?'?\d{2,4}|full[- ]year|annual|"
+                    r"quarter(?:ly)?|Q[1-4]|(?:for|in|during) (?:calendar |fiscal )?(?:the year )?(?:19|20)\d\d)\b"),
+        "text": ("A FIGURE FOR A PERIOD. When the claim is about a figure for a period (a year, a fiscal year, "
+                 "a quarter), it is judged on the figure for the latest such period that ends on or before the "
+                 "deadline, whenever that figure is published. A figure published after the deadline still "
+                 "counts; a later period's figure does not."),
+    },
+    "fiscal": {
+        "control": "own", "category": "company_business", "figure": _FIGURE,
+        "horizon": r"\b(?:this year|next year|fiscal|FY)\b",
+        "text": ("A COMPANY'S FISCAL YEAR. The speaker runs the company and the claim is about its own reported "
+                 "figures, so 'this year' and 'next year' mean the fiscal year the company reports on, which "
+                 "may not end in December. The deadline shown may be a calendar-year stand-in for those words; "
+                 "the fiscal year the speaker meant is the period judged, and the reasoning names it and when "
+                 "it ended."),
+    },
+}
+_JUDGED_RE = {k: re.compile(v["pattern"], re.I) for k, v in JUDGED_RULES.items() if "pattern" in v}
+
+
+def judged_block(rec: dict) -> str:
+    """The HOW THIS RECORD IS JUDGED text for one record, or '' when no rule applies.
+
+    Pure: reads the record's own fields and `_implied`, the implied-window row
+    phase2_resolvability.attach_deadlines set, and nothing a stage wrote.
+    """
+    pred, src = rec.get("prediction") or {}, rec.get("source") or {}
+    fields = {"claim": pred.get("normalized_claim") or "", "criterion": pred.get("resolution_criteria") or "",
+              "target_date_text": pred.get("target_date_text") or "", "quote": src.get("quote") or ""}
+    out = []
+    imp = rec.get("_implied")
+    if imp:
+        row = imp["row"]
+        why = (f"from the speaker's words '{imp['matched']}'" if imp.get("matched")
+               else "the claim is about " + row.split(": ", 1)[1])
+        out.append(JUDGED_RULES["implied"]["text"].format(window=imp["window_words"], why=why))
+    for key in ("approximate", "pace", "period"):
+        if any(_JUDGED_RE[key].search(fields[f]) for f in JUDGED_RULES[key]["fields"]):
+            out.append(JUDGED_RULES[key]["text"])
+    fy = JUDGED_RULES["fiscal"]
+    if (pred.get("subject_control") == fy["control"] and pred.get("category") == fy["category"]
+            and re.search(fy["figure"], fields["claim"] + " " + fields["criterion"], re.I)
+            and (re.search(fy["horizon"], fields["target_date_text"], re.I)
+                 or re.fullmatch(r"\d{4}", str(pred.get("target_date") or "")))):
+        out.append(fy["text"])
+    return "".join(f"  - {t}\n" for t in out)
 
 
 def _block(f: dict) -> str:
     """The shared description of one prediction. Identical text in both prompts,
     so the two stages are reading the same claim and any difference in their
-    answers is the stage rather than the wording."""
+    answers is the stage rather than the wording. The HOW THIS RECORD IS JUDGED
+    section is appended only when a rule applies, so a record with none reads
+    exactly as before 2026-09-29."""
+    return _block_body(f) + (f"\nHOW THIS RECORD IS JUDGED\n{f['judged']}" if f.get("judged") else "")
+
+
+def _block_body(f: dict) -> str:
     who = ", ".join(x for x in (f["role"], f["company"]) if x)
     return f"""PREDICTION {f["prediction_id"]}
 
@@ -169,14 +296,27 @@ The resolution criterion, as this pipeline recorded it:
 # Stage 1: the resolver
 # ---------------------------------------------------------------------------
 
+# Rules 2, 3, 5 and 7 are unchanged from the first release. Rule 1 is design
+# section 3.3; rules 4 and 6 are section 3.4 with critique 1 point 6 applied (the
+# effort floor binds every outcome, and no sentence tells the resolver what a
+# refusal does to a score); rule 8 is the operator's "already public" check
+# (2026-09-29); rule 9 points at the judged block the prior reads too. The old
+# rule 6, a company's fiscal year, is now the "fiscal" judged rule, so the prior
+# sees it (critique 1 point 12). Rule 7 keeps its number because the shared
+# deadline note of a trend record names it.
 RESOLVER_TASK = """You are resolving a dated public prediction. Decide whether the thing
 described by the resolution criterion actually happened by the deadline.
 
 RULES
 
-1. Answer "occurred" only if the criterion was satisfied ON OR BEFORE the deadline.
-   Something that happened a year late did NOT occur for this purpose; say
-   "not_occurred" and record the real date in your reasoning.
+1. THE DEADLINE BOUNDS THE EVENT, NOT THE EVIDENCE. Answer "occurred" only if the
+   thing the criterion describes happened ON OR BEFORE the deadline. Evidence may
+   be published at any time up to today: a report, filing or letter published
+   after the deadline settles the claim when what it reports happened on or before
+   the deadline. A criterion worded "by <date>, X will report ..." about a period's
+   figure means the period, not the date of the report; resolve it on the figure.
+   Something that happened after the deadline did NOT occur; say "not_occurred"
+   and give the real date in your reasoning.
 
 2. The criterion states the SPEAKER'S predicted outcome. "occurred" means the
    speaker was RIGHT. If the criterion carries a negation, such as "will not have
@@ -187,8 +327,11 @@ RULES
    date. A resolution with no source is not a resolution. If you have web search,
    use it; work from public record, not from impression.
 
-4. You may answer "unresolvable", and you should whenever the honest answer is
-   that you cannot tell. This is a real answer and costs nothing. Use it when:
+4. "unresolvable" is correct when the public record truly cannot settle the claim.
+   Before you answer "no_public_evidence" or "threshold_unmeasurable", check whether
+   a published adjacent figure settles the question anyway: a full-year figure, the
+   company's own guidance range, a count reported just after the deadline. Name one
+   of these reasons:
      - no_public_evidence: nothing public settles it either way
      - criterion_ambiguous: the criterion has two readings that disagree
      - criterion_undirected: the criterion states no direction to test, for
@@ -196,23 +339,20 @@ RULES
      - threshold_unmeasurable: the number named is not publicly reported
      - deadline_incoherent: the deadline precedes the statement, or makes no sense
      - after_knowledge_cutoff: the window closed too recently for a public record
-   Never guess in order to avoid answering "unresolvable". A wrong outcome is far
-   more expensive here than an honest refusal, because it is scored as if true.
+   Do not guess, and do not refuse where the evidence exists.
 
 5. "confidence" is about the RESOLUTION, not about the prediction. Use "high" when
    a cited source settles it directly, "medium" when it follows from cited sources
    by a short step, "low" when you are reading between the lines.
 
-6. A COMPANY'S "THIS YEAR" IS ITS FISCAL YEAR. When the speaker runs the company
-   and is talking about its own reported numbers, revenue, margin, guidance,
-   bookings, earnings or cash flow, then "this year" and "next year" mean the
-   FISCAL year they report on, which for many companies does not end in December.
-   The deadline shown below may be a calendar-year approximation of those words.
-   Resolve against the period the SPEAKER meant, and say in your reasoning which
-   period you used and when it ended. Do NOT answer "unresolvable" merely because
-   the fiscal period closes a few weeks after the calendar deadline shown.
-   This applies only to a company's own reported figures. For anything else the
-   deadline stands exactly as given.
+6. SEARCH BEFORE YOU ANSWER, WHATEVER THE ANSWER. Run at least three web searches
+   with different queries before you answer, and list every query you ran in
+   "searched", in the order you ran them. Where the claim is about a company,
+   include its own filings, releases and reports, and news dated near the deadline.
+   This holds for every answer: "occurred" needs a source that shows the event, or
+   the period's figure, on or before the deadline; "not_occurred" needs a source
+   that shows it did not happen, or searches that would have found it had it
+   happened; "unresolvable" needs the searches that failed to settle it.
 
 7. SOME CLAIMS ARE A DIRECTION OVER A WINDOW, NOT AN EVENT BY A DATE. If the
    deadline line says THIS IS A TREND WINDOW, the speaker named no closing date,
@@ -224,6 +364,18 @@ RULES
    near the statement and the value now, and cite both. Answer "unresolvable" if
    the quantity is not publicly reported across the window.
 
+8. ALREADY PUBLIC BEFORE IT WAS SAID. Check whether the event itself, or a credible
+   report that it had been agreed, decided or scheduled, was already public BEFORE
+   the statement date. If it was, fill "already_public" with the earliest such
+   source: its date, which is on or before the statement date, where it is, and
+   what it shows. A rumour, or another person's forecast, is not enough; a report
+   that the deal was agreed, the product announced or the date set is. Still
+   answer the outcome as usual. If you find no such report, "already_public" is null.
+
+9. HOW THIS RECORD IS JUDGED. When the prediction below carries a section with that
+   heading, apply it exactly. The assessor who estimated the prediction's
+   likelihood read the same section.
+
 Answer with one JSON object and nothing else:
 
 {
@@ -231,6 +383,8 @@ Answer with one JSON object and nothing else:
   "outcome": "occurred" | "not_occurred" | "unresolvable",
   "confidence": "high" | "medium" | "low",
   "sources": [{"what_it_shows": "...", "where": "...", "date": "YYYY-MM-DD or null"}],
+  "searched": ["the first query you ran", "the second", "the third", "..."],
+  "already_public": null or {"date": "YYYY-MM-DD", "where": "...", "what_it_shows": "..."},
   "unresolvable_reason": null or one of the reasons named in rule 4,
   "reasoning": "two to five sentences: what the criterion required, what the record shows, and by when"
 }
@@ -337,9 +491,38 @@ def build_prior_prompt(rec: dict, deadline: dt.date) -> str:
 # Validation of what came back
 # ---------------------------------------------------------------------------
 
-def validate_resolution(obj: dict, expect_id: str) -> list[str]:
+def _searched_errors(obj: dict) -> list[str]:
+    """The effort floor, for EVERY outcome: at least MIN_SEARCHES distinct queries listed."""
+    listed = obj.get("searched")
+    if not isinstance(listed, list):
+        return [f"searched is {listed!r}, not a list of the queries run"]
+    distinct = {str(q).strip().lower() for q in listed if str(q).strip()}
+    if len(distinct) < MIN_SEARCHES:
+        return [f"searched lists {len(distinct)} distinct queries; every outcome needs at least {MIN_SEARCHES}"]
+    return []
+
+
+def already_public_errors(obj: dict, said: "str | None") -> list[str]:
+    """A report dated AFTER the statement cannot show the thing was public before it."""
+    ap = obj.get("already_public")
+    if ap is None:
+        return []
+    try:
+        when = dt.date.fromisoformat(str(ap.get("date")))
+    except ValueError:
+        return [f"already_public date {ap.get('date')!r} is not YYYY-MM-DD"]
+    if not said:
+        return ["already_public is given, but the record has no statement date to compare it with"]
+    if when > dt.date.fromisoformat(str(said)[:10]):
+        return [f"already_public date {when} is after the statement date {said}; a report after the statement "
+                f"cannot show the thing was public before it"]
+    return []
+
+
+def validate_resolution(obj: dict, expect_id: str, said: "str | None") -> list[str]:
     """Rules the schema cannot express. Each one is a way a resolution could be
-    wrong while still being well-formed JSON."""
+    wrong while still being well-formed JSON. `said` is the record's statement
+    date, which an `already_public` date may not follow."""
     errs: list[str] = []
     if obj.get("prediction_id") != expect_id:
         errs.append(f"prediction_id {obj.get('prediction_id')!r} != {expect_id!r}")
@@ -354,6 +537,26 @@ def validate_resolution(obj: dict, expect_id: str) -> list[str]:
             errs.append(f"outcome {outcome!r} carries unresolvable_reason {reason!r}")
         if not sources:
             errs.append(f"outcome {outcome!r} cites no source; a resolution without evidence is not one")
+    errs += _searched_errors(obj)
+    errs += already_public_errors(obj, said)
+    return errs
+
+
+def validate_effort(obj: dict, telemetry: dict) -> list[str]:
+    """The harness's own count of web searches must reach the floor and cover what `searched` lists.
+
+    `searched` is the model's account of its effort; the telemetry is the harness's
+    (grade.call_astra records tool_use_counts.web_search). A count the telemetry
+    does not carry is refused, never assumed."""
+    n = ((telemetry or {}).get("tool_use_counts") or {}).get("web_search")
+    if not isinstance(n, int) or isinstance(n, bool):
+        return ["telemetry records no tool_use_counts.web_search, so the research effort cannot be shown"]
+    errs = []
+    if n < MIN_SEARCHES:
+        errs.append(f"the harness ran {n} web searches; every outcome needs at least {MIN_SEARCHES}")
+    listed = len({str(q).strip().lower() for q in obj.get("searched") or [] if str(q).strip()})
+    if listed > n:
+        errs.append(f"searched lists {listed} queries, but the harness ran {n} web searches")
     return errs
 
 
@@ -415,8 +618,16 @@ def prior_prompt_leaks(prompt: str, facts: dict | None = None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def resolution_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, harness: str,
-                      account: str | None, telemetry: dict, resolved_at: str, as_of: str) -> dict:
+                      account: str | None, telemetry: dict, resolved_at: str, as_of: str,
+                      prompt_sha: str, release: str, code_revision: str) -> dict:
     return {
+        # Which policy judged this, so a board never silently mixes two (critique
+        # 3 A2). A sidecar written before the release carries none and is "legacy".
+        "policy_release": release,
+        "prompt_sha256": prompt_sha,
+        "code_revision": code_revision,
+        "searched": obj["searched"],
+        "already_public": obj["already_public"],
         "prediction_id": rec["prediction_id"],
         "leader_slug": rec["leader_slug"],
         "transcript_id": rec["transcript_id"],
@@ -444,9 +655,11 @@ def resolution_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, h
 
 def prior_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, harness: str,
                  account: str | None, telemetry: dict, assessed_at: str, prompt_sha: str,
-                 leaks: list[str]) -> dict:
+                 leaks: list[str], release: str, code_revision: str) -> dict:
     p_raw = float(obj["p"])
     return {
+        "policy_release": release,
+        "code_revision": code_revision,
         "prediction_id": rec["prediction_id"],
         "leader_slug": rec["leader_slug"],
         "transcript_id": rec["transcript_id"],
@@ -639,3 +852,65 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
             r["_unrepairable"] = True
             unrepairable += 1
     return applied, unrepairable
+
+
+# ---------------------------------------------------------------------------
+# The release that pins every stage's policy (critique 3 A2)
+# ---------------------------------------------------------------------------
+#
+# The resolver, prior, early-call and lead-test prompts are code, outside the
+# extraction contract that POLICY_RELEASE.json pins, so until 2026-09-30 a
+# change to any of them left no trace: 476 resolutions carried no prompt hash,
+# and A7's resolver prompt had to be inferred from commit times. Every text, rule
+# and schema that shapes an answer is hashed here, and the hash is pinned. A stage
+# calls check_policy_release() before any call, so an edit that was not released
+# is refused rather than judged under the old name, and every sidecar records the
+# release it was written under. A sidecar written before this existed carries no
+# release; the scorer names it LEGACY_RELEASE and refuses a board that mixes
+# releases unless its config names every one (score_predictions.release_problem).
+#
+# Cutting a release: change the text, run test_resolution_policy.py, and put the
+# new id and sha256 below and in that test.
+
+POLICY_RELEASE = ("resolution-2026-09-30", "88a0ae81bfbc4e72cfaf8ecb6c3615acdd1dee36561a5ab37aa1dfdb9d4453de")
+LEGACY_RELEASE = "legacy"
+
+
+def _policy_fixture() -> dict:
+    """A fixed record whose rendering pins the shared block's layout, judged section included."""
+    return {
+        "prediction_id": "fixture", "leader_slug": "fixture", "transcript_id": "fixture/t", "_basis": "stated",
+        "speaker": {"name": "N", "role": "R", "company": "C"},
+        "source": {"statement_date": "2020-01-01", "venue": "V", "title": "T", "quote": "Q",
+                   "context_before": "B", "context_after": "A"},
+        "prediction": {"normalized_claim": "Revenue will be about 5 billion for fiscal 2020.",
+                       "resolution_criteria": "Revenue for fiscal 2020 will be about 5 billion.",
+                       "target_date": "2020", "target_date_text": "this year", "category": "company_business",
+                       "subject_control": "own"},
+        "_implied": {"row": "words: soon", "window_words": "1 year", "matched": "soon"},
+    }
+
+
+def _policy_parts() -> dict:
+    return {
+        "resolver_task": RESOLVER_TASK, "prior_task": PRIOR_TASK, "prior_trend_rule": PRIOR_TREND_RULE,
+        "judged_rules": JUDGED_RULES, "min_searches": MIN_SEARCHES, "leak_words": list(_LEAK_WORDS),
+        "schemas": {"resolution": RESOLUTION_SCHEMA, "prior": PRIOR_SCHEMA},
+        "block": _block(prompt_facts(_policy_fixture(), dt.date(2020, 12, 31))),
+    }
+
+
+def policy_release() -> tuple[str, str]:
+    """(release id, sha256 of every text, rule and schema in this checkout)."""
+    import hashlib
+    return POLICY_RELEASE[0], hashlib.sha256(json.dumps(_policy_parts(), sort_keys=True).encode()).hexdigest()
+
+
+def check_policy_release() -> str:
+    """The release id, or ValueError when a text changed without a new release."""
+    rid, sha = policy_release()
+    if sha != POLICY_RELEASE[1]:
+        raise ValueError(f"resolution_release_mismatch: the resolver, prior, early or lead-test policy in this "
+                         f"checkout hashes to {sha[:12]}, but release {rid} pins {POLICY_RELEASE[1][:12]}; cut a new "
+                         f"release (resolution_lib.POLICY_RELEASE) before spending a call under changed rules")
+    return rid

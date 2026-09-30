@@ -351,18 +351,22 @@ def run_one(job: dict) -> dict:
         errs = L.check_schema(obj, schema)
         if errs:
             raise RuntimeError(f"{E_SCHEMA}: {'; '.join(errs[:4])}")
-        errs = (R.validate_resolution(obj, pid) if stage == "resolve" else R.validate_prior(obj, pid))
+        said = (rec.get("source") or {}).get("statement_date")
+        errs = (R.validate_resolution(obj, pid, said) + R.validate_effort(obj, tel) if stage == "resolve"
+                else R.validate_prior(obj, pid))
         if errs:
             raise RuntimeError(f"{E_RULES}: {'; '.join(errs[:4])}")
 
         if stage == "resolve":
             out = R.resolution_record(rec, deadline, obj, run_id=args.run_id, harness=harness,
                                       account=account, telemetry=tel, resolved_at=utc_now(),
-                                      as_of=args.as_of)
+                                      as_of=args.as_of, prompt_sha=prompt_sha, release=args.release,
+                                      code_revision=args.code_revision)
         else:
             out = R.prior_record(rec, deadline, obj, run_id=args.run_id, harness=harness,
                                  account=account, telemetry=tel, assessed_at=utc_now(),
-                                 prompt_sha=prompt_sha, leaks=leaks)
+                                 prompt_sha=prompt_sha, leaks=leaks, release=args.release,
+                                 code_revision=args.code_revision)
         out["funnel_flags"] = rec["_flags"]
         dest = R.sidecar_path(Path(args.out), stage, slug, pid)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -465,11 +469,27 @@ def accounts_for(args) -> list[str]:
     return [str(Path(h).expanduser()) for h in homes] or [""]
 
 
+def code_revision() -> str:
+    """The public repo's HEAD, with "+dirty" when scripts/ holds uncommitted changes."""
+    here = Path(__file__).resolve().parent
+    rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=here, capture_output=True, text=True, check=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", "."], cwd=here, capture_output=True,
+                           text=True, check=True).stdout.strip()
+    return rev + ("+dirty" if dirty else "")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     args.predictions = args.predictions or [Path("data/predictions")]
     if Path(args.fable_bin).name == "cl":
         raise SystemExit("refusing --fable-bin cl: it injects --dangerously-skip-permissions (see CLAUDE.md)")
+    # Before anything is selected or called: a prompt edited without a new release
+    # would be recorded under the old release's name (critique 3 A2).
+    try:
+        args.release = R.check_policy_release()
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    args.code_revision = code_revision()
     if args.eligible_only and args.include_ineligible:
         raise SystemExit("--eligible-only and --include-ineligible contradict each other; pass one")
     try:

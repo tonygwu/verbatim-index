@@ -292,11 +292,14 @@ def test_sidecars_and_scorer(d: pathlib.Path) -> None:
     new_rec = record("NEWPID", "1996-10-16", L.OVERRIDE_DATE_BASIS, block)
     res = R.resolution_record(new_rec, dt.date(1996, 12, 31),
                               {"outcome": "not_occurred", "confidence": "high", "sources": [], "unresolvable_reason": None,
-                               "reasoning": "r"}, run_id="r", harness="astra", account="codex", telemetry={},
-                              resolved_at="2026-09-28T00:00:00Z", as_of="2026-09-27")
+                               "reasoning": "r", "searched": ["a", "b", "c"], "already_public": None},
+                              run_id="r", harness="astra", account="codex", telemetry={},
+                              resolved_at="2026-09-28T00:00:00Z", as_of="2026-09-27", prompt_sha="x",
+                              release="r", code_revision="c")
     pri = R.prior_record(new_rec, dt.date(1996, 12, 31), {"p": 0.3, "reference_class": "rc", "reasoning": "r"},
                          run_id="r", harness="fable", account="default", telemetry={},
-                         assessed_at="2026-09-28T00:00:00Z", prompt_sha="x", leaks=[])
+                         assessed_at="2026-09-28T00:00:00Z", prompt_sha="x", leaks=[], release="r",
+                         code_revision="c")
     check("SIDECARS: a new resolution records the statement date it was resolved against",
           res.get("statement_date") == "1996-10-16" and res.get("statement_date_basis") == L.OVERRIDE_DATE_BASIS)
     check("SIDECARS: a new prior records the statement date it was priced at",
