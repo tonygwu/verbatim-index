@@ -121,9 +121,10 @@ def main() -> int:
     ex = L._contract(SKILL / "EXTRACTION.md", SKILL / "extractor_output.schema.json")["contract_id"]
     ve = L._contract(SKILL / "VERIFICATION.md", SKILL / "verifier_output.schema.json")["contract_id"]
     pinned = json.loads((SKILL / "POLICY_RELEASE.json").read_text())
+    hd = L.header_contract(SKILL)["contract_id"]
     check("RELEASE: POLICY_RELEASE.json pins the contracts these files actually yield",
-          pinned["contracts"] == {"extract": ex, "verify": ve},
-          f"pinned {pinned['contracts']}, files yield {{'extract': '{ex}', 'verify': '{ve}'}}")
+          pinned["contracts"] == {"extract": ex, "verify": ve, "header": hd},
+          f"pinned {pinned['contracts']}, files yield {{'extract': '{ex}', 'verify': '{ve}', 'header': '{hd}'}}")
     check("RELEASE: editing a spec without bumping the release fails loudly",
           L.load_policy_release(SKILL)["release"] == pinned["release"])
 

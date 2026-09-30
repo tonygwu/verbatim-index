@@ -20,13 +20,15 @@ re-running anything.
 | `EXTRACTION.md` + `extractor_output.schema.json` | the extractor model, stage 1 | `extraction_contract()` |
 | `VERIFICATION.md` + `verifier_output.schema.json` | the verifier model, stage 2 | `verification_contract()` |
 | `MATCHING.md` + `matcher_output.schema.json` | the market matcher, stage 3 | `matching_contract()` |
+| `STATEMENT_DATE_HEADER.json` | both models, as the TRANSCRIPT METADATA block | pinned as `contracts.header` |
 | `prediction_record.schema.json` | `validate_predictions.py`, tests, humans | no |
 | this file | agents | no |
 
 Both stage specs include `ELIGIBILITY.md` through the `{{ELIGIBILITY_POLICY}}`
 marker. The contract hashes the expanded spec and the output schema, so an
 eligibility change changes both hashes. `POLICY_RELEASE.json` names the
-compatible pair. The runner refuses a release whose pins do not match its
+compatible pair, and pins the header template as a third hash, because the
+header is prompt text that lives outside both specs. The runner refuses a release whose pins do not match its
 files. Historical specs without the marker retain their original hashes.
 Editing this agent-facing file cannot move a result.
 
@@ -53,8 +55,16 @@ Phase 2, not built:  resolution  ->  scoring  ->  forecasting leaderboard
 ## Rules that must not bend
 
 - `confidence.probability` is a number the speaker said, or null. No stage infers one.
-- The statement date is the YouTube upload date, an upper bound on the recording date, or null.
-  `declared_year` in the corpus is a hardcoded constant and is never read.
+- The statement date line says how the date is known (release 2.3): stated in the source, a
+  sourced correction from `statement_date_overrides.json` (an operator entry, or one the dating
+  stage `scripts/date_recordings.py` confirmed against a fetched source), a checked upload or
+  publication date, an UNCHECKED upload or publication date (only an upper bound), or unknown.
+  Relative time words resolve against the statement date, an unchecked upload date included
+  (the page labels it "not checked"). They are not resolved when a model sees an older
+  recording, which it reports in `statement_date_doubt`, or when the date is a range of days
+  that crosses 31 December; either holds the record (`date_hold`) until the recording is
+  dated and extracted again, and the funnel derives no deadline across such a range. `declared_year` in the corpus
+  is a hardcoded constant and is never read.
 - The models are told the statement date and never today's date, so "future" is judged at the
   time of speaking and nothing about outcomes enters a prompt.
 - This clone writes under `data/predictions/` and nowhere else under `data/`; the writer refuses
@@ -83,6 +93,8 @@ Phase 2, not built:  resolution  ->  scoring  ->  forecasting leaderboard
 .venv/bin/python scripts/validate_predictions.py
 .venv/bin/python scripts/aggregate_predictions.py
 PREDICT_LIVE=1 .venv/bin/python scripts/eval_predictions.py --out <tmp>
+.venv/bin/python scripts/date_recordings.py --run-dir data/predictions/_experiments/dating-<name>        # dry run
+.venv/bin/python scripts/eval_prediction_cases.py --gold data/predictions/_eval/cases-20260929 --smoke   # offline
 ```
 
 `docs/PREDICTIONS.md` holds the architecture, the schema, the known limits and the Phase 2 boundary.

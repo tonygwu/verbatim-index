@@ -518,8 +518,40 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # sidecar for the same prediction. It must live under predictions/, because
 # data_sync.py regenerates scores.json from predictions/ and roster/ only; a path
 # anywhere else is refused by name (replacements_path_problem).
-OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements")
+#
+# The 2026-09-29 policies, each OFF when its key is absent (critique 3 A5 of the
+# rescue round-4 design): flip a key in the same data commit that adds the
+# results it needs, so no push of unrelated data moves the board.
+# `implied_windows` names the sha256 of phase2_resolvability.IMPLIED_TABLE (VD-6);
+# the scorer refuses any other table. `policy_releases` names every resolution-
+# policy release the board may carry, "legacy" for sidecars written before
+# releases existed; absent, only legacy sidecars may be scored. `early_calls`
+# (true, or absent) scores decided early calls now (VD-5); their sidecars live
+# under each run's early/, which is fingerprinted only while the key is set.
+# `lead_test` (true, or absent) lets a record under the lead floor score when its
+# outcome-blind label says it is a forecast (VD-7 (c)); labels live under each
+# run's lead_tests/, fingerprinted only while that key is set.
+# `withdrawn` names the operator's manifest of single withdrawn predictions
+# (predictions_lib.WITHDRAWN_FILE); like `replacements` it must lie under
+# predictions/, and its bytes are fingerprinted.
+# `implied_sensitivity` ({"half": [runs], "double": [runs]}, with implied_windows)
+# names the runs that judge every implied record at half and double its window,
+# for the per-person sensitivity report; their sidecars are fingerprinted too.
+OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements", "implied_windows", "policy_releases",
+                        "early_calls", "lead_test", "withdrawn", "implied_sensitivity")
+SENSITIVITY_SCALES = {"half": 0.5, "double": 2.0}
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
+# A stage directory enters the scores.json digest only while the key that makes the
+# scorer read it is set. Code from before these stages hashed SIDECAR_DIRS alone, so
+# hashing early/ on every board would make an old-code clone and a new-code clone
+# disagree about the same data as soon as one run held an early call, and each would
+# call the other's scores.json stale (review 2026-09-30, item 9).
+KEYED_SIDECAR_DIRS = (("early_calls", "early"), ("lead_test", "lead_tests"))
+
+
+def sidecar_dirs(settings: dict) -> tuple[str, ...]:
+    """The sidecar directories a board with these settings reads, so fingerprints."""
+    return SIDECAR_DIRS + tuple(sub for key, sub in KEYED_SIDECAR_DIRS if settings.get(key))
 
 
 def transcript_listing(roots: list[Path]) -> set[tuple[str, str]]:
@@ -558,6 +590,16 @@ def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list
     if (index["files_read"], index["records_read"]) != (files, lines):
         return (f"record counts changed: index read {index['files_read']} files / {index['records_read']} "
                 f"records, disk has {files} / {lines}")
+    if index.get("withdrawn_sha256"):
+        # Only an index built with the withdrawal manifest carries this, and then it
+        # must describe the manifest on disk now.
+        wf = Path(pred_root) / index.get("withdrawn_file", "")
+        if not wf.is_file():
+            return f"the index read the withdrawal manifest {index.get('withdrawn_file')!r}, which is gone"
+        now = hashlib.sha256(wf.read_bytes()).hexdigest()
+        if now != index["withdrawn_sha256"]:
+            return (f"the withdrawal manifest changed since the index was built (index "
+                    f"{index['withdrawn_sha256'][:12]}, disk {now[:12]}); its counts are stale")
     digest = prediction_inputs_sha256(pred_root)
     if index["inputs_sha256"] != digest:
         return (f"record contents changed in place: counts match ({files} files, {lines} records) but "
@@ -568,6 +610,21 @@ def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list
     if index["transcripts_listing_sha256"] != listing:
         return (f"the transcript listing changed (index {index['transcripts_listing_sha256'][:12]}, "
                 f"disk {listing[:12]}); coverage counts are stale")
+    return None
+
+
+def predictions_path_problem(key: str, rel) -> str | None:
+    """Why a scoring config's `key` path does not lie under predictions/, or None.
+
+    data_sync.py regenerates the derived files in a scratch tree holding only
+    predictions/ and roster/, so a manifest anywhere else scores here and fails
+    there."""
+    if not isinstance(rel, str) or not rel:
+        return f"{key} must be a path relative to the data root"
+    parts = PurePosixPath(rel).parts
+    if PurePosixPath(rel).is_absolute() or ".." in parts or len(parts) < 2 or parts[0] != "predictions":
+        return (f"{key} {rel!r} must lie under predictions/, because data_sync.py regenerates the derived files "
+                f"from predictions/ and roster/ only")
     return None
 
 
@@ -604,6 +661,30 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
         raise SystemExit(f"{path}: replacements must be a path relative to the data root")
     if "replacements" in cfg and replacements_path_problem(cfg["replacements"]):
         raise SystemExit(f"{path}: {replacements_path_problem(cfg['replacements'])}")
+    if "implied_windows" in cfg and not (isinstance(cfg["implied_windows"], str)
+                                         and re.fullmatch(r"[0-9a-f]{64}", cfg["implied_windows"])):
+        raise SystemExit(f"{path}: implied_windows must be the sha256 of the implied-window table "
+                         f"(phase2_resolvability.implied_table_sha256()), not {cfg['implied_windows']!r}")
+    if "implied_sensitivity" in cfg:
+        sens = cfg["implied_sensitivity"]
+        if "implied_windows" not in cfg:
+            raise SystemExit(f"{path}: implied_sensitivity needs implied_windows: it judges implied windows at half "
+                             f"and double, and there are none without the table")
+        if not (isinstance(sens, dict) and set(sens) == set(SENSITIVITY_SCALES)
+                and all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in sens.values())):
+            raise SystemExit(f"{path}: implied_sensitivity must be {{\"half\": [runs], \"double\": [runs]}}, "
+                             f"not {sens!r}")
+    if "withdrawn" in cfg and predictions_path_problem("withdrawn", cfg["withdrawn"]):
+        raise SystemExit(f"{path}: {predictions_path_problem('withdrawn', cfg['withdrawn'])}")
+    for flag in ("early_calls", "lead_test"):
+        if flag in cfg and cfg[flag] is not True:
+            raise SystemExit(f"{path}: {flag} is true when present; remove the key to switch it off, "
+                             f"rather than writing {cfg[flag]!r}")
+    if "policy_releases" in cfg and not (isinstance(cfg["policy_releases"], list) and cfg["policy_releases"]
+                                         and all(isinstance(x, str) and x for x in cfg["policy_releases"])
+                                         and len(set(cfg["policy_releases"])) == len(cfg["policy_releases"])):
+        raise SystemExit(f"{path}: policy_releases must be a non-empty list of distinct release ids, "
+                         f"\"legacy\" for sidecars written before releases existed; not {cfg['policy_releases']!r}")
     if not isinstance(cfg["trend"], bool) or not isinstance(cfg["min_lead_days"], int) \
             or not cfg["predictions"] or not cfg["runs"]:
         raise SystemExit(f"{path}: trend must be a boolean, min_lead_days an integer, and predictions "
@@ -634,10 +715,19 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
     if "replacements" in settings:
         # Only when named, like the two above, so every existing scores.json hashes as before.
         h.update(f"replacements {hashlib.sha256((root / settings['replacements']).read_bytes()).hexdigest()}\n".encode())
+    if "withdrawn" in settings:
+        h.update(f"withdrawn {hashlib.sha256((root / settings['withdrawn']).read_bytes()).hexdigest()}\n".encode())
     for run in settings["runs"]:
-        for sub in SIDECAR_DIRS:
+        for sub in sidecar_dirs(settings):
             for f in sorted((root / run / sub).glob("*/*.json")):
                 h.update(f"{run}/{f.relative_to(root / run)} {hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
+    for scale, runs in sorted((settings.get("implied_sensitivity") or {}).items()):
+        # Only when named, so every existing scores.json hashes as before.
+        for run in runs:
+            for sub in sidecar_dirs(settings):
+                for f in sorted((root / run / sub).glob("*/*.json")):
+                    h.update(f"sensitivity {scale} {run}/{f.relative_to(root / run)} "
+                             f"{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
     return h.hexdigest()
 
 
@@ -661,6 +751,56 @@ def scores_staleness(scores_path: Path, config_path: Path) -> str | None:
         return (f"an input changed since scores.json was computed (scores {doc['inputs_sha256'][:12]}, "
                 f"disk {now[:12]}): a record, a sidecar or the index")
     return None
+
+
+def scores_blockers(doc: dict) -> list[str]:
+    """Why a CURRENT scores.json must still not be published, or [] when nothing blocks it.
+
+    A sidecar judged over another window than the funnel's is a counted per-row
+    exclusion in the scorer, so a push that regenerates scores.json never stops
+    on it (critique 3 A5 of the rescue round-4 design). Publishing such a board
+    would drop those rows without anyone choosing to, so the deploy refuses until
+    they are re-run or their sidecars removed."""
+    out = []
+    corpus = doc.get("corpus") or {}
+    stale = corpus.get("stale_sidecars") or []
+    if stale:
+        ids = sorted({s["prediction_id"] for s in stale})
+        out.append(f"{len(stale)} stale sidecar(s), judged over another window than the funnel's or priced on "
+                   f"another prompt than today's, for {len(ids)} prediction(s) {ids[:8]}; re-run them, or remove "
+                   f"the sidecars, before publishing")
+    for key, scale in sorted((doc.get("implied_sensitivity") or {}).items()):
+        if isinstance(scale, dict) and scale.get("complete") is False:
+            # The page would show a half or double figure resting on missing sidecars.
+            out.append(f"the implied_sensitivity {key} scale is incomplete: missing resolutions "
+                       f"{scale.get('missing_resolution', [])[:6]}, missing priors {scale.get('missing_prior', [])[:6]}, "
+                       f"{len(scale.get('stale_sidecars') or [])} stale; run them before publishing")
+    early = corpus.get("early_calls") or {}
+    if early.get("awaiting_fresh_check"):
+        # VD-5: the fresh check at the deadline replaces the early call; a board
+        # may not keep scoring an early call past it (review 2026-09-30, item 5).
+        out.append(f"{len(early['awaiting_fresh_check'])} early call(s) past their deadline still await the fresh "
+                   f"check: {early['awaiting_fresh_check'][:8]}; resolve them and name each early call in the "
+                   f"replacement manifest before publishing")
+    if early.get("without_a_row"):
+        out.append(f"{len(early['without_a_row'])} decided early call(s) match no row: {early['without_a_row'][:8]}; "
+                   f"their records have no deadline now or are gone, so remove the sidecars or restore the window")
+    return out
+
+
+def scores_review_notes(doc: dict) -> list[str]:
+    """What the deploy prints without refusing: rows scored with a question open.
+
+    A resolver report that the thing was already public before an UPLOAD or
+    PUBLICATION date proves nothing about the day of speech, so the row is scored
+    and listed here until the recording is dated (review 2026-09-30)."""
+    out = []
+    review = (doc.get("corpus") or {}).get("already_public_review") or []
+    if review:
+        out.append(f"REVIEW: {len(review)} scored prediction(s) carry a report that the thing was public before an "
+                   f"upload or publication date, which may be later than the words: {review[:8]}; date the "
+                   f"recordings to decide")
+    return out
 
 
 def scores_asof_lag(data_root: Path, revision: str, as_of: str) -> str | None:

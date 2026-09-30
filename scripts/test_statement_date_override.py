@@ -141,8 +141,11 @@ def test_apply(ov: dict) -> None:
     check("no override: date and basis unchanged",
           L.derive_statement_date(plain) == ("2013-07-05", "youtube_upload_date"))
     header_before = L.speaker_header(plain, ROSTER)
-    check("no override: the prompt header is the old one, byte for byte",
-          "Statement date: 2013-07-05 (YouTube upload date; the recording is no later than this)\n" in header_before)
+    # Release 2.3 relabelled every unchecked upload date (design 2.1); the line is pinned by
+    # POLICY_RELEASE.json contracts.header, so this is the one line a new release may change.
+    check("no override: the prompt header labels the upload date as an unchecked upper bound",
+          "Statement date: no later than 2013-07-05 (YouTube upload date, NOT checked against the event. The "
+          "recording may be years older; see section 1a of the specification.)\n" in header_before, header_before)
     other = {**TRANSCRIPT, "source_id": "talk2"}
     check("apply leaves a transcript without an entry as the same object",
           L.apply_statement_date_override(other, ov) is other)
@@ -292,11 +295,14 @@ def test_sidecars_and_scorer(d: pathlib.Path) -> None:
     new_rec = record("NEWPID", "1996-10-16", L.OVERRIDE_DATE_BASIS, block)
     res = R.resolution_record(new_rec, dt.date(1996, 12, 31),
                               {"outcome": "not_occurred", "confidence": "high", "sources": [], "unresolvable_reason": None,
-                               "reasoning": "r"}, run_id="r", harness="astra", account="codex", telemetry={},
-                              resolved_at="2026-09-28T00:00:00Z", as_of="2026-09-27")
+                               "reasoning": "r", "searched": ["a", "b", "c"], "already_public": None},
+                              run_id="r", harness="astra", account="codex", telemetry={},
+                              resolved_at="2026-09-28T00:00:00Z", as_of="2026-09-27", prompt_sha="x",
+                              release="r", code_revision="c")
     pri = R.prior_record(new_rec, dt.date(1996, 12, 31), {"p": 0.3, "reference_class": "rc", "reasoning": "r"},
                          run_id="r", harness="fable", account="default", telemetry={},
-                         assessed_at="2026-09-28T00:00:00Z", prompt_sha="x", leaks=[])
+                         assessed_at="2026-09-28T00:00:00Z", prompt_sha="x", leaks=[], release="r",
+                         code_revision="c")
     check("SIDECARS: a new resolution records the statement date it was resolved against",
           res.get("statement_date") == "1996-10-16" and res.get("statement_date_basis") == L.OVERRIDE_DATE_BASIS)
     check("SIDECARS: a new prior records the statement date it was priced at",

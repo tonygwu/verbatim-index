@@ -3,18 +3,28 @@
   "title": "Prediction extractor output, version 1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "transcript_id", "attribution_notes", "subject_speech_share_estimate_pct", "candidates", "candidates_considered", "cap_hit", "estimated_total_qualifying"],
+  "required": ["schema_version", "transcript_id", "attribution_notes", "subject_speech_share_estimate_pct", "statement_date_doubt", "candidates", "candidates_considered", "cap_hit", "estimated_total_qualifying"],
   "properties": {
     "schema_version": {"const": "1"},
     "transcript_id": {"type": "string", "description": "Echo exactly the id given in the prompt: leader_slug/source_id."},
     "attribution_notes": {"type": "string", "description": "One or two sentences on how you told the subject's turns from the interviewer's."},
     "subject_speech_share_estimate_pct": {"type": "integer", "minimum": 0, "maximum": 100},
+    "statement_date_doubt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["doubt", "evidence", "evidence_year"],
+      "description": "One answer for the whole transcript. See EXTRACTION.md section 1a and ELIGIBILITY.md: recording_older_than_stated holds every record of the transcript until the recording is dated. A doubt written only in notes is read by nothing.",
+      "properties": {
+        "doubt": {"enum": ["none", "recording_older_than_stated", "cannot_tell"]},
+        "evidence": {"type": ["string", "null"], "description": "The words from the title, description or transcript that show the recording is older, copied. Null when doubt is none."},
+        "evidence_year": {"type": ["integer", "null"], "description": "The year the evidence names, or null."}
+      }
+    },
     "candidates": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["quote", "timestamp_hint", "normalized_claim", "gates", "gate_notes", "resolution_criteria", "category", "prediction_type", "target_date", "target_date_text", "horizon", "horizon_years_inferred", "horizon_evidence", "specificity", "subject_control", "confidence"],
+        "required": ["quote", "timestamp_hint", "normalized_claim", "gates", "gate_notes", "resolution_criteria", "category", "prediction_type", "claim_form", "target_date", "target_date_text", "horizon", "horizon_years_inferred", "horizon_evidence", "specificity", "subject_control", "confidence"],
         "properties": {
           "quote": {"type": "string", "minLength": 1, "description": "One contiguous verbatim span, 8 to 60 words, copied character for character."},
           "timestamp_hint": {"type": "string", "description": "The nearest [hh:mm:ss] mark at or before the quote, or 'unmarked'."},
@@ -31,11 +41,12 @@
             }
           },
           "gate_notes": {"type": "string", "description": "Why each gate passes, briefly. A human auditor reads this."},
-          "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> <outcome>. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
+          "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> <outcome>; for a figure for a period, For <period> (ending <date>), <figure> will be <outcome>, as reported at any time, never 'By <period end>, X will report'. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
           "category": {"enum": ["ai_capability", "technology_product", "company_business", "market_industry", "macro_economy", "policy_regulation", "science", "society", "other"]},
           "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "comparative", "other"]},
-          "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD; the latest date the speaker's words allow."},
-          "target_date_text": {"type": ["string", "null"], "description": "The speaker's exact words that fix the date."},
+          "claim_form": {"enum": ["simple", "conditional", "ordering", "recurring"], "description": "From the words: conditional needs a stated precondition, ordering one thing before another, recurring a repeated event. See EXTRACTION.md section 8."},
+          "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD; the latest date the speaker's words allow. Null when EXTRACTION.md section 1a forbids resolving the words against the statement date."},
+          "target_date_text": {"type": ["string", "null"], "description": "The speaker's exact words that fix the date, including vague ones such as 'soon' or 'in the coming months'."},
           "horizon": {"enum": ["explicit", "inferable", "none"]},
           "horizon_years_inferred": {"type": ["number", "null"], "minimum": 0},
           "horizon_evidence": {"type": ["string", "null"]},

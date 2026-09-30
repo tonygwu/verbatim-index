@@ -32,7 +32,7 @@ INVARIANTS = [
     "schema", "transcript_exists", "not_excluded", "quote_grounds", "quote_length", "timestamp_mark",
     "context_windows", "prediction_id", "near_duplicate", "sorted", "statement_date", "target_date",
     "confidence", "gates_and_qualifies", "verification_status", "sentinels", "provenance",
-    "meta_consistency", "speaker", "consensus", "file",
+    "meta_consistency", "speaker", "consensus", "file", "date_hold",
 ]
 
 
@@ -63,6 +63,16 @@ def known_contract_ids(pred_root: Path, skill_dir: Path = L.SKILL) -> set[str]:
             if c.get("contract_id"):
                 ids.add(c["contract_id"])
     return ids
+
+
+def legacy_date_checks(rec: dict) -> list[dict]:
+    """What the release-2.3 date checks would hold on a record written before them.
+
+    Reported, never failed: a 2.2 record's accepted flag is the published board, and
+    changing it is a decision for whoever re-extracts, not a side effect of
+    validation. It is the list the dating stage and a re-extraction should start from.
+    """
+    return [] if "date_hold" in rec else L.date_hold_reasons(rec)
 
 
 def check_record(rec: dict, text: str, file: Path, n: int, exclusions: dict, schema: dict,
@@ -115,6 +125,9 @@ def check_record(rec: dict, text: str, file: Path, n: int, exclusions: dict, sch
     if (basis == L.OVERRIDE_DATE_BASIS) != ("statement_date_override" in src):
         fail(out, file, n, "statement_date",
              f"basis {basis!r} with{'out' if 'statement_date_override' not in src else ''} a statement_date_override block")
+    if "statement_date_check" in src and basis not in L.CHECKABLE_BASES:
+        fail(out, file, n, "statement_date", f"a statement_date_check block on basis {basis!r}; a check confirms an "
+                                             f"upload or publication date only")
     p = rec["prediction"]
     if not L.target_date_valid(p["target_date"]):
         fail(out, file, n, "target_date", f"{p['target_date']!r} is not YYYY, YYYY-MM or YYYY-MM-DD")
@@ -145,7 +158,16 @@ def check_record(rec: dict, text: str, file: Path, n: int, exclusions: dict, sch
     if v["agreement"] != want_agree:
         fail(out, file, n, "gates_and_qualifies", f"agreement {v['agreement']!r} != {want_agree!r}")
     if rec["accepted"] != L.compute_accepted(rec):
-        fail(out, file, n, "gates_and_qualifies", "accepted is not extraction.qualifies and verification.qualifies")
+        fail(out, file, n, "gates_and_qualifies",
+             "accepted is not extraction.qualifies and verification.qualifies with no recomputed date hold")
+    # Release 2.3: a record whose extraction reported a date doubt carries a date
+    # hold, and the stored hold is what the rule gives from the record's fields.
+    if ("statement_date_doubt" in ex) != ("date_hold" in rec):
+        fail(out, file, n, "date_hold", "statement_date_doubt and date_hold travel together (release 2.3)")
+    elif "date_hold" in rec:
+        want = L.date_hold_reasons(rec)
+        if rec["date_hold"] != want:
+            fail(out, file, n, "date_hold", f"stored {rec['date_hold']} != recomputed {want}")
     nullable = [k for k in v if k != "status"]
     if v["status"] != "ok":
         wrong = [k for k in nullable if v[k] is not None]
@@ -226,7 +248,7 @@ def validate_tree(pred_root: Path, transcripts_root: Path, exclusions: dict, sch
     out: list[Failure] = []
     seen_ids: dict[str, str] = {}
     files = sorted(p for p in pred_root.glob("*/*.jsonl") if not p.parent.name.startswith("_"))
-    counts = {"files": len(files), "records": 0, "accepted": 0}
+    counts = {"files": len(files), "records": 0, "accepted": 0, "held": 0, "legacy_date_checks": Counter()}
     for file in files:
         slug, sid = file.parent.name, file.name[: -len(".jsonl")]
         tpath = transcripts_root / slug / f"{sid}.json"
@@ -255,6 +277,12 @@ def validate_tree(pred_root: Path, transcripts_root: Path, exclusions: dict, sch
                 spans.append((rec["source"]["quote_char_start"], rec["source"]["quote_char_end"], n))
             if rec.get("accepted") is True:
                 counts["accepted"] += 1
+            if isinstance(rec.get("source"), dict) and isinstance(rec.get("prediction"), dict):
+                if rec.get("date_hold"):
+                    counts["held"] += 1
+                if rec.get("accepted") is True:
+                    for h in legacy_date_checks(rec):
+                        counts["legacy_date_checks"][h["check"]] += 1
         spans.sort()
         for i, (s1, e1, n1) in enumerate(spans):
             for s2, e2, n2 in spans[i + 1:]:
@@ -302,10 +330,14 @@ def main() -> int:
         print(f"{where}: {f['invariant']}: {f['detail']}")
     by_inv = Counter(f["invariant"] for f in failures)
     print(f"\nfiles {counts['files']}  records {counts['records']}  accepted {counts['accepted']}  "
-          f"known_contracts {len(known)}")
+          f"held by a date check {counts['held']}  known_contracts {len(known)}")
+    legacy = counts["legacy_date_checks"]
+    print(f"accepted 2.2 records a 2.3 date check would hold (reported, not failed): "
+          f"{sum(legacy.values())} {dict(sorted(legacy.items()))}")
     for inv in INVARIANTS:
         print(f"  {inv:<20} {'FAIL ' + str(by_inv[inv]) if by_inv[inv] else 'ok'}")
-    report = {"validated_at_utc": L.utc_now(), "predictions": str(pred_root), "counts": counts,
+    report = {"validated_at_utc": L.utc_now(), "predictions": str(pred_root),
+              "counts": {**counts, "legacy_date_checks": dict(counts["legacy_date_checks"])},
               "failures_by_invariant": dict(by_inv), "failures": failures[:500], "known_contracts": sorted(known)}
     rpath = Path(args.report) if args.report else pred_root / "_eval" / f"validate_{report['validated_at_utc'].replace(':', '')}.json"
     L.write_prediction_file(rpath, json.dumps(report, indent=1, sort_keys=True))
