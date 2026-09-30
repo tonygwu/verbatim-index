@@ -1213,6 +1213,12 @@ def said_label(src: dict, where: str) -> dict:
         old, was = blk["replaced_date"], blk["replaced_basis"]
         if old and was not in REPLACED_DATE:
             raise SystemExit(f"REFUSING: {where}'s override replaced a {was!r} date, which the Said line cannot name")
+        if blk.get("verdict") == "publication_only":
+            # A sourced PUBLICATION date bounds the words from above and is not the day
+            # they were said (final review item 2), whatever it replaced.
+            return {"card": (f"on or before {d} (sourced publication date; the {REPLACED_DATE[was]} is {old})" if old
+                             else f"on or before {d} (sourced publication date)"),
+                    "also": f"on or before {d}"}
         return {"card": (f"{d} (sourced; the {REPLACED_DATE[was]} is {old})" if old
                          else f"{d} (sourced; the source carries no date of its own)"),
                 "also": f"on {d}"}

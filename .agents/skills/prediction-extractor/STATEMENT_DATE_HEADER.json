@@ -12,6 +12,7 @@
   "youtube_upload_date": "Statement date: no later than {date} (YouTube upload date, NOT checked against the event. The recording may be years older; see section 1a of the specification.)",
   "unknown": "Statement date: unknown (no date for this recording could be established.)",
   "override_day": "Statement date: {date} (the day the words were spoken, from a sourced correction: {basis}. {own_sentence})",
+  "override_published": "Statement date: {date} (the recording was published on this date, from a sourced correction: {basis}. The words were spoken on this date or before it. {own_sentence})",
   "override_range": "Statement date: {date} (the latest day the words could have been spoken, from a sourced correction: {basis}. They were spoken between {earliest} and {date}. {own_sentence})",
   "override_range_unsourced": "Statement date: {date} (the latest day the words could have been spoken, from a sourced correction: {basis}. The first possible day, {earliest}, is the dating agent's estimate, and no source confirms it. {own_sentence})",
   "own_later": "The {own_label}, {own_date}, is later and is NOT when the words were said.",

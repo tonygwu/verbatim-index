@@ -167,7 +167,7 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
         if (res or {}).get("already_public"):
             # Only a sidecar under a release carries the field, so a legacy row is unchanged.
             row["already_public"] = res["already_public"]
-            if (r.get("source") or {}).get("statement_date_basis") not in EXACT_DATE_BASES:
+            if not exact_statement_date(r.get("source") or {}):
                 row["already_public_review"] = True
         if pid in early_used:
             row["early_called"] = True
@@ -199,7 +199,7 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
             row["not_scored_because"] = stale[pid]
         elif res is None:
             row["not_scored_because"] = "no_resolution"
-        elif res.get("already_public") and (r.get("source") or {}).get("statement_date_basis") in EXACT_DATE_BASES:
+        elif res.get("already_public") and exact_statement_date(r.get("source") or {}):
             # Excluded only against a date that IS the day of speech. Against an upload
             # or publication date the report proves nothing about the speech, so the
             # row is scored and sent to review (review 2026-09-30: Buddy Media's
@@ -284,9 +284,30 @@ def implied_sensitivity(sens: dict[str, list[str]], root: Path, args, cutoff: dt
     return out
 
 
-# The statement-date bases that ARE the day of speech. Any other (an upload or a
-# publication date) is an upper bound only.
+# The statement-date bases that CAN be the day of speech. Any other (an upload or a
+# publication date) is an upper bound only. A sourced_override is exact only when
+# exact_statement_date says so.
 EXACT_DATE_BASES = ("stated_in_page", "sourced_override")
+
+
+def exact_statement_date(src: dict) -> bool:
+    """Is the record's statement date the day the words were spoken?
+
+    stated_in_page is. A sourced_override is only when its block carries no range
+    (a range's last day is a bound, not the day) and its dating verdict is not
+    publication_only (the dating stage makes an override from a publication date
+    earlier than the upload, and a publication date is a bound too; final review
+    item 2). Only an exact date lets an already_public report exclude a record;
+    against any other the row is scored and sent to review."""
+    basis = src.get("statement_date_basis")
+    if basis not in EXACT_DATE_BASES:
+        return False
+    if basis != "sourced_override":
+        return True
+    ov = src.get("statement_date_override") or {}
+    first = ov.get("statement_date_earliest")
+    ranged = first is not None and first != src.get("statement_date")
+    return not ranged and ov.get("verdict") != "publication_only"
 
 
 def set_aside(r: dict) -> bool:

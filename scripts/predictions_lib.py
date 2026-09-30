@@ -56,8 +56,8 @@ POLICY_MARKER = "{{ELIGIBILITY_POLICY}}"
 # hash (rescue round 4, critique 3 B2): a wording change needs a new release.
 HEADER_TEMPLATE_FILE = "STATEMENT_DATE_HEADER.json"
 HEADER_DATE_LINES = ("stated_in_page", "publication_date", "youtube_upload_date", "unknown", "override_day",
-                     "override_range", "override_range_unsourced", "own_later", "own_none", "check_day",
-                     "check_published", "check_sourced", "check_unsourced")
+                     "override_published", "override_range", "override_range_unsourced", "own_later", "own_none",
+                     "check_day", "check_published", "check_sourced", "check_unsourced")
 # What a stage may say about the date line (release 2.3). Only the first of the
 # two doubts holds a record; cannot_tell is recorded and does not.
 DOUBT_VALUES = ("none", "recording_older_than_stated", "cannot_tell")
@@ -743,11 +743,15 @@ def override_block(rec: dict) -> dict | None:
     if ov is None:
         return None
     own_date, own_basis = own_statement_date(rec)
-    # The range fields travel only when the entry has them, so a record built from
-    # an entry without them (the operator's Andreessen entry) is byte-identical.
+    # The range fields and the dating verdict travel only when the entry has them, so
+    # a record built from an entry without them (the operator's Andreessen entry) is
+    # byte-identical. The scorer reads the verdict: a publication date is not the day
+    # of speech (score_predictions.exact_statement_date, final review item 2).
+    verdict = (ov.get("confirmation") or {}).get("verdict")
     return {"basis": ov["basis"], "source_url": ov["source_url"], "verbatim_evidence": ov["verbatim_evidence"],
             "confirmed_by": ov["confirmed_by"], "confirmed_at_utc": ov["confirmed_at_utc"],
             "replaced_date": own_date, "replaced_basis": own_basis,
+            **({"verdict": verdict} if verdict else {}),
             **{k: ov[k] for k in ("statement_date_earliest", "precision", "earliest_evidenced") if k in ov}}
 
 
@@ -988,7 +992,11 @@ def statement_date_line(rec: dict, template: dict) -> str:
     own_sentence = (lines["own_none"] if own_date is None else
                     lines["own_later"].format(own_label=template["own_basis_labels"][own_basis], own_date=own_date))
     if earliest == date:
-        key = "override_day"
+        # A publication-only verdict dates when the recording was PUBLISHED, which the
+        # dating stage makes an override when it is earlier than the upload; the words
+        # may be older, so it never reads as the day of speech (final review item 2).
+        verdict = (ov.get("confirmation") or {}).get("verdict")
+        key = "override_published" if verdict == "publication_only" else "override_day"
     else:
         # An operator's range carries no flag and is the operator's sourced reading; an
         # agent's range says whether a source shows its first day (review item 11).

@@ -454,9 +454,12 @@ the window.
 - `already_public` is `{date, where, what_it_shows}`, dated strictly before the
   statement date, or before the first day of a date range. A same-day report is
   refused. The row is excluded as `already_public` only when the statement date
-  is exact (`stated_in_page` or `sourced_override`). Against an upload or
-  publication date the report proves nothing about the day of speech, so the row
-  scores and the deploy prints a REVIEW line for it.
+  is exact: `stated_in_page`, or a `sourced_override` whose block carries no
+  range and whose dating verdict is not `publication_only`
+  (`score_predictions.exact_statement_date`). Against an upload date, a
+  publication date (a dating agent's `publication_only` override included) or the
+  last day of a range, the report proves nothing about the day of speech, so the
+  row scores and the deploy prints a REVIEW line for it.
 
 ### Cutting a release
 
