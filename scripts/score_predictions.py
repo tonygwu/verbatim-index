@@ -823,12 +823,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="a resolution-policy release the board may carry; repeat it. Absent: legacy only")
     ap.add_argument("--early-calls", action="store_const", const=True, default=None,
                     help="score decided early calls now, before the deadline (VD-5)")
+    ap.add_argument("--lead-test", action="store_const", const=True, default=None,
+                    help="under the lead floor, score a record its outcome-blind label calls a forecast (VD-7)")
     args = ap.parse_args(argv)
     flags = {"--run": args.run, "--predictions": args.predictions, "--index": args.index, "--as-of": args.as_of,
              "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out,
              "--restatements": args.restatements, "--date-overrides": args.date_overrides,
              "--replacements": args.replacements, "--implied-windows": args.implied_windows,
-             "--policy-release": args.policy_releases, "--early-calls": args.early_calls}
+             "--policy-release": args.policy_releases, "--early-calls": args.early_calls,
+             "--lead-test": args.lead_test}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -843,6 +846,7 @@ def main(argv: list[str] | None = None) -> int:
         args.replacements = root / cfg["replacements"] if "replacements" in cfg else None
         args.implied_windows = cfg.get("implied_windows")
         args.early_calls = cfg.get("early_calls")
+        args.lead_test = cfg.get("lead_test")
         args.policy_releases = cfg.get("policy_releases")
         # A committed config names its override file, so staleness hashing covers
         # it. One that is silent while the production file exists is refused
@@ -885,6 +889,8 @@ def main(argv: list[str] | None = None) -> int:
         settings["policy_releases"] = list(args.policy_releases)
     if args.early_calls:
         settings["early_calls"] = True
+    if args.lead_test:
+        settings["lead_test"] = True
     implied = 1.0 if args.implied_windows is not None else None
 
     try:
@@ -936,6 +942,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("the replacement manifest replaces early calls, but this board does not read early calls "
                          "(early_calls is off)")
     decided = {pid: e for pid, e in earlies.items() if e.get("outcome") != "still_open"}
+    # Lead-test labels (VD-7 (c)), read only when the config says so.
+    lead_tests = (load_across(args.run, fresh(lambda run: R.load_sidecars(run, "lead_test"), "lead_test"))
+                  if args.lead_test else {})
+    labels = {pid: obj["label"] for pid, obj in lead_tests.items()} if args.lead_test else None
     restated: dict[str, str] = {}
     if manifest is not None:
         check_restatement_records(manifest, {r["prediction_id"]: r for r in loaded})
@@ -965,7 +975,8 @@ def main(argv: list[str] | None = None) -> int:
     # trend record, before the as-of could drop it. A dated record may move.
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend, resolutions=resolutions,
                   date_overrides=ov_in, window_conflicts=moved_windows(replaced["resolve"], resolutions,
-                                                                       swaps, root), implied=implied)
+                                                                       swaps, root), implied=implied,
+                  lead_labels=labels)
     # An early call scores NOW (VD-5 (c)): a decided one before its deadline, and
     # one past its deadline until the fresh check replaces it by name. A decided
     # early call beside a fresh resolution that does not name it is refused.
@@ -980,7 +991,8 @@ def main(argv: list[str] | None = None) -> int:
     early_rows: list[dict] = []
     if args.early_calls:
         early_rows = [r for r in select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
-                                        resolutions=resolutions, date_overrides=ov_in, implied=implied, due="not_due")
+                                        resolutions=resolutions, date_overrides=ov_in, implied=implied, due="not_due",
+                                        lead_labels=labels)
                       if r["prediction_id"] in decided]
         early_used.update({r["prediction_id"]: {"not_due": True} for r in early_rows})
     repairs = load_across(args.run, fresh(R.load_repairs, "criteria_repair"))
@@ -988,6 +1000,8 @@ def main(argv: list[str] | None = None) -> int:
     stages = {"resolve": resolutions, "prior": priors}
     if args.early_calls:
         stages["early"] = earlies
+    if args.lead_test:
+        stages["lead_test"] = lead_tests
     releases = release_counts(stages, args.policy_releases)
     window_stale = (stale_sidecars(rows + early_rows, {"resolve": resolutions, "prior": priors,
                                                        "early": {p: decided[p] for p in early_used}},
@@ -1055,6 +1069,15 @@ def main(argv: list[str] | None = None) -> int:
         doc["corpus"]["stale_sidecars"] = window_stale
     if args.policy_releases is not None:
         doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
+    if args.lead_test:
+        doc["rule"]["lead_test"] = True
+        under = [r for r in joined if "lead_test" in r["flags"] and not r.get("not_due")]
+        doc["corpus"]["lead_test"] = {
+            "by_label": dict(sorted(collections.Counter(r["flags"]["lead_test"]["label"] for r in under
+                                                        if r["flags"]["lead_test"]["label"]).items())),
+            "unlabelled": sorted(r["prediction_id"] for r in under if not r["flags"]["lead_test"]["label"]),
+            "scored_as_forecast": sum(1 for r in under if r["scored"]),
+        }
     if args.early_calls:
         doc["rule"]["early_calls"] = True
         doc["corpus"]["stale_sidecars"] = window_stale

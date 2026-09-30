@@ -642,6 +642,104 @@ def build_prior_prompt(rec: dict, deadline: dt.date) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Stage 3: forecast or announcement, under the lead floor (VD-7 (c))
+# ---------------------------------------------------------------------------
+#
+# The operator's call, 2026-09-29: a record said less than MIN_LEAD_DAYS before
+# its own deadline is scorable only when it is a FORECAST, about the world or
+# about the speaker's own organisation's RESULTS (numbers it does not directly
+# control). An announcement of the speaker's own plans or schedule, and a relay
+# of someone else's already-published schedule, stay out. The label is
+# OUTCOME-BLIND, like the prior: it reads prompt_facts, which cannot reach a
+# resolution, runs on the no-tools harness, and the same leak screen applies.
+
+LEAD_TEST_LABELS = ("world_forecast", "own_results_forecast", "own_plan_announcement", "relay")
+FORECAST_LABELS = ("world_forecast", "own_results_forecast")
+
+LEAD_TEST_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["prediction_id", "label", "reason"],
+    "properties": {
+        "prediction_id": {"type": "string", "minLength": 1},
+        "label": {"enum": list(LEAD_TEST_LABELS)},
+        "reason": {"type": "string", "minLength": 1},
+    },
+}
+
+LEAD_TEST_TASK = """FORECAST OR ANNOUNCEMENT. You are sorting one statement into a kind. You are
+NOT asked whether it came true. Do not try to recall what happened after it was
+said; read only what was said, who said it and when.
+
+The statement was made shortly before the date it names. A statement like that
+can be an announcement of the speaker's own plan, which is not a forecast, or a
+real forecast. Decide which kind it is.
+
+KINDS
+
+  "world_forecast"         a forecast about something outside the speaker's own
+                           organisation: markets, the economy, an election, a
+                           technology in general, another company, a policy.
+  "own_results_forecast"   a forecast of the speaker's OWN organisation's results
+                           that customers, markets or competitors decide, not the
+                           organisation itself: revenue, profit, cash flow,
+                           volume, sign-ups, market share, a ranking.
+  "own_plan_announcement"  the speaker's own organisation, or the speaker in
+                           person, has decided the thing, and the statement says
+                           when it happens: a launch, a release, a rollout, an
+                           event, a publication, a hire, a trip, a talk, a
+                           schedule. Whether it happens is a decision the speaker's
+                           side makes.
+  "relay"                  someone else's already-published plan or schedule,
+                           repeated by the speaker: a rival's launch date, a
+                           conference agenda, a government's announced timetable.
+
+When a statement mixes kinds, choose by the part the resolution criterion tests.
+Between an announcement and a forecast of the speaker's own organisation, ask
+whether the organisation can simply make it happen on that date. If it can, it is
+an announcement.
+
+Answer with one JSON object and nothing else:
+
+{
+  "prediction_id": "<copy it back exactly>",
+  "label": "world_forecast" | "own_results_forecast" | "own_plan_announcement" | "relay",
+  "reason": "one or two sentences naming what in the statement decides the kind"
+}
+"""
+
+
+def build_lead_test_prompt(rec: dict, deadline: dt.date) -> str:
+    """Blind like the prior: prompt_facts cannot reach a resolution, and there is no today."""
+    f = prompt_facts(rec, deadline)
+    return f"{LEAD_TEST_TASK}\n{'=' * 70}\n{_block(f)}{'=' * 70}\n\nAnswer with the JSON object now.\n"
+
+
+def validate_lead_test(obj: dict, expect_id: str) -> list[str]:
+    errs = []
+    if obj.get("prediction_id") != expect_id:
+        errs.append(f"prediction_id {obj.get('prediction_id')!r} != {expect_id!r}")
+    if not str(obj.get("reason") or "").strip():
+        errs.append("a label needs its reason")
+    return errs
+
+
+def lead_test_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, harness: str, account: str | None,
+                     telemetry: dict, labelled_at: str, prompt_sha: str, leaks: list[str], release: str,
+                     code_revision: str) -> dict:
+    return {
+        "policy_release": release, "prompt_sha256": prompt_sha, "prompt_leak_words": leaks,
+        "code_revision": code_revision, "prediction_id": rec["prediction_id"], "leader_slug": rec["leader_slug"],
+        "transcript_id": rec["transcript_id"], "stage": "lead_test",
+        "statement_date": (rec.get("source") or {}).get("statement_date"),
+        "statement_date_basis": (rec.get("source") or {}).get("statement_date_basis"),
+        "deadline": deadline.isoformat(), "label": obj["label"], "reason": obj["reason"],
+        "labelled_at_utc": labelled_at, "run_id": run_id, "harness": harness, "account": account,
+        "telemetry": telemetry,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Validation of what came back
 # ---------------------------------------------------------------------------
 
@@ -842,7 +940,7 @@ def prior_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, harnes
 
 
 # Each stage writes its own tree, so no stage can read another's by glob.
-SIDECAR_SUBDIRS = {"resolve": "resolutions", "prior": "priors", "early": "early"}
+SIDECAR_SUBDIRS = {"resolve": "resolutions", "prior": "priors", "early": "early", "lead_test": "lead_tests"}
 
 
 def sidecar_path(root: Path, stage: str, slug: str, prediction_id: str) -> Path:
@@ -1032,7 +1130,7 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # Cutting a release: change the text, run test_resolution_policy.py, and put the
 # new id and sha256 below and in that test.
 
-POLICY_RELEASE = ("resolution-2026-09-30", "b815e14eef73c1094067916cb044519780c39b064a7ec0381db1236b9f518d6b")
+POLICY_RELEASE = ("resolution-2026-09-30", "86726df37752cda719c8f727c5932409862e198e6e321d7c3ba03927bde87e16")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.
@@ -1057,9 +1155,11 @@ def _policy_fixture() -> dict:
 def _policy_parts() -> dict:
     return {
         "resolver_task": RESOLVER_TASK, "prior_task": PRIOR_TASK, "prior_trend_rule": PRIOR_TREND_RULE,
-        "early_task": EARLY_TASK,
+        "early_task": EARLY_TASK, "lead_test_task": LEAD_TEST_TASK, "lead_test_labels": list(LEAD_TEST_LABELS),
+        "forecast_labels": list(FORECAST_LABELS),
         "judged_rules": JUDGED_RULES, "min_searches": MIN_SEARCHES, "leak_words": list(_LEAK_WORDS),
-        "schemas": {"resolution": RESOLUTION_SCHEMA, "prior": PRIOR_SCHEMA, "early": EARLY_SCHEMA},
+        "schemas": {"resolution": RESOLUTION_SCHEMA, "prior": PRIOR_SCHEMA, "early": EARLY_SCHEMA,
+                    "lead_test": LEAD_TEST_SCHEMA},
         "block": _block(prompt_facts(_policy_fixture(), dt.date(2020, 12, 31))),
     }
 

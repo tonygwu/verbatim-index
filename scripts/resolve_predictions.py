@@ -84,7 +84,8 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
            resolutions: dict | None = None,
            date_overrides: "dict | None" = None, superseded: "list | None" = None,
            window_conflicts: "dict[str, list[str]] | None" = None,
-           implied: "float | None" = None, due: str = "past") -> list[dict]:
+           implied: "float | None" = None, due: str = "past",
+           lead_labels: "dict[str, str] | None" = None) -> list[dict]:
     """Past-due accepted predictions, each carrying the funnel's deadline and flags.
 
     The deadline comes from `phase2_resolvability`, never from a second parser
@@ -114,11 +115,15 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
     switching the table on moves no scored trend row.
 
     `due` is "past" (the default: deadline on or before the cutoff, the only set
-    before 2026-09-29) or "not_due" (deadline after the cutoff: the early-call
-    stage and a prior priced before the deadline, VD-5).
+    before 2026-09-29), "not_due" (deadline after the cutoff: the early-call
+    stage and a prior priced before the deadline, VD-5) or "any" (the lead test,
+    which labels a record whether or not it is due).
+
+    `lead_labels` (VD-7 (c)) maps prediction_id to its outcome-blind lead-test
+    label; None, the default, leaves the lead floor as it was.
     """
-    if due not in ("past", "not_due"):
-        raise SystemExit(f"select(due={due!r}): 'past' or 'not_due'")
+    if due not in ("past", "not_due", "any"):
+        raise SystemExit(f"select(due={due!r}): 'past', 'not_due' or 'any'")
     rows = P2.load(pred_dir, date_overrides=date_overrides, superseded=superseded)
     # The trend window is opt-in and dated by the caller's cutoff, never the clock.
     P2.attach_deadlines(rows, derive=True, trend_cutoff=(cutoff if trend and implied is None else None),
@@ -157,11 +162,11 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
         r["_deadline"], r["_basis"] = frozen, f"trend: {why}, frozen at its first resolution"
     out = []
     for r in rows:
-        if not r["_deadline"] or (r["_deadline"] > cutoff) == (due == "past"):
+        if not r["_deadline"] or (due != "any" and (r["_deadline"] > cutoff) == (due == "past")):
             continue
         # The operator's eligibility rule, in phase2_resolvability so the page asks
         # the same function about a record that is not past due yet.
-        r["_flags"] = P2.funnel_flags(r, min_lead)
+        r["_flags"] = P2.funnel_flags(r, min_lead, lead_labels)
         out.append(r)
     out.sort(key=lambda r: (r["leader_slug"], r["prediction_id"]))
     return out
@@ -217,6 +222,24 @@ def resolutions_across(runs: list[Path]) -> "tuple[dict[str, dict], dict[str, li
             where[pid].append((str(obj.get("deadline")), str(run)))
     clash = {pid: [f"{d} in {run}" for d, run in ws] for pid, ws in where.items() if len({d for d, _ in ws}) > 1}
     return first, clash
+
+
+def lead_labels_across(runs: list[Path]) -> dict[str, str]:
+    """Every lead-test label in the runs, by prediction. A prediction labelled
+    differently in two runs is refused: nothing here picks which label counts."""
+    out: dict[str, str] = {}
+    where: dict[str, str] = {}
+    seen: set[Path] = set()
+    for run in runs:
+        if Path(run).resolve() in seen:
+            continue
+        seen.add(Path(run).resolve())
+        for pid, obj in R.load_sidecars(Path(run), "lead_test").items():
+            if pid in out and out[pid] != obj["label"]:
+                raise SystemExit(f"prediction {pid} is labelled {out[pid]} in {where[pid]} and {obj['label']} in "
+                                 f"{run}; remove one before selecting")
+            out[pid], where[pid] = obj["label"], str(run)
+    return out
 
 
 def read_ids(path: Path) -> list[str]:
@@ -328,7 +351,10 @@ def run_one(job: dict) -> dict:
                                    raw_response_path=raw_path, wrapper=wrapper)
             harness, account = "astra", account_label(env_home or "__DEFAULT__")
         else:
-            prompt = R.build_prior_prompt(rec, deadline)
+            # The prior and the lead test are both outcome-blind (VD-7 (c)): the same
+            # harness with no working tools, and the same leak screen.
+            prompt = (R.build_prior_prompt(rec, deadline) if stage == "prior"
+                      else R.build_lead_test_prompt(rec, deadline))
             # Masked with the record's own quoted text, so only the authored part
             # of the prompt is screened. See prior_prompt_leaks.
             leaks = R.prior_prompt_leaks(prompt, R.prompt_facts(rec, deadline))
@@ -348,7 +374,8 @@ def run_one(job: dict) -> dict:
         except (ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"{E_NOJSON}: {exc}") from exc
 
-        schema = {"resolve": R.RESOLUTION_SCHEMA, "early": R.EARLY_SCHEMA, "prior": R.PRIOR_SCHEMA}[stage]
+        schema = {"resolve": R.RESOLUTION_SCHEMA, "early": R.EARLY_SCHEMA, "prior": R.PRIOR_SCHEMA,
+                  "lead_test": R.LEAD_TEST_SCHEMA}[stage]
         errs = L.check_schema(obj, schema)
         if errs:
             raise RuntimeError(f"{E_SCHEMA}: {'; '.join(errs[:4])}")
@@ -357,12 +384,18 @@ def run_one(job: dict) -> dict:
             errs = R.validate_resolution(obj, pid, said) + R.validate_effort(obj, tel)
         elif stage == "early":
             errs = R.validate_early(obj, pid, said, args.as_of) + R.validate_effort(obj, tel)
+        elif stage == "lead_test":
+            errs = R.validate_lead_test(obj, pid)
         else:
             errs = R.validate_prior(obj, pid)
         if errs:
             raise RuntimeError(f"{E_RULES}: {'; '.join(errs[:4])}")
 
-        if stage == "early":
+        if stage == "lead_test":
+            out = R.lead_test_record(rec, deadline, obj, run_id=args.run_id, harness=harness, account=account,
+                                     telemetry=tel, labelled_at=utc_now(), prompt_sha=prompt_sha, leaks=leaks,
+                                     release=args.release, code_revision=args.code_revision)
+        elif stage == "early":
             out = R.early_record(rec, deadline, obj, run_id=args.run_id, harness=harness, account=account,
                                  telemetry=tel, checked_at=utc_now(), as_of=args.as_of, prompt_sha=prompt_sha,
                                  release=args.release, code_revision=args.code_revision)
@@ -381,7 +414,8 @@ def run_one(job: dict) -> dict:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
         base.update(ok=True, seconds=round(time.time() - t0, 1),
-                    summary=(obj["p"] if stage == "prior" else obj["outcome"]))
+                    summary=(obj["p"] if stage == "prior" else obj["label"] if stage == "lead_test"
+                             else obj["outcome"]))
         return base
 
     except subprocess.TimeoutExpired:
@@ -397,10 +431,14 @@ def run_one(job: dict) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stage", choices=["resolve", "prior", "early"], required=True,
+    ap.add_argument("--stage", choices=["resolve", "prior", "early", "lead_test"], required=True,
                     help="resolve and prior run over records past their deadline; early (VD-5) checks eligible "
                          "records NOT yet due for a result already settled, with no minimum distance to the "
-                         "deadline")
+                         "deadline; lead_test (VD-7) labels, outcome-blind, each record whose only failing "
+                         "clause is the lead floor, due or not")
+    ap.add_argument("--lead-test", action="store_true",
+                    help="read the lead-test labels of the scoring config's runs and --out, so a record under the "
+                         "lead floor labelled a forecast is eligible (the scoring.json key lead_test)")
     ap.add_argument("--not-due", action="store_true",
                     help="prior only: price eligible records whose deadline has NOT passed, with the prompt the "
                          "deadline would use, byte for byte (an early call needs its prior now)")
@@ -470,7 +508,7 @@ def date_overrides_for(arg: "Path | None", predictions: list[Path]) -> "tuple[Pa
 
 
 def accounts_for(args) -> list[str]:
-    if args.stage == "prior":
+    if args.stage in ("prior", "lead_test"):
         out = []
         for name in args.fable_accounts.split(","):
             name = name.strip()
@@ -550,17 +588,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.not_due and args.stage != "prior":
         raise SystemExit("--not-due is for the prior stage only: the resolver judges a deadline that passed, and "
                          "the early stage always reads records not yet due")
-    due = "not_due" if args.stage == "early" or args.not_due else "past"
+    due = "any" if args.stage == "lead_test" else "not_due" if args.stage == "early" or args.not_due else "past"
     implied = implied_scale(args)
+    if args.lead_test and args.stage == "lead_test":
+        raise SystemExit("--lead-test reads labels for the other stages; the lead_test stage writes them")
+    labels = lead_labels_across(freeze_runs + [out_root]) if args.lead_test else None
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
                   resolutions=resolutions, window_conflicts=clash,
-                  date_overrides=date_overrides if ov_path else None, implied=implied, due=due)
+                  date_overrides=date_overrides if ov_path else None, implied=implied, due=due, lead_labels=labels)
     if args.implied_scale:
         # A sensitivity run judges the implied records only; every other record's
         # window does not depend on the scale.
         rows = [r for r in rows if "_implied" in r]
         log(f"--implied-scale {args.implied_scale}: {len(rows)} implied record(s) at {implied:g}x their windows")
-    rows, left_out = narrow(rows, args.slug, args.include_ineligible, ids)
+    if args.stage == "lead_test":
+        # Only a record whose ONE failing clause is the lead floor: a label cannot
+        # rescue a record that fails another, so labelling it spends a call on nothing.
+        rows = [r for r in rows if P2.failing_clauses(r["_flags"], r["prediction_id"]) == ["lead_under_floor"]]
+        rows, left_out = narrow(rows, args.slug, True, ids)
+    else:
+        rows, left_out = narrow(rows, args.slug, args.include_ineligible, ids)
     if left_out:
         log(f"left out {sum(left_out.values())} ineligible, by reason {json.dumps(dict(sorted(left_out.items())))}; "
             f"pass --include-ineligible to run them")
@@ -583,6 +630,7 @@ def main(argv: list[str] | None = None) -> int:
             r = todo[0]
             p = (R.build_resolver_prompt(r, r["_deadline"], args.as_of) if args.stage == "resolve"
                  else R.build_early_prompt(r, r["_deadline"], args.as_of) if args.stage == "early"
+                 else R.build_lead_test_prompt(r, r["_deadline"]) if args.stage == "lead_test"
                  else R.build_prior_prompt(r, r["_deadline"]))
             print(p)
             print(f"--- prompt chars: {len(p)}  leak words: "

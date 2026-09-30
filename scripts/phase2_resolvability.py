@@ -677,7 +677,13 @@ CLAUSE_FLAGS = ("deadline_before_statement", "specificity_ok", "lead_days", "lea
 REASON_FLAGS = ("eligible",) + CLAUSE_FLAGS
 
 
-def funnel_flags(r: dict, min_lead: int) -> dict:
+# VD-7 (c), operator 2026-09-29: under the lead floor, these outcome-blind labels
+# (resolution_lib.LEAD_TEST_LABELS) are forecasts and may be scored; an
+# announcement of the speaker's own plans and a relay may not.
+LEAD_TEST_FORECASTS = ("world_forecast", "own_results_forecast")
+
+
+def funnel_flags(r: dict, min_lead: int, lead_labels: "dict[str, str] | None" = None) -> dict:
     """The eligibility flags of one record that carries a deadline (attach_deadlines).
 
     resolve_predictions.select() writes these onto every past-due record, and the
@@ -717,6 +723,16 @@ def funnel_flags(r: dict, min_lead: int) -> dict:
         # Only on an implied row, so every other row's flags are byte-identical.
         flags["implied"] = {**{k: implied[k] for k in ("row", "window_words", "scale", "matched", "matched_in",
                                                          "shortest_reading_days")}, "lead_rule": lead_rule}
+    if (lead_labels is not None and not lead_ok and lead is not None and not is_trend
+            and flags["specificity_ok"] and not flags["deadline_before_statement"]):
+        # Under the floor, the outcome-blind label decides (VD-7 (c)); at or over
+        # it, nothing changes. Only a record the floor ALONE keeps out is asked
+        # about, as the lead_test stage labels only those. `lead_labels` is None
+        # when the policy is off, so no row gains the key.
+        label = lead_labels.get(r.get("prediction_id"))
+        flags["lead_test"] = {"label": label}
+        if label in LEAD_TEST_FORECASTS:
+            flags["lead_ok"] = True
     flags["eligible"] = is_trend or (flags["specificity_ok"] and flags["lead_ok"]
                                      and not flags["deadline_before_statement"])
     return flags

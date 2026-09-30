@@ -528,9 +528,12 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # releases existed; absent, only legacy sidecars may be scored. `early_calls`
 # (true, or absent) scores decided early calls now (VD-5); their sidecars live
 # under each run's early/, which is fingerprinted like every other sidecar.
+# `lead_test` (true, or absent) lets a record under the lead floor score when its
+# outcome-blind label says it is a forecast (VD-7 (c)); labels live under each
+# run's lead_tests/.
 OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements", "implied_windows", "policy_releases",
-                        "early_calls")
-SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs", "early")
+                        "early_calls", "lead_test")
+SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs", "early", "lead_tests")
 
 
 def transcript_listing(roots: list[Path]) -> set[tuple[str, str]]:
@@ -619,9 +622,10 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
                                          and re.fullmatch(r"[0-9a-f]{64}", cfg["implied_windows"])):
         raise SystemExit(f"{path}: implied_windows must be the sha256 of the implied-window table "
                          f"(phase2_resolvability.implied_table_sha256()), not {cfg['implied_windows']!r}")
-    if "early_calls" in cfg and cfg["early_calls"] is not True:
-        raise SystemExit(f"{path}: early_calls is true when present; remove the key to switch early calls off, "
-                         f"rather than writing {cfg['early_calls']!r}")
+    for flag in ("early_calls", "lead_test"):
+        if flag in cfg and cfg[flag] is not True:
+            raise SystemExit(f"{path}: {flag} is true when present; remove the key to switch it off, "
+                             f"rather than writing {cfg[flag]!r}")
     if "policy_releases" in cfg and not (isinstance(cfg["policy_releases"], list) and cfg["policy_releases"]
                                          and all(isinstance(x, str) and x for x in cfg["policy_releases"])
                                          and len(set(cfg["policy_releases"])) == len(cfg["policy_releases"])):
