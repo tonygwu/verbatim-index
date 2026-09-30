@@ -1504,7 +1504,7 @@ def unresolvable_split(scores_doc: dict, listed: set[str]) -> dict:
     present the rows must reproduce it exactly, or the file is refused."""
     count = {k: collections.Counter() for k in ("eligible", "not_eligible")}
     for row in scores_doc.get("predictions", []):
-        if row.get("outcome") != "unresolvable":
+        if row.get("outcome") != "unresolvable" or SP.set_aside(row):
             continue
         ok = (row.get("flags") or {}).get("eligible")
         if not isinstance(ok, bool):

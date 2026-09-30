@@ -118,6 +118,10 @@ def main() -> int:
             side(board, sid, "prior", dl[sid])
         side(board, "pub", "resolve", dl["pub"], policy_release=REL, already_public={
             "date": "2025-02-20", "where": "https://example.com/already", "what_it_shows": "the launch date was set"})
+        # A withdrawn prediction the resolver could not settle is Withdrawn, not Couldn't check:
+        # the scorer's eligible-unresolvable split and the page's column must agree on it.
+        side(board, "wd", "resolve", dl["wd"], outcome="unresolvable", unresolvable_reason="no_public_evidence",
+             sources=[])
         for sid in ("early-now", "early-late"):
             side(board, sid, "early", dl[sid])
             side(board, sid, "prior", dl[sid])

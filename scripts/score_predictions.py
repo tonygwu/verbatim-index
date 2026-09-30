@@ -264,6 +264,14 @@ def implied_sensitivity(sens: dict[str, list[str]], root: Path, args, cutoff: dt
     return out
 
 
+def set_aside(r: dict) -> bool:
+    """A row the operator withdrew, or one already public before it was said: out of
+    the board for its own reason, so never counted as one the resolver could not
+    settle, whatever the resolver answered. The page reads this same rule."""
+    why = str(r.get("not_scored_because") or "")
+    return why.startswith("withdrawn:") or why == "already_public"
+
+
 def unresolvable_split(rows: list[dict]) -> dict:
     """Rows the resolver answered "unresolvable", split by eligibility, each half with its reasons.
 
@@ -277,7 +285,8 @@ def unresolvable_split(rows: list[dict]) -> dict:
     """
     out = {}
     for key, want in (("eligible", True), ("not_eligible", False)):
-        rs = [r for r in rows if r["outcome"] == "unresolvable" and bool(r["flags"]["eligible"]) is want]
+        rs = [r for r in rows if r["outcome"] == "unresolvable" and bool(r["flags"]["eligible"]) is want
+              and not set_aside(r)]
         blank = [r["prediction_id"] for r in rs if not r["unresolvable_reason"]]
         if blank:
             raise SystemExit(f"unresolvable resolutions with no unresolvable_reason: {blank}; "
