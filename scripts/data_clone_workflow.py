@@ -527,10 +527,10 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # policy release the board may carry, "legacy" for sidecars written before
 # releases existed; absent, only legacy sidecars may be scored. `early_calls`
 # (true, or absent) scores decided early calls now (VD-5); their sidecars live
-# under each run's early/, which is fingerprinted like every other sidecar.
+# under each run's early/, which is fingerprinted only while the key is set.
 # `lead_test` (true, or absent) lets a record under the lead floor score when its
 # outcome-blind label says it is a forecast (VD-7 (c)); labels live under each
-# run's lead_tests/.
+# run's lead_tests/, fingerprinted only while that key is set.
 # `withdrawn` names the operator's manifest of single withdrawn predictions
 # (predictions_lib.WITHDRAWN_FILE); like `replacements` it must lie under
 # predictions/, and its bytes are fingerprinted.
@@ -540,7 +540,18 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements", "implied_windows", "policy_releases",
                         "early_calls", "lead_test", "withdrawn", "implied_sensitivity")
 SENSITIVITY_SCALES = {"half": 0.5, "double": 2.0}
-SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs", "early", "lead_tests")
+SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs")
+# A stage directory enters the scores.json digest only while the key that makes the
+# scorer read it is set. Code from before these stages hashed SIDECAR_DIRS alone, so
+# hashing early/ on every board would make an old-code clone and a new-code clone
+# disagree about the same data as soon as one run held an early call, and each would
+# call the other's scores.json stale (review 2026-09-30, item 9).
+KEYED_SIDECAR_DIRS = (("early_calls", "early"), ("lead_test", "lead_tests"))
+
+
+def sidecar_dirs(settings: dict) -> tuple[str, ...]:
+    """The sidecar directories a board with these settings reads, so fingerprints."""
+    return SIDECAR_DIRS + tuple(sub for key, sub in KEYED_SIDECAR_DIRS if settings.get(key))
 
 
 def transcript_listing(roots: list[Path]) -> set[tuple[str, str]]:
@@ -707,13 +718,13 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
     if "withdrawn" in settings:
         h.update(f"withdrawn {hashlib.sha256((root / settings['withdrawn']).read_bytes()).hexdigest()}\n".encode())
     for run in settings["runs"]:
-        for sub in SIDECAR_DIRS:
+        for sub in sidecar_dirs(settings):
             for f in sorted((root / run / sub).glob("*/*.json")):
                 h.update(f"{run}/{f.relative_to(root / run)} {hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
     for scale, runs in sorted((settings.get("implied_sensitivity") or {}).items()):
         # Only when named, so every existing scores.json hashes as before.
         for run in runs:
-            for sub in SIDECAR_DIRS:
+            for sub in sidecar_dirs(settings):
                 for f in sorted((root / run / sub).glob("*/*.json")):
                     h.update(f"sensitivity {scale} {run}/{f.relative_to(root / run)} "
                              f"{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
