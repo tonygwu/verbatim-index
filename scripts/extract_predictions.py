@@ -219,7 +219,8 @@ def paths_for(out: Path, slug: str, sid: str) -> tuple[Path, Path]:
     return out / slug / f"{sid}.jsonl", out / slug / f"{sid}.meta.json"
 
 
-def read_transcript(rec_path: Path, tid: str, date_overrides: dict | None = None) -> dict:
+def read_transcript(rec_path: Path, tid: str, date_overrides: dict | None = None,
+                    date_checks: dict | None = None) -> dict:
     """Load the transcript, or fail with a label that names what is missing.
 
     repo-0 retires recordings while a pass runs, so a file listed at launch can
@@ -237,7 +238,7 @@ def read_transcript(rec_path: Path, tid: str, date_overrides: dict | None = None
     if (rec["leader_slug"], rec["source_id"]) != tuple(tid.split("/", 1)):
         raise RuntimeError(f"{L.E_TRANSCRIPT_MISSING}: {rec_path} holds "
                            f"{rec['leader_slug']}/{rec['source_id']}, not {tid}")
-    return L.apply_statement_date_override(rec, date_overrides)
+    return L.apply_statement_date_check(L.apply_statement_date_override(rec, date_overrides), date_checks)
 
 
 def read_meta(meta_path: Path) -> dict:
@@ -366,7 +367,7 @@ def extract_one(job: dict) -> dict:
     cached = meta["extract"].get("status") == "ok" and not args.force
     if cached and meta["extract"].get("contract_id") != job["contract"]["contract_id"]:
         return cache_failure(base, f"{tid}: extraction contract changed")
-    rec = read_transcript(rec_path, tid, job.get("date_overrides"))
+    rec = read_transcript(rec_path, tid, job.get("date_overrides"), job.get("date_checks"))
 
     workdir = job["workroot"] / f"{slug}-{sid}__extract__{job['run_id']}"
     prompt = L.build_extraction_prompt(rec, job["roster"].get(slug), job["spec"], job["schema_text"],
@@ -417,6 +418,9 @@ def extract_one(job: dict) -> dict:
         "candidates_considered": obj["candidates_considered"],
         "subject_speech_share_estimate_pct": obj["subject_speech_share_estimate_pct"],
         "attribution_notes": obj["attribution_notes"], "raw": str(raw_path.relative_to(job["out"])),
+        # On the meta file too, so the dating stage finds a doubted transcript even when
+        # every one of its candidates was refused (review item 18).
+        **({"statement_date_doubt": obj["statement_date_doubt"]} if "statement_date_doubt" in obj else {}),
     }
     # A forced re-extraction replaces the file, so any earlier verification is void.
     meta["verify"] = {"status": "not_run"}
@@ -489,7 +493,7 @@ def verify_one(job: dict) -> dict:
     base = {"id": tid, "stage": "verify", "run": job["run_id"]}
     if meta["extract"].get("status") != "ok":
         return {**base, "status": "skipped", "reason": f"extract status {meta['extract'].get('status')}"}
-    rec = read_transcript(rec_path, tid, job.get("date_overrides"))
+    rec = read_transcript(rec_path, tid, job.get("date_overrides"), job.get("date_checks"))
     records = L.parse_lines(jsonl_path.read_text(), str(jsonl_path))
     source_inputs = {"transcript": rec, "roster_entry": job["roster"].get(slug)}
     expected_extract = job["release"]["contracts"]["extract"]
@@ -580,9 +584,9 @@ def verify_one(job: dict) -> dict:
         return {**base, "status": "dry_run", "batches": len(batches), "workdir": str(workdir)}
 
     verified_at = L.utc_now()
+    merged_doubt = L.merge_doubts(doubts) if doubts else None
     apply_verdicts(records, all_verdicts, provenance, job["contract"]["contract_id"], job["run_id"], verified_at,
-                   {"batches": telemetry_all, "prediction_audit": audit},
-                   statement_date_doubt=L.merge_doubts(doubts) if doubts else None)
+                   {"batches": telemetry_all, "prediction_audit": audit}, statement_date_doubt=merged_doubt)
     L.write_prediction_file(jsonl_path, L.serialise_lines(records))
     accepted = sum(1 for r in records if r["accepted"])
     meta["verify"] = {"status": "ok", "run_id": job["run_id"], **provenance, "contract_id": job["contract"]["contract_id"],
@@ -590,7 +594,8 @@ def verify_one(job: dict) -> dict:
                       "verified_at_utc": verified_at, "elapsed_sec": round(time.time() - t0, 1),
                       "candidates_verified": len(pending), "batches": len(batches),
                       "accepted": accepted, "rejected": len(pending) - sum(1 for r in pending if r["accepted"]),
-                      "disagreements": sum(1 for r in pending if r["verification"]["agreement"] is False)}
+                      "disagreements": sum(1 for r in pending if r["verification"]["agreement"] is False),
+                      **({"statement_date_doubt": merged_doubt} if merged_doubt else {})}
     write_meta(meta_path, meta)
     return {**base, "status": "ok", "harness": provenance["harness"], "verified": len(pending),
             "accepted": accepted, "elapsed": round(time.time() - t0, 1)}
@@ -663,6 +668,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--skill-dir", default=str(L.SKILL))
     ap.add_argument("--date-overrides", default=None,
                     help=f"reviewed statement-date override file; default <data>/{L.DATE_OVERRIDES_FILE} when it exists")
+    ap.add_argument("--date-checks", default=None,
+                    help=f"dating checks that confirm a transcript's own date; default <data>/{L.DATE_CHECKS_FILE} "
+                         f"when it exists")
     return ap
 
 
@@ -679,6 +687,17 @@ def resolve_date_overrides(arg: str | None, extra_roots: list[Path]) -> tuple[Pa
         return None, {}
     roots = [L.data_root() / d for d in L.TRANSCRIPT_DIRS] + list(extra_roots)
     return path, L.load_statement_date_overrides(path, roots)
+
+
+def resolve_date_checks(arg: str | None, extra_roots: list[Path]) -> tuple[Path | None, dict]:
+    """(path, checks). An explicit file must exist; the production default is used when present."""
+    path = Path(arg) if arg else L.data_root() / L.DATE_CHECKS_FILE
+    if not path.exists():
+        if arg:
+            raise SystemExit(f"--date-checks {arg} does not exist")
+        return None, {}
+    roots = [L.data_root() / d for d in L.TRANSCRIPT_DIRS] + list(extra_roots)
+    return path, L.load_statement_date_checks(path, roots)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -724,6 +743,14 @@ def main(argv: list[str] | None = None) -> int:
     log(f"date overrides: {ov_path or 'none'}" + ("" if ov_record is None else
         f" ({len(date_overrides)} entries; applied in this run {in_run}; "
         f"not in this run {len(ov_record['not_in_this_run'])})"))
+    ck_path, date_checks = resolve_date_checks(args.date_checks, [Path(args.transcripts)])
+    both = sorted(set(date_checks) & set(date_overrides))
+    if both:
+        raise SystemExit(f"REFUSING: {both[:5]} carry both an override and a check; one date source per transcript")
+    ck_record = None if ck_path is None else {
+        "file": str(ck_path), "sha256": L.date_overrides_digest(ck_path), "entries": sorted(date_checks),
+        "applied_in_this_run": sorted({L.transcript_id_from_path(p) for p in paths} & set(date_checks))}
+    log(f"date checks: {ck_path or 'none'}" + ("" if ck_record is None else f" ({len(date_checks)} entries)"))
 
     run_id = f"{L.utc_now().replace(':', '').replace('-', '')}-{args.stage}-{secrets.token_hex(4)}"
     workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "predict-work"
@@ -747,7 +774,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs = [{"args": args, "path": str(p), "out": out, "roster": roster, "exclusions": exclusions,
                  "router": router, "run_id": run_id, "workroot": workroot, "contract": contracts[stage],
                  "release": release, "code_revision": code_revision, "input_data_revision": input_data_revision,
-                 "date_overrides": date_overrides, "header_template": header_template,
+                 "date_overrides": date_overrides, "date_checks": date_checks, "header_template": header_template,
                  "extraction_spec": specs["extract"],
                  "extraction_schema_text": json.dumps(schemas["extract"], indent=1),
                  "spec": specs[stage], "schema": schemas[stage],
@@ -774,7 +801,7 @@ def main(argv: list[str] | None = None) -> int:
                     "policy_release": release, "code_revision": code_revision, "input_data_revision": input_data_revision,
                     "extraction_contract": contracts["extract"], "verification_contract": contracts["verify"],
                     "transcripts": len(paths), "summaries": summaries, "results": results,
-                    "date_overrides": ov_record,
+                    "date_overrides": ov_record, "date_checks": ck_record,
                     "router_accounts": [a[0] for a in router.accounts] if router else None,
                     "finished_at_utc": L.utc_now()}
         L.write_prediction_file(out / "_runs" / f"{run_id}.json", json.dumps(manifest, indent=1, sort_keys=True, ensure_ascii=False))

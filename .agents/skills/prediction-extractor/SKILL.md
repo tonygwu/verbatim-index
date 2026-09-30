@@ -59,9 +59,11 @@ Phase 2, not built:  resolution  ->  scoring  ->  forecasting leaderboard
   sourced correction from `statement_date_overrides.json` (an operator entry, or one the dating
   stage `scripts/date_recordings.py` confirmed against a fetched source), a checked upload or
   publication date, an UNCHECKED upload or publication date (only an upper bound), or unknown.
-  Relative time words resolve only against a date known to be the day of speech. A model that
-  sees an older recording says so in `statement_date_doubt`, and the record is held
-  (`date_hold`) until the recording is dated and extracted again. `declared_year` in the corpus
+  Relative time words resolve against the statement date, an unchecked upload date included
+  (the page labels it "not checked"). They are not resolved when a model sees an older
+  recording, which it reports in `statement_date_doubt`, or when the date is a range of days
+  that crosses 31 December; either holds the record (`date_hold`) until the recording is
+  dated and extracted again, and the funnel derives no deadline across such a range. `declared_year` in the corpus
   is a hardcoded constant and is never read.
 - The models are told the statement date and never today's date, so "future" is judged at the
   time of speaking and nothing about outcomes enters a prompt.

@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -59,6 +60,17 @@ def operator_entry(date, **extra):
 def with_override(rec, entry):
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
     return L.apply_statement_date_override(copy.deepcopy(rec), {tid: entry})
+
+
+def with_check(rec, entry):
+    tid = f"{rec['leader_slug']}/{rec['source_id']}"
+    return L.apply_statement_date_check(copy.deepcopy(rec), {tid: entry})
+
+
+def agent_check(date, verdict, **extra):
+    """A dating-stage entry that CONFIRMS the transcript's own date (review item 14)."""
+    return {**operator_entry(date, basis="podcast episode page"), "confirmed_by": "agent_plus_source_check",
+            "earliest_evidenced": True, "confirmation": {"verdict": verdict, "kind": "check"}, **extra}
 
 
 def date_line(header: str) -> str:
@@ -148,6 +160,48 @@ class HeaderLabels(unittest.TestCase):
                          "episode page. This date is an upper bound; that the words were spoken no earlier than "
                          "2025-09-14 is the dating agent's estimate, and no source confirms it.)")
 
+    def test_a_check_confirms_the_own_date_without_replacing_it(self):
+        """Review item 14: a confirmation of the transcript's own date is a CHECK. The date and its basis
+        stay the transcript's own, so no record is superseded, and the header says it was checked."""
+        rec = with_check(PUBLISHED, agent_check("2025-09-17", "dated"))
+        self.assertEqual(L.derive_statement_date(rec), ("2025-09-17", "publication_date"))
+        self.assertEqual(date_line(L.speaker_header(rec, ROSTER)),
+                         "Statement date: 2025-09-17 (publication date. A dating check found the words were spoken on "
+                         "this date: podcast episode page.)")
+        with self.assertRaisesRegex(L.PredictionError, "own date"):
+            with_check(PUBLISHED, agent_check("2025-09-16", "dated"))
+        with self.assertRaisesRegex(L.PredictionError, "both"):
+            L.apply_statement_date_check(with_override(PUBLISHED, operator_entry("2025-09-10")),
+                                         {"ada/hs-pod": agent_check("2025-09-17", "dated")})
+
+    def test_a_published_day_is_not_called_the_day_of_speech(self):
+        """Review item 4: publication_only says published on that day and spoken on or before it."""
+        line = date_line(L.speaker_header(with_check(PUBLISHED, agent_check("2025-09-17", "publication_only")), ROSTER))
+        self.assertEqual(line, "Statement date: 2025-09-17 (publication date. A dating check found the recording was "
+                               "published on this date: podcast episode page. The words were spoken on this date or "
+                               "before it.)")
+        self.assertNotIn("were spoken on this date:", line)
+
+    def test_a_range_with_an_unsourced_first_day_says_so(self):
+        """Review item 11: like check_unsourced, an estimate is labelled as an estimate."""
+        entry = {**operator_entry("2025-09-09", statement_date_earliest="2025-09-07", precision="days",
+                                  basis="All-In Summit 2025, Los Angeles"), "earliest_evidenced": False}
+        self.assertEqual(date_line(L.speaker_header(with_override(PUBLISHED, entry), ROSTER)),
+                         "Statement date: 2025-09-09 (the latest day the words could have been spoken, from a sourced "
+                         "correction: All-In Summit 2025, Los Angeles. The first possible day, 2025-09-07, is the "
+                         "dating agent's estimate, and no source confirms it. The publication date, 2025-09-17, is "
+                         "later and is NOT when the words were said.)")
+
+    def test_a_check_travels_onto_the_record(self):
+        rec = with_check(PUBLISHED, agent_check("2025-09-17", "publication_only",
+                                                statement_date_earliest="2025-09-14", precision="days"))
+        r = record(rec)
+        blk = r["source"]["statement_date_check"]
+        self.assertEqual((blk["verdict"], blk["statement_date_earliest"], blk["earliest_evidenced"]),
+                         ("publication_only", "2025-09-14", True))
+        self.assertEqual(r["source"]["statement_date_basis"], "publication_date")
+        self.assertEqual(L.check_schema(r, L.load_record_schema()), [])
+
     def test_only_the_date_line_varies(self):
         others = {tuple(x for x in L.speaker_header(r, ROSTER).splitlines() if not x.startswith("Statement date:"))
                   for r in (UPLOAD, {**STATED, "word_count": 30, "yt_title": "Ada at D10 2012", "declared_venue": "Re-uploads",
@@ -209,7 +263,8 @@ class SpecText(unittest.TestCase):
         for needle in ("## 1a. The statement date, and what you may compute from it",
                        '"NOT checked against the event"', "recording_older_than_stated",
                        "leave\n       `target_date` null", "whole range lies inside one calendar year",
-                       'never write a placeholder such as "the statement year"'):
+                       'never write a placeholder such as "the statement year"',
+                       "If nothing shows an older recording, resolve relative time words against it as the latest"):
             self.assertIn(needle, self.ext, needle)
 
     def test_period_results_name_the_period(self):
@@ -225,8 +280,11 @@ class SpecText(unittest.TestCase):
         self.assertNotIn("remember that the\n  statement date is an upper bound", self.ext)
 
     def test_shared_policy(self):
-        self.assertIn("Resolve relative dates only against a statement date the metadata marks as the\n"
-                      "day of speech or as a checked publication date.", self.pol)
+        # Coordinator's decision (review item 8): an unchecked date still resolves relative words, as the
+        # card labels it "not checked"; a doubt or a range across New Year stops the resolution.
+        self.assertIn("Resolve relative dates against the statement date.", self.pol)
+        self.assertIn("range of days that crosses 31 December", self.pol)
+        self.assertNotIn("Resolve relative dates only against", self.pol)
         self.assertIn("A note is not read by anything.", self.pol)
         self.assertIn("A stated pace or schedule", self.pol)
         self.assertNotIn("do not reject a correctly resolved relative\ndate for following the supplied metadata", self.pol)
@@ -238,7 +296,10 @@ class SpecText(unittest.TestCase):
         self.assertIn("dates the REPORT of a period's figure", self.ver)
 
     def test_skill_readme_no_longer_says_every_date_is_an_upload(self):
-        self.assertNotIn("The statement date is the YouTube upload date", (L.SKILL / "SKILL.md").read_text())
+        text = (L.SKILL / "SKILL.md").read_text()
+        self.assertNotIn("The statement date is the YouTube upload date", text)
+        self.assertNotIn("only against a date known to be the day of speech", text)
+        self.assertIn("Relative time words resolve against the statement date", text)
 
 
 class Schemas(unittest.TestCase):
@@ -338,6 +399,9 @@ class Holds(unittest.TestCase):
         self.assertEqual([h["check"] for h in record({**UPLOAD, "yt_upload_date": "20161011"}, target_date="2019",
                                                      target_date_text="this year")["date_hold"]],
                          ["relative_year_mismatch"])
+        # One year earlier is already a different year (review mutation M04).
+        self.assertEqual([h["check"] for h in record(ces, target_date="2012", target_date_text="this year")["date_hold"]],
+                         ["relative_year_mismatch"])
         # A year in the speaker's own words is the extractor's to use; no recomputation.
         self.assertEqual(record(UPLOAD, target_date="2030", target_date_text="in 10 years, by 2030")["date_hold"], [])
 
@@ -349,6 +413,79 @@ class Holds(unittest.TestCase):
         self.assertEqual([h["check"] for h in r["date_hold"]], ["relative_year_on_ambiguous_range"])
         inside = operator_entry("2025-01-20", statement_date_earliest="2025-01-03", precision="days")
         self.assertEqual(record(with_override(late, inside), target_date="2026", target_date_text="next year")["date_hold"], [])
+
+    def test_a_range_across_new_year_holds_even_with_no_target(self):
+        """Review probe P8: an extractor that obeys 1a leaves target_date null, and the funnel would then
+        derive 'next year' from the LAST day of a range that began the year before."""
+        late = {**UPLOAD, "yt_upload_date": "20250125"}
+        entry = operator_entry("2025-01-03", statement_date_earliest="2024-12-28", precision="days")
+        r = record(with_override(late, entry), target_date=None, target_date_text="next year")
+        self.assertEqual([h["check"] for h in r["date_hold"]], ["relative_year_on_ambiguous_range"])
+        self.assertIsNotNone(L.relative_phrase_crosses_new_year(r))
+        import phase2_resolvability as P2
+        self.assertEqual(P2.derived_deadline(r), (None, L.RANGE_CROSSES_NEW_YEAR))
+
+    def test_an_unchecked_upload_with_no_doubt_keeps_deriving(self):
+        """Review probe P9, coordinator's decision: the card already labels the date 'not checked'."""
+        r = record(UPLOAD, target_date=None, target_date_text="next year")
+        self.assertEqual(r["date_hold"], [])
+        import phase2_resolvability as P2
+        self.assertEqual(P2.derived_deadline(r)[0].isoformat(), "2020-12-31")
+
+    def test_a_placeholder_on_a_legacy_record_does_not_move_the_published_board(self):
+        """Review mutation M02: a 2.2 record's accepted flag is kept even when a 2.3 check would hold it."""
+        r = verify(record(UPLOAD, normalized_claim="Oracle hardware grows in the year following the recording."))
+        del r["date_hold"], r["extraction"]["statement_date_doubt"], r["verification"]["statement_date_doubt"]
+        self.assertTrue(L.date_hold_reasons(r))
+        self.assertTrue(L.compute_accepted(r))
+
+    def test_the_holding_doubt_wins_the_merge(self):
+        """Review mutation M10."""
+        tell = {"doubt": "cannot_tell", "evidence": None, "evidence_year": None}
+        self.assertEqual(L.merge_doubts([tell, OLDER, NO_DOUBT]), OLDER)
+        self.assertEqual(L.merge_doubts([NO_DOUBT, tell]), tell)
+
+    def test_a_precision_that_is_not_the_span_is_refused(self):
+        """Review mutation M12."""
+        with self.assertRaisesRegex(L.PredictionError, "precision"):
+            L.check_override_entry("ada/s1", operator_entry("2025-09-09", statement_date_earliest="2025-09-07",
+                                                            precision="months"))
+
+    def test_the_validator_refuses_a_doubt_without_a_hold(self):
+        """Review mutation M17."""
+        r = verify(record(UPLOAD))
+        del r["date_hold"]
+        out = []
+        V.check_record(r, UPLOAD["text"], Path("/x/ada/s1.jsonl"), 1, {}, L.load_record_schema(),
+                       {"c" * 12, "v" * 12}, out)
+        self.assertEqual([f["invariant"] for f in out], ["date_hold"])
+
+    def test_the_hold_needs_no_checkout(self):
+        """Review item 19: compute_accepted imported phase2_resolvability, which runs git rev-parse in the
+        working directory, so any caller outside a checkout crashed."""
+        code = ("import sys; sys.path.insert(0, %r); import predictions_lib as L; "
+                "r = {'source': {'statement_date': '2019-02-27'}, 'prediction': {'target_date': '2013', "
+                "'target_date_text': 'next year'}}; print([h['check'] for h in L.date_hold_reasons(r)])"
+                % str(Path(L.__file__).parent))
+        with tempfile.TemporaryDirectory() as td:
+            out = subprocess.run([sys.executable, "-c", code], cwd=td, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr[-600:])
+        self.assertEqual(out.stdout.strip(), "['relative_year_mismatch']")
+
+    def test_the_relative_parser_agrees_with_the_funnel(self):
+        """predictions_lib keeps its own copy so the hold needs no checkout; this pins it to the funnel's."""
+        import phase2_resolvability as P2
+        for said in ("2019-02-27", "2020-11-19", "2024-12-31", "2016-02-29"):
+            for text in ("this year", "next year", "the next year", "this time next year", "by the middle of next year",
+                         "in 5 years", "for the next 5-7 years", "in 18 months", "in two years", "within 3 weeks",
+                         "10 years from now or 20 years from now", "end of the year", "second half of this year",
+                         "sometime next year", "eventually", "every year", "at least 10 years", "in a few years"):
+                rec = {"source": {"statement_date": said}, "prediction": {"target_date": None,
+                                                                          "target_date_text": text,
+                                                                          "horizon_years_inferred": None}}
+                want = P2.derived_deadline(rec)[0]
+                got = L.relative_phrase_deadline(said, text)
+                self.assertEqual(got, want, (said, text))
 
     def test_a_legacy_record_is_judged_by_its_own_rules(self):
         """A 2.2 record carries no date_hold; its accepted flag is the published board and stays."""
@@ -436,6 +573,8 @@ class StaleNeverPays(unittest.TestCase):
         r = L.parse_lines(jl.read_text(), str(jl))[0]
         self.assertEqual(r["extraction"]["statement_date_doubt"], OLDER)
         self.assertEqual(r["prediction"]["claim_form"], "simple")
+        _, mp = D.paths_for(self.out, "ada", "s1")
+        self.assertEqual(json.loads(mp.read_text())["extract"]["statement_date_doubt"], OLDER)
         self.assertEqual([h["check"] for h in r["date_hold"]], ["statement_date_doubt:extraction"])
         self.assertEqual(L.check_schema(r, L.load_record_schema()), [])
 

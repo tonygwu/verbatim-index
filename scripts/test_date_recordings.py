@@ -131,7 +131,8 @@ def urllib_unquote(s):
 def pod_answer():
     src = {"url": "https://thepod.example.com/episodes/ada", "publisher": "The Pod", "date_on_source": "2025-09-12",
            "verbatim_excerpt": "Episode released September 12, 2025 in full", "kind": "primary"}
-    return proposal(verdict="publication_only", e="2025-09-12", l="2025-09-12", sources=[src], tid="ada/pod-ep-xyz789")
+    return proposal(verdict="publication_only", e="2025-09-12", l="2025-09-12", sources=[src], tid="ada/pod-ep-xyz789",
+                    reupload="no")
 
 
 def run(argv, agent=None, web=None):
@@ -166,7 +167,8 @@ class Run(unittest.TestCase):
                                                        event_kind=None, tid="ada/held-ep")})
             web = FakeWeb({LIVE_URL: 403, "wayback:" + LIVE_URL: LIVEBLOG,
                            "https://thepod.example.com/episodes/ada":
-                               "<html><body><p>Episode released September 12, 2025 in full</p></body></html>"})
+                               "<html><body><h1>Ada on the pod</h1><p>Episode released September 12, 2025 in full</p>"
+                               "</body></html>"})
             rc, out = run(fx.argv("--run"), agent, web)
             self.assertEqual(rc, 0, out)
             self.assertTrue(out.lstrip().startswith("SPENDS QUOTA: up to 3 gemini calls"), out[:200])
@@ -178,14 +180,15 @@ class Run(unittest.TestCase):
             chk = json.loads((fx.run / "source_checks" / "ada" / "re-upload-abc123.json").read_text())
             self.assertEqual(chk["checks"][0]["fetched_via"], "wayback")
             ov = L.load_statement_date_overrides(fx.run / "overrides.json", [fx.data / "transcripts_open"])
-            self.assertEqual({k: v["statement_date"] for k, v in ov.items()},
-                             {"ada/re-upload-abc123": "2012-05-30", "ada/pod-ep-xyz789": "2025-09-12"})
+            self.assertEqual({k: v["statement_date"] for k, v in ov.items()}, {"ada/re-upload-abc123": "2012-05-30"})
+            ck = L.load_statement_date_checks(fx.run / "checks.json", [fx.data / "transcripts_open"])
+            self.assertEqual({k: v["statement_date"] for k, v in ck.items()}, {"ada/pod-ep-xyz789": "2025-09-12"})
             queue = json.loads((fx.run / "queue.json").read_text())["queue"]
             self.assertEqual([(q["transcript_id"], q["reason"]) for q in queue], [("ada/held-ep", "cannot_date")])
             self.assertFalse((fx.data / "predictions" / "statement_date_overrides.json").read_text().count("abc123"))
             report = json.loads(next((fx.run / "runs").glob("*.json")).read_text())
             self.assertEqual(report["propose"]["succeeded"], 3)
-            self.assertEqual(report["merge"]["confirmed"], 2)
+            self.assertEqual((report["merge"]["confirmed"], report["merge"]["checked"]), (1, 1))
             self.assertEqual(report["merge"]["queued_by_reason"], {"cannot_date": 1})
 
     def test_a_rerun_spends_nothing_on_what_is_done(self):
@@ -251,6 +254,38 @@ class EmptyAnswer(unittest.TestCase):
             self.assertEqual(ov["ada/re-upload-abc123"]["statement_date"], "2012-05-30")
 
 
+class Scope(unittest.TestCase):
+    def test_a_doubt_on_the_meta_file_brings_the_transcript_in(self):
+        """Review item 18: every candidate refused, but the extractor doubted the date; it is dated anyway."""
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            pred = fx.data / "predictions" / "ada"
+            (pred / "pod-ep-xyz789.jsonl").write_text(rec_line("ada/pod-ep-xyz789", "p2", "youtube_upload_date",
+                                                               "2025-09-12", accepted=False) + "\n")
+            rc, out = run(fx.argv(), FakeAgent({}), FakeWeb({}))
+            self.assertIn("in scope: 2 transcripts", out)
+            (pred / "pod-ep-xyz789.meta.json").write_text(json.dumps({"extract": {"status": "ok", "statement_date_doubt": {
+                "doubt": "recording_older_than_stated", "evidence": "Ada 2019 tour", "evidence_year": 2019}}}))
+            rc, out = run(fx.argv(), FakeAgent({}), FakeWeb({}))
+            self.assertIn("in scope: 3 transcripts", out)
+
+    def test_an_explicit_production_file_must_exist_and_a_missing_default_is_said(self):
+        """Review item 16."""
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            argv = fx.argv()
+            argv[argv.index("--production-overrides") + 1] = str(fx.data / "nope.json")
+            with self.assertRaises(SystemExit) as cm:
+                run(argv, FakeAgent({}), FakeWeb({}))
+            self.assertIn("does not exist", str(cm.exception))
+            (fx.data / "predictions" / "statement_date_overrides.json").unlink()
+            argv = [a for a in fx.argv() if a]
+            i = argv.index("--production-overrides")
+            del argv[i:i + 2]
+            rc, out = run(argv, FakeAgent({}), FakeWeb({}))
+            self.assertIn("no production override file at", out)
+
+
 class Where(unittest.TestCase):
     def test_production_and_non_dating_directories_are_refused(self):
         with tempfile.TemporaryDirectory() as td:
@@ -271,7 +306,7 @@ class Fetch(unittest.TestCase):
             own = {"url": "https://www.youtube.com/watch?v=vid0000000A", "publisher": "YouTube", "date_on_source": None,
                    "verbatim_excerpt": "Uploaded on Feb 27, 2019 by Re Uploads", "kind": "secondary"}
             agent = FakeAgent({"ada/re-upload-abc123": proposal(verdict="publication_only", e="2019-02-27",
-                                                                 l="2019-02-27", sources=[own])})
+                                                                 l="2019-02-27", sources=[own], reupload="unclear")})
             ids = Path(td) / "ids.txt"
             ids.write_text("ada/re-upload-abc123\n")
             web = FakeWeb({})
@@ -279,6 +314,19 @@ class Fetch(unittest.TestCase):
             self.assertEqual(web.asked, [])
             q = json.loads((fx.run / "queue.json").read_text())["queue"]
             self.assertEqual(q[0]["reason"], "no_confirming_source")
+
+    def test_the_breaker_stops_calling_a_host_that_keeps_throttling(self):
+        """Review mutation M40: after five throttles in a row, a host is not called again this run."""
+        calls = []
+
+        def opener(url, timeout):
+            calls.append(url)
+            return 429, url, b"", "text/html"
+        f = DR.PoliteFetcher(opener, sleep=lambda s: None, interval=0.0)
+        for _ in range(3):
+            last = f.fetch("https://slow.example.com/a")
+        self.assertEqual(len([c for c in calls if c.startswith("https://slow.example.com")]), 6)
+        self.assertIn("breaker open", last["error"])
 
     def test_throttling_backs_off_then_gives_up_loudly(self):
         calls = []

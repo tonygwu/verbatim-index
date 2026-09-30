@@ -121,10 +121,12 @@ is faithful. Adding a number, entity, direction, threshold or scope absent
 from the window is not. Losing a qualification or changing a general adoption
 claim into a single demonstration is not faithful either.
 
-Resolve relative dates only against a statement date the metadata marks as the
-day of speech or as a checked publication date. "Next year" means the following
-calendar year. "In a few years" cannot supply an exact year. If the window, the
-title or the description shows the recording is older than an unchecked upload
-date, set `statement_date_doubt` to `recording_older_than_stated` and quote the
-evidence. The pipeline reads that field and holds the record until the recording
-is dated. A note is not read by anything.
+Resolve relative dates against the statement date. "Next year" means the
+following calendar year. "In a few years" cannot supply an exact year. When the
+date line gives a range of days that crosses 31 December, "this year" and "next
+year" name a different year for each end: do not resolve them; keep the words.
+If the window, the title or the description shows the recording is older than a
+date marked NOT checked against the event, set `statement_date_doubt` to
+`recording_older_than_stated`, quote the evidence, and do not resolve relative
+dates against that date. The pipeline reads that field and holds the record until
+the recording is dated. A note is not read by anything.

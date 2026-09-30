@@ -13,9 +13,11 @@
   "unknown": "Statement date: unknown (no date for this recording could be established.)",
   "override_day": "Statement date: {date} (the day the words were spoken, from a sourced correction: {basis}. {own_sentence})",
   "override_range": "Statement date: {date} (the latest day the words could have been spoken, from a sourced correction: {basis}. They were spoken between {earliest} and {date}. {own_sentence})",
+  "override_range_unsourced": "Statement date: {date} (the latest day the words could have been spoken, from a sourced correction: {basis}. The first possible day, {earliest}, is the dating agent's estimate, and no source confirms it. {own_sentence})",
   "own_later": "The {own_label}, {own_date}, is later and is NOT when the words were said.",
   "own_none": "The source carries no date of its own.",
   "check_day": "Statement date: {date} ({own_label}. A dating check found the words were spoken on this date: {basis}.)",
+  "check_published": "Statement date: {date} ({own_label}. A dating check found the recording was published on this date: {basis}. The words were spoken on this date or before it.)",
   "check_sourced": "Statement date: {date} ({own_label}. A dating check found no earlier event: {basis}. The words were spoken on this date or up to {days} days before it.)",
   "check_unsourced": "Statement date: {date} ({own_label}. A dating check found no earlier event: {basis}. This date is an upper bound; that the words were spoken no earlier than {earliest} is the dating agent's estimate, and no source confirms it.)"
  }

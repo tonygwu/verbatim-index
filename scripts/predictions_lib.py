@@ -23,11 +23,12 @@ touches them, so this module and its tests never spawn a process.
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timedelta as _timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -55,7 +56,8 @@ POLICY_MARKER = "{{ELIGIBILITY_POLICY}}"
 # hash (rescue round 4, critique 3 B2): a wording change needs a new release.
 HEADER_TEMPLATE_FILE = "STATEMENT_DATE_HEADER.json"
 HEADER_DATE_LINES = ("stated_in_page", "publication_date", "youtube_upload_date", "unknown", "override_day",
-                     "override_range", "own_later", "own_none", "check_day", "check_sourced", "check_unsourced")
+                     "override_range", "override_range_unsourced", "own_later", "own_none", "check_day",
+                     "check_published", "check_sourced", "check_unsourced")
 # What a stage may say about the date line (release 2.3). Only the first of the
 # two doubts holds a record; cannot_tell is recorded and does not.
 DOUBT_VALUES = ("none", "recording_older_than_stated", "cannot_tell")
@@ -542,6 +544,9 @@ def load_statement_date_overrides(path, transcript_roots) -> dict[str, dict]:
     """
     path = Path(path)
     doc = json.loads(path.read_text())
+    if isinstance(doc, dict) and "checks" in doc:
+        raise PredictionError(f"statement_date_override: {path} is a checks file; a check confirms a transcript's own "
+                              f"date and replaces nothing, so it is loaded with load_statement_date_checks")
     if not isinstance(doc, dict) or doc.get("schema_version") != 1 or not isinstance(doc.get("overrides"), dict) \
             or set(doc) - {"schema_version", "overrides", "notes"}:
         raise PredictionError(f"statement_date_override: {path} must be "
@@ -564,9 +569,81 @@ def load_statement_date_overrides(path, transcript_roots) -> dict[str, dict]:
                 # excerpt. Re-checked here, in every stage that loads the file, so an
                 # entry that cannot vouch for itself stops the run rather than a date.
                 import dating_lib  # noqa: PLC0415 -- dating_lib imports this module
-                dating_lib.verify_agent_entry(tid, e, trec, path)
+                dating_lib.verify_agent_entry(tid, e, trec, path, kind="override")
         out[tid] = e
     return out
+
+
+# A CHECK confirms that a transcript's own upload or publication date is when the
+# words were spoken (or a close bound), from the dating stage (design 1.1). Unlike an
+# override it replaces nothing: the date and its basis stay the transcript's own, so
+# no record is superseded (review item 14), and only the prompt header and the
+# record's statement_date_check block change.
+DATE_CHECKS_FILE = Path("predictions") / "statement_date_checks.json"
+CHECKABLE_BASES = ("youtube_upload_date", "publication_date")
+
+
+def load_statement_date_checks(path, transcript_roots) -> dict[str, dict]:
+    """{transcript_id: entry} from a checks file, or raise. Each entry must carry the transcript's own date."""
+    path = Path(path)
+    doc = json.loads(path.read_text())
+    if not isinstance(doc, dict) or doc.get("schema_version") != 1 or not isinstance(doc.get("checks"), dict) \
+            or set(doc) - {"schema_version", "checks", "notes"}:
+        raise PredictionError(f"statement_date_check: {path} must be "
+                              f'{{"schema_version": 1, "checks": {{transcript_id: entry}}}} (optional "notes")')
+    roots = [Path(r) for r in transcript_roots]
+    out: dict[str, dict] = {}
+    for tid, entry in doc["checks"].items():
+        e = check_override_entry(tid, entry)
+        slug, sid = tid.split("/", 1)
+        hits = [r / slug / f"{sid}.json" for r in roots if (r / slug / f"{sid}.json").is_file()]
+        if not hits:
+            raise PredictionError(f"statement_date_check: {tid}: unknown transcript; not under any of "
+                                  f"{[str(r) for r in roots]}")
+        for h in hits:
+            trec = json.loads(h.read_text())
+            _check_matches_own_date(tid, e, trec)
+            if e["confirmed_by"] == AGENT_CONFIRMATION:
+                import dating_lib  # noqa: PLC0415 -- dating_lib imports this module
+                dating_lib.verify_agent_entry(tid, e, trec, path, kind="check")
+        out[tid] = e
+    return out
+
+
+def _check_matches_own_date(tid: str, entry: dict, rec: dict) -> None:
+    own_date, own_basis = own_statement_date(rec)
+    if own_basis not in CHECKABLE_BASES or own_date != entry["statement_date"]:
+        raise PredictionError(f"statement_date_check: {tid}: the check's date {entry['statement_date']} is not the "
+                              f"transcript's own date ({own_date}, {own_basis}); a check confirms an upload or "
+                              f"publication date and cannot move it, which is an override's job")
+
+
+def apply_statement_date_check(rec: dict, checks: dict | None) -> dict:
+    """The transcript with its dating check attached. A transcript with no entry is the same object."""
+    if not checks:
+        return rec
+    tid = f"{rec.get('leader_slug')}/{rec.get('source_id')}"
+    entry = checks.get(tid)
+    if entry is None:
+        return rec
+    if "statement_date_override" in rec:
+        raise PredictionError(f"statement_date_check: {tid}: the transcript carries both an override and a check; "
+                              f"one date source per transcript")
+    e = check_override_entry(tid, entry)
+    _check_matches_own_date(tid, e, rec)
+    return {**rec, "statement_date_check": e}
+
+
+def check_block(rec: dict) -> dict | None:
+    """What a record carries about its dating check: the evidence, the verdict and any range."""
+    ck = rec.get("statement_date_check")
+    if ck is None:
+        return None
+    verdict = (ck.get("confirmation") or {}).get("verdict")
+    return {"basis": ck["basis"], "source_url": ck["source_url"], "verbatim_evidence": ck["verbatim_evidence"],
+            "confirmed_by": ck["confirmed_by"], "confirmed_at_utc": ck["confirmed_at_utc"],
+            **({"verdict": verdict} if verdict else {}),
+            **{k: ck[k] for k in ("statement_date_earliest", "precision", "earliest_evidenced") if k in ck}}
 
 
 def date_overrides_digest(path) -> str:
@@ -585,6 +662,9 @@ def apply_statement_date_override(rec: dict, overrides: dict | None) -> dict:
     entry = overrides.get(tid)
     if entry is None:
         return rec
+    if "statement_date_check" in rec:
+        raise PredictionError(f"statement_date_override: {tid}: the transcript carries both an override and a check; "
+                              f"one date source per transcript")
     check_override_against_transcript(tid, _strict_date(entry["statement_date"], tid), rec)
     return {**rec, "statement_date_override": dict(entry)}
 
@@ -838,29 +918,49 @@ def statement_date_line(rec: dict, template: dict) -> str:
     """
     lines = template["date_lines"]
     date, basis = derive_statement_date(rec)
+    if basis in CHECKABLE_BASES and "statement_date_check" in rec:
+        return _check_line(rec, rec["statement_date_check"], date, basis, template)
     if basis != OVERRIDE_DATE_BASIS:
         if basis not in lines:
             raise PredictionError(f"header: no date line for basis {basis!r}")
         return lines[basis].format(date=date)
     ov = rec["statement_date_override"]
     own_date, own_basis = own_statement_date(rec)
-    earliest = ov.get("statement_date_earliest") or date
-    fields = {"date": date, "earliest": earliest, "basis": ov["basis"],
-              "days": (datetime.strptime(date, "%Y-%m-%d") - datetime.strptime(earliest, "%Y-%m-%d")).days}
     if own_date is not None and own_basis not in template["own_basis_labels"]:
         raise PredictionError(f"header: no label for the transcript's own basis {own_basis!r}")
     if own_date is not None and own_date == date:
-        fields["own_label"] = template["own_basis_labels"][own_basis]
-        if earliest == date:
-            return lines["check_day"].format(**fields)
-        if "earliest_evidenced" not in ov:
-            raise PredictionError(f"header: {rec.get('leader_slug')}/{rec.get('source_id')}: an override on the "
-                                  f"transcript's own date with a range must say whether a source shows its first "
-                                  f"day (earliest_evidenced)")
-        return lines["check_sourced" if ov["earliest_evidenced"] else "check_unsourced"].format(**fields)
+        return _check_line(rec, ov, date, own_basis, template)
+    earliest = ov.get("statement_date_earliest") or date
+    fields = {"date": date, "earliest": earliest, "basis": ov["basis"]}
     own_sentence = (lines["own_none"] if own_date is None else
                     lines["own_later"].format(own_label=template["own_basis_labels"][own_basis], own_date=own_date))
-    return lines["override_day" if earliest == date else "override_range"].format(own_sentence=own_sentence, **fields)
+    if earliest == date:
+        key = "override_day"
+    else:
+        # An operator's range carries no flag and is the operator's sourced reading; an
+        # agent's range says whether a source shows its first day (review item 11).
+        key = "override_range" if ov.get("earliest_evidenced", True) else "override_range_unsourced"
+    return lines[key].format(own_sentence=own_sentence, **fields)
+
+
+def _check_line(rec: dict, entry: dict, date: str, own_basis: str, template: dict) -> str:
+    """The line for a date that is the transcript's own, confirmed by a dating check or an operator."""
+    lines = template["date_lines"]
+    if own_basis not in template["own_basis_labels"]:
+        raise PredictionError(f"header: no label for the transcript's own basis {own_basis!r}")
+    earliest = entry.get("statement_date_earliest") or date
+    fields = {"date": date, "earliest": earliest, "basis": entry["basis"],
+              "own_label": template["own_basis_labels"][own_basis],
+              "days": (datetime.strptime(date, "%Y-%m-%d") - datetime.strptime(earliest, "%Y-%m-%d")).days}
+    if earliest == date:
+        # A publication-only verdict says when the recording was PUBLISHED; the words may
+        # be older, so it never reads as the day of speech (review item 4).
+        verdict = (entry.get("confirmation") or {}).get("verdict")
+        return lines["check_published" if verdict == "publication_only" else "check_day"].format(**fields)
+    if "earliest_evidenced" not in entry:
+        raise PredictionError(f"header: {rec.get('leader_slug')}/{rec.get('source_id')}: a check on the transcript's "
+                              f"own date with a range must say whether a source shows its first day (earliest_evidenced)")
+    return lines["check_sourced" if entry["earliest_evidenced"] else "check_unsourced"].format(**fields)
 
 
 def speaker_header(rec: dict, roster_entry: dict | None, template: dict | None = None) -> str:
@@ -1109,33 +1209,119 @@ def merge_doubts(doubts: list[dict]) -> dict:
     return dict(doubts[0])
 
 
+# The funnel's relative-phrase reading (phase2_resolvability.derived_deadline), kept
+# here as well so that the hold, which compute_accepted reads, needs no import of the
+# funnel: that module runs `git rev-parse` in the working directory when imported,
+# and any caller outside a checkout crashed (review item 19).
+# test_predictions_release23.test_the_relative_parser_agrees_with_the_funnel pins the
+# two readings together over a table of phrases, so a change to either fails loudly.
+_REL_REFUSALS = (re.compile(r"\bevery\b", re.I),
+                 re.compile(r"\b(or more|plus|at least|more than|lifetime|forever|eventually|someday|some day|"
+                            r"or so|beyond)\b", re.I))
+REL_THIS_YEAR = re.compile(r"\b(this year|end of the year|end of this year|second half of this year)\b", re.I)
+REL_NEXT_YEAR = re.compile(r"\bnext year\b", re.I)
+_REL_THE_NEXT_YEAR = re.compile(r"\b(?:the|this time) next year\b", re.I)
+_REL_MID_NEXT_YEAR = re.compile(r"\b(?:first half|middle|mid)(?:\s+of)?[\s-]+next year\b", re.I)
+_REL_UNIT = re.compile(r"\b(year|month|week|day)s?\b", re.I)
+_REL_RANGE = re.compile(r"(\d+)\s*(?:to|or|through|-|–)\s*(\d+)\s*(year|month|week|day)s?", re.I)
+REL_NUMBER = re.compile(r"(\d+)\s*(year|month|week|day)s?", re.I)
+_REL_WORD_COUNTS = {"a": 1, "an": 1, "one": 1, "two": 2, "couple": 2, "three": 3, "few": 3, "several": 3, "four": 4,
+                    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12, "fifteen": 15,
+                    "twenty": 20}
+_REL_WORDY = re.compile(r"\b(" + "|".join(_REL_WORD_COUNTS) + r")\s+(?:more\s+)?(year|month|week|day)s?\b", re.I)
+_REL_DAYS = {"year": 365.25, "month": 30.44, "week": 7.0, "day": 1.0}
+RANGE_CROSSES_NEW_YEAR = "range_crosses_new_year"
+
+
+def _rel_add_span(start: _date, count: float, unit: str) -> _date:
+    whole = int(count)
+    if unit == "year" and count == whole:
+        try:
+            return start.replace(year=start.year + whole)
+        except ValueError:
+            return start.replace(year=start.year + whole, day=28)
+    if unit == "month" and count == whole:
+        m = start.month - 1 + whole
+        y, m = start.year + m // 12, m % 12 + 1
+        return _date(y, m, min(start.day, calendar.monthrange(y, m)[1]))
+    return start + _timedelta(days=round(count * _REL_DAYS[unit]))
+
+
+def relative_phrase_deadline(said: str, text: str | None) -> _date | None:
+    """The deadline the funnel derives from a relative phrase said on `said`, or None when it derives none."""
+    try:
+        d = _date.fromisoformat(str(said)[:10])
+    except ValueError:
+        return None
+    if text and REL_THIS_YEAR.search(text) and not REL_NEXT_YEAR.search(text):
+        return _date(d.year, 12, 31)
+    if not text or any(p.search(text) for p in _REL_REFUSALS):
+        return None
+    m = _REL_RANGE.search(text)
+    if m:
+        return _rel_add_span(d, max(int(m.group(1)), int(m.group(2))), m.group(3).lower())
+    m = REL_NUMBER.search(text)
+    if m:
+        return _rel_add_span(d, int(m.group(1)), m.group(2).lower())
+    m = _REL_WORDY.search(text)
+    if m:
+        return _rel_add_span(d, _REL_WORD_COUNTS[m.group(1).lower()], m.group(2).lower())
+    if REL_NEXT_YEAR.search(text):
+        if _REL_MID_NEXT_YEAR.search(text):
+            return _date(d.year + 1, 6, 30)
+        if _REL_THE_NEXT_YEAR.search(text):
+            return _rel_add_span(d, 1, "year")
+        return _date(d.year + 1, 12, 31)
+    return None
+
+
+def relative_phrase_crosses_new_year(rec: dict) -> str | None:
+    """Why "this year" or "next year" cannot be resolved on this record, or None.
+
+    Critique 1 point 13, the coordinator's decision of 2026-09-30 (review item 8): a
+    date known only as a range of days that crosses 31 December gives "next year" two
+    different answers, one for each end. The record is held (date_hold) and the
+    funnel must derive NO deadline from the phrase: phase2_resolvability.derived_deadline
+    calls this first and refuses with RANGE_CROSSES_NEW_YEAR. The range comes from the
+    record's statement_date_override or statement_date_check block.
+    """
+    src, pred = rec.get("source") or {}, rec.get("prediction") or {}
+    said, text = src.get("statement_date"), pred.get("target_date_text")
+    if not (said and text) or _YEAR_WORD_RE.search(text):
+        return None
+    if not (REL_THIS_YEAR.search(text) or REL_NEXT_YEAR.search(text)):
+        return None
+    earliest = ((src.get("statement_date_override") or {}).get("statement_date_earliest")
+                or (src.get("statement_date_check") or {}).get("statement_date_earliest"))
+    if earliest and earliest[:4] != said[:4]:
+        return f"{text!r} said between {earliest} and {said} names a different year for each end"
+    return None
+
+
 def relative_year_problem(rec: dict) -> dict | None:
     """A relative year the extractor resolved differently from the funnel, or on a range that spans two years.
 
     Design 2.5 (b): when target_date_text is "this year", "next year" or a number of
-    units, recompute the deadline from the statement date with the funnel's OWN
-    parser and require the same year. This catches the CES 2006 keynote, where the
-    extractor resolved "this year" from context against a 2013 upload. A year in
-    the speaker's own words is the extractor's to use, so those are not recomputed.
-
-    Critique 1 point 13: "next year" from a date known only to lie between
-    2024-12-20 and 2025-01-03 names two different years, so it is held, not guessed.
+    units, recompute the deadline from the statement date with the funnel's reading
+    (relative_phrase_deadline) and require the same year. This catches the CES 2006
+    keynote, where the extractor resolved "this year" from context against a 2013
+    upload. A year in the speaker's own words is the extractor's to use, so those are
+    not recomputed. A range across New Year holds the record whether or not the
+    extractor wrote a target date (review probe P8).
     """
     src, pred = rec.get("source") or {}, rec.get("prediction") or {}
     said, text, target = src.get("statement_date"), pred.get("target_date_text"), pred.get("target_date")
+    crossing = relative_phrase_crosses_new_year(rec)
+    if crossing:
+        return {"check": "relative_year_on_ambiguous_range",
+                "detail": crossing + (f"; target_date {target} cannot be checked" if target else "")}
     if not (said and text and target) or _YEAR_WORD_RE.search(text):
         return None
-    import phase2_resolvability as P2  # noqa: PLC0415 -- phase2_resolvability imports this module
-    year_words = bool(P2.THIS_YEAR.search(text) or P2.NEXT_YEAR.search(text))
-    if not (year_words or P2.NUMBER.search(text)):
+    year_words = bool(REL_THIS_YEAR.search(text) or REL_NEXT_YEAR.search(text))
+    if not (year_words or REL_NUMBER.search(text)):
         return None
-    earliest = (src.get("statement_date_override") or {}).get("statement_date_earliest")
-    if year_words and earliest and earliest[:4] != said[:4]:
-        return {"check": "relative_year_on_ambiguous_range",
-                "detail": f"{text!r} said between {earliest} and {said} names a different year for each end; "
-                          f"target_date {target} cannot be checked"}
-    probe = {**rec, "prediction": {**pred, "target_date": None, "horizon_years_inferred": None}}
-    deadline, how = P2.derived_deadline(probe)
+    deadline = relative_phrase_deadline(said, text)
+    how = "the funnel's reading"
     if deadline is None:
         return None
     # EARLIER than the funnel's year means the words were resolved against some
@@ -1273,6 +1459,7 @@ def make_record(rec: dict, roster_entry: dict | None, cand: dict, loc: dict, pro
             "venue": rec.get("declared_venue"), "kind": rec.get("declared_kind"),
             "statement_date": date, "statement_date_basis": basis,
             **({"statement_date_override": override_block(rec)} if basis == OVERRIDE_DATE_BASIS else {}),
+            **({"statement_date_check": check_block(rec)} if "statement_date_check" in rec else {}),
             "quote": cand["quote"], "quote_original": text[start:end],
             "quote_char_start": start, "quote_char_end": end,
             "quote_word_count": quote_word_count(text[start:end]),

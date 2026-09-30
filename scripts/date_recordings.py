@@ -96,8 +96,16 @@ def write(path: Path, text: str) -> None:
 # Scope
 # ---------------------------------------------------------------------------
 
-def load_production_overrides(path: Path | None) -> dict:
-    if path is None or not path.exists():
+def load_production_overrides(path: Path, explicit: bool) -> dict:
+    """The operator's entries, read only to skip what the operator already dated (review item 16).
+
+    A file named on the command line must exist. The default file may be absent, and
+    that is said, never passed over in silence.
+    """
+    if not path.exists():
+        if explicit:
+            raise SystemExit(f"--production-overrides {path} does not exist")
+        print(f"no production override file at {path}; no transcript is skipped as already dated by the operator")
         return {}
     return json.loads(path.read_text()).get("overrides") or {}
 
@@ -120,9 +128,11 @@ def select_scope(pred_dirs: list[Path], troots: list[Path], ids_file: Path | Non
                 continue
             tid = f"{f.parent.name}/{f.name[:-len('.jsonl')]}"
             records.setdefault(tid, []).extend(L.parse_lines(f.read_text(), str(f)))
-            mp = f.with_name(f.name[:-len(".jsonl")] + ".meta.json")
-            if mp.exists():
+        for mp in sorted(Path(d).glob("*/*.meta.json")):
+            if not mp.parent.name.startswith("_"):
+                tid = f"{mp.parent.name}/{mp.name[:-len('.meta.json')]}"
                 metas[tid] = json.loads(mp.read_text())
+                records.setdefault(tid, [])
     excluded: Counter = Counter()
     if ids_file is not None:
         wanted = [x.strip() for x in Path(ids_file).read_text().splitlines() if x.strip()]
@@ -131,14 +141,18 @@ def select_scope(pred_dirs: list[Path], troots: list[Path], ids_file: Path | Non
         for tid, recs in sorted(records.items()):
             acc = [r for r in recs if r.get("accepted")]
             held = [r for r in recs if r.get("date_hold")]
-            if not acc and not held:
+            # The extractor's or verifier's doubt, from the meta file, so a transcript all
+            # of whose candidates were refused is still dated (review item 18).
+            doubted = any(((metas.get(tid) or {}).get(stage) or {}).get("statement_date_doubt", {}).get("doubt")
+                          == L.HOLDING_DOUBT for stage in ("extract", "verify"))
+            if not acc and not held and not doubted:
                 excluded["no accepted or held record"] += 1
                 continue
-            bases = {(r.get("source") or {}).get("statement_date_basis") for r in acc + held}
+            bases = {(r.get("source") or {}).get("statement_date_basis") for r in acc + held + (recs if doubted else [])}
             if tid in production and production[tid].get("confirmed_by") == "operator":
                 excluded["operator override already present"] += 1
                 continue
-            if bases & set(UNDATED_BASES) or held:
+            if bases & set(UNDATED_BASES) or held or (doubted and "stated_in_page" not in bases):
                 wanted.append(tid)
             elif "stated_in_page" in bases:
                 excluded["stated_in_page (not dated by this stage)"] += 1
@@ -404,7 +418,8 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     run_dir = guard_run_dir(Path(args.run_dir), data)
     pred_dirs = args.predictions or [data / "predictions"]
     troots = args.transcripts or [data / d for d in L.TRANSCRIPT_DIRS]
-    production = load_production_overrides(args.production_overrides or data / L.DATE_OVERRIDES_FILE)
+    production = load_production_overrides(args.production_overrides or data / L.DATE_OVERRIDES_FILE,
+                                           explicit=args.production_overrides is not None)
     jobs, excluded, missing = select_scope(pred_dirs, troots, args.ids, production, args.limit)
     by_tid = {j["tid"]: j for j in jobs}
 
@@ -460,7 +475,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
 
     merge_report = None
     if "merge" in stages:
-        overrides, queue, not_proposed = {}, [], []
+        overrides, checks_out, queue, not_proposed = {}, {}, [], []
         rel = str(run_dir.relative_to(data)) if data in run_dir.parents else str(run_dir)
         for tid, job in sorted(by_tid.items()):
             pp = proposal_path(tid)
@@ -482,6 +497,9 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                                proposal_ref={"path": str(pp.relative_to(run_dir)), "sha256": sha}, run_rel=rel)
             if out["outcome"] == "override":
                 overrides[tid] = {**out["entry"], "confirmed_at_utc": DL.utc_stamp()}
+            elif out["outcome"] == "check":
+                # It confirms the transcript's own date: a check, which supersedes no record.
+                checks_out[tid] = {**out["entry"], "confirmed_at_utc": DL.utc_stamp()}
             else:
                 queue.append({"transcript_id": tid, "reason": out["reason"], "detail": out["detail"],
                               "proposal": str(pp.relative_to(run_dir)), "checks": out["checks"]})
@@ -497,9 +515,17 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         L.load_statement_date_overrides(staged, troots)
         write(ov_path, body)
         staged.unlink()
+        ck_body = json.dumps({"schema_version": 1, "notes": f"Dating run {run_dir.name}, merge {DL.MERGE_VERSION}: "
+                              f"checks that CONFIRM a transcript's own date. Pass with --date-checks.",
+                              "checks": checks_out}, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
+        staged = run_dir / "checks.json.candidate"
+        write(staged, ck_body)
+        L.load_statement_date_checks(staged, troots)
+        write(run_dir / "checks.json", ck_body)
+        staged.unlink()
         write(run_dir / "queue.json", json.dumps({"schema_version": 1, "queue": queue}, indent=1, sort_keys=True,
                                                  ensure_ascii=False) + "\n")
-        merge_report = {"confirmed": len(overrides), "queued": len(queue),
+        merge_report = {"confirmed": len(overrides), "checked": len(checks_out), "queued": len(queue),
                         "queued_by_reason": dict(Counter(q["reason"] for q in queue)), "not_proposed": not_proposed}
 
     report = {"run_id": run_id, "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
@@ -515,7 +541,8 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
               f"failed {s['failed']} {s['error_taxonomy']}, skipped {s['skipped']}")
     print(f"fetch outcomes: {dict(fetcher.outcomes)}")
     if merge_report:
-        print(f"merge: confirmed {merge_report['confirmed']}, queued {merge_report['queued']} "
+        print(f"merge: confirmed {merge_report['confirmed']} (overrides), checked {merge_report['checked']} "
+              f"(own date confirmed), queued {merge_report['queued']} "
               f"{merge_report['queued_by_reason']}, not proposed or not checked {len(merge_report['not_proposed'])}")
     return 1 if report["propose"]["failed"] or report["check"]["failed"] else 0
 

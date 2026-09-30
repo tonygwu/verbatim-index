@@ -30,16 +30,17 @@ about later events change what you extract.
   quarter phrase only if it lies inside one quarter; otherwise treat the phrase as in the
   "unknown" case below.
 - "NOT checked against the event": the date is only an upper bound, and the recording may be
-  years older. Against such a date:
-    1. do not write a calendar year into the claim or the criterion unless the speaker said
-       that year;
+  years older. Test it against the title, the description and the transcript.
+  If nothing shows an older recording, resolve relative time words against it as the latest
+  possible date, as for any other date; the page labels the date "not checked". If anything
+  shows an older recording (a conference name with a year, "welcome to CES 2006", a product that
+  launched years before this date, a remark such as "here in 2008"), then:
+    1. set `statement_date_doubt.doubt` to `recording_older_than_stated` and copy the words
+       that show it into `statement_date_doubt.evidence`;
     2. do not turn a relative time phrase into a calendar date: leave
        `target_date` null and keep the speaker's words in `target_date_text`;
-    3. test the date against the title, the description and the transcript. If anything shows
-       an older recording (a conference name with a year, "welcome to CES 2006", a product that
-       launched years before this date, a remark such as "here in 2008"), set
-       `statement_date_doubt.doubt` to `recording_older_than_stated` and copy the words that
-       show it into `statement_date_doubt.evidence`.
+    3. do not write a calendar year into the claim or the criterion unless the speaker said
+       that year.
   The pipeline dates the recording and then extracts it again, and it holds every record of a
   transcript with that doubt until then. Guessing the year does not save a prediction; it
   produces a wrong claim.

@@ -56,6 +56,7 @@ LIVEBLOG = ("<html><head><title>Ada live at DX</title><script>var x = 1;</script
             "</body></html>")
 SCHEDULE = ("<html><body><h1>Summit 2025</h1><p>The summit runs September 7-9, 2025 in Los Angeles.</p>"
             "</body></html>")
+POD_PAGE = "<html><body><h1>Ada on the pod</h1><p>Episode released September 12, 2025 in full</p></body></html>"
 
 
 def proposal(verdict="dated", e="2012-05-30", l="2012-05-30", sources=None, tid="ada/re-upload-abc123", **over):
@@ -132,7 +133,7 @@ class OwnPage(unittest.TestCase):
         src = {"url": "https://www.youtube.com/watch?v=vid0000000A", "publisher": "YouTube",
                "date_on_source": "2019-02-27", "verbatim_excerpt": "Uploaded on Feb 27, 2019 by Re Uploads",
                "kind": "secondary"}
-        obj = proposal(verdict="publication_only", e="2019-02-27", l="2019-02-27", sources=[src])
+        obj = proposal(verdict="publication_only", e="2019-02-27", l="2019-02-27", sources=[src], reupload="unclear")
         chk = checks_for(obj, {}, D10)
         self.assertFalse(chk[0]["fetched"])
         self.assertIn("recording's own video id", chk[0]["refused"])
@@ -184,6 +185,164 @@ class Check(unittest.TestCase):
         self.assertFalse(DL.confirms(c, proposal(), D10)[0])
 
 
+class ReviewOwnPage(unittest.TestCase):
+    """Review item 1: the own-page rule on every address the page could be reached by."""
+
+    def test_copies_front_ends_and_redirectors_are_refused(self):
+        for url in ("https://archive.ph/AbCdE", "https://archive.today/AbCdE", "https://archive.is/AbCdE",
+                    "https://yewtu.be/watch?v=vid0000000A", "https://invidious.example.net/watch?v=zzz",
+                    "https://piped.video/watch?v=zzz", "https://www.google.com/url?q=https://liveblog.example.com/x"):
+            self.assertIsNotNone(DL.own_page_reason(url, D10), url)
+
+    def test_the_query_string_does_not_hide_the_transcripts_own_page(self):
+        web = {**D10, "url": "https://podcasts.example.com/show/ep-12?utm_source=feed", "video_id": None}
+        self.assertIsNotNone(DL.own_page_reason("https://podcasts.example.com/show/ep-12?ref=search", web))
+
+    def test_a_redirect_to_the_own_page_is_refused(self):
+        """Probe P3: a shortener that lands on the recording's own YouTube page."""
+        src = {"url": "https://bit.ly/3xYz", "publisher": "x", "date_on_source": None,
+               "verbatim_excerpt": "views Premiered Feb 27, 2019 Ada interview", "kind": "secondary"}
+        page = "<html><body><div>1,234 views Premiered Feb 27, 2019 Ada interview</div></body></html>"
+        c = DL.check_source(src, D10, {"status": 200, "final_url": "https://www.youtube.com/watch?v=vid0000000A",
+                                       "body": page.encode(), "via": "direct", "error": None})
+        self.assertIsNotNone(c["refused"])
+        self.assertFalse(DL.confirms(c, proposal(verdict="publication_only", e="2019-02-27", l="2019-02-27",
+                                                 sources=[src]), D10)[0])
+
+    def test_a_page_embedding_the_recording_is_refused(self):
+        """Probe P5: a blog embeds the video; its VideoObject carries the upload date."""
+        blog = ('<html><head><script type="application/ld+json">{"@type":"VideoObject","name":"Ada interview",'
+                '"uploadDate":"2019-02-27T08:00:00-08:00","embedUrl":"https://www.youtube.com/embed/vid0000000A"}'
+                '</script></head><body><iframe src="https://www.youtube.com/embed/vid0000000A"></iframe></body></html>')
+        src = {"url": "https://someblog.example/ada", "publisher": "blog", "date_on_source": None,
+               "verbatim_excerpt": '"name":"Ada interview","uploadDate":"2019-02-27T08:00:00-08:00"', "kind": "secondary"}
+        c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": blog.encode(), "via": "direct",
+                                       "error": None})
+        ok, why = DL.confirms(c, proposal(verdict="publication_only", e="2019-02-27", l="2019-02-27", sources=[src]), D10)
+        self.assertFalse(ok)
+        self.assertRegex(why, "embeds|upload")
+
+    def test_an_embed_far_from_the_excerpt_still_refuses_the_page(self):
+        """The window is 1,000 characters each side; the page-level flag sees an embed outside it."""
+        page = ('<html><body><iframe src="https://www.youtube.com/embed/vid0000000A"></iframe>' + "<p>filler</p>" * 400
+                + "<p>Ada talked on May 30, 2012 at the DX conference</p></body></html>")
+        src = {"url": "https://someblog.example/ada-dx", "publisher": "blog", "date_on_source": None,
+               "verbatim_excerpt": "Ada talked on May 30, 2012 at the DX conference", "kind": "secondary"}
+        c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": page.encode(), "via": "direct",
+                                       "error": None})
+        self.assertNotIn("vid0000000A", c["window"])
+        ok, why = DL.confirms(c, proposal(sources=[src]), D10)
+        self.assertFalse(ok)
+        self.assertIn("embeds the recording's own video", why)
+
+    def test_an_upload_date_beside_the_excerpt_refuses_it(self):
+        """A VideoObject's uploadDate dates an upload, even of another copy of the talk."""
+        page = ('<html><head><script type="application/ld+json">{"@type":"VideoObject","name":"Ada at DX",'
+                '"uploadDate":"2012-05-30T10:00:00-07:00"}</script></head><body><p>Ada at DX</p></body></html>')
+        src = {"url": "https://mirror.example/ada-dx", "publisher": "mirror", "date_on_source": None,
+               "verbatim_excerpt": '"name":"Ada at DX","uploadDate":"2012-05-30T10:00:00-07:00"', "kind": "secondary"}
+        c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": page.encode(), "via": "direct",
+                                       "error": None})
+        self.assertFalse(c["page_names_video_id"])
+        ok, why = DL.confirms(c, proposal(sources=[src]), D10)
+        self.assertFalse(ok)
+        self.assertIn("uploadDate", why)
+
+    def test_a_stored_check_is_rechecked_for_its_own_page(self):
+        """Review mutation M23: a stored check that claims no refusal is re-derived, not trusted."""
+        src = {"url": "https://www.youtube.com/watch?v=someOtherVid", "publisher": "x", "date_on_source": None,
+               "verbatim_excerpt": "Posted May 30, 2012 at 4:26 pm PT", "kind": "secondary"}
+        c = DL.check_source({**src, "url": "https://liveblog.example.com/2012/05/30/ada-live"}, D10,
+                            {"status": 200, "final_url": "https://liveblog.example.com/2012/05/30/ada-live",
+                             "body": LIVEBLOG.encode(), "via": "direct", "error": None})
+        c = {**c, "url": src["url"], "final_url": src["url"]}
+        ok, why = DL.confirms(c, proposal(sources=[src]), D10)
+        self.assertFalse(ok)
+        self.assertIn("YouTube", why)
+
+
+class ReviewMerge(unittest.TestCase):
+    PAGES = {"https://liveblog.example.com/2012/05/30/ada-live": LIVEBLOG}
+
+    def test_a_page_about_another_event_is_refused(self):
+        """Probe P1 / review item 12: the window names neither the speaker nor the event."""
+        src = {"url": "https://liveblog.example.com/2010/06/01/d8", "publisher": "x", "date_on_source": None,
+               "verbatim_excerpt": "Posted June 1, 2010 at 4:00 pm PT", "kind": "secondary"}
+        page = "<html><body><p>Posted June 1, 2010 at 4:00 pm PT. Someone Else took the stage at D8.</p></body></html>"
+        obj = proposal(e="2010-06-01", l="2010-06-01", sources=[src], event="An interview")
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: page}))
+        self.assertEqual(out["outcome"], "queue")
+        self.assertIn("name neither the speaker nor the event", out["detail"])
+
+    def test_the_statement_date_itself_must_be_sourced(self):
+        """Probe P2 / review item 2: a source for the first day does not date the last."""
+        obj = proposal(e="2012-05-30", l="2012-11-30")
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES))
+        self.assertEqual((out["outcome"], out["reason"]), ("queue", "latest_day_unsourced"))
+        month = "<html><body><p>Ada spoke at DX in May 2012, the tenth one</p></body></html>"
+        src = {"url": "https://recap.example.com/dx", "publisher": "x", "date_on_source": None,
+               "verbatim_excerpt": "Ada spoke at DX in May 2012", "kind": "secondary"}
+        obj = proposal(e="2012-05-01", l="2012-05-31", sources=[src])
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: month}))
+        self.assertEqual((out["outcome"], out["entry"]["statement_date"]), ("override", "2012-05-31"))
+
+    def test_a_utc_stamp_cannot_date_a_speech(self):
+        """Probe P6 / review item 13: 9:30 pm PT on May 30 is 04:30Z on May 31; a speech keeps May 30."""
+        live = "<html><body><time>2012-05-31T04:30:00Z</time> Ada live at DX session</body></html>"
+        src = {"url": "https://live.example.com/dx", "publisher": "x", "date_on_source": None,
+               "verbatim_excerpt": "2012-05-31T04:30:00Z Ada live at DX", "kind": "secondary"}
+        dated = proposal(e="2012-05-31", l="2012-05-31", sources=[src])
+        out = DL.merge_one(D10, doc_for(dated), checks_for(dated, {src["url"]: live}))
+        self.assertEqual((out["outcome"], out["reason"]), ("queue", "no_confirming_source"))
+        self.assertIn("UTC", out["detail"])
+        self.assertIsNone(DL.date_for_verdict(DL.dates_in_text("2012-05-31T04:30:00Z")[0], "dated"))
+        self.assertEqual(DL.date_for_verdict(DL.dates_in_text("2012-05-31T04:30:00Z")[0], "publication_only")[0].isoformat(),
+                         "2012-05-31")
+
+    def test_publication_only_of_a_reupload_is_queued(self):
+        """Review item 9: a re-upload's publication date is not the event's."""
+        obj = proposal(verdict="publication_only", reupload="yes")
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES))
+        self.assertEqual((out["outcome"], out["reason"]), ("queue", "reupload_publication_only"))
+
+    def test_checks_the_proposal_never_cited_do_not_count(self):
+        """Probe P7 / review item 10, enforced in merge_one so the loader enforces it too."""
+        obj = proposal(sources=[{**proposal()["sources"][0], "verbatim_excerpt": "cited words that are nowhere at all"}])
+        other = {"url": "https://other.example.com/", "publisher": "x", "date_on_source": None,
+                 "verbatim_excerpt": "Posted May 30, 2012 at 4:26 pm PT", "kind": "secondary"}
+        good = DL.check_source(other, D10, {"status": 200, "final_url": other["url"], "body": LIVEBLOG.encode(),
+                                            "via": "direct", "error": None})
+        out = DL.merge_one(D10, doc_for(obj), [good])
+        self.assertEqual((out["outcome"], out["reason"]), ("queue", "no_confirming_source"))
+        self.assertIn("did not cite", out["detail"])
+
+    def test_an_undated_transcript_is_bounded_by_its_fetch_date(self):
+        """Review item 3: no future dates, even when the source carries none."""
+        undated = {k: v for k, v in D10.items() if k != "yt_upload_date"}
+        undated["fetched_at_utc"] = "2012-05-29T23:00:00Z"
+        obj = proposal()
+        out = DL.merge_one(undated, doc_for(obj, undated), checks_for(obj, self.PAGES, undated))
+        self.assertEqual((out["outcome"], out["reason"]), ("queue", "after_upper_bound"))
+        self.assertIn("fetched", out["detail"])
+        prompt, _ = DL.build_dating_prompt(undated, [])
+        self.assertIn("UPPER BOUND: 2012-05-29 (the day this transcript was fetched", prompt)
+        del undated["fetched_at_utc"]
+        out = DL.merge_one(undated, doc_for(obj, undated), checks_for(obj, self.PAGES, undated))
+        self.assertEqual((out["outcome"], out["reason"]), ("queue", "no_upper_bound"))
+
+
+class ReviewLeads(unittest.TestCase):
+    def test_a_dated_sentence_that_repeats_the_quote_is_dropped(self):
+        """Review mutation M35: four words of the quote in a row make it claim text."""
+        rec = {"prediction_id": "p1", "source": {"statement_date": "2019-02-27",
+                                                 "quote": "the hardware business starts growing again soon"},
+               "prediction": {}, "verification": {},
+               "extraction": {"gate_notes": "In May 2012 the hardware business starts growing again soon."}}
+        leads, dropped = DL.leads_from_records([rec], None)
+        self.assertEqual(leads, [])
+        self.assertEqual(dropped["shares_claim_text"], 1)
+
+
 class Merge(unittest.TestCase):
     PAGES = {"https://liveblog.example.com/2012/05/30/ada-live": LIVEBLOG}
 
@@ -203,7 +362,7 @@ class Merge(unittest.TestCase):
     def test_a_range_takes_the_latest_day_and_records_the_first(self):
         src = {"url": "https://summit.example.com/2025", "publisher": "Summit", "date_on_source": None,
                "verbatim_excerpt": "The summit runs September 7-9, 2025 in Los Angeles", "kind": "primary"}
-        obj = proposal(e="2025-09-07", l="2025-09-09", sources=[src], tid="ada/pod-ep-xyz789")
+        obj = proposal(e="2025-09-07", l="2025-09-09", sources=[src], tid="ada/pod-ep-xyz789", event="Summit 2025, Ada talk")
         out = DL.merge_one(PODCAST, doc_for(obj, PODCAST), checks_for(obj, {src["url"]: SCHEDULE}, PODCAST))
         self.assertEqual(out["outcome"], "override", out)
         e = out["entry"]
@@ -221,7 +380,8 @@ class Merge(unittest.TestCase):
                "date_on_source": "2025-09-13", "verbatim_excerpt": "Published on Sep 13, 2025 by staff",
                "kind": "secondary"}
         page = "<html><body><p>Published on Sep 13, 2025 by staff</p></body></html>"
-        obj = proposal(verdict="publication_only", e="2025-09-13", l="2025-09-13", sources=[src], tid="ada/pod-ep-xyz789")
+        obj = proposal(verdict="publication_only", e="2025-09-13", l="2025-09-13", sources=[src], tid="ada/pod-ep-xyz789",
+                       reupload="no")
         out = DL.merge_one(PODCAST, doc_for(obj, PODCAST), checks_for(obj, {src["url"]: page}, PODCAST))
         self.assertEqual((out["outcome"], out["reason"]), ("queue", "after_upper_bound"))
         self.assertIn("2025-09-12", out["detail"])
@@ -234,16 +394,17 @@ class Merge(unittest.TestCase):
         self.assertEqual((out["outcome"], out["reason"]), ("queue", "strong_year_conflict"))
 
     def test_on_the_own_date_it_is_a_check_with_an_honest_first_day(self):
+        """Review item 14: a confirmation of the own date is a CHECK, which supersedes nothing."""
         src = {"url": "https://thepod.example.com/episodes/ada", "publisher": "The Pod", "date_on_source": "2025-09-12",
                "verbatim_excerpt": "Episode released September 12, 2025 in full", "kind": "primary"}
-        page = "<html><body><p>Episode released September 12, 2025 in full</p></body></html>"
-        obj = proposal(verdict="publication_only", e="2025-09-10", l="2025-09-12", sources=[src], tid="ada/pod-ep-xyz789")
-        out = DL.merge_one(PODCAST, doc_for(obj, PODCAST), checks_for(obj, {src["url"]: page}, PODCAST))
-        self.assertEqual(out["outcome"], "override", out)
+        obj = proposal(verdict="publication_only", e="2025-09-10", l="2025-09-12", sources=[src], tid="ada/pod-ep-xyz789",
+                       reupload="no")
+        out = DL.merge_one(PODCAST, doc_for(obj, PODCAST), checks_for(obj, {src["url"]: POD_PAGE}, PODCAST))
+        self.assertEqual(out["outcome"], "check", out)
         e = out["entry"]
         self.assertEqual((e["statement_date"], e["earliest_evidenced"]), ("2025-09-12", False))
-        rec = L.apply_statement_date_override(copy.deepcopy(PODCAST), {"ada/pod-ep-xyz789": {**e,
-                                              "confirmed_at_utc": "2026-09-30T00:00:00Z"}})
+        rec = L.apply_statement_date_check(copy.deepcopy(PODCAST), {"ada/pod-ep-xyz789": {**e,
+                                           "confirmed_at_utc": "2026-09-30T00:00:00Z"}})
         line = [x for x in L.speaker_header(rec, None).splitlines() if x.startswith("Statement date")][0]
         self.assertIn("YouTube upload date. A dating check found no earlier event", line)
         self.assertIn("no source confirms it", line)
@@ -261,8 +422,8 @@ class Merge(unittest.TestCase):
         self.assertEqual((out["outcome"], out["reason"]), ("queue", "invalid_proposal"))
 
 
-def write_run(root: Path, rec: dict, obj: dict, pages: dict) -> tuple[Path, dict]:
-    """A data root with one transcript and a dating run holding one proposal; returns the override file."""
+def write_run(root: Path, rec: dict, obj: dict, pages: dict, kind: str = "override") -> tuple[Path, dict]:
+    """A data root with one transcript and a dating run holding one proposal; returns the entry's file."""
     (root / "transcripts_open" / rec["leader_slug"]).mkdir(parents=True)
     (root / "transcripts_open" / rec["leader_slug"] / f"{rec['source_id']}.json").write_text(json.dumps(rec))
     run = root / "predictions" / "_experiments" / "dating-test"
@@ -273,10 +434,11 @@ def write_run(root: Path, rec: dict, obj: dict, pages: dict) -> tuple[Path, dict
     out = DL.merge_one(rec, doc, checks_for(obj, pages, rec),
                        proposal_ref={"path": str(prop.relative_to(run)), "sha256": hashlib.sha256(prop.read_bytes()).hexdigest()},
                        run_rel="predictions/_experiments/dating-test")
-    assert out["outcome"] == "override", out
+    assert out["outcome"] == kind, out
     entry = {**out["entry"], "confirmed_at_utc": "2026-09-30T00:00:00Z"}
-    path = run / "overrides.json"
-    path.write_text(json.dumps({"schema_version": 1, "overrides": {obj["transcript_id"]: entry}}))
+    path = run / ("overrides.json" if kind == "override" else "checks.json")
+    path.write_text(json.dumps({"schema_version": 1, ("overrides" if kind == "override" else "checks"):
+                                {obj["transcript_id"]: entry}}))
     return path, entry
 
 
@@ -330,6 +492,24 @@ class Loader(unittest.TestCase):
         self.rewrite(e)
         with self.assertRaisesRegex(L.PredictionError, "confirmation block"):
             L.load_statement_date_overrides(self.path, self.roots)
+
+    def test_a_check_loads_through_its_own_loader(self):
+        """Review item 14: checks.json, re-verified the same way, and never an override."""
+        tmp = Path(self.tmp.name) / "c"
+        src = {"url": "https://thepod.example.com/episodes/ada", "publisher": "The Pod", "date_on_source": "2025-09-12",
+               "verbatim_excerpt": "Episode released September 12, 2025 in full", "kind": "primary"}
+        obj = proposal(verdict="publication_only", e="2025-09-12", l="2025-09-12", sources=[src],
+                       tid="ada/pod-ep-xyz789", reupload="no")
+        path, entry = write_run(tmp, PODCAST, obj, {src["url"]: POD_PAGE}, kind="check")
+        got = L.load_statement_date_checks(path, [tmp / "transcripts_open"])
+        self.assertEqual(got["ada/pod-ep-xyz789"]["statement_date"], "2025-09-12")
+        with self.assertRaisesRegex(L.PredictionError, "checks"):
+            L.load_statement_date_overrides(path, [tmp / "transcripts_open"])
+        e = copy.deepcopy(entry)
+        e["confirmation"]["source_checks"][0]["window"] = "nothing here"
+        path.write_text(json.dumps({"schema_version": 1, "checks": {"ada/pod-ep-xyz789": e}}))
+        with self.assertRaisesRegex(L.PredictionError, "no longer confirms"):
+            L.load_statement_date_checks(path, [tmp / "transcripts_open"])
 
     def test_the_operator_entry_shape_still_loads(self):
         andreessen = {"statement_date": "1996-10-16", "basis": "Opening keynote", "source_url": "http://example.com/pr",

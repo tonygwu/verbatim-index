@@ -53,6 +53,22 @@
             "earliest_evidenced": {"type": "boolean", "description": "Optional. Whether a checked source shows the first day, not only the dating agent's estimate."}
           }
         },
+        "statement_date_check": {
+          "type": "object", "additionalProperties": false,
+          "required": ["basis", "source_url", "verbatim_evidence", "confirmed_by", "confirmed_at_utc"],
+          "description": "Optional, release 2.3 on: a dating check CONFIRMED the transcript's own upload or publication date (statement_date_basis stays that basis). It replaced nothing, so no record is superseded by it.",
+          "properties": {
+            "basis": {"type": "string", "minLength": 1},
+            "source_url": {"type": "string", "minLength": 1},
+            "verbatim_evidence": {"type": "string", "minLength": 1},
+            "confirmed_by": {"type": "string", "minLength": 1},
+            "confirmed_at_utc": {"type": "string", "minLength": 1},
+            "verdict": {"enum": ["dated", "publication_only"]},
+            "statement_date_earliest": {"type": "string", "minLength": 10, "maxLength": 10},
+            "precision": {"enum": ["day", "days", "months", "years"]},
+            "earliest_evidenced": {"type": "boolean"}
+          }
+        },
         "quote": {"type": "string", "minLength": 1, "description": "The span as the model wrote it."},
         "quote_original": {"type": "string", "minLength": 1, "description": "text[quote_char_start:quote_char_end] from the original transcript. May contain a [hh:mm:ss] mark."},
         "quote_char_start": {"type": "integer", "minimum": 0},

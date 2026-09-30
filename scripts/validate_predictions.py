@@ -125,6 +125,9 @@ def check_record(rec: dict, text: str, file: Path, n: int, exclusions: dict, sch
     if (basis == L.OVERRIDE_DATE_BASIS) != ("statement_date_override" in src):
         fail(out, file, n, "statement_date",
              f"basis {basis!r} with{'out' if 'statement_date_override' not in src else ''} a statement_date_override block")
+    if "statement_date_check" in src and basis not in L.CHECKABLE_BASES:
+        fail(out, file, n, "statement_date", f"a statement_date_check block on basis {basis!r}; a check confirms an "
+                                             f"upload or publication date only")
     p = rec["prediction"]
     if not L.target_date_valid(p["target_date"]):
         fail(out, file, n, "target_date", f"{p['target_date']!r} is not YYYY, YYYY-MM or YYYY-MM-DD")
