@@ -141,8 +141,11 @@ def test_apply(ov: dict) -> None:
     check("no override: date and basis unchanged",
           L.derive_statement_date(plain) == ("2013-07-05", "youtube_upload_date"))
     header_before = L.speaker_header(plain, ROSTER)
-    check("no override: the prompt header is the old one, byte for byte",
-          "Statement date: 2013-07-05 (YouTube upload date; the recording is no later than this)\n" in header_before)
+    # Release 2.3 relabelled every unchecked upload date (design 2.1); the line is pinned by
+    # POLICY_RELEASE.json contracts.header, so this is the one line a new release may change.
+    check("no override: the prompt header labels the upload date as an unchecked upper bound",
+          "Statement date: no later than 2013-07-05 (YouTube upload date, NOT checked against the event. The "
+          "recording may be years older; see section 1a of the specification.)\n" in header_before, header_before)
     other = {**TRANSCRIPT, "source_id": "talk2"}
     check("apply leaves a transcript without an entry as the same object",
           L.apply_statement_date_override(other, ov) is other)

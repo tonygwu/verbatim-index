@@ -50,6 +50,17 @@ RECORD_SCHEMA = "prediction_record.schema.json"
 POLICY_SPEC = "ELIGIBILITY.md"
 POLICY_RELEASE_FILE = "POLICY_RELEASE.json"
 POLICY_MARKER = "{{ELIGIBILITY_POLICY}}"
+# The TRANSCRIPT METADATA block both prompts carry, with one date line per basis.
+# It is prompt text outside both specs, so POLICY_RELEASE.json pins it as a third
+# hash (rescue round 4, critique 3 B2): a wording change needs a new release.
+HEADER_TEMPLATE_FILE = "STATEMENT_DATE_HEADER.json"
+HEADER_DATE_LINES = ("stated_in_page", "publication_date", "youtube_upload_date", "unknown", "override_day",
+                     "override_range", "own_later", "own_none", "check_day", "check_sourced", "check_unsourced")
+# What a stage may say about the date line (release 2.3). Only the first of the
+# two doubts holds a record; cannot_tell is recorded and does not.
+DOUBT_VALUES = ("none", "recording_older_than_stated", "cannot_tell")
+HOLDING_DOUBT = "recording_older_than_stated"
+CLAIM_FORMS = ("simple", "conditional", "ordering", "recurring")
 
 # Bounds that appear in the model-facing spec text as well. test_predictions_driver
 # asserts the spec states the same numbers, so a change here is a contract change.
@@ -437,7 +448,16 @@ OVERRIDE_DATE_BASIS = "sourced_override"
 DATE_OVERRIDES_FILE = Path("predictions") / "statement_date_overrides.json"
 TRANSCRIPT_DIRS = ("transcripts_open", "transcripts_web")
 OVERRIDE_REQUIRED = ("statement_date", "basis", "source_url", "verbatim_evidence", "confirmed_by", "confirmed_at_utc")
-OVERRIDE_OPTIONAL = ("internal_evidence", "confidence", "confirmation_note", "researched_by", "speaker_check")
+OVERRIDE_OPTIONAL = ("internal_evidence", "confidence", "confirmation_note", "researched_by", "speaker_check",
+                     # A range: the first day the words could have been spoken, with
+                     # statement_date as the last (design D1: the latest day).
+                     "statement_date_earliest", "precision", "earliest_evidenced",
+                     # An entry the dating stage wrote: how it was confirmed, re-checked on load.
+                     "confirmation")
+# Who may confirm an entry. An operator entry is taken on the operator's word; an
+# agent entry must carry its confirmation and is re-verified from it on every load.
+AGENT_CONFIRMATION = "agent_plus_source_check"
+PRECISIONS = ("day", "days", "months", "years")
 _UTC_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 
 
@@ -449,6 +469,14 @@ def _strict_date(value, where: str) -> str:
     except ValueError as exc:
         raise PredictionError(f"statement_date_override: {where}: statement_date {value!r} is not a real date: {exc}") from exc
     return value
+
+
+def date_precision(earliest: str, latest: str) -> str:
+    """How wide a range of days is, in words a reader can check: DERIVED, never chosen."""
+    span = (datetime.strptime(latest, "%Y-%m-%d") - datetime.strptime(earliest, "%Y-%m-%d")).days
+    if span < 0:
+        raise PredictionError(f"statement_date_override: earliest {earliest} is after latest {latest}")
+    return "day" if span == 0 else "days" if span <= 31 else "months" if span <= 366 else "years"
 
 
 def check_override_entry(tid: str, entry) -> dict:
@@ -471,6 +499,20 @@ def check_override_entry(tid: str, entry) -> dict:
     if not isinstance(entry["confirmed_at_utc"], str) or not _UTC_STAMP.fullmatch(entry["confirmed_at_utc"]):
         raise PredictionError(f"statement_date_override: {tid}: confirmed_at_utc {entry['confirmed_at_utc']!r} "
                               f"is not YYYY-MM-DDTHH:MM:SSZ")
+    if ("statement_date_earliest" in entry) != ("precision" in entry):
+        raise PredictionError(f"statement_date_override: {tid}: statement_date_earliest and precision travel together")
+    if "statement_date_earliest" in entry:
+        _strict_date(entry["statement_date_earliest"], f"{tid} statement_date_earliest")
+        want = date_precision(entry["statement_date_earliest"], entry["statement_date"])
+        if entry["precision"] != want:
+            raise PredictionError(f"statement_date_override: {tid}: precision {entry['precision']!r} is not the "
+                                  f"span's own, {want!r}")
+    if "earliest_evidenced" in entry and not isinstance(entry["earliest_evidenced"], bool):
+        raise PredictionError(f"statement_date_override: {tid}: earliest_evidenced must be true or false")
+    if (entry["confirmed_by"] == AGENT_CONFIRMATION) != ("confirmation" in entry):
+        raise PredictionError(f"statement_date_override: {tid}: an entry is confirmed_by {AGENT_CONFIRMATION!r} "
+                              f"exactly when it carries a confirmation block; confirmed_by is "
+                              f"{entry['confirmed_by']!r}")
     return dict(entry)
 
 
@@ -514,7 +556,15 @@ def load_statement_date_overrides(path, transcript_roots) -> dict[str, dict]:
             raise PredictionError(f"statement_date_override: {tid}: unknown transcript; not under any of "
                                   f"{[str(r) for r in roots]}")
         for h in hits:
-            check_override_against_transcript(tid, e["statement_date"], json.loads(h.read_text()))
+            trec = json.loads(h.read_text())
+            check_override_against_transcript(tid, e["statement_date"], trec)
+            if e["confirmed_by"] == AGENT_CONFIRMATION:
+                # An agent entry vouches for itself from what it stored: the proposal
+                # file by sha256, and each confirming page by the window kept around its
+                # excerpt. Re-checked here, in every stage that loads the file, so an
+                # entry that cannot vouch for itself stops the run rather than a date.
+                import dating_lib  # noqa: PLC0415 -- dating_lib imports this module
+                dating_lib.verify_agent_entry(tid, e, trec, path)
         out[tid] = e
     return out
 
@@ -560,9 +610,12 @@ def override_block(rec: dict) -> dict | None:
     if ov is None:
         return None
     own_date, own_basis = own_statement_date(rec)
+    # The range fields travel only when the entry has them, so a record built from
+    # an entry without them (the operator's Andreessen entry) is byte-identical.
     return {"basis": ov["basis"], "source_url": ov["source_url"], "verbatim_evidence": ov["verbatim_evidence"],
             "confirmed_by": ov["confirmed_by"], "confirmed_at_utc": ov["confirmed_at_utc"],
-            "replaced_date": own_date, "replaced_basis": own_basis}
+            "replaced_date": own_date, "replaced_basis": own_basis,
+            **{k: ov[k] for k in ("statement_date_earliest", "precision", "earliest_evidenced") if k in ov}}
 
 
 DATE_ONLY_RULE = ("cutoff is 00:00:00 UTC at the start of the publication date, so every observation "
@@ -689,11 +742,12 @@ def json_sha256(value) -> str:
 
 
 def load_policy_release(skill_dir: Path = SKILL) -> dict:
-    """A named release pins one compatible pair; edits require an explicit new pin."""
+    """A named release pins one compatible pair and the header template; edits require an explicit new pin."""
     path = skill_dir / POLICY_RELEASE_FILE
     release = json.loads(path.read_text())
     actual = {"extract": extraction_contract(skill_dir)["contract_id"],
-              "verify": verification_contract(skill_dir)["contract_id"]}
+              "verify": verification_contract(skill_dir)["contract_id"],
+              "header": header_contract(skill_dir)["contract_id"]}
     if not isinstance(release.get("release"), str) or not release["release"].strip():
         raise PredictionError(f"{E_POLICY}: {path} has no release name")
     if release.get("contracts") != actual:
@@ -728,6 +782,29 @@ def matching_contract(skill_dir: Path = SKILL) -> dict:
     return _contract(skill_dir / MATCHING_SPEC, skill_dir / MATCHER_SCHEMA)
 
 
+def header_contract(skill_dir: Path = SKILL) -> dict:
+    """The header template's bytes, hashed. Pinned in POLICY_RELEASE.json as contracts.header."""
+    b = (Path(skill_dir) / HEADER_TEMPLATE_FILE).read_bytes()
+    return {"contract_id": hashlib.sha256(b).hexdigest()[:12], "sha256": hashlib.sha256(b).hexdigest(),
+            "bytes": len(b), "file": HEADER_TEMPLATE_FILE}
+
+
+def load_header_template(skill_dir: Path = SKILL) -> dict:
+    """The header template, or raise naming what is missing. Never a default line."""
+    path = Path(skill_dir) / HEADER_TEMPLATE_FILE
+    t = json.loads(path.read_text())
+    if not isinstance(t, dict) or t.get("schema_version") != 1 or not isinstance(t.get("header"), str) \
+            or "{date_line}" not in t["header"] or not isinstance(t.get("date_lines"), dict) \
+            or not isinstance(t.get("own_basis_labels"), dict):
+        raise PredictionError(f"header template: {path} must carry schema_version 1, a header with "
+                              f"{{date_line}}, date_lines and own_basis_labels")
+    missing = [k for k in HEADER_DATE_LINES if not isinstance(t["date_lines"].get(k), str)]
+    unknown = sorted(set(t["date_lines"]) - set(HEADER_DATE_LINES))
+    if missing or unknown:
+        raise PredictionError(f"header template: {path} date_lines missing {missing}, unknown {unknown}")
+    return t
+
+
 def load_record_schema(skill_dir: Path = SKILL) -> dict:
     return json.loads((skill_dir / RECORD_SCHEMA).read_text())
 
@@ -746,40 +823,74 @@ NO_SPEAKER_LABELS = (
 )
 
 
-def speaker_header(rec: dict, roster_entry: dict | None) -> str:
-    """Never declared_year (a hardcoded constant), never today's date (invites resolution reasoning)."""
-    name = (roster_entry or {}).get("name") or rec["leader_slug"].replace("-", " ").title()
-    role = (roster_entry or {}).get("role") or "unknown"
-    company = (roster_entry or {}).get("company") or "unknown"
-    sector = (roster_entry or {}).get("sector") or "unknown"
+_DEFAULT_HEADER: dict | None = None
+
+
+def statement_date_line(rec: dict, template: dict) -> str:
+    """The one line that says what the statement date is and HOW it is known (design 2.1).
+
+    Every date that was not an override used to reach the extractor as a "YouTube
+    upload date", a shareholder letter's printed date included. Each basis now has
+    its own line, and an unchecked upload or publication date says it is only an
+    upper bound, which is what EXTRACTION.md section 1a tells the extractor to read.
+    An override whose date IS the transcript's own date confirms that bound, so it
+    reads as a check rather than a correction.
+    """
+    lines = template["date_lines"]
     date, basis = derive_statement_date(rec)
-    if basis == OVERRIDE_DATE_BASIS:
-        blk = override_block(rec)
-        own = {"youtube_upload_date": "YouTube upload date", "publication_date": "publication date"}
-        later = (f"The {own.get(blk['replaced_basis'], blk['replaced_basis'])}, {blk['replaced_date']}, is later and is NOT when "
-                 f"the words were said" if blk["replaced_date"] else "The source carries no date of its own")
-        date_line = (f"Statement date: {date} (the date of the recording, from a sourced correction: "
-                     f"{blk['basis']}. {later})")
-    elif date:
-        date_line = f"Statement date: {date} (YouTube upload date; the recording is no later than this)"
-    else:
-        date_line = "Statement date: unknown"
-    minutes = round((rec.get("duration_sec") or 0) / 60)
-    return (
-        f"Speaker: {name}\n"
-        f"Role (current roster entry; may postdate this recording): {role}\n"
-        f"Company (current roster entry): {company}\n"
-        f"Sector: {sector}\n"
-        f"Title: {rec.get('yt_title') or rec.get('declared_title') or 'unknown'}\n"
-        f"Venue: {rec.get('declared_venue') or 'unknown'}\n"
-        f"Format: {rec.get('declared_kind') or 'unknown'}\n"
-        f"{date_line}\n"
-        f"Transcript length: {rec.get('word_count')} words\n"
-        f"Duration: {minutes} minutes\n"
+    if basis != OVERRIDE_DATE_BASIS:
+        if basis not in lines:
+            raise PredictionError(f"header: no date line for basis {basis!r}")
+        return lines[basis].format(date=date)
+    ov = rec["statement_date_override"]
+    own_date, own_basis = own_statement_date(rec)
+    earliest = ov.get("statement_date_earliest") or date
+    fields = {"date": date, "earliest": earliest, "basis": ov["basis"],
+              "days": (datetime.strptime(date, "%Y-%m-%d") - datetime.strptime(earliest, "%Y-%m-%d")).days}
+    if own_date is not None and own_basis not in template["own_basis_labels"]:
+        raise PredictionError(f"header: no label for the transcript's own basis {own_basis!r}")
+    if own_date is not None and own_date == date:
+        fields["own_label"] = template["own_basis_labels"][own_basis]
+        if earliest == date:
+            return lines["check_day"].format(**fields)
+        if "earliest_evidenced" not in ov:
+            raise PredictionError(f"header: {rec.get('leader_slug')}/{rec.get('source_id')}: an override on the "
+                                  f"transcript's own date with a range must say whether a source shows its first "
+                                  f"day (earliest_evidenced)")
+        return lines["check_sourced" if ov["earliest_evidenced"] else "check_unsourced"].format(**fields)
+    own_sentence = (lines["own_none"] if own_date is None else
+                    lines["own_later"].format(own_label=template["own_basis_labels"][own_basis], own_date=own_date))
+    return lines["override_day" if earliest == date else "override_range"].format(own_sentence=own_sentence, **fields)
+
+
+def speaker_header(rec: dict, roster_entry: dict | None, template: dict | None = None) -> str:
+    """Never declared_year (a hardcoded constant), never today's date (invites resolution reasoning).
+
+    `template` is the pinned STATEMENT_DATE_HEADER.json; the default is the one in
+    SKILL. The driver passes the one from --skill-dir, the same directory the
+    policy release was checked against.
+    """
+    global _DEFAULT_HEADER
+    if template is None:
+        if _DEFAULT_HEADER is None:
+            _DEFAULT_HEADER = load_header_template(SKILL)
+        template = _DEFAULT_HEADER
+    return template["header"].format(
+        name=(roster_entry or {}).get("name") or rec["leader_slug"].replace("-", " ").title(),
+        role=(roster_entry or {}).get("role") or "unknown",
+        company=(roster_entry or {}).get("company") or "unknown",
+        sector=(roster_entry or {}).get("sector") or "unknown",
+        title=rec.get("yt_title") or rec.get("declared_title") or "unknown",
+        venue=rec.get("declared_venue") or "unknown",
+        format=rec.get("declared_kind") or "unknown",
+        date_line=statement_date_line(rec, template),
+        word_count=rec.get("word_count"),
+        minutes=round((rec.get("duration_sec") or 0) / 60),
     )
 
 
-def build_extraction_prompt(rec: dict, roster_entry: dict | None, spec: str, schema: str) -> str:
+def build_extraction_prompt(rec: dict, roster_entry: dict | None, spec: str, schema: str,
+                            header_template: dict | None = None) -> str:
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
     return f"""You extract forward-looking, falsifiable predictions that a named speaker made in one public
 recording. Apply the specification below to the whole transcript and return one JSON object.
@@ -789,7 +900,7 @@ recording. Apply the specification below to the whole transcript and return one 
 ======================== END EXTRACTION SPEC ==========================
 
 TRANSCRIPT METADATA
-{speaker_header(rec, roster_entry)}
+{speaker_header(rec, roster_entry, header_template)}
 {NO_SPEAKER_LABELS}
 
 =========================== TRANSCRIPT ===========================
@@ -960,8 +1071,120 @@ def verification_qualifies(v: dict) -> bool | None:
     return all(bool(gates.get(g)) for g in GATES) and v.get("attribution") == "subject" and bool(v.get("claim_faithful"))
 
 
+# ---------------------------------------------------------------------------
+# Date holds (release 2.3)
+# ---------------------------------------------------------------------------
+#
+# The models noticed wrong dates many times and wrote it in notes nothing reads
+# (rescue round 4, design summary). From 2.3 a doubt is a field, and three
+# mechanical checks join it. Each one HOLDS the record: it stays on file with
+# both verdicts and is not accepted until the recording is dated and the
+# transcript extracted again. A hold is DERIVED from the record's own fields, so
+# the validator recomputes it rather than trusting the stored list.
+
+# Words that stand in for a year the writer did not resolve. A1 wrote "the second
+# half of the statement year" against a record it could not date. With a known
+# statement date the year can be written, so a placeholder in a field that names
+# NO year means the date was not trusted or not read (design 2.5 (a)). A field
+# that names its year as well is only wordy: MEASURED 2026-09-30 on the accepted
+# corpus, 7 of 9 placeholder hits sat beside the year itself ("within the year
+# following the recording, no later than 2020-07-16"), and holding those would
+# drop records that resolve exactly as written.
+PLACEHOLDER_YEAR_RE = re.compile(
+    r"\b(?:statement\s+year|the\s+(?:calendar\s+)?year\s+(?:following|after|of)\s+the\s+(?:recording|statement))\b",
+    re.I)
+_YEAR_WORD_RE = re.compile(r"\b(?:19|20)\d\d\b")
+HOLD_TEXT_FIELDS = (("prediction", "normalized_claim"), ("prediction", "resolution_criteria"),
+                    ("verification", "verifier_resolution_criteria"))
+
+
+def merge_doubts(doubts: list[dict]) -> dict:
+    """One transcript-level doubt from several batch answers: the holding doubt wins, then cannot_tell."""
+    if not doubts:
+        raise PredictionError("statement_date_doubt: no answer to merge")
+    for want in (HOLDING_DOUBT, "cannot_tell"):
+        hit = next((d for d in doubts if d.get("doubt") == want), None)
+        if hit is not None:
+            return dict(hit)
+    return dict(doubts[0])
+
+
+def relative_year_problem(rec: dict) -> dict | None:
+    """A relative year the extractor resolved differently from the funnel, or on a range that spans two years.
+
+    Design 2.5 (b): when target_date_text is "this year", "next year" or a number of
+    units, recompute the deadline from the statement date with the funnel's OWN
+    parser and require the same year. This catches the CES 2006 keynote, where the
+    extractor resolved "this year" from context against a 2013 upload. A year in
+    the speaker's own words is the extractor's to use, so those are not recomputed.
+
+    Critique 1 point 13: "next year" from a date known only to lie between
+    2024-12-20 and 2025-01-03 names two different years, so it is held, not guessed.
+    """
+    src, pred = rec.get("source") or {}, rec.get("prediction") or {}
+    said, text, target = src.get("statement_date"), pred.get("target_date_text"), pred.get("target_date")
+    if not (said and text and target) or _YEAR_WORD_RE.search(text):
+        return None
+    import phase2_resolvability as P2  # noqa: PLC0415 -- phase2_resolvability imports this module
+    year_words = bool(P2.THIS_YEAR.search(text) or P2.NEXT_YEAR.search(text))
+    if not (year_words or P2.NUMBER.search(text)):
+        return None
+    earliest = (src.get("statement_date_override") or {}).get("statement_date_earliest")
+    if year_words and earliest and earliest[:4] != said[:4]:
+        return {"check": "relative_year_on_ambiguous_range",
+                "detail": f"{text!r} said between {earliest} and {said} names a different year for each end; "
+                          f"target_date {target} cannot be checked"}
+    probe = {**rec, "prediction": {**pred, "target_date": None, "horizon_years_inferred": None}}
+    deadline, how = P2.derived_deadline(probe)
+    if deadline is None:
+        return None
+    # EARLIER than the funnel's year means the words were resolved against some
+    # other, older date: the CES 2006 case. LATER is usually right and is allowed:
+    # the funnel's parser takes the first of two alternatives ("a year or two",
+    # "10 years or 20 years") and knows no fiscal year ("this year" said in
+    # October, resolved to a fiscal year ending 31 January). MEASURED 2026-09-30:
+    # an exact-year rule held 15 accepted corpus records and 9 were those. More
+    # than one year later for "this year" or "next year" has no such excuse.
+    gap = int(target[:4]) - deadline.year
+    if gap < 0 or (year_words and gap > 1):
+        return {"check": "relative_year_mismatch",
+                "detail": f"{text!r} said {said} gives {deadline.isoformat()} ({how}); target_date is {target}"}
+    return None
+
+
+def date_hold_reasons(rec: dict) -> list[dict]:
+    """Why this record's date must be settled before it can be accepted. Empty when nothing holds it."""
+    out: list[dict] = []
+    for stage in ("extraction", "verification"):
+        d = (rec.get(stage) or {}).get("statement_date_doubt")
+        if isinstance(d, dict) and d.get("doubt") == HOLDING_DOUBT:
+            out.append({"check": f"statement_date_doubt:{stage}", "detail": d.get("evidence") or "(no words quoted)"})
+    said = (rec.get("source") or {}).get("statement_date")
+    if said:
+        for block, field in HOLD_TEXT_FIELDS:
+            text = (rec.get(block) or {}).get(field) or ""
+            m = None if _YEAR_WORD_RE.search(text) else PLACEHOLDER_YEAR_RE.search(text)
+            if m:
+                out.append({"check": f"placeholder_date:{field}",
+                            "detail": f"{m.group(0)!r} written against the known statement date {said}"})
+    rel = relative_year_problem(rec)
+    if rel:
+        out.append(rel)
+    return out
+
+
 def compute_accepted(rec: dict) -> bool:
-    return bool(rec["extraction"]["qualifies"]) and bool(rec["verification"].get("qualifies"))
+    """Both verdicts qualify and, on a 2.3 record, nothing holds its date.
+
+    A 2.2 record carries no date_hold, and its accepted flag is the published
+    board, so it is judged by the rule it was written under. The hold is
+    RECOMPUTED here, never read from the stored list, so a record edited to
+    clear its hold is still refused.
+    """
+    ok = bool(rec["extraction"]["qualifies"]) and bool(rec["verification"].get("qualifies"))
+    if "date_hold" in rec:
+        ok = ok and not date_hold_reasons(rec)
+    return ok
 
 
 def empty_verification() -> dict:
@@ -1001,8 +1224,14 @@ def normalise_provenance(harness: str, telemetry: dict, account: str | None, rou
 # ---------------------------------------------------------------------------
 
 def make_record(rec: dict, roster_entry: dict | None, cand: dict, loc: dict, provenance: dict,
-                contract_id: str, run_id: str, extracted_at_utc: str, telemetry: dict) -> dict:
-    """Assemble one full record from a grounded extractor candidate. Pure."""
+                contract_id: str, run_id: str, extracted_at_utc: str, telemetry: dict,
+                statement_date_doubt: dict | None = None) -> dict:
+    """Assemble one full record from a grounded extractor candidate. Pure.
+
+    `statement_date_doubt` is the extractor's transcript-level answer (release
+    2.3). With it the record carries the doubt, the claim form and a date_hold;
+    without it the record has the 2.2 shape, as every existing caller built it.
+    """
     text = rec["text"]
     start, end = loc["start"], loc["end"]
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
@@ -1026,7 +1255,7 @@ def make_record(rec: dict, roster_entry: dict | None, cand: dict, loc: dict, pro
     if ctype == "none":
         lang = None
     criteria = cand.get("resolution_criteria") or ""
-    return {
+    out = {
         "schema_version": SCHEMA_VERSION,
         "prediction_id": prediction_id(tid, cand["quote"]),
         "transcript_id": tid,
@@ -1060,6 +1289,7 @@ def make_record(rec: dict, roster_entry: dict | None, cand: dict, loc: dict, pro
             "horizon_evidence": cand.get("horizon_evidence"),
             "resolution_criteria": criteria, "specificity": cand.get("specificity"),
             "subject_control": cand.get("subject_control"),
+            **({"claim_form": cand["claim_form"]} if "claim_form" in cand else {}),
         },
         "confidence": {"type": ctype, "probability": prob, "verbatim_confidence_language": lang},
         "extraction": {
@@ -1071,6 +1301,10 @@ def make_record(rec: dict, roster_entry: dict | None, cand: dict, loc: dict, pro
         "resolution": dict(SENTINEL_RESOLUTION),
         "consensus": dict(SENTINEL_CONSENSUS),
     }
+    if statement_date_doubt is not None:
+        out["extraction"]["statement_date_doubt"] = dict(statement_date_doubt)
+        out["date_hold"] = date_hold_reasons(out)
+    return out
 
 
 def serialise_line(rec: dict) -> str:

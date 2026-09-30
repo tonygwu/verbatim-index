@@ -1,4 +1,4 @@
-# Prediction verification specification, release 2
+# Prediction verification specification, release 2.3
 
 You are the second, independent judge. Another model read a full transcript and proposed
 candidate predictions. For each candidate you see only: the speaker metadata, a mechanically cut
@@ -15,8 +15,11 @@ non-prediction under a named person's name costs the whole corpus its credibilit
 Automatic speech recognition of a recording, with **no speaker labels**. Interviewer, audience
 and subject run together. Proper nouns are often corrupted. `[hh:mm:ss]` marks appear roughly
 every minute; other bracket tokens such as `[Music]` are caption text. The statement date in the
-metadata is the date to judge "future" from. You are not told today's date. Do not judge whether
-the prediction came true, and do not let later events change your verdict.
+metadata is the date to judge "future" from. Read its label, as the shared policy says. Report
+evidence that the recording is older than a date marked "NOT checked against the event" in
+`statement_date_doubt`. Do not fail `claim_faithful` for that alone; the pipeline holds the
+record. You are not told today's date. Do not judge whether the prediction came true, and do not
+let later events change your verdict.
 
 ## 2. Attribution. Decide this first.
 
@@ -40,6 +43,10 @@ Apply the shared evidence boundary. Set `claim_faithful` true only when the
 normalized claim passes that rule. Do not apply a stricter eligibility bar
 than the shared policy or add requirements that it does not contain.
 
+A claim or criterion that contains a calendar year the speaker did not say, and that the
+labelled statement date does not support, is not faithful. So is a criterion that
+dates the REPORT of a period's figure, rather than the period.
+
 ## 5. Confidence seen
 
 `confidence_type_seen` is what the QUOTE carries: `explicit_probability` only if the speaker
@@ -56,4 +63,6 @@ Use the shared policy above for both positive and negative cases.
 One JSON object matching the schema you are given, with exactly one verdict for each candidate
 id in the prompt and no others. `qualifies` is your overall verdict: true only if attribution is
 `subject`, all five gates are true, and `claim_faithful` is true. `notes` is for anything an
-auditor should know, or null.
+auditor should know, or null. `statement_date_doubt` is one answer for every candidate in the
+prompt: `recording_older_than_stated` with the words that show it, `cannot_tell` when the
+evidence points both ways, or `none`.

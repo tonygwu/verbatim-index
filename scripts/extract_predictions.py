@@ -324,7 +324,8 @@ def ground_candidates(rec: dict, roster_entry: dict | None, obj: dict, provenanc
         if not (L.MIN_QUOTE_WORDS <= wc <= L.MAX_QUOTE_WORDS):
             ungrounded.append({"quote": c["quote"], "reason": f"word_count_{wc}", "occurrences": loc["occurrences"]})
             continue
-        r = L.make_record(rec, roster_entry, c, loc, provenance, contract_id, run_id, extracted_at, telemetry)
+        r = L.make_record(rec, roster_entry, c, loc, provenance, contract_id, run_id, extracted_at, telemetry,
+                          statement_date_doubt=obj.get("statement_date_doubt"))
         grounded.append({"start": loc["start"], "end": loc["end"], "prediction_id": r["prediction_id"], "record": r})
     kept, dropped = L.dedupe_overlapping(grounded)
     records = [k["record"] for k in kept]
@@ -368,7 +369,8 @@ def extract_one(job: dict) -> dict:
     rec = read_transcript(rec_path, tid, job.get("date_overrides"))
 
     workdir = job["workroot"] / f"{slug}-{sid}__extract__{job['run_id']}"
-    prompt = L.build_extraction_prompt(rec, job["roster"].get(slug), job["spec"], job["schema_text"])
+    prompt = L.build_extraction_prompt(rec, job["roster"].get(slug), job["spec"], job["schema_text"],
+                                       job.get("header_template"))
     inputs = {"transcript": rec, "roster_entry": job["roster"].get(slug)}
     audit = stage_audit(job, "extract", inputs, [prompt])
     if cached:
@@ -449,8 +451,14 @@ def _extract_failed(meta, meta_path, base, detail, t0, args, harness=None, route
 # ---------------------------------------------------------------------------
 
 def apply_verdicts(records: list[dict], verdicts: list[dict], provenance: dict, contract_id: str,
-                   run_id: str, verified_at: str, telemetry: dict) -> None:
-    """Pure over the given records: write the verification block and the derived booleans."""
+                   run_id: str, verified_at: str, telemetry: dict,
+                   statement_date_doubt: dict | None = None) -> None:
+    """Pure over the given records: write the verification block and the derived booleans.
+
+    `statement_date_doubt` is the verifier's transcript-level answer (release 2.3),
+    merged across batches by the caller. A record that carries date_hold has it
+    recomputed here, because the verifier's doubt and criterion join the checks.
+    """
     by_id = {v["prediction_id"]: v for v in verdicts}
     for r in records:
         v = by_id.get(r["prediction_id"])
@@ -461,9 +469,13 @@ def apply_verdicts(records: list[dict], verdicts: list[dict], provenance: dict, 
                "attribution": v["attribution"], "claim_faithful": bool(v["claim_faithful"]),
                "qualifies_stated": bool(v["qualifies"]), "qualifies": None, "agreement": None,
                "verifier_resolution_criteria": v["resolution_criteria"], "notes": v.get("notes"), "telemetry": telemetry}
+        if statement_date_doubt is not None:
+            ver["statement_date_doubt"] = dict(statement_date_doubt)
         ver["qualifies"] = L.verification_qualifies(ver)
         ver["agreement"] = r["extraction"]["qualifies"] == ver["qualifies"]
         r["verification"] = ver
+        if "date_hold" in r:
+            r["date_hold"] = L.date_hold_reasons(r)
         r["accepted"] = L.compute_accepted(r)
 
 
@@ -483,7 +495,8 @@ def verify_one(job: dict) -> dict:
     expected_extract = job["release"]["contracts"]["extract"]
     ex_audit = meta["extract"].get("audit") or {}
     expected_prompt = L.build_extraction_prompt(
-        rec, job["roster"].get(slug), job["extraction_spec"], job["extraction_schema_text"])
+        rec, job["roster"].get(slug), job["extraction_spec"], job["extraction_schema_text"],
+        job.get("header_template"))
     if (meta["extract"].get("contract_id") != expected_extract
             or ex_audit.get("policy_release") != job["release"]["release"]
             or ex_audit.get("input_sha256") != L.json_sha256(source_inputs)
@@ -500,7 +513,7 @@ def verify_one(job: dict) -> dict:
         detail = f"{L.E_VERIFIER_SAME}: --verifier {args.verifier} is the harness that extracted {tid}"
         return _verify_failed(meta, meta_path, base, detail, t0, args)
 
-    header = L.speaker_header(rec, job["roster"].get(slug))
+    header = L.speaker_header(rec, job["roster"].get(slug), job.get("header_template"))
     workdir = job["workroot"] / f"{slug}-{sid}__verify__{job['run_id']}"
     batches = [pending[i:i + L.VERIFY_BATCH] for i in range(0, len(pending), L.VERIFY_BATCH)]
     bundles = [
@@ -530,6 +543,7 @@ def verify_one(job: dict) -> dict:
     if not args.dry_run:
         save_inputs(job, "verify", slug, sid, inputs, prompts, audit)
     all_verdicts: list[dict] = []
+    doubts: list[dict] = []
     provenance = None
     telemetry_all: list[dict] = []
     for bi, (batch, prompt) in enumerate(zip(batches, prompts)):
@@ -560,12 +574,15 @@ def verify_one(job: dict) -> dict:
         provenance = L.normalise_provenance(route["harness"], telemetry, account, route["account_id"])
         telemetry_all.append(telemetry)
         all_verdicts.extend(obj["verdicts"])
+        if "statement_date_doubt" in obj:
+            doubts.append(obj["statement_date_doubt"])
     if args.dry_run:
         return {**base, "status": "dry_run", "batches": len(batches), "workdir": str(workdir)}
 
     verified_at = L.utc_now()
     apply_verdicts(records, all_verdicts, provenance, job["contract"]["contract_id"], job["run_id"], verified_at,
-                   {"batches": telemetry_all, "prediction_audit": audit})
+                   {"batches": telemetry_all, "prediction_audit": audit},
+                   statement_date_doubt=L.merge_doubts(doubts) if doubts else None)
     L.write_prediction_file(jsonl_path, L.serialise_lines(records))
     accepted = sum(1 for r in records if r["accepted"])
     meta["verify"] = {"status": "ok", "run_id": job["run_id"], **provenance, "contract_id": job["contract"]["contract_id"],
@@ -674,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
     out = L.guard_data_path(args.out)  # raises before any call if --out is elsewhere under data/
     skill = Path(args.skill_dir)
     release = L.load_policy_release(skill)  # reject an unreviewed contract pair before any routing or call
+    header_template = L.load_header_template(skill)  # the template the release just pinned
     code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=L.REPO, text=True).strip()
     from data_clone_workflow import git as data_git
     input_data_revision = data_git(L.data_root(), "rev-parse", "HEAD") if (L.data_root() / ".git").exists() else None
@@ -729,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs = [{"args": args, "path": str(p), "out": out, "roster": roster, "exclusions": exclusions,
                  "router": router, "run_id": run_id, "workroot": workroot, "contract": contracts[stage],
                  "release": release, "code_revision": code_revision, "input_data_revision": input_data_revision,
-                 "date_overrides": date_overrides,
+                 "date_overrides": date_overrides, "header_template": header_template,
                  "extraction_spec": specs["extract"],
                  "extraction_schema_text": json.dumps(schemas["extract"], indent=1),
                  "spec": specs[stage], "schema": schemas[stage],

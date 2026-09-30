@@ -19,7 +19,10 @@
         "role": {"type": ["string", "null"]}, "company": {"type": ["string", "null"]}
       }
     },
-    "accepted": {"type": "boolean", "description": "DERIVED: extraction.qualifies and verification.qualifies. Never written by a model."},
+    "accepted": {"type": "boolean", "description": "DERIVED: extraction.qualifies and verification.qualifies, and, on a record that carries date_hold (release 2.3 on), an empty date_hold. Never written by a model."},
+    "date_hold": {"type": "array", "description": "DERIVED, release 2.3 on: why the recording's date must be settled before this record may be accepted (predictions_lib.date_hold_reasons): a statement_date_doubt of recording_older_than_stated from either stage, a placeholder year written against a known statement date, or a relative year that the funnel's own parser reads differently. Absent on a 2.2 record, whose accepted flag is left as published.",
+      "items": {"type": "object", "additionalProperties": false, "required": ["check", "detail"],
+                "properties": {"check": {"type": "string", "minLength": 1}, "detail": {"type": "string"}}}},
     "status": {"const": "pending", "description": "V0: no resolution has been attempted."},
 
     "source": {
@@ -44,7 +47,10 @@
             "confirmed_by": {"type": "string", "minLength": 1},
             "confirmed_at_utc": {"type": "string", "minLength": 1},
             "replaced_date": {"type": ["string", "null"]},
-            "replaced_basis": {"enum": ["youtube_upload_date", "publication_date", "unknown"]}
+            "replaced_basis": {"enum": ["youtube_upload_date", "publication_date", "unknown"]},
+            "statement_date_earliest": {"type": "string", "minLength": 10, "maxLength": 10, "description": "Optional. The first day the words could have been spoken; statement_date is the last."},
+            "precision": {"enum": ["day", "days", "months", "years"], "description": "Optional, with statement_date_earliest. DERIVED from the span between the two days."},
+            "earliest_evidenced": {"type": "boolean", "description": "Optional. Whether a checked source shows the first day, not only the dating agent's estimate."}
           }
         },
         "quote": {"type": "string", "minLength": 1, "description": "The span as the model wrote it."},
@@ -66,12 +72,13 @@
         "normalized_claim": {"type": "string", "minLength": 1},
         "category": {"enum": ["ai_capability", "technology_product", "company_business", "market_industry", "macro_economy", "policy_regulation", "science", "society", "other"]},
         "prediction_type": {"enum": ["numeric", "milestone", "binary_event", "trend_direction", "comparative", "other"]},
+        "claim_form": {"enum": ["simple", "conditional", "ordering", "recurring"], "description": "Optional; the extractor writes it from release 2.3 on."},
         "target_date": {"type": ["string", "null"], "description": "YYYY, YYYY-MM or YYYY-MM-DD."},
         "target_date_text": {"type": ["string", "null"], "description": "The speaker's own words that fix the date."},
         "horizon": {"enum": ["explicit", "inferable", "none"]},
         "horizon_years_inferred": {"type": ["number", "null"], "minimum": 0},
         "horizon_evidence": {"type": ["string", "null"]},
-        "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> <outcome>. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
+        "resolution_criteria": {"type": "string", "minLength": 1, "description": "By <date or dated event>, <observable> <outcome>; for a figure for a period, For <period> (ending <date>), <figure> will be <outcome>, as reported at any time, never 'By <period end>, X will report'. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
         "specificity": {"enum": ["high", "medium", "low"]},
         "subject_control": {"enum": ["external", "partial", "own"], "description": "own: the outcome is mainly the speaker's or their company's decision (roadmap, guidance). Recorded, not a gate."}
       }
@@ -103,7 +110,8 @@
         "contract_id": {"type": "string", "minLength": 12, "maxLength": 12},
         "run_id": {"type": "string", "minLength": 1},
         "extracted_at_utc": {"type": "string", "minLength": 20},
-        "telemetry": {"type": "object"}
+        "telemetry": {"type": "object"},
+        "statement_date_doubt": {"$ref": "#/$defs/statement_date_doubt"}
       }
     },
 
@@ -129,7 +137,8 @@
         "agreement": {"type": ["boolean", "null"], "description": "extraction.qualifies == verification.qualifies"},
         "verifier_resolution_criteria": {"type": ["string", "null"]},
         "notes": {"type": ["string", "null"]},
-        "telemetry": {"type": ["object", "null"]}
+        "telemetry": {"type": ["object", "null"]},
+        "statement_date_doubt": {"$ref": "#/$defs/statement_date_doubt"}
       }
     },
 
@@ -187,6 +196,16 @@
   },
 
   "$defs": {
+    "statement_date_doubt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["doubt", "evidence", "evidence_year"],
+      "description": "Optional, release 2.3 on: what the stage reported about the date line, for the whole transcript.",
+      "properties": {
+        "doubt": {"enum": ["none", "recording_older_than_stated", "cannot_tell"]},
+        "evidence": {"type": ["string", "null"]},
+        "evidence_year": {"type": ["integer", "null"]}
+      }
+    },
     "gates": {
       "type": "object", "additionalProperties": false,
       "required": ["forward_looking", "falsifiable", "committed", "own_voice", "stands_alone"],

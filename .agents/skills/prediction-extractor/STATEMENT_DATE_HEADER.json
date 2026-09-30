@@ -1,0 +1,22 @@
+{
+ "schema_version": 1,
+ "description": "The TRANSCRIPT METADATA block both prompts carry, and the one line in it that says what the statement date is and how it is known. predictions_lib.speaker_header renders it with str.format; a missing field raises. POLICY_RELEASE.json pins this file's sha256 as contracts.header, so a wording change needs a new release. The labels in brackets are the ones EXTRACTION.md section 1a tells the extractor to read.",
+ "header": "Speaker: {name}\nRole (current roster entry; may postdate this recording): {role}\nCompany (current roster entry): {company}\nSector: {sector}\nTitle: {title}\nVenue: {venue}\nFormat: {format}\n{date_line}\nTranscript length: {word_count} words\nDuration: {minutes} minutes\n",
+ "own_basis_labels": {
+  "youtube_upload_date": "YouTube upload date",
+  "publication_date": "publication date"
+ },
+ "date_lines": {
+  "stated_in_page": "Statement date: {date} (stated in the source itself; this is when the words were written or spoken.)",
+  "publication_date": "Statement date: no later than {date} (publication date, NOT checked against the event. The words may have been spoken earlier; see section 1a of the specification.)",
+  "youtube_upload_date": "Statement date: no later than {date} (YouTube upload date, NOT checked against the event. The recording may be years older; see section 1a of the specification.)",
+  "unknown": "Statement date: unknown (no date for this recording could be established.)",
+  "override_day": "Statement date: {date} (the day the words were spoken, from a sourced correction: {basis}. {own_sentence})",
+  "override_range": "Statement date: {date} (the latest day the words could have been spoken, from a sourced correction: {basis}. They were spoken between {earliest} and {date}. {own_sentence})",
+  "own_later": "The {own_label}, {own_date}, is later and is NOT when the words were said.",
+  "own_none": "The source carries no date of its own.",
+  "check_day": "Statement date: {date} ({own_label}. A dating check found the words were spoken on this date: {basis}.)",
+  "check_sourced": "Statement date: {date} ({own_label}. A dating check found no earlier event: {basis}. The words were spoken on this date or up to {days} days before it.)",
+  "check_unsourced": "Statement date: {date} ({own_label}. A dating check found no earlier event: {basis}. This date is an upper bound; that the words were spoken no earlier than {earliest} is the dating agent's estimate, and no source confirms it.)"
+ }
+}

@@ -3,10 +3,20 @@
   "title": "Prediction verifier output, version 1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "transcript_id", "verdicts"],
+  "required": ["schema_version", "transcript_id", "statement_date_doubt", "verdicts"],
   "properties": {
     "schema_version": {"const": "1"},
     "transcript_id": {"type": "string", "description": "Echo exactly the id given in the prompt."},
+    "statement_date_doubt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["doubt", "evidence", "evidence_year"],
+      "description": "One answer for the whole transcript. See VERIFICATION.md section 1 and ELIGIBILITY.md: recording_older_than_stated holds every record of the transcript until the recording is dated. A doubt written only in notes is read by nothing.",
+      "properties": {
+        "doubt": {"enum": ["none", "recording_older_than_stated", "cannot_tell"]},
+        "evidence": {"type": ["string", "null"], "description": "The words from the title, description or transcript that show the recording is older, copied. Null when doubt is none."},
+        "evidence_year": {"type": ["integer", "null"], "description": "The year the evidence names, or null."}
+      }
+    },
     "verdicts": {
       "type": "array",
       "items": {
@@ -30,7 +40,7 @@
           "claim_faithful": {"type": "boolean"},
           "confidence_type_seen": {"enum": ["explicit_probability", "qualitative", "none"]},
           "qualifies": {"type": "boolean", "description": "attribution == subject and every gate true and claim_faithful."},
-          "resolution_criteria": {"type": "string", "minLength": 1, "description": "In your own words, without reference to the extractor's. By <date or dated event>, <observable> <outcome>. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
+          "resolution_criteria": {"type": "string", "minLength": 1, "description": "In your own words, without reference to the extractor's. By <date or dated event>, <observable> <outcome>; for a figure for a period, For <period> (ending <date>), <figure> will be <outcome>, as reported at any time, never 'By <period end>, X will report'. State ONE direction, never the form 'will / will not'. Write it so that TRUE means the speaker was RIGHT: keep the speaker's own negation rather than flipping it. See ELIGIBILITY.md G2."},
           "notes": {"type": ["string", "null"]}
         }
       }
