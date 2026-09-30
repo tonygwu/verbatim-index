@@ -18,8 +18,10 @@ What lives here, and nothing else (no network, no model, no argparse):
   - the prompt (DATING_TASK), its input block and the proposal schema
   - dates in text, and the time zone rule: a speech keeps the date where it
     happened, a publication is read in UTC
-  - the own-page rule: the recording's own video page, any YouTube page, the
-    transcript's own url and a Wayback copy of any of them never confirm
+  - the own-page rule: the recording's own video page, any YouTube page (by host,
+    or by YouTube's own page shapes /watch?v=, /channel/UC and /@handle on any
+    mirror), an archive copy, the transcript's own url and a Wayback copy of any
+    of them never confirm
   - the source check of one fetched page, and the stored window it keeps
   - the merge of one proposal (MERGE_VERSION), and the loader's re-verification
     of an entry from its stored proposal and windows
@@ -208,9 +210,16 @@ YOUTUBE_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
 # archive.today keeps copies under several names, and a copy of an unknown page may
 # be the recording's own; front ends re-serve YouTube pages under other hosts.
 ARCHIVE_COPY_HOSTS = ("archive.ph", "archive.today", "archive.is", "archive.li", "archive.vn", "archive.fo",
-                      "archive.md")
+                      "archive.md", "ghostarchive.org")
 FRONT_END_HOSTS = ("yewtu.be",)
 FRONT_END_WORDS = ("invidious", "piped")
+# YouTube's own page shapes, refused on ANY host (final review item 8): mirrors such as
+# inv.nadeko.net and hooktube.com serve them under names no list can keep up with. A
+# handle is refused as a channel page (the handle alone, or a channel tab under it),
+# not every path under an @ segment: medium.com/@author/post and mastodon.social/@user/1
+# are posts, which can date an event.
+YOUTUBE_CHANNEL_TABS = ("videos", "streams", "shorts", "live", "featured", "playlists", "community", "about",
+                        "podcasts", "releases")
 # Transcript sites whose first path segment is the show: another episode page of
 # the same show dates that show's uploads, not this event.
 SHOW_HOSTS = ("podcasts.happyscribe.com",)
@@ -225,12 +234,24 @@ def unwrap_wayback(url: str) -> str:
 
 def _split(url: str) -> tuple[str, list[str], str]:
     p = urllib.parse.urlsplit(unwrap_wayback(url))
-    host = (p.hostname or "").lower()
+    # A fully qualified name's trailing dot (www.youtube.com.) is the same host.
+    host = (p.hostname or "").lower().rstrip(".")
     host = host[4:] if host.startswith("www.") else host
     host = host[2:] if host.startswith("m.") else host
     segs = [s for s in p.path.split("/") if s]
     q = "&".join(sorted(x for x in p.query.split("&") if x))
     return host, segs, q
+
+
+def youtube_page_shape(segs: list[str], q: str) -> str | None:
+    """"watch page" or "channel page" when the path is one of YouTube's own, on any host."""
+    if segs[:1] == ["watch"] and any(x.startswith("v=") for x in q.split("&")):
+        return "watch page"
+    if len(segs) >= 2 and segs[0] == "channel" and segs[1].startswith("UC"):
+        return "channel page"
+    if segs and segs[0].startswith("@") and len(segs[0]) > 1 and (len(segs) == 1 or segs[1] in YOUTUBE_CHANNEL_TABS):
+        return "channel page"
+    return None
 
 
 def own_page_reason(url: str, rec: dict) -> str | None:
@@ -255,6 +276,9 @@ def own_page_reason(url: str, rec: dict) -> str | None:
         return "is a YouTube front end; it dates an upload, not the event"
     if re.match(r"^(?:www\.)?google\.[a-z.]+$", host) and segs[:1] == ["url"]:
         return "is a google.com/url redirect, which hides the page; cite the page itself"
+    shape = youtube_page_shape(segs, q)
+    if shape:
+        return f"is a YouTube {shape} served by {host}; it dates an upload, not the event"
     own = rec.get("url")
     if own:
         ohost, osegs, _ = _split(own)
