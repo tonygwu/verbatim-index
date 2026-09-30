@@ -124,6 +124,27 @@ def _transcript(case: dict, ctx: Context) -> dict:
 # Prompts (model stages)
 # ---------------------------------------------------------------------------
 
+def resolve_record(case: dict, ctx: Context) -> tuple[dict, dt.date]:
+    """The record a resolve case judges, and its deadline, exactly as production builds them.
+
+    Production runs every record through phase2_resolvability.attach_deadlines before
+    the resolver sees it, which sets the deadline and, for a claim with no date, the
+    implied window and the judged block. A case that skipped this would record answers
+    to a prompt production never sends (review of the combined branch, 2026-09-30).
+    The gold names the deadline it expects; a disagreement refuses the case before any
+    call, naming both, rather than testing a question production does not ask.
+    """
+    import phase2_resolvability as P2  # noqa: PLC0415 -- the funnel, read at call time
+    rec = _set(ctx.record(case["input"]["record"]), case["input"].get("set"))
+    P2.attach_deadlines([rec], derive=True, implied=1.0)
+    derived, want = rec.get("_deadline"), dt.date.fromisoformat(case["input"]["deadline"])
+    if derived != want:
+        raise SystemExit(f"REFUSING {case['id']}: the gold deadline is {want}, but production derives "
+                         f"{derived} ({rec.get('_basis') or rec.get('_why_none')}) for this record; fix the gold "
+                         f"before recording, or the case tests a prompt production never sends")
+    return rec, derived
+
+
 def build_prompt(case: dict, ctx: Context) -> str:
     st, inp = case["stage"], case["input"]
     if st == "dating":
@@ -141,8 +162,8 @@ def build_prompt(case: dict, ctx: Context) -> str:
         return L.build_extraction_prompt(rec, roster.get(rec["leader_slug"]), spec, schema, L.load_header_template())
     if st == "resolve":
         import resolution_lib as R  # noqa: PLC0415 -- another stage's module, read at call time
-        rec = _set(ctx.record(inp["record"]), inp.get("set"))
-        return R.build_resolver_prompt(rec, dt.date.fromisoformat(inp["deadline"]), inp["today"])
+        rec, deadline = resolve_record(case, ctx)
+        return R.build_resolver_prompt(rec, deadline, inp["today"])
     raise ValueError(f"stage {st} has no prompt")
 
 
@@ -226,14 +247,20 @@ def judge_extract(case: dict, ctx: Context, text: str) -> tuple[str, str]:
     return "pass", f"target_date {p['target_date']!r}; criterion {p['resolution_criteria'][:120]!r}"
 
 
-def judge_resolve(case: dict, ctx: Context, text: str) -> tuple[str, str]:
+def judge_resolve(case: dict, ctx: Context, text: str, telemetry: "dict | None") -> tuple[str, str]:
     import resolution_lib as R  # noqa: PLC0415
-    rec = ctx.record(case["input"]["record"])
+    # The record with the case's own dates, as the prompt showed it: already_public is
+    # judged against THAT statement date, never the stored one.
+    rec, _ = resolve_record(case, ctx)
     try:
         obj = L.extract_json(text)
     except (ValueError, json.JSONDecodeError) as exc:
         return "fail", f"no JSON in the answer: {exc}"
-    errs = L.check_schema(obj, R.RESOLUTION_SCHEMA) + R.validate_resolution(obj, rec["prediction_id"])
+    errs = (L.check_schema(obj, R.RESOLUTION_SCHEMA)
+            + R.validate_resolution(obj, rec["prediction_id"], R.statement_bound(rec))
+            # Production's own floor, on the harness's search telemetry; an answer
+            # production would refuse is never a pass here.
+            + [f"research effort: {e}" for e in R.validate_effort(obj, telemetry or {})])
     if errs:
         return "fail", f"invalid resolution: {'; '.join(errs[:3])}"
     ex, bad = case["expect"], []
@@ -334,12 +361,12 @@ def aggregate(outcomes: list[tuple[str, str]], infra: Counter) -> tuple[str, str
     return "FAIL", summary + "; first miss: " + next(d for s, d in valid if s != "pass")
 
 
-def judge(case, ctx, text, checks):
+def judge(case, ctx, text, checks, telemetry=None):
     if case["stage"] == "dating":
         return judge_dating(case, ctx, text, checks)
     if case["stage"] == "extract":
         return judge_extract(case, ctx, text)
-    return judge_resolve(case, ctx, text)
+    return judge_resolve(case, ctx, text, telemetry)
 
 
 def requested_models(args) -> dict:
@@ -369,7 +396,8 @@ def run_offline(case: dict, ctx: Context, requested: dict) -> tuple[str, str]:
     if wrong:
         return "RECORDING_REFUSED", (f"this case runs on {harness} ({requested[harness]}); "
                                      f"{len(wrong)} of {len(docs)} recordings do not: {wrong[:3]}")
-    return aggregate([judge(case, ctx, d["response_text"], d.get("source_checks") or []) for d in docs], Counter())
+    return aggregate([judge(case, ctx, d["response_text"], d.get("source_checks") or [], d.get("telemetry"))
+                      for d in docs], Counter())
 
 
 def run_live(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) -> tuple[str, str]:
@@ -413,9 +441,10 @@ def run_live(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) 
              "response_text": text,
              "served_model": tel.get("served_model"), "served_model_verified": tel.get("served_model_verified"),
              "identity": identity, "telemetry": {k: v for k, v in tel.items() if k in (
-                 "web_search_queries", "tool_use_counts", "attempts", "empty_retries", "requested_model")},
+                 "web_search", "web_search_queries", "tool_use_counts", "attempts", "empty_retries",
+                 "requested_model")},
              "source_checks": checks, "recorded_at_utc": DL.utc_stamp()}, indent=1, sort_keys=True, default=str) + "\n")
-        outcomes.append(judge(case, ctx, text, checks))
+        outcomes.append(judge(case, ctx, text, checks, tel))
     return aggregate(outcomes, infra)
 
 

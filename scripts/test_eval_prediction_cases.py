@@ -83,7 +83,10 @@ DATING = {"id": "D-dx", "operator_case": "A3", "stage": "dating",
           "expect": {"pass_within": ["2012-05-30", "2012-05-30"], "hard_outside": ["2012-05-30", "2012-05-30"]}}
 RESOLVE = {"id": "R-public", "operator_case": "A3", "stage": "resolve",
            "input": {"record": {"file": "predictions/ada/re-upload-abc123.jsonl", "prediction_id": REC_ID},
-                     "set": {"source.statement_date": "2012-05-30"}, "deadline": "2017-05-30", "today": "2026-09-29",
+                     "set": {"source.statement_date": "2012-05-30", "prediction.target_date": None,
+                             "prediction.target_date_text": None, "prediction.horizon": "none",
+                             "prediction.subject_control": "external"},
+                     "deadline": "2015-05-30", "today": "2026-09-29",
                      "harness": "astra"},
            "expect": {"already_public": "present", "already_public_on_or_before": "2012-05-30",
                       "already_public_mentions_all": [["thing"]]}}
@@ -110,13 +113,14 @@ def run(argv, env=None, **kw):
 def resolver_answer(pid=REC_ID, public=True, date="2012-05-29"):
     return {"prediction_id": pid, "outcome": "occurred", "confidence": "high", "reasoning": "r",
             "sources": [{"what_it_shows": "s", "where": "https://e.example.com", "date": "2012-06-04"}],
-            "unresolvable_reason": None,
+            "unresolvable_reason": None, "searched": ["q one", "q two", "q three"],
             "already_public": {"date": date, "where": "https://news.example.com/deal",
                                "what_it_shows": "the thing was reported"} if public else None}
 
 
-SCHEMA_WITH_PUBLIC = copy.deepcopy(R.RESOLUTION_SCHEMA)
-SCHEMA_WITH_PUBLIC["properties"]["already_public"] = {"anyOf": [{"type": "null"}, {"type": "object"}]}
+# What the Astra harness records for a call that ran the three queries above
+# (grade.web_search_actions): production's effort check reads exactly this.
+SEARCHED = {"served_model": "gpt-6-astra", "web_search": {"queries": ["q one", "q two", "q three"], "opens": 0}}
 
 
 class Offline(unittest.TestCase):
@@ -252,10 +256,9 @@ class Resolve(unittest.TestCase):
         def caller(harness, prompt, timeout, workdir, args, idx):
             case = "R-control" if "2012-05-30" in prompt and seen.count("R-public") >= 3 else "R-public"
             seen.append(case)
-            return json.dumps(answers[case][seen.count(case) - 1]), {"served_model": "gpt-6-astra"}, "codex"
-        with patch.object(R, "RESOLUTION_SCHEMA", SCHEMA_WITH_PUBLIC):
-            rc, out = run(["--gold", str(g), "--data", str(self.data), "--live", "--smoke"], {"PREDICT_LIVE": "1"},
-                          caller=caller)
+            return json.dumps(answers[case][seen.count(case) - 1]), SEARCHED, "codex"
+        rc, out = run(["--gold", str(g), "--data", str(self.data), "--live", "--smoke"], {"PREDICT_LIVE": "1"},
+                      caller=caller)
         self.assertEqual(rc, 0, out)
         self.assertIn("[PASS] R-public (2 of 3 valid repeats pass", out)
         self.assertIn("[PASS] R-control", out)
@@ -265,11 +268,50 @@ class Resolve(unittest.TestCase):
         g = gold(self.root, [CONTROL])
 
         def caller(*a):
-            return json.dumps(resolver_answer(date="2012-05-28")), {"served_model": "gpt-6-astra"}, "codex"
-        with patch.object(R, "RESOLUTION_SCHEMA", SCHEMA_WITH_PUBLIC):
-            rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"}, caller=caller)
+            return json.dumps(resolver_answer(date="2012-05-28")), SEARCHED, "codex"
+        rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"}, caller=caller)
         self.assertEqual(rc, 1, out)
         self.assertIn("[HARD_FAIL] R-control", out)
+
+
+    # MERGE WITH THE RESOLVER POLICY (review of the combined branch, 2026-09-30). The
+    # harness must judge what production would: the deadline production derives, the
+    # record with the case's own dates, and production's effort check on the harness's
+    # own search telemetry.
+    def test_a_gold_deadline_production_would_not_derive_is_refused(self):
+        wrong = copy.deepcopy(RESOLVE)
+        wrong["input"]["deadline"] = "2017-05-30"
+        g = gold(self.root, [wrong])
+
+        def caller(*a):
+            raise AssertionError("no call may be made for a case whose gold disagrees with production")
+        with self.assertRaises(SystemExit) as cm:
+            run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"}, caller=caller)
+        self.assertIn("gold deadline is 2017-05-30", str(cm.exception))
+        self.assertIn("production derives 2015-05-30", str(cm.exception))
+
+    def test_already_public_is_judged_against_the_cases_own_statement_date(self):
+        g = gold(self.root, [RESOLVE])
+
+        def caller(*a):
+            # Dated after the case's 2012-05-30, though before the fixture's stored 2019 date.
+            return json.dumps(resolver_answer(date="2012-06-04")), SEARCHED, "codex"
+        rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"}, caller=caller)
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("invalid resolution", out)
+
+    def test_an_answer_production_would_refuse_for_effort_is_not_a_pass(self):
+        g = gold(self.root, [RESOLVE])
+
+        def caller(*a):
+            return json.dumps(resolver_answer()), {"served_model": "gpt-6-astra"}, "codex"
+        rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"}, caller=caller)
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("research effort", out)
+        # The recording keeps the telemetry, and replay applies the same check.
+        rc2, out2 = run(["--gold", str(g), "--data", str(self.data)])
+        self.assertNotEqual(rc2, 0, out2)
+        self.assertIn("research effort", out2)
 
 
 class Live(unittest.TestCase):
@@ -358,8 +400,7 @@ class Live(unittest.TestCase):
 
     def test_smoke_cost_is_stated_before_a_live_run(self):
         g = gold(self.root, [RESOLVE, DATING], smoke=["R-public", "D-dx"])
-        with patch.object(R, "RESOLUTION_SCHEMA", SCHEMA_WITH_PUBLIC):
-            rc, out = run(["--gold", str(g), "--data", str(self.data), "--smoke", "--estimate"])
+        rc, out = run(["--gold", str(g), "--data", str(self.data), "--smoke", "--estimate"])
         self.assertIn("live run: 2 model cases x 3 repeats = 6 calls (astra 3, gemini 3)", out)
 
 
