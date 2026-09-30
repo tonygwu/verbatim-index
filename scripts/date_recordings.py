@@ -223,7 +223,7 @@ def propose_one(job: dict, args, run_dir: Path, run_id: str, caller, idx: int) -
         return {**base, "status": "cached"}
     rec = json.loads(Path(job["path"]).read_text())
     leads, dropped = DL.leads_from_records(job["records"], job["meta"])
-    prompt, meta = DL.build_dating_prompt(rec, leads)
+    prompt, meta = DL.build_dating_prompt(rec, leads, harness=args.harness)
     sha = hashlib.sha256(prompt.encode()).hexdigest()
     write(run_dir / "prompts" / slug / f"{sid}.txt", prompt)
     t0 = time.time()
@@ -428,7 +428,8 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         lines.append(f"  transcript file missing under every root: {len(missing)} {missing[:5]}")
     if not args.run:
         sample = DL.build_dating_prompt(json.loads(jobs[0]["path"].read_text()),
-                                        DL.leads_from_records(jobs[0]["records"], jobs[0]["meta"])[0])[1] if jobs else None
+                                        DL.leads_from_records(jobs[0]["records"], jobs[0]["meta"])[0],
+                                        harness=args.harness)[1] if jobs else None
         print("DRY RUN: nothing is called, fetched or written.")
         print("\n".join(lines).replace("  excluded, ", "  "))
         print(f"a real run would spend {len(jobs)} {args.harness} calls ({requested_model(args)}), one per transcript "

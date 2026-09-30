@@ -217,7 +217,7 @@ def build_prompt(case: dict, ctx: Context) -> str:
         recs = L.parse_lines(ctx.path(recs_path).read_text(), recs_path) if recs_path else []
         meta_path = ctx.data / recs_path.replace(".jsonl", ".meta.json") if recs_path else None
         meta = json.loads(meta_path.read_text()) if meta_path and meta_path.is_file() else None
-        return DL.build_dating_prompt(rec, DL.leads_from_records(recs, meta)[0])[0]
+        return DL.build_dating_prompt(rec, DL.leads_from_records(recs, meta)[0], harness=case_harness(case))[0]
     if st == "extract":
         rec = _transcript(case, ctx)
         roster = {r["slug"]: r for r in json.loads(ctx.path(inp.get("roster", "roster/final.json")).read_text())["roster"]}

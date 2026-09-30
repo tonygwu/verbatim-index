@@ -324,7 +324,7 @@ class ReviewMerge(unittest.TestCase):
         out = DL.merge_one(undated, doc_for(obj, undated), checks_for(obj, self.PAGES, undated))
         self.assertEqual((out["outcome"], out["reason"]), ("queue", "after_upper_bound"))
         self.assertIn("fetched", out["detail"])
-        prompt, _ = DL.build_dating_prompt(undated, [])
+        prompt, _ = DL.build_dating_prompt(undated, [], harness="gemini")
         self.assertIn("UPPER BOUND: 2012-05-29 (the day this transcript was fetched", prompt)
         del undated["fetched_at_utc"]
         out = DL.merge_one(undated, doc_for(obj, undated), checks_for(obj, self.PAGES, undated))
@@ -564,7 +564,7 @@ class Prompt(unittest.TestCase):
                " ".join(f"back in 20{i % 30:02d} we did it " + " ".join(f"f{i}x{j}" for j in range(70))
                         for i in range(60)) + " " + WORDS
         rec = {**D10, "text": text}
-        prompt, meta = DL.build_dating_prompt(rec, ["Said at DX on May 30, 2012."])
+        prompt, meta = DL.build_dating_prompt(rec, ["Said at DX on May 30, 2012."], harness="gemini")
         self.assertIn("UPPER BOUND: 2019-02-27 (YouTube upload date)", prompt)
         self.assertIn("THE RECORDING'S OWN PAGE NEVER COUNTS", prompt)
         self.assertIn("TIME ZONE", prompt)
@@ -577,9 +577,29 @@ class Prompt(unittest.TestCase):
 
     def test_undated_source_says_so(self):
         rec = {k: v for k, v in PODCAST.items() if k != "yt_upload_date"}
-        prompt, _ = DL.build_dating_prompt(rec, [])
+        prompt, _ = DL.build_dating_prompt(rec, [], harness="gemini")
         self.assertIn("UPPER BOUND: none (the source carries no date)", prompt)
         self.assertIn("LEADS FROM EARLIER STAGES: none", prompt)
+
+    # FOUND in the smoke pilot, 2026-09-30: the prompt told the agent to "Open the
+    # page". Gemini in print mode may search but may not open a page or run a
+    # command; each try was soft-denied and ended the turn with an empty answer,
+    # 9 of 9 attempts on the D10 case (RunCommand twice, ReadUrlContent once).
+    def test_the_gemini_prompt_says_search_only_and_never_asks_it_to_open_a_page(self):
+        prompt, _ = DL.build_dating_prompt(D10, [], harness="gemini")
+        self.assertNotIn("Open the page", prompt)
+        self.assertIn("YOUR TOOLS", prompt)
+        self.assertIn("You cannot open a page", prompt)
+        self.assertIn("run a command", prompt)
+        self.assertIn("exactly as the search result shows them", prompt)
+
+    def test_the_astra_prompt_may_open_pages_and_fable_is_told_it_has_no_tools(self):
+        astra, _ = DL.build_dating_prompt(D10, [], harness="astra")
+        self.assertIn("You can search the web and open pages", astra)
+        fable, _ = DL.build_dating_prompt(D10, [], harness="fable")
+        self.assertIn("You have no working tools", fable)
+        with self.assertRaises(ValueError):
+            DL.build_dating_prompt(D10, [], harness="other")
 
 
 if __name__ == "__main__":

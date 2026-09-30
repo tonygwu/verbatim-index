@@ -478,9 +478,10 @@ WORK IN THIS ORDER.
    the organiser's schedule or press release, a dated live blog or news report of
    the session, the podcast's own episode page or feed, a company's investor
    relations page, an archived copy on web.archive.org. Prefer a source written
-   at the time by the organiser or by a reporter who was there. Open the page.
-   Do not rely on a search-result summary: in this project, summaries gave the
-   wrong day in 3 of 10 checks.
+   at the time by the organiser or by a reporter who was there. How you read a
+   source depends on your tools; see YOUR TOOLS below. Either way the script
+   opens every page you cite and checks your excerpt against it, which is where a
+   summary that gave the wrong day (3 of 10 checks in this project) is caught.
 
    THE RECORDING'S OWN PAGE NEVER COUNTS. A YouTube page of any kind, the page
    named under URL below, another page of the same show on a transcript site, and
@@ -559,7 +560,30 @@ def fetch_bound(rec: dict) -> str | None:
     return f[:10] if isinstance(f, str) and _FETCHED.fullmatch(f) else None
 
 
-def build_dating_prompt(rec: dict, leads: list[str]) -> tuple[str, dict]:
+#: What each harness can do, stated in its prompt. FOUND in the smoke pilot on
+#: 2026-09-30: the shared text told every agent to "Open the page", and Gemini in
+#: print mode may search but may not open a page or run a command. Each try was
+#: soft-denied and ended the turn with an empty answer, 9 of 9 attempts on D10
+#: (RunCommand twice, ReadUrlContent once). Granting it page access is not an
+#: option: that permission lives in the shared agy config, which the leaders
+#: board's Gemini judge also reads.
+HARNESS_TOOLS = {
+    "gemini": """YOUR TOOLS. You can search the web. You cannot open a page, read a URL or
+run a command: if you try, this harness ends your turn and discards your answer.
+So work from search results only. Cite the URL of a result, and copy into
+"verbatim_excerpt" words exactly as the search result shows them, with their date.
+The script then opens that page and must find your words on it; a result whose
+text is shortened or reworded confirms nothing and goes to a person, which is
+safe, so prefer results that quote the page.""",
+    "astra": """YOUR TOOLS. You can search the web and open pages. Open each source you cite
+and copy the excerpt from the page itself, not from a search-result summary.""",
+    "fable": """YOUR TOOLS. You have no working tools: you cannot search or open pages. Cite
+only sources you know well, with words you are confident appear on them; the
+script opens every page and refuses an excerpt it cannot find there.""",
+}
+
+
+def build_dating_prompt(rec: dict, leads: list[str], harness: str) -> tuple[str, dict]:
     """(prompt, meta). Only the opening, the closing and the dated passages are sent.
 
     A long prompt raises the odds that the Gemini harness reaches for a tool, has
@@ -583,7 +607,11 @@ def build_dating_prompt(rec: dict, leads: list[str]) -> tuple[str, dict]:
                   "LEADS FROM EARLIER STAGES (unverified; use them to search, never cite them)\n"
                   + "\n".join(f"- {x}" for x in leads))
     cut_note = f", {cut} more cut by the cap of {MAX_PASSAGES}" if cut else ""
+    if harness not in HARNESS_TOOLS:
+        raise ValueError(f"no tool statement for harness {harness!r}; expected one of {sorted(HARNESS_TOOLS)}")
     prompt = f"""{DATING_TASK}
+
+{HARNESS_TOOLS[harness]}
 
 It must validate against this schema:
 
