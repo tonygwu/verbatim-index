@@ -74,6 +74,7 @@ import predictions_lib as L  # noqa: E402
 from resolve_predictions import date_overrides_for, select  # noqa: E402
 from data_clone_workflow import (  # noqa: E402
     load_scoring_config as load_config, scoring_rel as rel, score_inputs_sha256, scores_staleness,
+    SENSITIVITY_SCALES as D_SCALES,
 )
 
 
@@ -207,6 +208,60 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
         why[row["not_scored_because"] or "scored"] += 1
         out.append(row)
     return out, why
+
+
+def _ranks(leaders: list[dict]) -> dict[str, int]:
+    """1-based rank among ranked people, in per_leader's own order."""
+    return {l["slug"]: i for i, l in enumerate((l for l in leaders if l["ranked"]), 1)}
+
+
+def implied_sensitivity(sens: dict[str, list[str]], root: Path, args, cutoff: dt.date, resolutions: dict,
+                        ov_in, joined: list[dict], names: dict, labels, withdrawn: dict, restated: dict, fresh,
+                        board: list[dict]) -> dict:
+    """Each person's score and rank with every implied window at half and at double (VD-6 (a)).
+
+    A changed window is a changed question, so the implied rows at a scale are
+    judged only by that scale's runs, whose every sidecar must say it was
+    written at that scale; every other row keeps the board's result. A sidecar
+    missing at a scale is named, never borrowed from the board or the other scale.
+    """
+    out = {"board_rank": _ranks(board)}
+    kept = [r for r in joined if "implied" not in r["flags"]]
+    for key, runs in sorted(sens.items()):
+        scale = D_SCALES[key]
+        paths = [root / r for r in runs]
+        overlap = sorted({str(Path(p).resolve()) for p in paths} & {str(Path(r).resolve()) for r in args.run})
+        if overlap:
+            raise SystemExit(f"implied_sensitivity {key} names board runs {overlap}; a scale's runs judge another "
+                             f"question and must be their own")
+        res = load_across(paths, fresh(lambda run: R.load_sidecars(run, "resolve"), "resolve")) if paths else {}
+        pri = load_across(paths, fresh(lambda run: R.load_sidecars(run, "prior"), "prior")) if paths else {}
+        for stage, have in (("resolve", res), ("prior", pri)):
+            wrong = sorted(pid for pid, obj in have.items()
+                           if obj.get("implied_scale", ((obj.get("funnel_flags") or {}).get("implied") or {}).get("scale"))
+                           != scale)
+            if wrong:
+                raise SystemExit(f"implied_sensitivity {key}: {stage} sidecars {wrong[:6]} were not written at "
+                                 f"{scale}x their windows; a {key} run holds only resolve_predictions.py "
+                                 f"--implied-scale {key} output")
+        rows = [r for r in select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
+                                  resolutions=resolutions, date_overrides=ov_in, implied=scale, lead_labels=labels)
+                if "_implied" in r]
+        stale = stale_sidecars(rows, {"resolve": res, "prior": pri})
+        got, _ = join(rows, res, pri, restated, stale={s["prediction_id"] for s in stale}, withdrawn=withdrawn)
+        people = per_leader(kept + got, names)
+        missing = collections.Counter(r["leader_slug"] for r in got if r["not_scored_because"] in ("no_resolution", "no_prior"))
+        ranks = _ranks(people)
+        out[key] = {
+            "runs": runs, "scale": scale, "implied_past_due": len(rows), "scored": sum(1 for r in got if r["scored"]),
+            "missing_resolution": sorted(r["prediction_id"] for r in got if r["not_scored_because"] == "no_resolution"),
+            "missing_prior": sorted(r["prediction_id"] for r in got if r["not_scored_because"] == "no_prior"),
+            "stale_sidecars": stale,
+            "leaders": {l["slug"]: {"n_scored": l["n_scored"], "mean_points": l["mean_points"], "ranked": l["ranked"],
+                                    "rank": ranks.get(l["slug"]), "implied_missing": missing.get(l["slug"], 0)}
+                        for l in people},
+        }
+    return out
 
 
 def unresolvable_split(rows: list[dict]) -> dict:
@@ -840,6 +895,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="a resolution-policy release the board may carry; repeat it. Absent: legacy only")
     ap.add_argument("--early-calls", action="store_const", const=True, default=None,
                     help="score decided early calls now, before the deadline (VD-5)")
+    ap.add_argument("--implied-sensitivity", type=json.loads, default=None,
+                    help='with --implied-windows: {"half": [runs], "double": [runs]}, the runs judging every implied '
+                         'record at half and double its window')
     ap.add_argument("--withdrawn", type=Path, default=None,
                     help="the operator's withdrawal manifest; each listed prediction reads withdrawn:<reason>")
     ap.add_argument("--lead-test", action="store_const", const=True, default=None,
@@ -850,7 +908,8 @@ def main(argv: list[str] | None = None) -> int:
              "--restatements": args.restatements, "--date-overrides": args.date_overrides,
              "--replacements": args.replacements, "--implied-windows": args.implied_windows,
              "--policy-release": args.policy_releases, "--early-calls": args.early_calls,
-             "--lead-test": args.lead_test, "--withdrawn": args.withdrawn}
+             "--lead-test": args.lead_test, "--withdrawn": args.withdrawn,
+             "--implied-sensitivity": args.implied_sensitivity}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -867,6 +926,7 @@ def main(argv: list[str] | None = None) -> int:
         args.early_calls = cfg.get("early_calls")
         args.lead_test = cfg.get("lead_test")
         args.withdrawn = root / cfg["withdrawn"] if "withdrawn" in cfg else None
+        args.implied_sensitivity = cfg.get("implied_sensitivity")
         args.policy_releases = cfg.get("policy_releases")
         # A committed config names its override file, so staleness hashing covers
         # it. One that is silent while the production file exists is refused
@@ -913,6 +973,11 @@ def main(argv: list[str] | None = None) -> int:
         settings["lead_test"] = True
     if args.withdrawn is not None:
         settings["withdrawn"] = rel(args.withdrawn, root)
+    if args.implied_sensitivity is not None:
+        if args.implied_windows is None:
+            raise SystemExit("implied_sensitivity needs implied_windows")
+        settings["implied_sensitivity"] = {k: [rel(root / r, root) for r in v]
+                                           for k, v in sorted(args.implied_sensitivity.items())}
     implied = 1.0 if args.implied_windows is not None else None
 
     try:
@@ -1095,6 +1160,10 @@ def main(argv: list[str] | None = None) -> int:
         doc["corpus"]["stale_sidecars"] = window_stale
     if args.policy_releases is not None:
         doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
+    if args.implied_sensitivity is not None:
+        doc["implied_sensitivity"] = implied_sensitivity(
+            settings["implied_sensitivity"], root, args, cutoff, resolutions, ov_in, joined, names, labels, withdrawn,
+            restated, fresh, leaders)
     if args.withdrawn is not None:
         doc["withdrawn"] = {"manifest": settings["withdrawn"],
                             "sha256": hashlib.sha256(args.withdrawn.read_bytes()).hexdigest(),

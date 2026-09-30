@@ -534,8 +534,12 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # `withdrawn` names the operator's manifest of single withdrawn predictions
 # (predictions_lib.WITHDRAWN_FILE); like `replacements` it must lie under
 # predictions/, and its bytes are fingerprinted.
+# `implied_sensitivity` ({"half": [runs], "double": [runs]}, with implied_windows)
+# names the runs that judge every implied record at half and double its window,
+# for the per-person sensitivity report; their sidecars are fingerprinted too.
 OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements", "implied_windows", "policy_releases",
-                        "early_calls", "lead_test", "withdrawn")
+                        "early_calls", "lead_test", "withdrawn", "implied_sensitivity")
+SENSITIVITY_SCALES = {"half": 0.5, "double": 2.0}
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs", "early", "lead_tests")
 
 
@@ -650,6 +654,15 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
                                          and re.fullmatch(r"[0-9a-f]{64}", cfg["implied_windows"])):
         raise SystemExit(f"{path}: implied_windows must be the sha256 of the implied-window table "
                          f"(phase2_resolvability.implied_table_sha256()), not {cfg['implied_windows']!r}")
+    if "implied_sensitivity" in cfg:
+        sens = cfg["implied_sensitivity"]
+        if "implied_windows" not in cfg:
+            raise SystemExit(f"{path}: implied_sensitivity needs implied_windows: it judges implied windows at half "
+                             f"and double, and there are none without the table")
+        if not (isinstance(sens, dict) and set(sens) == set(SENSITIVITY_SCALES)
+                and all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in sens.values())):
+            raise SystemExit(f"{path}: implied_sensitivity must be {{\"half\": [runs], \"double\": [runs]}}, "
+                             f"not {sens!r}")
     if "withdrawn" in cfg and predictions_path_problem("withdrawn", cfg["withdrawn"]):
         raise SystemExit(f"{path}: {predictions_path_problem('withdrawn', cfg['withdrawn'])}")
     for flag in ("early_calls", "lead_test"):
@@ -697,6 +710,13 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
         for sub in SIDECAR_DIRS:
             for f in sorted((root / run / sub).glob("*/*.json")):
                 h.update(f"{run}/{f.relative_to(root / run)} {hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
+    for scale, runs in sorted((settings.get("implied_sensitivity") or {}).items()):
+        # Only when named, so every existing scores.json hashes as before.
+        for run in runs:
+            for sub in SIDECAR_DIRS:
+                for f in sorted((root / run / sub).glob("*/*.json")):
+                    h.update(f"sensitivity {scale} {run}/{f.relative_to(root / run)} "
+                             f"{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
     return h.hexdigest()
 
 

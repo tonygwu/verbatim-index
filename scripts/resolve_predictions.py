@@ -410,6 +410,9 @@ def run_one(job: dict) -> dict:
                                  prompt_sha=prompt_sha, leaks=leaks, release=args.release,
                                  code_revision=args.code_revision)
         out["funnel_flags"] = rec["_flags"]
+        if "_implied" in rec:
+            # Which window this was judged at, so a sensitivity run can prove its scale.
+            out["implied_scale"] = rec["_implied"]["scale"]
         dest = R.sidecar_path(Path(args.out), stage, slug, pid)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
