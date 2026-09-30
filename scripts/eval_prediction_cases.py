@@ -15,14 +15,22 @@ only the PREDICT_LIVE gate, which this file applies the same way.
 
 STAGES
   header   deterministic: the TRANSCRIPT METADATA block under an optional override
-  funnel   deterministic: phase2_resolvability's deadline, lead and eligibility
-           under the gold statement date
+  funnel   deterministic: phase2_resolvability's deadline, lead, eligibility and
+           failing clauses under the gold statement date, with the implied-window
+           configuration the case states (input.implied: 1.0 for the board's table,
+           null for off; required)
   extract  one extraction call (release 2.3), then the real parser and grounding;
            the operator's quote must still be extracted (critique 2 point 5)
   dating   one dating agent call, the real page check, the real merge; a confirmed
            date outside the gold band is a WRONG AUTO-CONFIRMATION
   resolve  one resolver call, validated by resolution_lib; a case needing a field
            the resolver contract lacks (already_public) is BLOCKED before any call
+  early    one early-call check (VD-5 c) before the deadline, validated as
+           resolve_predictions --stage early validates it
+  Resolve and early cases are judged over the deadline production derives with
+  implied windows on; the gold names it, and every case's gold is checked against
+  production BEFORE the first call (and by --estimate), so a live run never spends
+  calls and then refuses.
 
 MODES
   --offline (default)  deterministic stages run; a model stage replays each
@@ -65,9 +73,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dating_lib as DL  # noqa: E402
 import predictions_lib as L  # noqa: E402
 
-MODEL_STAGES = ("extract", "dating", "resolve")
+MODEL_STAGES = ("extract", "dating", "resolve", "early")
 STAGES = ("header", "funnel") + MODEL_STAGES
-DEFAULT_HARNESS = {"extract": "astra", "dating": "gemini", "resolve": "astra"}
+DEFAULT_HARNESS = {"extract": "astra", "dating": "gemini", "resolve": "astra", "early": "astra"}
+# The only statuses that mean a dating case's answers were judged: the denominator of
+# "wrong auto-confirmations: k of n". A refused recording, too few valid repeats, or no
+# answer at all is not a trial (final review item 7).
+JUDGED_STATUSES = ("PASS", "FAIL", "HARD_FAIL", "QUEUED")
 INFRA = ("cli_timeout", "auth_or_quota", "empty_response", "cli_nonzero_exit", "transient_retryable",
          "router_no_account", "model_identity_mismatch")
 REPORT_DEADLINE_RE = re.compile(r"^By [^,]{0,60},\s+[^.]{0,80}\b(will report|reports?|will confirm|reporting will confirm)\b",
@@ -131,25 +143,70 @@ def _transcript(case: dict, ctx: Context) -> dict:
 # Prompts (model stages)
 # ---------------------------------------------------------------------------
 
+# A resolve or early case is judged over the deadline the BOARD would use: implied
+# windows on, at the operator's table (VD-6 a), scale 1.
+RESOLVE_IMPLIED = 1.0
+
+
 def resolve_record(case: dict, ctx: Context) -> tuple[dict, dt.date]:
-    """The record a resolve case judges, and its deadline, exactly as production builds them.
+    """The record a resolve or early case judges, and its deadline, exactly as production builds them.
 
     Production runs every record through phase2_resolvability.attach_deadlines before
     the resolver sees it, which sets the deadline and, for a claim with no date, the
     implied window and the judged block. A case that skipped this would record answers
     to a prompt production never sends (review of the combined branch, 2026-09-30).
-    The gold names the deadline it expects; a disagreement refuses the case before any
-    call, naming both, rather than testing a question production does not ask.
+    The gold names the deadline it expects; a disagreement refuses the case, naming
+    both, rather than testing a question production does not ask. preflight() runs
+    this for every case before the first call.
     """
     import phase2_resolvability as P2  # noqa: PLC0415 -- the funnel, read at call time
     rec = _set(ctx.record(case["input"]["record"]), case["input"].get("set"))
-    P2.attach_deadlines([rec], derive=True, implied=1.0)
+    P2.attach_deadlines([rec], derive=True, implied=RESOLVE_IMPLIED)
     derived, want = rec.get("_deadline"), dt.date.fromisoformat(case["input"]["deadline"])
     if derived != want:
         raise SystemExit(f"REFUSING {case['id']}: the gold deadline is {want}, but production derives "
                          f"{derived} ({rec.get('_basis') or rec.get('_why_none')}) for this record; fix the gold "
                          f"before recording, or the case tests a prompt production never sends")
     return rec, derived
+
+
+def funnel_implied(case: dict) -> "float | None":
+    """The implied-window configuration a funnel case states it tests, or raise.
+
+    input.implied is the scale (1.0 for the board's table) or null for implied windows
+    off. It is required: the funnel gives a record with no date a window only with the
+    table on, so a case that does not say which it tests does not say what it tests
+    (final review item 6)."""
+    import phase2_resolvability as P2  # noqa: PLC0415
+    inp = case["input"]
+    if "implied" not in inp:
+        raise SystemExit(f"REFUSING {case['id']}: a funnel case must state the implied-window configuration it "
+                         f"tests, input.implied: {RESOLVE_IMPLIED} for the board's table (the resolve and early "
+                         f"cases' configuration) or null for off")
+    if inp["implied"] is not None and inp["implied"] not in P2.IMPLIED_SCALES:
+        raise SystemExit(f"REFUSING {case['id']}: input.implied {inp['implied']!r} is not null or one of "
+                         f"{list(P2.IMPLIED_SCALES)}")
+    return inp["implied"]
+
+
+def preflight(cases: list[dict], ctx: Context) -> list[str]:
+    """Every gold defect a run would meet, found before anything is called (final review item 6).
+
+    Each resolve and early case's gold deadline against the one production derives,
+    and each funnel case's stated configuration. A case left PENDING or BLOCKED is
+    skipped, since it never runs. Returned as a list, so a refusal names them all."""
+    problems = []
+    for c in cases:
+        if c.get("pending") or (c["stage"] == "resolve" and resolve_blocked(c)):
+            continue
+        try:
+            if c["stage"] in ("resolve", "early"):
+                resolve_record(c, ctx)
+            elif c["stage"] == "funnel":
+                funnel_implied(c)
+        except SystemExit as exc:
+            problems.append(str(exc))
+    return problems
 
 
 def build_prompt(case: dict, ctx: Context) -> str:
@@ -171,6 +228,10 @@ def build_prompt(case: dict, ctx: Context) -> str:
         import resolution_lib as R  # noqa: PLC0415 -- another stage's module, read at call time
         rec, deadline = resolve_record(case, ctx)
         return R.build_resolver_prompt(rec, deadline, inp["today"])
+    if st == "early":
+        import resolution_lib as R  # noqa: PLC0415
+        rec, deadline = resolve_record(case, ctx)
+        return R.build_early_prompt(rec, deadline, inp["today"])
     raise ValueError(f"stage {st} has no prompt")
 
 
@@ -300,6 +361,36 @@ def judge_resolve(case: dict, ctx: Context, text: str, telemetry: "dict | None")
     return "pass", f"outcome {obj['outcome']}; already_public {ap}"
 
 
+def judge_early(case: dict, ctx: Context, text: str, telemetry: "dict | None") -> tuple[str, str]:
+    """An early call (VD-5 c) judged as resolve_predictions --stage early would: EARLY_SCHEMA,
+    validate_early with the case's own statement date and range, and the effort floor."""
+    import resolution_lib as R  # noqa: PLC0415
+    rec, _ = resolve_record(case, ctx)
+    try:
+        obj = L.extract_json(text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return "fail", f"no JSON in the answer: {exc}"
+    errs = (L.check_schema(obj, R.EARLY_SCHEMA)
+            + R.validate_early(obj, rec["prediction_id"], (rec.get("source") or {}).get("statement_date"),
+                               case["input"]["today"], earliest=R.statement_bound(rec))
+            + [f"research effort: {e}" for e in R.validate_effort(obj, telemetry or {})])
+    if errs:
+        return "fail", f"invalid early call: {'; '.join(errs[:3])}"
+    ex, bad = case["expect"], []
+    if ex.get("hard_outcomes") and obj["outcome"] in ex["hard_outcomes"]:
+        return "hard_fail", f"outcome {obj['outcome']} is a hard failure for this case"
+    if ex.get("outcome_in") and obj["outcome"] not in ex["outcome_in"]:
+        bad.append(f"outcome {obj['outcome']} not in {ex['outcome_in']}")
+    for group in ex.get("sources_mention_all", []):
+        blob = " ".join(f"{s.get('where', '')} {s.get('what_it_shows', '')} {s.get('date', '')}"
+                        for s in obj.get("sources") or []).lower()
+        if not any(w.lower() in blob for w in group):
+            bad.append(f"no source names any of {group}")
+    if bad:
+        return "fail", "; ".join(bad)
+    return "pass", f"outcome {obj['outcome']}"
+
+
 def resolve_blocked(case: dict) -> str | None:
     import resolution_lib as R  # noqa: PLC0415
     fields = set(case.get("requires_resolver_fields", [])) | ({"already_public"} if "already_public" in case["expect"] else set())
@@ -324,7 +415,7 @@ def run_funnel(case: dict, ctx: Context) -> tuple[str, str]:
     import phase2_resolvability as P2  # noqa: PLC0415 -- another stage's module, read-only
     inp, ex = case["input"], case["expect"]
     r = _set(ctx.record(inp["record"]), inp.get("set"))
-    P2.attach_deadlines([r], derive=True)
+    P2.attach_deadlines([r], derive=True, implied=funnel_implied(case))
     if r.get("_deadline") is None:
         return ("pass", f"no deadline ({r['_why_none']})") if ex.get("deadline") is None else \
             ("fail", f"no deadline ({r['_why_none']}); expected {ex['deadline']}")
@@ -343,6 +434,12 @@ def run_funnel(case: dict, ctx: Context) -> tuple[str, str]:
     for k in ("eligible", "past_due"):
         if k in ex and ex[k] != got[k]:
             bad.append(f"{k} {got[k]} != {ex[k]}")
+    if "failing_clauses" in ex:
+        # Which clause fails, not only that one does: an implied row with no lower bound
+        # fails only the lead floor, and the VD-7 lead test decides it.
+        clauses = P2.failing_clauses(flags, r["prediction_id"])
+        if clauses != ex["failing_clauses"]:
+            bad.append(f"failing_clauses {clauses} != {ex['failing_clauses']}")
     return ("fail", "; ".join(bad) + f" ({r['_basis']})") if bad else ("pass", f"{got} ({r['_basis']})")
 
 
@@ -373,6 +470,8 @@ def judge(case, ctx, text, checks, telemetry=None):
         return judge_dating(case, ctx, text, checks)
     if case["stage"] == "extract":
         return judge_extract(case, ctx, text)
+    if case["stage"] == "early":
+        return judge_early(case, ctx, text, telemetry)
     return judge_resolve(case, ctx, text, telemetry)
 
 
@@ -518,12 +617,20 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     for c in cases:
         if c["stage"] not in STAGES:
             raise SystemExit(f"case {c['id']}: unknown stage {c['stage']!r}")
+    ctx = Context(data, args.gold)
+    # Every gold defect, before any case runs and before any call: a --live run must
+    # never spend calls on early cases and then refuse a later one (final review item 6).
+    problems = preflight(cases, ctx)
     if args.estimate:
         print(estimate(cases, args.repeats))
+        if problems:
+            raise SystemExit(f"REFUSING: --live would refuse these {len(problems)} case(s) before its first call:\n  "
+                             + "\n  ".join(problems))
         return 0
+    if problems:
+        raise SystemExit(f"REFUSING before any case runs: {len(problems)} gold defect(s):\n  " + "\n  ".join(problems))
     if args.live and os.environ.get("PREDICT_LIVE") != "1":
         raise SystemExit("refusing to call a model: set PREDICT_LIVE=1 for --live (it spends quota; run --estimate first)")
-    ctx = Context(data, args.gold)
     if args.live:
         import date_recordings as DR  # noqa: PLC0415
         caller = caller or DR.call_agent
@@ -553,10 +660,12 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     wrong = sum(1 for r in rows if r["stage"] == "dating" and r["status"] == "HARD_FAIL")
     print(f"\n{dict(sorted(tally.items()))}")
     dating = [r for r in rows if r["stage"] == "dating"]
-    judged = [r for r in dating if r["status"] not in ("UNRECORDED", "PENDING", "BLOCKED", "PROMPT_CHANGED")]
+    judged = [r for r in dating if r["status"] in JUDGED_STATUSES]
     # 0 errors in n cases bounds the error rate below about 3/n at 95%, no lower (critique 3 C4).
+    unjudged = Counter(r["status"] for r in dating if r["status"] not in JUDGED_STATUSES)
     print(f"dating: wrong auto-confirmations: {wrong} of {len(judged)} judged dating cases "
-          f"({len(dating) - len(judged)} of {len(dating)} not judged: unrecorded, pending or blocked)")
+          f"({len(dating) - len(judged)} of {len(dating)} not judged"
+          + (f": {', '.join(f'{k} {v}' for k, v in sorted(unjudged.items()))})" if unjudged else ")"))
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps({"gold": str(args.gold), "mode": "live" if args.live else "offline",

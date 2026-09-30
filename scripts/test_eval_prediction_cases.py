@@ -75,7 +75,7 @@ HEADER = {"id": "H-override", "operator_case": "A3", "stage": "header",
 FUNNEL = {"id": "F-lead", "operator_case": "A5", "stage": "funnel",
           "input": {"record": {"file": "predictions/ada/re-upload-abc123.jsonl", "prediction_id": REC_ID},
                     "set": {"source.statement_date": "2012-05-30", "prediction.target_date": "2012-06-06"},
-                    "as_of": "2026-09-28"},
+                    "as_of": "2026-09-28", "implied": 1.0},
           "expect": {"deadline": "2012-06-06", "lead_days": [7, 7], "eligible": False, "past_due": True}}
 DATING = {"id": "D-dx", "operator_case": "A3", "stage": "dating",
           "input": {"transcript": "transcripts_open/ada/re-upload-abc123.json",
