@@ -1393,9 +1393,11 @@ def main() -> int:
               pm.returncode != 0 and scored_pid in (pm.stdout + pm.stderr), (pm.stdout + pm.stderr)[-300:])
 
         # ---- task 7: the Predictions column says where each prediction stands ----
+        # Withdrawn joined as the eighth on 2026-09-30 (ledger VD-9): a prediction the
+        # operator withdrew still counts toward the total, so the lines still add up.
         want_labels = ["Scored", "Not yet due", "No deadline", "Awaiting check", "Not testable", "Couldn't check",
-                       "Restated"]
-        check("BUCKETS: seven buckets in a fixed order with short plain labels",
+                       "Restated", "Withdrawn"]
+        check("BUCKETS: eight buckets in a fixed order with short plain labels",
               [lab for _, lab in getattr(B, "BUCKETS", ())] == want_labels, str(getattr(B, "BUCKETS", None)))
         dd = {r["slug"]: r for r in embedded(h2, "DATA")}
         check("BUCKETS: derived per person from the records and scores.json",
@@ -1491,8 +1493,9 @@ def main() -> int:
             shutil.copytree(td / "site", keep, dirs_exist_ok=True)
         precs = records(td / "site" / "rs.html") if prs.returncode == 0 else {}
         dr = {r["slug"]: r for r in embedded(hr, "DATA")} if hr else {}
-        check("RESTATED: a seventh bucket, Restated, last",
-              [lab for _, lab in getattr(B, "BUCKETS", ())][-1:] == ["Restated"] and len(getattr(B, "BUCKETS", ())) == 7,
+        check("RESTATED: a seventh bucket, Restated, before Withdrawn",
+              [lab for _, lab in getattr(B, "BUCKETS", ())][-2:] == ["Restated", "Withdrawn"]
+              and len(getattr(B, "BUCKETS", ())) == 8,
               str(getattr(B, "BUCKETS", None)))
         check("RESTATED: the restated member is counted as Restated, and the lines still add up to the total",
               dr.get("ada", {}).get("buckets") == {"scored": 1, "unresolvable": 1, "not_due": 1, "restated": 1}
