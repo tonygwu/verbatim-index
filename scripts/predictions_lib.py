@@ -519,6 +519,59 @@ def load_statement_date_overrides(path, transcript_roots) -> dict[str, dict]:
     return out
 
 
+# Single predictions the operator withdrew from scoring, while the rest of their
+# transcript stays (ledger VD-9). The shape is the one committed on data main in
+# 6e0ced71; everything else is refused, as the override loader above refuses.
+WITHDRAWN_FILE = Path("predictions") / "withdrawn_predictions.json"
+WITHDRAWN_KEYS = ("reason", "detail", "evidence", "transcript_id", "decided_by", "decided_at_utc")
+
+
+def load_withdrawn(path, records: dict) -> dict[str, dict]:
+    """{prediction_id: entry} from the withdrawal manifest, checked against `records`.
+
+    `records` maps prediction_id to its record. An id that is not an ACCEPTED
+    record there, or whose record lives in another transcript than the entry
+    names, is refused, never skipped: a withdrawal that matches nothing means the
+    manifest describes other data than this.
+    """
+    path = Path(path)
+    doc = json.loads(path.read_text())
+    if not isinstance(doc, dict) or set(doc) != {"schema_version", "note", "withdrawn"} \
+            or doc.get("schema_version") != 1 or not isinstance(doc.get("withdrawn"), dict) \
+            or not isinstance(doc.get("note"), str):
+        raise PredictionError(f"withdrawn_predictions: {path} must be exactly "
+                              f'{{"schema_version": 1, "note": str, "withdrawn": {{prediction_id: entry}}}}; it has '
+                              f"keys {sorted(doc) if isinstance(doc, dict) else type(doc).__name__} and schema_version "
+                              f"{doc.get('schema_version') if isinstance(doc, dict) else None!r}")
+    out: dict[str, dict] = {}
+    for pid, e in doc["withdrawn"].items():
+        where = f"withdrawn_predictions: {pid}"
+        if not isinstance(e, dict):
+            raise PredictionError(f"{where}: entry is {type(e).__name__}, not an object")
+        missing, unknown = [k for k in WITHDRAWN_KEYS if k not in e], sorted(set(e) - set(WITHDRAWN_KEYS))
+        if missing or unknown:
+            raise PredictionError(f"{where}: missing {missing}, unknown {unknown}; an entry carries exactly "
+                                  f"{list(WITHDRAWN_KEYS)}")
+        if not isinstance(e["reason"], str) or not re.fullmatch(r"[a-z][a-z_]*", e["reason"]):
+            raise PredictionError(f"{where}: reason {e['reason']!r} is not a lower-case word like not_a_forecast")
+        for k in ("detail", "decided_by"):
+            if not isinstance(e[k], str) or not e[k].strip():
+                raise PredictionError(f"{where}: {k} is empty")
+        if not isinstance(e["evidence"], list) or not e["evidence"] \
+                or not all(isinstance(u, str) and re.match(r"https?://\S+$", u) for u in e["evidence"]):
+            raise PredictionError(f"{where}: evidence must be a non-empty list of http(s) URLs, has {e['evidence']!r}")
+        if not isinstance(e["decided_at_utc"], str) or not _UTC_STAMP.fullmatch(e["decided_at_utc"]):
+            raise PredictionError(f"{where}: decided_at_utc {e['decided_at_utc']!r} is not YYYY-MM-DDTHH:MM:SSZ")
+        r = records.get(pid)
+        if r is None or r.get("accepted") is not True:
+            raise PredictionError(f"{where}: unknown prediction_id; no accepted record carries {pid}")
+        if r.get("transcript_id") != e["transcript_id"]:
+            raise PredictionError(f"{where}: transcript_id {e['transcript_id']!r} does not hold this prediction, "
+                                  f"which is in {r.get('transcript_id')!r}")
+        out[pid] = dict(e)
+    return out
+
+
 def date_overrides_digest(path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 

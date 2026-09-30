@@ -106,7 +106,8 @@ def speaker_q(rec: dict) -> float | None:
 def join(rows: list[dict], resolutions: dict, priors: dict,
          restated: "dict[str, str] | None" = None,
          stale: "set[str] | None" = None,
-         early_used: "dict[str, dict] | None" = None) -> tuple[list[dict], collections.Counter]:
+         early_used: "dict[str, dict] | None" = None,
+         withdrawn: "dict[str, dict] | None" = None) -> tuple[list[dict], collections.Counter]:
     """One row per past-due prediction, with its points where all the parts exist.
 
     `restated` maps a non-specific cluster member to its specific member. Such a
@@ -128,6 +129,7 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
     restated = restated or {}
     stale = stale or set()
     early_used = early_used or {}
+    withdrawn = withdrawn or {}
     for r in rows:
         pid = r["prediction_id"]
         res, pri = resolutions.get(pid), priors.get(pid)
@@ -166,6 +168,14 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
             row["early_called"] = True
             row["early"] = {k: res.get(k) for k in ("as_of", "outcome", "not_occurred_basis", "run_id")}
             row["not_due" if early_used[pid]["not_due"] else "fresh_check_due"] = True
+        if pid in withdrawn:
+            # The operator's decision comes before every other reason (ledger VD-9).
+            w = withdrawn[pid]
+            row["withdrawn"] = {k: w[k] for k in ("reason", "detail", "evidence", "decided_by", "decided_at_utc")}
+            row["not_scored_because"] = f"withdrawn:{w['reason']}"
+            why["withdrawn:" + w["reason"]] += 1
+            out.append(row)
+            continue
         if own is not None:
             row.update(own, not_scored_because=f"restated:{restated[pid]}", restated_by=restated[pid])
             why["restated"] += 1
@@ -226,8 +236,12 @@ def is_restated(r: dict) -> bool:
     return str(r.get("not_scored_because") or "").startswith("restated:")
 
 
+def is_withdrawn(r: dict) -> bool:
+    return str(r.get("not_scored_because") or "").startswith("withdrawn:")
+
+
 def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = False,
-               with_early: bool = False) -> list[dict]:
+               with_early: bool = False, with_withdrawn: bool = False) -> list[dict]:
     by = collections.defaultdict(list)
     for r in rows:
         by[r["leader_slug"]].append(r)
@@ -243,7 +257,8 @@ def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = Fa
             "past_due": sum(1 for r in rs if not r.get("not_due")),
             # A restated row is the same prediction as its specific member, so it is
             # not a second eligible one.
-            "eligible": sum(1 for r in rs if r["flags"]["eligible"] and not is_restated(r) and not r.get("not_due")),
+            "eligible": sum(1 for r in rs if r["flags"]["eligible"] and not is_restated(r) and not r.get("not_due")
+                            and not is_withdrawn(r)),
             "resolved": sum(1 for r in rs if r["outcome"] in ("occurred", "not_occurred")),
             "unresolvable": outcomes.get("unresolvable", 0),
             "occurred": outcomes.get("occurred", 0),
@@ -262,6 +277,8 @@ def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = Fa
             out[-1]["restated"] = sum(1 for r in rs if is_restated(r))
         if with_early:
             out[-1]["early_called"] = sum(1 for r in rs if r.get("early_called"))
+        if with_withdrawn:
+            out[-1]["withdrawn"] = sum(1 for r in rs if is_withdrawn(r))
     out.sort(key=lambda l: (-(l["mean_points"] if l["ranked"] and l["mean_points"] is not None else -99),
                             l["name"]))
     return out
@@ -823,6 +840,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="a resolution-policy release the board may carry; repeat it. Absent: legacy only")
     ap.add_argument("--early-calls", action="store_const", const=True, default=None,
                     help="score decided early calls now, before the deadline (VD-5)")
+    ap.add_argument("--withdrawn", type=Path, default=None,
+                    help="the operator's withdrawal manifest; each listed prediction reads withdrawn:<reason>")
     ap.add_argument("--lead-test", action="store_const", const=True, default=None,
                     help="under the lead floor, score a record its outcome-blind label calls a forecast (VD-7)")
     args = ap.parse_args(argv)
@@ -831,7 +850,7 @@ def main(argv: list[str] | None = None) -> int:
              "--restatements": args.restatements, "--date-overrides": args.date_overrides,
              "--replacements": args.replacements, "--implied-windows": args.implied_windows,
              "--policy-release": args.policy_releases, "--early-calls": args.early_calls,
-             "--lead-test": args.lead_test}
+             "--lead-test": args.lead_test, "--withdrawn": args.withdrawn}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -847,6 +866,7 @@ def main(argv: list[str] | None = None) -> int:
         args.implied_windows = cfg.get("implied_windows")
         args.early_calls = cfg.get("early_calls")
         args.lead_test = cfg.get("lead_test")
+        args.withdrawn = root / cfg["withdrawn"] if "withdrawn" in cfg else None
         args.policy_releases = cfg.get("policy_releases")
         # A committed config names its override file, so staleness hashing covers
         # it. One that is silent while the production file exists is refused
@@ -891,6 +911,8 @@ def main(argv: list[str] | None = None) -> int:
         settings["early_calls"] = True
     if args.lead_test:
         settings["lead_test"] = True
+    if args.withdrawn is not None:
+        settings["withdrawn"] = rel(args.withdrawn, root)
     implied = 1.0 if args.implied_windows is not None else None
 
     try:
@@ -905,6 +927,8 @@ def main(argv: list[str] | None = None) -> int:
     superseded: list[dict] = []
     loaded = P2.load(args.predictions, date_overrides=ov_in, superseded=superseded)
     live_ids = {r["prediction_id"] for r in loaded}
+    withdrawn = (L.load_withdrawn(args.withdrawn, {r["prediction_id"]: r for r in loaded})
+                 if args.withdrawn is not None else {})
     live_tids = {r["transcript_id"] for r in loaded}
     sup_ids = {s["prediction_id"] for s in superseded}
     stale: list[dict] = []
@@ -1012,10 +1036,11 @@ def main(argv: list[str] | None = None) -> int:
     everything = sorted(rows + early_rows, key=lambda r: (r["leader_slug"], r["prediction_id"])) if early_rows else rows
 
     joined, why = join(everything, effective, priors, restated, stale={s["prediction_id"] for s in window_stale},
-                       early_used=early_used)
+                       early_used=early_used, withdrawn=withdrawn)
     index = json.loads(args.index.read_text())
     names = {l["slug"]: l["name"] for l in index["leaders"]}
-    leaders = per_leader(joined, names, with_restated=manifest is not None, with_early=bool(args.early_calls))
+    leaders = per_leader(joined, names, with_restated=manifest is not None, with_early=bool(args.early_calls),
+                         with_withdrawn=args.withdrawn is not None)
 
     scored = [r for r in joined if r["scored"]]
     outcomes = collections.Counter(r["outcome"] for r in joined if r["outcome"])
@@ -1043,7 +1068,8 @@ def main(argv: list[str] | None = None) -> int:
         },
         "corpus": {
             "past_due": len(rows),
-            "eligible": sum(1 for r in joined if r["flags"]["eligible"] and not is_restated(r) and not r.get("not_due")),
+            "eligible": sum(1 for r in joined if r["flags"]["eligible"] and not is_restated(r) and not r.get("not_due")
+                            and not is_withdrawn(r)),
             "criteria_repairs_applied": applied,
             "criteria_unrepairable": unrepairable,
             "resolutions_present": len(resolutions),
@@ -1069,6 +1095,10 @@ def main(argv: list[str] | None = None) -> int:
         doc["corpus"]["stale_sidecars"] = window_stale
     if args.policy_releases is not None:
         doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
+    if args.withdrawn is not None:
+        doc["withdrawn"] = {"manifest": settings["withdrawn"],
+                            "sha256": hashlib.sha256(args.withdrawn.read_bytes()).hexdigest(),
+                            "entries": withdrawn}
     if args.lead_test:
         doc["rule"]["lead_test"] = True
         under = [r for r in joined if "lead_test" in r["flags"] and not r.get("not_due")]

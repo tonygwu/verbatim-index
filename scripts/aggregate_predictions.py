@@ -144,7 +144,7 @@ def summarise_meta(metas: list[dict]) -> dict:
 
 
 def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Path] | None,
-                roster_path: Path | None = None) -> dict:
+                roster_path: Path | None = None, withdrawn_path: Path | None = None) -> dict:
     files = sorted(p for p in pred_root.glob("*/*.jsonl") if not p.parent.name.startswith("_"))
     all_recs: list[dict] = []
     per_slug: dict[str, list[dict]] = {}
@@ -209,6 +209,18 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Pat
             "cap_hit_transcripts": sum(1 for m in ms if (m.get("extract") or {}).get("cap_hit")),
         })
 
+    # The operator's single-prediction withdrawals (ledger VD-9), only when named:
+    # checked against every record read, counted per person, and fingerprinted, so
+    # an index built without them is byte-identical to before.
+    withdrawn = None
+    if withdrawn_path is not None:
+        try:
+            rel_w = Path(withdrawn_path).resolve().relative_to(Path(pred_root).resolve())
+        except ValueError:
+            raise SystemExit(f"--withdrawn {withdrawn_path} is not under {pred_root}")
+        withdrawn = L.load_withdrawn(withdrawn_path, {r["prediction_id"]: r for r in all_recs})
+        for l in leaders:
+            l["withdrawn"] = sum(1 for r in per_slug.get(l["slug"], []) if r["prediction_id"] in withdrawn)
     corpus = {
         "transcripts_on_disk": sum(on_disk.values()),
         "transcripts_with_meta": len(metas),
@@ -216,7 +228,9 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Pat
         "extractor_models": sorted(m for m in ext_models if m),
         "verifier_models": sorted(m for m in ver_models if m),
     }
-    return {
+    if withdrawn is not None:
+        corpus["withdrawn"] = len(withdrawn)
+    out = {
         "schema_version": L.SCHEMA_VERSION,
         "files_read": len(files),
         "records_read": records_read,
@@ -239,6 +253,10 @@ def build_index(pred_root: Path, roster: dict, transcripts_root: Path | list[Pat
         "coverage": summarise_meta(metas),
         "leaders": leaders,
     }
+    if withdrawn is not None:
+        out["withdrawn_file"] = str(rel_w)
+        out["withdrawn_sha256"] = hashlib.sha256(Path(withdrawn_path).read_bytes()).hexdigest()
+    return out
 
 
 def walk_keys(obj, path="$"):
@@ -268,6 +286,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--transcripts", action="append", default=None,
                     help="a transcript root, repeatable; default data/transcripts_open and data/transcripts_web")
     ap.add_argument("--out", default=None, help="default <predictions>/index.json")
+    ap.add_argument("--withdrawn", default=None,
+                    help="the operator's withdrawal manifest (predictions/withdrawn_predictions.json), read only "
+                         "when named: data_sync.py names it when scoring.json does")
     args = ap.parse_args(argv)
     from data_clone_workflow import guard_aggregate
     pred_root = Path(args.predictions)
@@ -279,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
     transcripts = [Path(t) for t in (args.transcripts or ["data/transcripts_open", "data/transcripts_web"])]
     index = build_index(pred_root, roster, transcripts,
-                        Path(args.roster))
+                        Path(args.roster), Path(args.withdrawn) if args.withdrawn else None)
     bad = forbidden_keys(index)
     if bad:
         raise SystemExit(f"index carries evaluative keys, refusing to write: {bad[:5]}")

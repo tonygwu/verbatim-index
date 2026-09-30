@@ -531,8 +531,11 @@ CONFIG_KEYS = ("as_of", "trend", "min_lead_days", "predictions", "runs", "index"
 # `lead_test` (true, or absent) lets a record under the lead floor score when its
 # outcome-blind label says it is a forecast (VD-7 (c)); labels live under each
 # run's lead_tests/.
+# `withdrawn` names the operator's manifest of single withdrawn predictions
+# (predictions_lib.WITHDRAWN_FILE); like `replacements` it must lie under
+# predictions/, and its bytes are fingerprinted.
 OPTIONAL_CONFIG_KEYS = ("restatements", "date_overrides", "replacements", "implied_windows", "policy_releases",
-                        "early_calls", "lead_test")
+                        "early_calls", "lead_test", "withdrawn")
 SIDECAR_DIRS = ("resolutions", "priors", "criteria_repairs", "early", "lead_tests")
 
 
@@ -572,6 +575,16 @@ def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list
     if (index["files_read"], index["records_read"]) != (files, lines):
         return (f"record counts changed: index read {index['files_read']} files / {index['records_read']} "
                 f"records, disk has {files} / {lines}")
+    if index.get("withdrawn_sha256"):
+        # Only an index built with the withdrawal manifest carries this, and then it
+        # must describe the manifest on disk now.
+        wf = Path(pred_root) / index.get("withdrawn_file", "")
+        if not wf.is_file():
+            return f"the index read the withdrawal manifest {index.get('withdrawn_file')!r}, which is gone"
+        now = hashlib.sha256(wf.read_bytes()).hexdigest()
+        if now != index["withdrawn_sha256"]:
+            return (f"the withdrawal manifest changed since the index was built (index "
+                    f"{index['withdrawn_sha256'][:12]}, disk {now[:12]}); its counts are stale")
     digest = prediction_inputs_sha256(pred_root)
     if index["inputs_sha256"] != digest:
         return (f"record contents changed in place: counts match ({files} files, {lines} records) but "
@@ -582,6 +595,21 @@ def index_staleness(index: dict, pred_root: Path, roster_path: Path, roots: list
     if index["transcripts_listing_sha256"] != listing:
         return (f"the transcript listing changed (index {index['transcripts_listing_sha256'][:12]}, "
                 f"disk {listing[:12]}); coverage counts are stale")
+    return None
+
+
+def predictions_path_problem(key: str, rel) -> str | None:
+    """Why a scoring config's `key` path does not lie under predictions/, or None.
+
+    data_sync.py regenerates the derived files in a scratch tree holding only
+    predictions/ and roster/, so a manifest anywhere else scores here and fails
+    there."""
+    if not isinstance(rel, str) or not rel:
+        return f"{key} must be a path relative to the data root"
+    parts = PurePosixPath(rel).parts
+    if PurePosixPath(rel).is_absolute() or ".." in parts or len(parts) < 2 or parts[0] != "predictions":
+        return (f"{key} {rel!r} must lie under predictions/, because data_sync.py regenerates the derived files "
+                f"from predictions/ and roster/ only")
     return None
 
 
@@ -622,6 +650,8 @@ def load_scoring_config(path: Path) -> tuple[Path, dict]:
                                          and re.fullmatch(r"[0-9a-f]{64}", cfg["implied_windows"])):
         raise SystemExit(f"{path}: implied_windows must be the sha256 of the implied-window table "
                          f"(phase2_resolvability.implied_table_sha256()), not {cfg['implied_windows']!r}")
+    if "withdrawn" in cfg and predictions_path_problem("withdrawn", cfg["withdrawn"]):
+        raise SystemExit(f"{path}: {predictions_path_problem('withdrawn', cfg['withdrawn'])}")
     for flag in ("early_calls", "lead_test"):
         if flag in cfg and cfg[flag] is not True:
             raise SystemExit(f"{path}: {flag} is true when present; remove the key to switch it off, "
@@ -661,6 +691,8 @@ def score_inputs_sha256(root: Path, settings: dict) -> str:
     if "replacements" in settings:
         # Only when named, like the two above, so every existing scores.json hashes as before.
         h.update(f"replacements {hashlib.sha256((root / settings['replacements']).read_bytes()).hexdigest()}\n".encode())
+    if "withdrawn" in settings:
+        h.update(f"withdrawn {hashlib.sha256((root / settings['withdrawn']).read_bytes()).hexdigest()}\n".encode())
     for run in settings["runs"]:
         for sub in SIDECAR_DIRS:
             for f in sorted((root / run / sub).glob("*/*.json")):
