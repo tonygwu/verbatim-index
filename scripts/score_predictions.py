@@ -259,15 +259,26 @@ def implied_sensitivity(sens: dict[str, list[str]], root: Path, args, cutoff: dt
         got, _ = join(rows, res, pri, restated, stale={s["prediction_id"]: "stale_sidecar:deadline_changed"
                                                      for s in stale}, withdrawn=withdrawn)
         people = per_leader(kept + got, names)
-        missing = collections.Counter(r["leader_slug"] for r in got if r["not_scored_because"] in ("no_resolution", "no_prior"))
-        ranks = _ranks(people)
+        # The rows that need both sidecars at this scale: eligible, and not set aside for
+        # another reason. Each list is read off the sidecars themselves, so a row missing
+        # both is in both (review 2026-09-30, item 7: no_prior was reached only when a
+        # resolution existed, so a row missing both was counted once).
+        need = [r for r in got if r["flags"]["eligible"] and not set_aside(r) and not is_restated(r)]
+        miss_res = sorted(r["prediction_id"] for r in need if r["prediction_id"] not in res)
+        miss_pri = sorted(r["prediction_id"] for r in need if r["prediction_id"] not in pri)
+        stale_ids = {x["prediction_id"] for x in stale}
+        short = collections.Counter(r["leader_slug"] for r in need if r["prediction_id"] in set(miss_res) | set(miss_pri)
+                                    | stale_ids)
+        complete = not (miss_res or miss_pri or stale)
+        # A rank computed from missing sidecars is never shown: an incomplete scale ranks nobody.
+        ranks = _ranks(people) if complete else {}
         out[key] = {
             "runs": runs, "scale": scale, "implied_past_due": len(rows), "scored": sum(1 for r in got if r["scored"]),
-            "missing_resolution": sorted(r["prediction_id"] for r in got if r["not_scored_because"] == "no_resolution"),
-            "missing_prior": sorted(r["prediction_id"] for r in got if r["not_scored_because"] == "no_prior"),
-            "stale_sidecars": stale,
-            "leaders": {l["slug"]: {"n_scored": l["n_scored"], "mean_points": l["mean_points"], "ranked": l["ranked"],
-                                    "rank": ranks.get(l["slug"]), "implied_missing": missing.get(l["slug"], 0)}
+            "complete": complete, "missing_resolution": miss_res, "missing_prior": miss_pri, "stale_sidecars": stale,
+            "leaders": {l["slug"]: {"n_scored": l["n_scored"], "ranked": l["ranked"],
+                                    "complete": short.get(l["slug"], 0) == 0,
+                                    "mean_points": l["mean_points"] if short.get(l["slug"], 0) == 0 else None,
+                                    "rank": ranks.get(l["slug"]), "implied_missing": short.get(l["slug"], 0)}
                         for l in people},
         }
     return out

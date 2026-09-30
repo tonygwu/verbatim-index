@@ -236,6 +236,22 @@ def main() -> int:
               set(sens) == {"half", "double"} and sens["half"]["mean_points"] is not None
               and sens["half"]["mean_points"] != row["score"], json.dumps(sens))
         check("ROW: the score cell's hover carries them", "at half the implied windows" in page)
+        check("ROW: the row says whether the person's figure and the scale's ranks are complete",
+              sens["half"].get("complete") is True and sens["half"].get("scale_complete") is True, json.dumps(sens))
+        # The page's own hover function, run by node on an incomplete person and an incomplete scale.
+        fn = page[page.index("function sensWords(r){"):page.index("function scoreCell(r){")]
+        probe = fn + """
+const base = {mean_points: 0.5, rank: 2, n_scored: 4, implied_missing: 0, complete: true, scale_complete: true};
+console.log(JSON.stringify([
+  sensWords({sens: {half: {...base, complete: false, mean_points: null, rank: null}, double: base}}),
+  sensWords({sens: {half: {...base, scale_complete: false, rank: null}, double: base}})]));
+"""
+        n = subprocess.run(["node", "-e", probe], capture_output=True, text=True)
+        said = json.loads(n.stdout) if n.returncode == 0 else ["", ""]
+        check("HOVER: a person missing a check at half reads 'incomplete', never a figure",
+              "at half the implied windows: incomplete" in said[0] and "(rank 2)" in said[0], str(said) + n.stderr[-300:])
+        check("HOVER: at an incomplete scale no rank is shown, for anyone",
+              "no rank" in said[1] and "(rank" not in said[1].split(";")[1], str(said))
 
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0

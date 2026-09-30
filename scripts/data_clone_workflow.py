@@ -758,6 +758,12 @@ def scores_blockers(doc: dict) -> list[str]:
         out.append(f"{len(stale)} stale sidecar(s), judged over another window than the funnel's or priced on "
                    f"another prompt than today's, for {len(ids)} prediction(s) {ids[:8]}; re-run them, or remove "
                    f"the sidecars, before publishing")
+    for key, scale in sorted((doc.get("implied_sensitivity") or {}).items()):
+        if isinstance(scale, dict) and scale.get("complete") is False:
+            # The page would show a half or double figure resting on missing sidecars.
+            out.append(f"the implied_sensitivity {key} scale is incomplete: missing resolutions "
+                       f"{scale.get('missing_resolution', [])[:6]}, missing priors {scale.get('missing_prior', [])[:6]}, "
+                       f"{len(scale.get('stale_sidecars') or [])} stale; run them before publishing")
     early = corpus.get("early_calls") or {}
     if early.get("awaiting_fresh_check"):
         # VD-5: the fresh check at the deadline replaces the early call; a board

@@ -75,25 +75,27 @@ def main() -> int:
         # Two people, each with two stated predictions (the board) and one implied
         # one (market_industry: 5 years from 2021-03-01, so 2026-03-01; half is 2023-08-31,
         # double 2031-03-01 and not due at the as-of).
-        for slug in ("ada", "bob", "cat"):
+        for slug in ("ada", "bob", "cat", "dan"):
             (corpus / slug).mkdir(parents=True)
             (corpus / slug / "t1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in (
                 rec(f"{slug}-s1", slug, target="2022-12-31"), rec(f"{slug}-s2", slug, target="2023-12-31"),
-                rec(f"{slug}-i", slug))))
+                rec(f"{slug}-s3", slug, target="2024-06-30"), rec(f"{slug}-i", slug))))
         (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada"},
                                                                     {"slug": "bob", "name": "Bob"},
-                                                                    {"slug": "cat", "name": "Cat"}]}))
+                                                                    {"slug": "cat", "name": "Cat"},
+                                                                    {"slug": "dan", "name": "Dan"}]}))
         run = corpus / "_experiments" / "board"
         half = corpus / "_experiments" / "half"
         dbl = corpus / "_experiments" / "double"
-        for slug in ("ada", "bob", "cat"):
-            for pid, dl in ((f"{slug}-s1", "2022-12-31"), (f"{slug}-s2", "2023-12-31"), (f"{slug}-i", "2026-03-01")):
+        for slug in ("ada", "bob", "cat", "dan"):
+            for pid, dl in ((f"{slug}-s1", "2022-12-31"), (f"{slug}-s2", "2023-12-31"), (f"{slug}-s3", "2024-06-30"),
+                            (f"{slug}-i", "2026-03-01")):
                 write(run, slug, pid, "resolve", dl)
                 write(run, slug, pid, "prior", dl)
         half_dl = (dt.date(2021, 3, 1) + dt.timedelta(days=round(2.5 * 365.25))).isoformat()
         # Each implied claim is under the lead floor (no lower bound on when), so the
         # outcome-blind lead test decides it; the label holds at every scale.
-        for slug in ("ada", "bob", "cat"):
+        for slug in ("ada", "bob", "cat", "dan"):     # dan has neither sidecar at half
             fp = R.sidecar_path(run, "lead_test", slug, f"{slug}-i")
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_text(json.dumps({"prediction_id": f"{slug}-i", "leader_slug": slug, "stage": "lead_test",
@@ -131,26 +133,33 @@ def main() -> int:
         check("HALF: ada's implied claim is judged at half its window, from the half run, and moves her score",
               h.get("leaders", {}).get("ada", {}).get("mean_points") is not None
               and h["leaders"]["ada"]["mean_points"] < doc["leaders"][0]["mean_points"]
-              and h["leaders"]["ada"]["n_scored"] == 3, json.dumps(h.get("leaders")))
-        check("HALF: bob's missing prior at half is named, never filled from the board",
-              h.get("missing_prior") == ["bob-i"] and h["leaders"]["bob"]["n_scored"] == 2
-              and h["leaders"]["bob"]["implied_missing"] == 1, json.dumps(h)[:500])
+              and h["leaders"]["ada"]["n_scored"] == 4, json.dumps(h.get("leaders")))
+        check("HALF: a missing prior at half is named, never filled from the board, and a row missing BOTH "
+              "sidecars is counted in both lists",
+              h.get("missing_prior") == ["bob-i", "dan-i"] and h.get("missing_resolution") == ["cat-i", "dan-i"]
+              and h["leaders"]["bob"]["implied_missing"] == 1 and h["leaders"]["dan"]["implied_missing"] == 1,
+              json.dumps(h)[:600])
+        check("HALF: a person with a missing sidecar shows no score at that scale, only that it is incomplete",
+              h["leaders"]["bob"]["mean_points"] is None and h["leaders"]["bob"]["complete"] is False
+              and h["leaders"]["ada"]["complete"] is True, json.dumps(h.get("leaders")))
         check("HALF: cat's missing resolution at half is named, never borrowed from the board",
-              h.get("missing_resolution") == ["cat-i"] and h["leaders"]["cat"]["n_scored"] == 2
-              and h["leaders"]["cat"]["implied_missing"] == 1, json.dumps(h)[:500])
-        check("DOUBLE: at double, the implied claims are not yet due, so each person keeps the stated two",
-              d2.get("implied_past_due") == 0 and d2.get("leaders", {}).get("ada", {}).get("n_scored") == 2,
+              "cat-i" in h.get("missing_resolution", []) and h["leaders"]["cat"]["implied_missing"] == 1
+              and h["leaders"]["cat"]["mean_points"] is None, json.dumps(h)[:500])
+        check("DOUBLE: at double, the implied claims are not yet due, so each person keeps the stated three",
+              d2.get("implied_past_due") == 0 and d2.get("leaders", {}).get("ada", {}).get("n_scored") == 3,
               json.dumps(d2)[:400])
         board = {l["slug"]: l for l in doc["leaders"]}
         check("BOARD: the board's own figures are unchanged by the sensitivity",
-              board["ada"]["n_scored"] == 3 and board["bob"]["n_scored"] == 3 and board["cat"]["n_scored"] == 3,
+              all(board[x]["n_scored"] == 4 for x in ("ada", "bob", "cat", "dan")),
               json.dumps(doc["leaders"]))
-        # bob has 2 scored at half (his implied prior is missing), under the rank floor of 3.
-        check("RANKS: each scale ranks the people beside the board's own rank, and one below the floor at a "
-              "scale is unranked there",
-              set(s.get("board_rank", {})) == {"ada", "bob", "cat"} and h["leaders"]["ada"]["rank"] == 1
-              and h["leaders"]["bob"]["rank"] is None and h["leaders"]["bob"]["ranked"] is False,
-              json.dumps(s.get("board_rank")) + json.dumps(h.get("leaders")))
+        check("RANKS: a scale with any sidecar missing is incomplete, and ranks NOBODY at it",
+              h.get("complete") is False and all(x["rank"] is None for x in h["leaders"].values()),
+              json.dumps(h.get("leaders")))
+        check("RANKS: a complete scale ranks everyone beside the board's own rank",
+              d2.get("complete") is True and set(s.get("board_rank", {})) == {"ada", "bob", "cat", "dan"}
+              and sorted(x["rank"] for x in d2["leaders"].values()) == [1, 2, 3, 4], json.dumps(d2.get("leaders")))
+        check("DEPLOY: an incomplete sensitivity blocks the deploy while the key is on",
+              any("sensitivity" in b and "half" in b for b in D.scores_blockers(doc)), str(D.scores_blockers(doc)))
         check("FRESH: scores.json is current", D.scores_staleness(corpus / "scores.json", cfg_path) is None,
               str(D.scores_staleness(corpus / "scores.json", cfg_path)))
         write(half, "ada", "ada-i", "prior", half_dl, 0.5, p=0.35)
@@ -189,7 +198,7 @@ def main() -> int:
                           "--lead-test", "--dry-run"])
         sel = [l for l in err.getvalue().splitlines() if l.startswith("stage=resolve")]
         check("STAGE: --implied-scale half selects only the implied records, at half their windows",
-              rc == 0 and sel and "to run=3" in sel[0] and "3 implied record(s) at 0.5x" in err.getvalue(),
+              rc == 0 and sel and "to run=4" in sel[0] and "4 implied record(s) at 0.5x" in err.getvalue(),
               err.getvalue()[-500:])
         try:
             with contextlib.redirect_stderr(io.StringIO()):

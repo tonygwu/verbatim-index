@@ -643,9 +643,14 @@ function hitCell(r){
    much it moves the number. */
 function sensWords(r){
   if (!r.sens) return "";
+  // A figure resting on a missing sidecar is never shown, and neither is a rank
+  // from an incomplete scale (review 2026-09-30, item 7).
   const f = (k, lab) => { const s = r.sens[k];
-    return s && s.mean_points != null ? `; ${lab}: ${(s.mean_points >= 0 ? "+" : "\u2212") + Math.abs(s.mean_points).toFixed(2)}`
-      + (s.rank ? ` (rank ${s.rank})` : " (unranked)") : `; ${lab}: no score`; };
+    if (!s || s.complete === false) return `; ${lab}: incomplete, a check at that window is missing`;
+    if (s.mean_points == null) return `; ${lab}: no score`;
+    return `; ${lab}: ${(s.mean_points >= 0 ? "+" : "\u2212") + Math.abs(s.mean_points).toFixed(2)}`
+      + (s.scale_complete === false ? " (no rank: the check at that window is incomplete for someone)"
+         : s.rank ? ` (rank ${s.rank})` : " (unranked)"); };
   return f("half", "at half the implied windows") + f("double", "at double");
 }
 function scoreCell(r){
@@ -2388,8 +2393,9 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
         })
         if sensitivity:
             # Only when the scoring run carries it, so every other page's DATA is unchanged.
-            rows[-1]["sens"] = {k: {x: (sensitivity[k]["leaders"].get(l["slug"]) or {}).get(x)
-                                    for x in ("mean_points", "rank", "n_scored", "implied_missing")}
+            rows[-1]["sens"] = {k: {**{x: (sensitivity[k]["leaders"].get(l["slug"]) or {}).get(x)
+                                       for x in ("mean_points", "rank", "n_scored", "implied_missing", "complete")},
+                                    "scale_complete": sensitivity[k]["complete"]}
                                 for k in ("half", "double")}
     return default_order(rows, scored=bool(scores))
 
