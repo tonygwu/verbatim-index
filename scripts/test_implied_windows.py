@@ -48,7 +48,7 @@ FAILED = []
 
 # The sha256 of the committed table. Changing the table changes this, and a
 # scoring config that names the old value refuses (test_implied_scoring.py).
-PINNED_TABLE_SHA256 = "2b44127153bf6dcae40c78e254f9076730d3bbd9ef64d5628e571949e4a671df"
+PINNED_TABLE_SHA256 = "dbe262799451bc0fbc096e083bfb8dff8f0d073b08aeac3bc3e6d6ea2163ed0e"
 
 
 def check(label, ok, detail=""):
@@ -58,8 +58,8 @@ def check(label, ok, detail=""):
 
 
 def rec(pid, *, said="2025-01-15", tdt=None, quote="we will do it", claim=None, crit=None,
-        cat="market_industry", ctrl="external", target=None, spec="medium", ptype="milestone"):
-    return {
+        cat="market_industry", ctrl="external", target=None, spec="medium", ptype="milestone", claim_form=None):
+    r = {
         "accepted": True, "leader_slug": "ada", "prediction_id": pid, "transcript_id": "ada/t1",
         "prediction": {"target_date": target, "target_date_text": tdt, "horizon_years_inferred": None,
                        "specificity": spec, "subject_control": ctrl, "category": cat,
@@ -68,6 +68,10 @@ def rec(pid, *, said="2025-01-15", tdt=None, quote="we will do it", claim=None, 
         "source": {"statement_date": said, "quote": quote},
         "confidence": {"probability": None}, "consensus": {"status": "no_match", "exact_match": None},
     }
+    if claim_form is not None:
+        # Release 2.3 of the extractor records the claim's form; 2.2 records carry none.
+        r["prediction"]["claim_form"] = claim_form
+    return r
 
 
 def deadline(r, scale=1.0, trend_cutoff=None):
@@ -93,6 +97,7 @@ def main() -> int:
     print("the operator's phrase rows")
     cases = [
         ("weeks", dict(tdt="in the coming weeks"), dt.date(2025, 4, 15)),
+        ("nextfew", dict(tdt="over the next few weeks"), dt.date(2025, 4, 15)),
         ("months", dict(tdt="in the coming months"), dt.date(2026, 1, 15)),
         ("several", dict(tdt="over the next several months"), dt.date(2026, 1, 15)),
         ("few", dict(tdt="in a few months"), dt.date(2026, 1, 15)),
@@ -177,6 +182,24 @@ def main() -> int:
     amb = deadline(rec("amb", quote="it will come soon and eventually everyone will use it"))
     check("SCREEN: two phrase rows in one field are refused, never guessed between",
           amb["_deadline"] is None and amb["_why_none"] == "implied_ambiguous_words", str(amb["_why_none"]))
+    ev = deadline(rec("ev", tdt="when the merger closes"))
+    check("SCREEN: words that name an event, not a time, get NO window (event_anchored), never a claim row",
+          ev["_deadline"] is None and ev["_why_none"] == "event_anchored", f"{ev['_deadline']} {ev['_why_none']}")
+    print("the extractor's claim_form, when the record has one, decides the screen")
+    cf = deadline(rec("cf", claim="The merger will close.", claim_form="conditional"))
+    check("CLAIM FORM: 'conditional' screens the record out though its words hold no condition",
+          cf["_deadline"] is None and cf["_why_none"] == "conditional_claim", str(cf["_why_none"]))
+    for form, why in (("ordering", "ordering_claim"), ("recurring", "recurring_claim")):
+        r = deadline(rec(f"cf-{form}", claim="The merger will close.", claim_form=form))
+        check(f"CLAIM FORM: {form!r} gives {why}", r["_why_none"] == why, str(r["_why_none"]))
+    simple = deadline(rec("cf-simple", claim="If regulators approve it, the merger will close.", claim_form="simple"))
+    check("CLAIM FORM: 'simple' wins over the regex, so the record keeps its window",
+          simple["_deadline"] is not None and simple["_why_none"] is None, f"{simple['_deadline']} {simple['_why_none']}")
+    try:
+        deadline(rec("cf-odd", claim_form="sometimes"))
+        check("CLAIM FORM: an unknown claim_form is refused, never read as simple", False)
+    except (SystemExit, ValueError) as e:
+        check("CLAIM FORM: an unknown claim_form is refused, never read as simple", "sometimes" in str(e), str(e))
     und = deadline(rec("und", said=None, tdt="soon"))
     check("SCREEN: no statement date, no anchor", und["_deadline"] is None and und["_why_none"] == "no_statement_date",
           str(und["_why_none"]))
@@ -191,17 +214,25 @@ def main() -> int:
     f = P2.funnel_flags(mo, 60)
     check("LEAD: 'coming months' reads as 61 days at the shortest, over the floor even when the speaker controls it",
           f["implied"]["shortest_reading_days"] == 61 and f["lead_ok"] and f["eligible"], json.dumps(f))
-    s_own = P2.funnel_flags(deadline(rec("so", tdt="soon", ctrl="own", cat="company_business")), 60)
-    s_ext = P2.funnel_flags(deadline(rec("se", tdt="soon", ctrl="external")), 60)
-    check("LEAD: 'soon' has no lower bound; about the speaker's own plans it is not a lead",
-          s_own["implied"]["shortest_reading_days"] is None and not s_own["lead_ok"], json.dumps(s_own))
-    check("LEAD: 'soon' about something the speaker does not control is eligible",
-          s_ext["lead_ok"] and s_ext["eligible"], json.dumps(s_ext))
-    c_own = P2.funnel_flags(own, 60)
-    check("LEAD: a class row about the speaker's own company has no words to read, so it is not a lead",
-          not c_own["lead_ok"] and P2.ineligible_reason("own", c_own) == "lead_under_floor", json.dumps(c_own))
+    wk2 = P2.funnel_flags(deadline(rec("wk2", tdt="over the next few weeks")), 60)
+    check("LEAD: 'next few weeks' reads as 14 days too", wk2["implied"]["shortest_reading_days"] == 14
+          and not wk2["lead_ok"], json.dumps(wk2))
+    # Review 2026-09-30: words with no lower bound, and a claim row, which has no words, count as UNDER the
+    # floor whoever controls the outcome, so the outcome-blind lead test (VD-7 c) decides every one of them.
+    for label, r in (("'soon', the speaker's own plans", rec("so", tdt="soon", ctrl="own", cat="company_business")),
+                     ("'soon', about something the speaker does not control", rec("se", tdt="soon", ctrl="external")),
+                     ("a claim row about the speaker's own company", rec("own2", cat="company_business", ctrl="own")),
+                     ("a claim row about another company", rec("ext2", cat="company_business", ctrl="external")),
+                     ("a claim row, partial control", rec("part2", cat="technology_product", ctrl="partial"))):
+        x = deadline(r)
+        f = P2.funnel_flags(x, 60)
+        check(f"LEAD: {label}: no lower bound, so under the floor and not eligible without a label",
+              f["implied"]["shortest_reading_days"] is None and not f["lead_ok"] and not f["eligible"]
+              and P2.ineligible_reason(x["prediction_id"], f) == "lead_under_floor", json.dumps(f))
+        g = P2.funnel_flags(x, 60, lead_labels={x["prediction_id"]: "world_forecast"})
+        check(f"LEAD: {label}: the lead test decides; a forecast label makes it eligible",
+              g["eligible"] and g["lead_test"]["label"] == "world_forecast", json.dumps(g))
     c_ext = P2.funnel_flags(ext, 60)
-    check("LEAD: a class row about another company is eligible", c_ext["eligible"], json.dumps(c_ext))
     check("LEAD: lead_days still counts statement to deadline, like every other row",
           c_ext["lead_days"] == (dt.date(2028, 1, 15) - dt.date(2025, 1, 15)).days, str(c_ext["lead_days"]))
 

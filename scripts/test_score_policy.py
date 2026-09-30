@@ -101,6 +101,14 @@ def main() -> int:
         write(run, "pub", "resolve", "2023-06-30", policy_release=REL,
               already_public={"date": "2021-02-20", "where": "https://example.com/deal", "what_it_shows": "agreed"})
         write(run, "pub", "prior", "2023-06-30")
+        # An implied window sets no lower bound on when, so each implied record is under the
+        # lead floor and the outcome-blind lead test decides it (VD-7 c; review 2026-09-30).
+        for pid, dl in (("imp", "2026-03-01"), ("stale", "2022-03-01")):
+            fp = R.sidecar_path(run, "lead_test", "ada", pid)
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(json.dumps({"prediction_id": pid, "leader_slug": "ada", "stage": "lead_test",
+                                      "label": "world_forecast", "reason": "r", "policy_release": REL,
+                                      "deadline": dl}))
         cfg_path = corpus / "scoring.json"
         base = {"as_of": "2026-09-28", "trend": True, "min_lead_days": 60, "predictions": ["predictions"],
                 "runs": ["predictions/_experiments/run-a"], "index": "predictions/index.json",
@@ -148,7 +156,7 @@ def main() -> int:
         p, _ = score(policy_releases=["legacy", REL], implied_windows="0" * 64)
         check("SHA: a config naming another table is refused, naming both hashes",
               p.returncode != 0 and "0" * 12 in p.stderr and sha[:12] in p.stderr, p.stderr[-400:])
-        p, doc = score(policy_releases=["legacy", REL], implied_windows=sha)
+        p, doc = score(policy_releases=["legacy", REL], implied_windows=sha, lead_test=True)
         check("ON: exits 0", p.returncode == 0, p.stderr[-600:])
         rows = {r["prediction_id"]: r for r in doc.get("predictions", [])}
         imp = rows.get("imp", {})
@@ -185,7 +193,7 @@ def main() -> int:
               str(D.scores_staleness(corpus / "scores.json", cfg_path)))
         (run / "resolutions" / "ada" / "stale.json").unlink()
         (run / "priors" / "ada" / "stale.json").unlink()
-        p, doc = score(policy_releases=["legacy", REL], implied_windows=sha)
+        p, doc = score(policy_releases=["legacy", REL], implied_windows=sha, lead_test=True)
         check("STALE: with the stale sidecars gone the count is empty and the deploy check passes",
               p.returncode == 0 and doc["corpus"].get("stale_sidecars") == [] and D.scores_blockers(doc) == [],
               p.stderr[-300:])

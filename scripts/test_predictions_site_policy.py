@@ -126,6 +126,8 @@ def main() -> int:
             side(board, sid, "early", dl[sid])
             side(board, sid, "prior", dl[sid])
         side(board, "lead-fc", "lead_test", dl["lead-fc"])
+        # An implied window sets no lower bound, so the outcome-blind lead test decides it.
+        side(board, "imp-scored", "lead_test", dl["imp-scored"])
         side(board, "lead-ann", "lead_test", dl["lead-ann"], label="own_plan_announcement")
         hrun = pred / "_experiments" / "half"
         side(hrun, "imp-scored", "resolve", half[0]["_deadline"], outcome="not_occurred", implied_scale=0.5)

@@ -91,6 +91,14 @@ def main() -> int:
                 write(run, slug, pid, "resolve", dl)
                 write(run, slug, pid, "prior", dl)
         half_dl = (dt.date(2021, 3, 1) + dt.timedelta(days=round(2.5 * 365.25))).isoformat()
+        # Each implied claim is under the lead floor (no lower bound on when), so the
+        # outcome-blind lead test decides it; the label holds at every scale.
+        for slug in ("ada", "bob", "cat"):
+            fp = R.sidecar_path(run, "lead_test", slug, f"{slug}-i")
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(json.dumps({"prediction_id": f"{slug}-i", "leader_slug": slug, "stage": "lead_test",
+                                      "label": "world_forecast", "reason": "r",
+                                      "policy_release": R.POLICY_RELEASE[0], "deadline": "2026-03-01"}))
         # At half the window, ada's implied claim had not yet happened: a miss.
         write(half, "ada", "ada-i", "resolve", half_dl, 0.5, outcome="not_occurred")
         write(half, "ada", "ada-i", "prior", half_dl, 0.5, p=0.3)
@@ -99,7 +107,8 @@ def main() -> int:
         cfg_path = corpus / "scoring.json"
         base = {"as_of": "2026-09-28", "trend": False, "min_lead_days": 60, "predictions": ["predictions"],
                 "runs": ["predictions/_experiments/board"], "index": "predictions/index.json",
-                "out": "predictions/scores.json", "implied_windows": SHA}
+                "out": "predictions/scores.json", "implied_windows": SHA, "lead_test": True,
+                "policy_releases": ["legacy", R.POLICY_RELEASE[0]]}
         sens = {"half": ["predictions/_experiments/half"], "double": ["predictions/_experiments/double"]}
         dbl.mkdir(parents=True)
 
@@ -176,7 +185,8 @@ def main() -> int:
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             rc = RP.main(["--stage", "resolve", "--predictions", str(corpus), "--out", str(root / "dry"),
-                          "--as-of", "2026-09-28", "--implied-windows", SHA, "--implied-scale", "half", "--dry-run"])
+                          "--as-of", "2026-09-28", "--implied-windows", SHA, "--implied-scale", "half",
+                          "--lead-test", "--dry-run"])
         sel = [l for l in err.getvalue().splitlines() if l.startswith("stage=resolve")]
         check("STAGE: --implied-scale half selects only the implied records, at half their windows",
               rc == 0 and sel and "to run=3" in sel[0] and "3 implied record(s) at 0.5x" in err.getvalue(),

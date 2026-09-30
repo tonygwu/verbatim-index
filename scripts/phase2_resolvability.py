@@ -315,7 +315,8 @@ IMPLIED_TABLE = {
     # Read in this order; the first field holding a phrase row decides.
     "phrase_fields": ["target_date_text", "quote"],
     "phrases": [
-        {"row": "coming weeks", "pattern": r"\bcoming weeks\b", "window": [3, "month"], "shortest": [2, "week"]},
+        {"row": "coming weeks", "pattern": r"\b(?:coming weeks|next few weeks)\b", "window": [3, "month"],
+         "shortest": [2, "week"]},
         {"row": "coming months", "pattern": r"\b(?:coming months|next several months|in a few months)\b",
          "window": [12, "month"], "shortest": [2, "month"]},
         {"row": "soon", "pattern": r"\b(?:soon|shortly|near[- ]term)\b", "window": [1, "year"], "shortest": None},
@@ -337,7 +338,11 @@ IMPLIED_TABLE = {
                r"\bforever\b"],
     # "at least N years" and "more than N years" with N over the cap.
     "longer_at_least": r"\b(?:at least|more than) (\w+) years?\b",
-    # Screened from the pipeline's own claim text, before any resolver runs.
+    # Screened before any resolver runs. The extractor's own claim_form decides
+    # when the record carries one (release 2.3); these patterns over the
+    # pipeline's claim text decide for a record that does not.
+    "claim_forms": {"simple": None, "conditional": "conditional_claim", "ordering": "ordering_claim",
+                    "recurring": "recurring_claim"},
     "screen_fields": ["normalized_claim"],
     "screens": [
         ["conditional_claim", r"\b(?:if|unless|provided that|as long as|assuming|in the event that|once|when|whenever)\b"],
@@ -347,9 +352,12 @@ IMPLIED_TABLE = {
         ["recurring_claim", r"\b(?:every\s+(?:day|week|month|quarter|year|single)|each\s+(?:day|week|month|quarter|year)"
                             r"|annually)\b"],
     ],
+    # Words that name an event rather than a time ("when the merger closes") get
+    # no window: the claim row would impose a horizon the speaker tied to something else.
+    "no_window_refusals": ["recurring", "event_anchored"],
     "lead": ("the shortest reading of the words, in days (count times phase2_resolvability.DAYS[unit], "
-             "rounded); words with no lower bound, and a class row, which has no words, count as a lead only "
-             "when subject_control is not 'own'"),
+             "rounded); words with no lower bound, and a claim row, which has no words, count as UNDER the "
+             "floor whoever controls the outcome, so the outcome-blind lead test decides them (VD-7 c)"),
 }
 
 
@@ -403,9 +411,17 @@ def implied_deadline(rec: dict, scale: float = 1.0):
               "resolution_criteria": p.get("resolution_criteria") or ""}
     if any(_longer_than_cap(fields[f]) for f in IMPLIED_TABLE["longer_fields"]):
         return None, "speaker_horizon_longer", None
-    for name, pat in _IMPLIED_SCREENS:
-        if any(pat.search(fields[f]) for f in IMPLIED_TABLE["screen_fields"]):
-            return None, name, None
+    form = p.get("claim_form")
+    if form is not None:
+        if form not in IMPLIED_TABLE["claim_forms"]:
+            raise SystemExit(f"prediction {rec.get('prediction_id')}: claim_form {form!r} is none of "
+                             f"{sorted(IMPLIED_TABLE['claim_forms'])}; it is never read as simple")
+        if IMPLIED_TABLE["claim_forms"][form]:
+            return None, IMPLIED_TABLE["claim_forms"][form], None
+    else:
+        for name, pat in _IMPLIED_SCREENS:
+            if any(pat.search(fields[f]) for f in IMPLIED_TABLE["screen_fields"]):
+                return None, name, None
     chosen, where, matched = None, None, None
     for f in IMPLIED_TABLE["phrase_fields"]:
         rows = implied_phrase_rows(fields[f])
@@ -434,16 +450,20 @@ def implied_deadline(rec: dict, scale: float = 1.0):
     return d, basis, info
 
 
-def implied_lead(info: dict, control: "str | None", min_lead: int) -> tuple[bool, str]:
-    """(lead_ok, why) for an implied window: the shortest reading of the words, never the window."""
+def implied_lead(info: dict, min_lead: int) -> tuple[bool, str]:
+    """(lead_ok, why) for an implied window: the shortest reading of the words, never the window.
+
+    Words with no lower bound, and a claim row, which has no words, allow the
+    thing at once, so they count as under the floor whoever controls the
+    outcome, and the outcome-blind lead test decides (review 2026-09-30 of VD-7 c).
+    """
     s = info["shortest_reading_days"]
     if s is not None:
         return s >= min_lead, (f"the words ({info['matched']!r}) allow it within {s} days at the shortest, "
                                f"{'at or over' if s >= min_lead else 'under'} the {min_lead}-day floor")
-    if control == "own":
-        return False, ("the words set no lower bound and the speaker controls the outcome, so it reads as an "
-                       "announcement")
-    return True, "the words set no lower bound, and the speaker does not control the outcome"
+    words = f"the words ({info['matched']!r})" if info.get("matched") else "it names no time at all, so it"
+    return False, (f"{words} set no lower bound, so it counts as under the {min_lead}-day floor, and an "
+                   f"outcome-blind check decides whether it is a forecast")
 
 
 def superseded_by_override(r: dict, date_overrides: dict) -> str | None:
@@ -570,29 +590,23 @@ def attach_deadlines(rows, derive: bool, trend_cutoff: "dt.date | None" = None,
             # and 2.3 versions of one record agree; a number the speaker said still
             # wins, because it is not a vague word.
             tdt = r["prediction"].get("target_date_text") or ""
-            if not re.search(r"\d", tdt) and implied_phrase_rows(tdt):
-                d4, basis4, info4 = implied_deadline(r, implied)
-                if d4 is not None:
-                    r["_deadline"], r["_basis"], r["_why_none"], r["_implied"] = d4, basis4, None, info4
-                    notes["implied_windows"] += 1
-                    continue
-            d2, how = derived_deadline(r)
+            # With a phrase row in target_date_text and no number, the table decides
+            # outright, a window or a refusal; otherwise the funnel's own reading first.
+            phrase = not re.search(r"\d", tdt) and bool(implied_phrase_rows(tdt))
+            d2, how = (None, None) if phrase else derived_deadline(r)
             if d2 is not None:
                 r["_deadline"], r["_basis"], r["_why_none"] = d2, f"derived: {how}", None
                 continue
-            if how == "recurring":
-                # "every" names no closing date, and a window cannot settle a
-                # recurring claim either.
-                refusals[how] += 1
-                r["_deadline"], r["_basis"], r["_why_none"] = None, None, how
-                continue
             d4, basis4, info4 = implied_deadline(r, implied)
-            if d4 is not None:
+            if d4 is not None and how not in IMPLIED_TABLE["no_window_refusals"]:
                 r["_deadline"], r["_basis"], r["_why_none"], r["_implied"] = d4, basis4, None, info4
                 notes["implied_windows"] += 1
                 continue
-            refusals[basis4] += 1
-            r["_deadline"], r["_basis"], r["_why_none"] = None, None, basis4
+            # The table's own refusal names more (a horizon longer than the cap, a
+            # screen); a recurring claim or words tied to an event get none either.
+            why = basis4 if d4 is None else how
+            refusals[why] += 1
+            r["_deadline"], r["_basis"], r["_why_none"] = None, None, why
             continue
         if derive and note == "missing":
             d2, how = derived_deadline(r)
@@ -707,7 +721,7 @@ def funnel_flags(r: dict, min_lead: int, lead_labels: "dict[str, str] | None" = 
     if implied is not None:
         # An implied window is imposed, so the window itself is no lead: the
         # shortest reading of the words is (critique 1 point 2).
-        lead_ok, lead_rule = implied_lead(implied, r["prediction"].get("subject_control"), min_lead)
+        lead_ok, lead_rule = implied_lead(implied, min_lead)
     else:
         lead_ok = lead is not None and lead >= min_lead
     flags = {
