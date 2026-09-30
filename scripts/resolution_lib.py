@@ -398,6 +398,160 @@ def build_resolver_prompt(rec: dict, deadline: dt.date, today: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Stage 1b: the early call, before the deadline (VD-5 (c), operator 2026-09-29)
+# ---------------------------------------------------------------------------
+#
+# "As Bayesian as possible": a prediction already settled before its deadline
+# scores NOW, in both directions. Occurred when a dated source shows the
+# criterion already met; not_occurred when it can no longer happen, or when the
+# subject itself has publicly moved its own target past the deadline. Everything
+# else is still_open. The scorer queues every early call for a fresh resolution
+# at the deadline, which replaces it (score_predictions), so neither direction
+# gets two looks (critique 1 point 9). The prior is the at-deadline prior, byte
+# for byte: build_prior_prompt never reads anything early.
+
+EARLY_OUTCOMES = ("occurred", "not_occurred", "still_open")
+EARLY_BASES = ("cannot_happen", "target_moved")
+
+EARLY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["prediction_id", "outcome", "not_occurred_basis", "confidence", "sources", "searched",
+                 "already_public", "reasoning"],
+    "properties": {
+        "prediction_id": {"type": "string", "minLength": 1},
+        "outcome": {"enum": list(EARLY_OUTCOMES)},
+        "not_occurred_basis": {"anyOf": [{"enum": list(EARLY_BASES)}, {"type": "null"}]},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "sources": SOURCES_SCHEMA,
+        "searched": SEARCHED_SCHEMA,
+        "already_public": ALREADY_PUBLIC_SCHEMA,
+        "reasoning": {"type": "string", "minLength": 1},
+    },
+}
+
+EARLY_TASK = """You are checking a dated public prediction BEFORE its deadline. The deadline
+has NOT passed. Decide only whether the claim is ALREADY settled.
+
+RULES
+
+1. Answer "occurred" only if a cited source, dated after the statement date and on
+   or before today, shows that the thing the criterion describes has already
+   happened, in full. A claim about a state AT the deadline (a price, a count or a
+   share at the end of a period) is not settled because it holds today: the time
+   left can still undo it, so answer "still_open".
+
+2. Answer "not_occurred" only in one of two cases, and name which one in
+   "not_occurred_basis":
+     - "cannot_happen": a cited source shows it can no longer happen by the
+       deadline: the event it names has taken place with another result, the
+       thing was cancelled, or a law or a physical fact now rules it out. A low
+       probability is not enough.
+     - "target_moved": the subject of the claim itself, the company or the person
+       the claim is about, has publicly moved its own target or schedule past the
+       deadline, shown by a cited source dated after the statement date. Doubts
+       voiced by others are not enough; the subject's own statement or filing is.
+
+3. Answer "still_open" in every other case. This is the normal answer. When you
+   answer it, "not_occurred_basis" is null and no source is needed.
+
+4. The criterion states the SPEAKER'S predicted outcome. "occurred" means the
+   speaker was RIGHT. If the criterion carries a negation, "occurred" means the
+   thing indeed did not happen.
+
+5. CITE SOMETHING for "occurred" and "not_occurred": what each source shows, where
+   it is (a URL, or a specific named document, filing, release or report), and its
+   date. Work from the public record, not from impression.
+
+6. SEARCH BEFORE YOU ANSWER, WHATEVER THE ANSWER. Run at least three web searches
+   with different queries before you answer, and list every query you ran in
+   "searched", in the order you ran them.
+
+7. ALREADY PUBLIC BEFORE IT WAS SAID. Check whether the event itself, or a credible
+   report that it had been agreed, decided or scheduled, was already public BEFORE
+   the statement date. If it was, fill "already_public" with the earliest such
+   source: its date, which is on or before the statement date, where it is, and
+   what it shows. Otherwise "already_public" is null.
+
+8. HOW THIS RECORD IS JUDGED. When the prediction below carries a section with that
+   heading, apply it exactly.
+
+9. "confidence" is about your answer: "high" when a cited source settles it
+   directly, "medium" when it follows by a short step, "low" otherwise.
+
+Answer with one JSON object and nothing else:
+
+{
+  "prediction_id": "<copy it back exactly>",
+  "outcome": "occurred" | "not_occurred" | "still_open",
+  "not_occurred_basis": null | "cannot_happen" | "target_moved",
+  "confidence": "high" | "medium" | "low",
+  "sources": [{"what_it_shows": "...", "where": "...", "date": "YYYY-MM-DD or null"}],
+  "searched": ["the first query you ran", "the second", "the third", "..."],
+  "already_public": null or {"date": "YYYY-MM-DD", "where": "...", "what_it_shows": "..."},
+  "reasoning": "two to five sentences: what the criterion requires, what is already on the record, and why that settles it or not"
+}
+"""
+
+
+def build_early_prompt(rec: dict, deadline: dt.date, today: str) -> str:
+    f = prompt_facts(rec, deadline)
+    return (f"{EARLY_TASK}\nToday is {today}. The deadline is {f['deadline']}, which has not passed.\n\n"
+            f"{'=' * 70}\n{_block(f)}{'=' * 70}\n\nAnswer with the JSON object now.\n")
+
+
+def validate_early(obj: dict, expect_id: str, said: "str | None", today: str) -> list[str]:
+    """Rules the schema cannot express for an early call. A decided answer needs a
+    source dated after the statement and on or before today, and a not_occurred
+    names its basis; still_open names none."""
+    errs: list[str] = []
+    if obj.get("prediction_id") != expect_id:
+        errs.append(f"prediction_id {obj.get('prediction_id')!r} != {expect_id!r}")
+    outcome, basis = obj.get("outcome"), obj.get("not_occurred_basis")
+    if outcome == "not_occurred" and basis not in EARLY_BASES:
+        errs.append(f"not_occurred needs not_occurred_basis in {list(EARLY_BASES)}, has {basis!r}")
+    if outcome != "not_occurred" and basis is not None:
+        errs.append(f"outcome {outcome!r} carries not_occurred_basis {basis!r}")
+    if outcome in ("occurred", "not_occurred"):
+        if not said:
+            errs.append("an early call needs the record's statement date, and it has none")
+        else:
+            lo, hi = dt.date.fromisoformat(str(said)[:10]), dt.date.fromisoformat(today)
+            dated = []
+            for s in obj.get("sources") or []:
+                try:
+                    dated.append(dt.date.fromisoformat(str(s.get("date"))[:10]))
+                except ValueError:
+                    continue
+            if not any(lo < x <= hi for x in dated):
+                errs.append(f"an early {outcome} needs a source dated after the statement date {lo} and on or "
+                            f"before today {hi}; the dates cited are {[str(x) for x in dated] or 'none'}")
+    errs += _searched_errors(obj)
+    errs += already_public_errors(obj, said)
+    return errs
+
+
+def early_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, harness: str, account: str | None,
+                 telemetry: dict, checked_at: str, as_of: str, prompt_sha: str, release: str,
+                 code_revision: str) -> dict:
+    return {
+        "policy_release": release, "prompt_sha256": prompt_sha, "code_revision": code_revision,
+        "prediction_id": rec["prediction_id"], "leader_slug": rec["leader_slug"],
+        "transcript_id": rec["transcript_id"], "stage": "early",
+        "statement_date": (rec.get("source") or {}).get("statement_date"),
+        "statement_date_basis": (rec.get("source") or {}).get("statement_date_basis"),
+        # The FULL window: the fresh check at the deadline judges this same one.
+        "deadline": deadline.isoformat(), "as_of": as_of,
+        "outcome": obj["outcome"], "not_occurred_basis": obj["not_occurred_basis"],
+        "early_called": obj["outcome"] != "still_open",
+        "confidence": obj["confidence"], "sources": obj["sources"], "searched": obj["searched"],
+        "already_public": obj["already_public"], "reasoning": obj["reasoning"],
+        "checked_at_utc": checked_at, "run_id": run_id, "harness": harness, "account": account,
+        "telemetry": telemetry,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Stage 2: the prior assessor. It never learns the outcome.
 # ---------------------------------------------------------------------------
 
@@ -687,17 +841,23 @@ def prior_record(rec: dict, deadline: dt.date, obj: dict, *, run_id: str, harnes
     }
 
 
+# Each stage writes its own tree, so no stage can read another's by glob.
+SIDECAR_SUBDIRS = {"resolve": "resolutions", "prior": "priors", "early": "early"}
+
+
 def sidecar_path(root: Path, stage: str, slug: str, prediction_id: str) -> Path:
-    if stage not in ("resolve", "prior"):
+    if stage not in SIDECAR_SUBDIRS:
         raise ValueError(f"unknown stage {stage!r}")
-    return root / ("resolutions" if stage == "resolve" else "priors") / slug / f"{prediction_id}.json"
+    return root / SIDECAR_SUBDIRS[stage] / slug / f"{prediction_id}.json"
 
 
 def load_sidecars(root: Path, stage: str) -> dict[str, dict]:
     """Every sidecar of a stage, keyed by prediction_id. Raises on a duplicate id
     rather than letting one silently win."""
+    if stage not in SIDECAR_SUBDIRS:
+        raise ValueError(f"unknown stage {stage!r}")
     out: dict[str, dict] = {}
-    sub = root / ("resolutions" if stage == "resolve" else "priors")
+    sub = root / SIDECAR_SUBDIRS[stage]
     if not sub.exists():
         return out
     for f in sorted(sub.glob("*/*.json")):
@@ -872,7 +1032,7 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # Cutting a release: change the text, run test_resolution_policy.py, and put the
 # new id and sha256 below and in that test.
 
-POLICY_RELEASE = ("resolution-2026-09-30", "88a0ae81bfbc4e72cfaf8ecb6c3615acdd1dee36561a5ab37aa1dfdb9d4453de")
+POLICY_RELEASE = ("resolution-2026-09-30", "b815e14eef73c1094067916cb044519780c39b064a7ec0381db1236b9f518d6b")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.
@@ -897,8 +1057,9 @@ def _policy_fixture() -> dict:
 def _policy_parts() -> dict:
     return {
         "resolver_task": RESOLVER_TASK, "prior_task": PRIOR_TASK, "prior_trend_rule": PRIOR_TREND_RULE,
+        "early_task": EARLY_TASK,
         "judged_rules": JUDGED_RULES, "min_searches": MIN_SEARCHES, "leak_words": list(_LEAK_WORDS),
-        "schemas": {"resolution": RESOLUTION_SCHEMA, "prior": PRIOR_SCHEMA},
+        "schemas": {"resolution": RESOLUTION_SCHEMA, "prior": PRIOR_SCHEMA, "early": EARLY_SCHEMA},
         "block": _block(prompt_facts(_policy_fixture(), dt.date(2020, 12, 31))),
     }
 

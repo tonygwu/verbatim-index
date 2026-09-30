@@ -42,7 +42,7 @@ import resolution_lib as R  # noqa: E402
 
 FAILED = []
 
-PINNED_RELEASE = ("resolution-2026-09-30", "88a0ae81bfbc4e72cfaf8ecb6c3615acdd1dee36561a5ab37aa1dfdb9d4453de")
+PINNED_RELEASE = ("resolution-2026-09-30", "b815e14eef73c1094067916cb044519780c39b064a7ec0381db1236b9f518d6b")
 
 
 def check(label, ok, detail=""):

@@ -311,8 +311,9 @@ def run_one(job: dict) -> dict:
     raw_path = raw_dir / f"{pid}.txt"
 
     try:
-        if stage == "resolve":
-            prompt = R.build_resolver_prompt(rec, deadline, args.as_of)
+        if stage in ("resolve", "early"):
+            prompt = (R.build_resolver_prompt(rec, deadline, args.as_of) if stage == "resolve"
+                      else R.build_early_prompt(rec, deadline, args.as_of))
             leaks = []
             workdir = Path(args.workdir) / f"astra-{pid}"
             workdir.mkdir(parents=True, exist_ok=True)
@@ -347,17 +348,25 @@ def run_one(job: dict) -> dict:
         except (ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"{E_NOJSON}: {exc}") from exc
 
-        schema = R.RESOLUTION_SCHEMA if stage == "resolve" else R.PRIOR_SCHEMA
+        schema = {"resolve": R.RESOLUTION_SCHEMA, "early": R.EARLY_SCHEMA, "prior": R.PRIOR_SCHEMA}[stage]
         errs = L.check_schema(obj, schema)
         if errs:
             raise RuntimeError(f"{E_SCHEMA}: {'; '.join(errs[:4])}")
         said = (rec.get("source") or {}).get("statement_date")
-        errs = (R.validate_resolution(obj, pid, said) + R.validate_effort(obj, tel) if stage == "resolve"
-                else R.validate_prior(obj, pid))
+        if stage == "resolve":
+            errs = R.validate_resolution(obj, pid, said) + R.validate_effort(obj, tel)
+        elif stage == "early":
+            errs = R.validate_early(obj, pid, said, args.as_of) + R.validate_effort(obj, tel)
+        else:
+            errs = R.validate_prior(obj, pid)
         if errs:
             raise RuntimeError(f"{E_RULES}: {'; '.join(errs[:4])}")
 
-        if stage == "resolve":
+        if stage == "early":
+            out = R.early_record(rec, deadline, obj, run_id=args.run_id, harness=harness, account=account,
+                                 telemetry=tel, checked_at=utc_now(), as_of=args.as_of, prompt_sha=prompt_sha,
+                                 release=args.release, code_revision=args.code_revision)
+        elif stage == "resolve":
             out = R.resolution_record(rec, deadline, obj, run_id=args.run_id, harness=harness,
                                       account=account, telemetry=tel, resolved_at=utc_now(),
                                       as_of=args.as_of, prompt_sha=prompt_sha, release=args.release,
@@ -372,7 +381,7 @@ def run_one(job: dict) -> dict:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
         base.update(ok=True, seconds=round(time.time() - t0, 1),
-                    summary=(obj["outcome"] if stage == "resolve" else obj["p"]))
+                    summary=(obj["p"] if stage == "prior" else obj["outcome"]))
         return base
 
     except subprocess.TimeoutExpired:
@@ -388,7 +397,19 @@ def run_one(job: dict) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stage", choices=["resolve", "prior"], required=True)
+    ap.add_argument("--stage", choices=["resolve", "prior", "early"], required=True,
+                    help="resolve and prior run over records past their deadline; early (VD-5) checks eligible "
+                         "records NOT yet due for a result already settled, with no minimum distance to the "
+                         "deadline")
+    ap.add_argument("--not-due", action="store_true",
+                    help="prior only: price eligible records whose deadline has NOT passed, with the prompt the "
+                         "deadline would use, byte for byte (an early call needs its prior now)")
+    ap.add_argument("--implied-windows", default=None, metavar="TABLE_SHA256",
+                    help="judge records with no deadline over the implied-window table with this sha256 (VD-6); "
+                         "the same value scoring.json names")
+    ap.add_argument("--implied-scale", choices=["half", "double"], default=None,
+                    help="with --implied-windows: run the implied records only, at half or double the windows, for "
+                         "the sensitivity report")
     ap.add_argument("--predictions", type=Path, action="append", default=None,
                     help="a corpus directory; repeat it to score several corpora together")
     ap.add_argument("--out", type=Path, required=True, help="the experiment run directory")
@@ -469,6 +490,22 @@ def accounts_for(args) -> list[str]:
     return [str(Path(h).expanduser()) for h in homes] or [""]
 
 
+def implied_scale(args) -> "float | None":
+    """The implied-window scale a run judges at, or None with the table off.
+
+    The table is named by its sha256, the value scoring.json names, and refused
+    when the code's table differs: a stage that judged a record over another
+    window than the scorer's would write a stale sidecar."""
+    if args.implied_windows is None:
+        if args.implied_scale:
+            raise SystemExit("--implied-scale needs --implied-windows")
+        return None
+    if args.implied_windows != P2.implied_table_sha256():
+        raise SystemExit(f"--implied-windows {args.implied_windows[:12]} is not the table in this code "
+                         f"({P2.implied_table_sha256()[:12]})")
+    return {"half": 0.5, "double": 2.0, None: 1.0}[args.implied_scale]
+
+
 def code_revision() -> str:
     """The public repo's HEAD, with "+dirty" when scripts/ holds uncommitted changes."""
     here = Path(__file__).resolve().parent
@@ -510,9 +547,19 @@ def main(argv: list[str] | None = None) -> int:
     log(f"trend windows: read {len(resolutions)} resolved predictions from {len(freeze_runs)} run(s) of "
         f"{cfg_path or 'no scoring config'} and --out; {len(clash)} resolved over different windows in "
         f"different runs {sorted(clash)}, refused if a trend record")
+    if args.not_due and args.stage != "prior":
+        raise SystemExit("--not-due is for the prior stage only: the resolver judges a deadline that passed, and "
+                         "the early stage always reads records not yet due")
+    due = "not_due" if args.stage == "early" or args.not_due else "past"
+    implied = implied_scale(args)
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
                   resolutions=resolutions, window_conflicts=clash,
-                  date_overrides=date_overrides if ov_path else None)
+                  date_overrides=date_overrides if ov_path else None, implied=implied, due=due)
+    if args.implied_scale:
+        # A sensitivity run judges the implied records only; every other record's
+        # window does not depend on the scale.
+        rows = [r for r in rows if "_implied" in r]
+        log(f"--implied-scale {args.implied_scale}: {len(rows)} implied record(s) at {implied:g}x their windows")
     rows, left_out = narrow(rows, args.slug, args.include_ineligible, ids)
     if left_out:
         log(f"left out {sum(left_out.values())} ineligible, by reason {json.dumps(dict(sorted(left_out.items())))}; "
@@ -535,6 +582,7 @@ def main(argv: list[str] | None = None) -> int:
         if todo:
             r = todo[0]
             p = (R.build_resolver_prompt(r, r["_deadline"], args.as_of) if args.stage == "resolve"
+                 else R.build_early_prompt(r, r["_deadline"], args.as_of) if args.stage == "early"
                  else R.build_prior_prompt(r, r["_deadline"]))
             print(p)
             print(f"--- prompt chars: {len(p)}  leak words: "

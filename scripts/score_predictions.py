@@ -105,7 +105,8 @@ def speaker_q(rec: dict) -> float | None:
 
 def join(rows: list[dict], resolutions: dict, priors: dict,
          restated: "dict[str, str] | None" = None,
-         stale: "set[str] | None" = None) -> tuple[list[dict], collections.Counter]:
+         stale: "set[str] | None" = None,
+         early_used: "dict[str, dict] | None" = None) -> tuple[list[dict], collections.Counter]:
     """One row per past-due prediction, with its points where all the parts exist.
 
     `restated` maps a non-specific cluster member to its specific member. Such a
@@ -116,10 +117,17 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
     `stale` names predictions whose sidecar judged another window than the
     funnel's (stale_sidecars); each reads `stale_sidecar:deadline_changed`. A
     resolution that found the thing `already_public` before the statement keeps
-    its outcome and reads `already_public`: the words were no forecast."""
+    its outcome and reads `already_public`: the words were no forecast.
+
+    `early_used` names the rows scored on an early call (VD-5): `resolutions`
+    carries the early call for them, and each row says `early_called`, what the
+    call was, and either `not_due` (its deadline has not passed) or
+    `fresh_check_due` (it has, and the fresh check that will replace the call is
+    still to run)."""
     out, why = [], collections.Counter()
     restated = restated or {}
     stale = stale or set()
+    early_used = early_used or {}
     for r in rows:
         pid = r["prediction_id"]
         res, pri = resolutions.get(pid), priors.get(pid)
@@ -154,6 +162,10 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
         if (res or {}).get("already_public"):
             # Only a sidecar under a release carries the field, so a legacy row is unchanged.
             row["already_public"] = res["already_public"]
+        if pid in early_used:
+            row["early_called"] = True
+            row["early"] = {k: res.get(k) for k in ("as_of", "outcome", "not_occurred_basis", "run_id")}
+            row["not_due" if early_used[pid]["not_due"] else "fresh_check_due"] = True
         if own is not None:
             row.update(own, not_scored_because=f"restated:{restated[pid]}", restated_by=restated[pid])
             why["restated"] += 1
@@ -214,7 +226,8 @@ def is_restated(r: dict) -> bool:
     return str(r.get("not_scored_because") or "").startswith("restated:")
 
 
-def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = False) -> list[dict]:
+def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = False,
+               with_early: bool = False) -> list[dict]:
     by = collections.defaultdict(list)
     for r in rows:
         by[r["leader_slug"]].append(r)
@@ -226,10 +239,11 @@ def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = Fa
         out.append({
             "slug": slug,
             "name": names.get(slug, slug),
-            "past_due": len(rs),
+            # A row scored on an early call before its deadline is not past due.
+            "past_due": sum(1 for r in rs if not r.get("not_due")),
             # A restated row is the same prediction as its specific member, so it is
             # not a second eligible one.
-            "eligible": sum(1 for r in rs if r["flags"]["eligible"] and not is_restated(r)),
+            "eligible": sum(1 for r in rs if r["flags"]["eligible"] and not is_restated(r) and not r.get("not_due")),
             "resolved": sum(1 for r in rs if r["outcome"] in ("occurred", "not_occurred")),
             "unresolvable": outcomes.get("unresolvable", 0),
             "occurred": outcomes.get("occurred", 0),
@@ -246,6 +260,8 @@ def per_leader(rows: list[dict], names: dict[str, str], with_restated: bool = Fa
         })
         if with_restated:
             out[-1]["restated"] = sum(1 for r in rs if is_restated(r))
+        if with_early:
+            out[-1]["early_called"] = sum(1 for r in rs if r.get("early_called"))
     out.sort(key=lambda l: (-(l["mean_points"] if l["ranked"] and l["mean_points"] is not None else -99),
                             l["name"]))
     return out
@@ -332,17 +348,21 @@ def drop_stale_sidecars(sidecars: dict[str, dict], date_overrides: dict, superse
     return out
 
 
-def stale_sidecars(rows: list[dict], sidecars: "dict[str, dict[str, dict]]") -> list[dict]:
-    """Sidecars of an implied-window row that judged another window than the funnel's.
+def stale_sidecars(rows: list[dict], sidecars: "dict[str, dict[str, dict]]",
+                   also: "set[str] | None" = None) -> list[dict]:
+    """Sidecars of an implied-window row, or of a row scored on an early call, that
+    judged another window than the funnel's.
 
-    Checked only where a policy of 2026-09-29 set the window (an `_implied`
-    row), because every other row's deadline comes from its own words and the
-    existing prior-against-resolution check covers it. A table changed after its
-    records were judged makes their sidecars stale here, one row at a time,
-    rather than stopping every push (critique 3 A5)."""
+    Checked only where a policy of 2026-09-29 is involved (an `_implied` row, or
+    a prediction in `also`, the early calls in use; critique 1 point 9), because
+    every other row's deadline comes from its own words and the existing
+    prior-against-resolution check covers it. A table changed after its records
+    were judged makes their sidecars stale here, one row at a time, rather than
+    stopping every push (critique 3 A5)."""
     out = []
+    also = also or set()
     for r in rows:
-        if "_implied" not in r:
+        if "_implied" not in r and r["prediction_id"] not in also:
             continue
         want = r["_deadline"].isoformat()
         for stage, have in sidecars.items():
@@ -383,9 +403,53 @@ def release_counts(sidecars: "dict[str, dict[str, dict]]", allowed: "list[str] |
     return {stage: dict(sorted(c.items())) for stage, c in counts.items()}
 
 
+def load_early(runs: list[Path], loader, swaps: "dict | None", root: Path,
+               resolve_from: dict[str, Path]) -> tuple[dict[str, dict], dict[str, Path], list[dict]]:
+    """(early calls by prediction, the run each came from, the early calls replaced).
+
+    An early call is replaced only by name, in the replacement manifest (stage
+    "early"): by the fresh RESOLUTION read for that prediction once its deadline
+    has passed (VD-5: the fresh answer replaces the early one), which may live in
+    the same run, or by a newer early call in another run. Anything else the
+    manifest names is refused, and so is a prediction left with early calls in
+    two runs. `resolve_from` maps each resolution read to its run (load_across).
+    """
+    have: dict[tuple[Path, str], dict] = {}
+    for run in runs:
+        for pid, obj in loader(run).items():
+            have[(Path(run).resolve(), pid)] = obj
+    entries = [e for e in (swaps or {}).get("replacements", []) if e["stage"] == "early"]
+    gone, report = set(), []
+    for e in entries:
+        old, new, pid = (root / e["run"]).resolve(), (root / e["replacement"]).resolve(), e["prediction_id"]
+        if (old, pid) not in have:
+            raise SystemExit(f"the replacement manifest replaces an early call of {pid} in {e['run']}, and there "
+                             f"is none there")
+        if (new, pid) in have and new != old:
+            now, kind = have[(new, pid)], "early"
+        elif resolve_from.get(pid) is not None and Path(resolve_from[pid]).resolve() == new:
+            now, kind = None, "resolve"
+        else:
+            raise SystemExit(f"the replacement manifest replaces {pid}'s early call in {e['run']} by "
+                             f"{e['replacement']}, which holds neither a newer early call nor the resolution read "
+                             f"for it")
+        gone.add((old, pid))
+        report.append({"entry": e, "old": have[(old, pid)], "kind": kind, "now": now})
+    out: dict[str, dict] = {}
+    where: dict[str, Path] = {}
+    for (run, pid), obj in sorted(have.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
+        if (run, pid) in gone:
+            continue
+        if pid in out:
+            raise SystemExit(f"prediction {pid} has early calls in two runs: {where[pid]} and {run}; name the one "
+                             f"that replaces the other in the replacement manifest (stage early)")
+        out[pid], where[pid] = obj, run
+    return out, where, report
+
+
 def load_across(runs: list[Path], loader, drop: "set[tuple[Path, str]] | None" = None,
                 dropped: "dict | None" = None, replace: "dict[tuple[Path, str], Path] | None" = None,
-                replaced: "dict | None" = None) -> dict[str, dict]:
+                replaced: "dict | None" = None, where: "dict[str, Path] | None" = None) -> dict[str, dict]:
     """One loader applied to every run, merged by prediction_id.
 
     A prediction present in two runs is REFUSED, naming both, because letting the
@@ -452,6 +516,8 @@ def load_across(runs: list[Path], loader, drop: "set[tuple[Path, str]] | None" =
                          + "; ".join(f"{pid} should come from {w}, "
                                      + (f"but the one read is in {got}" if got else "and there is none there")
                                      for pid, w, got in wrong))
+    if where is not None:
+        where.update(seen)
     return out
 
 
@@ -604,8 +670,10 @@ REPLACEMENT_MANIFEST_KEYS = {"schema_version", "replacements"}
 REPLACEMENT_KEYS = {"stage", "prediction_id", "run", "replacement", "reason"}
 # The stages load_across merges across runs that a re-run can produce. Criteria
 # repairs also load across runs, and are not replaceable here until a re-run
-# needs it.
-REPLACEMENT_STAGES = ("resolve", "prior")
+# needs it. An "early" entry names an early call (VD-5) and the run holding what
+# replaces it: the fresh RESOLUTION once the deadline has passed, which may sit
+# in the same run, or a newer early call before it (load_early).
+REPLACEMENT_STAGES = ("resolve", "prior", "early")
 
 
 def read_replacements(path: Path, root: Path, runs: list[Path]) -> dict:
@@ -644,7 +712,9 @@ def read_replacements(path: Path, root: Path, runs: list[Path]) -> dict:
             if p not in run_set:
                 raise SystemExit(f"{path}: replacement of {e['prediction_id']} names {k} {e[k]}, which is not "
                                  f"one of the runs being scored")
-        if old == new:
+        if old == new and e["stage"] != "early":
+            # An early call and the fresh resolution that replaces it are two
+            # stages, so they may share a run; two sidecars of one stage may not.
             raise SystemExit(f"{path}: replacement of {e['prediction_id']} names {e['run']} as both the run "
                              f"replaced and the replacement")
         key = (e["stage"], e["prediction_id"], old)
@@ -655,7 +725,8 @@ def read_replacements(path: Path, root: Path, runs: list[Path]) -> dict:
         groups[(e["stage"], e["prediction_id"])].append(e)
     for (stage, pid), es in groups.items():
         olds = {(root / e["run"]).resolve() for e in es}
-        news = {(root / e["replacement"]).resolve() for e in es}
+        news = {(root / e["replacement"]).resolve() for e in es if (root / e["replacement"]).resolve()
+                != (root / e["run"]).resolve()}
         if olds & news:
             raise SystemExit(f"{path}: the {stage} sidecar of {pid} in {sorted(str(x) for x in olds & news)} is "
                              f"both replaced and a replacement, a chain; name the final sidecar as the "
@@ -695,12 +766,24 @@ def moved_windows(replaced: dict, resolutions: dict[str, dict], swaps: "dict | N
 
 
 def replacement_report(doc: dict, path_rel: str, sha: str, replaced: dict[str, dict],
-                       merged: dict[str, dict], root: Path) -> dict:
+                       merged: dict[str, dict], root: Path, early_report: "list[dict] | None" = None) -> dict:
     """Every replaced sidecar, with what it said and what the replacement says,
-    and the window each judged or priced (`deadline_was`, `deadline_now`)."""
+    and the window each judged or priced (`deadline_was`, `deadline_now`).
+
+    An early call replaced by the fresh check at its deadline stays here with both
+    answers, which is how often the early call and the fresh check agree
+    (critique 1 point 9)."""
     field = {"resolve": "outcome", "prior": "p"}
     why = {(e["stage"], (root / e["run"]).resolve(), e["prediction_id"]): e for e in doc["replacements"]}
     out = []
+    for x in early_report or []:
+        e = x["entry"]
+        now = x["now"] if x["kind"] == "early" else merged["resolve"][e["prediction_id"]]
+        out.append({"stage": "early", "prediction_id": e["prediction_id"], "run": rel(root / e["run"], root),
+                    "replacement": rel(root / e["replacement"], root), "reason": e["reason"],
+                    "replaced_by": "fresh resolution" if x["kind"] == "resolve" else "a newer early call",
+                    "was": x["old"].get("outcome"), "now": now.get("outcome"),
+                    "deadline_was": x["old"].get("deadline"), "deadline_now": now.get("deadline")})
     for stage in REPLACEMENT_STAGES:
         for (run, pid), obj in replaced[stage].items():
             e = why[(stage, run, pid)]
@@ -738,12 +821,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="judge records with no deadline over the implied-window table with this sha256 (VD-6)")
     ap.add_argument("--policy-release", action="append", default=None, dest="policy_releases",
                     help="a resolution-policy release the board may carry; repeat it. Absent: legacy only")
+    ap.add_argument("--early-calls", action="store_const", const=True, default=None,
+                    help="score decided early calls now, before the deadline (VD-5)")
     args = ap.parse_args(argv)
     flags = {"--run": args.run, "--predictions": args.predictions, "--index": args.index, "--as-of": args.as_of,
              "--min-lead-days": args.min_lead_days, "--trend": args.trend, "--out": args.out,
              "--restatements": args.restatements, "--date-overrides": args.date_overrides,
              "--replacements": args.replacements, "--implied-windows": args.implied_windows,
-             "--policy-release": args.policy_releases}
+             "--policy-release": args.policy_releases, "--early-calls": args.early_calls}
     if args.config is not None:
         mixed = [k for k, v in flags.items() if v is not None]
         if mixed:
@@ -757,6 +842,7 @@ def main(argv: list[str] | None = None) -> int:
         args.restatements = root / cfg["restatements"] if "restatements" in cfg else None
         args.replacements = root / cfg["replacements"] if "replacements" in cfg else None
         args.implied_windows = cfg.get("implied_windows")
+        args.early_calls = cfg.get("early_calls")
         args.policy_releases = cfg.get("policy_releases")
         # A committed config names its override file, so staleness hashing covers
         # it. One that is silent while the production file exists is refused
@@ -797,6 +883,8 @@ def main(argv: list[str] | None = None) -> int:
                              f"sha256 in scoring.json deliberately")
     if args.policy_releases is not None:
         settings["policy_releases"] = list(args.policy_releases)
+    if args.early_calls:
+        settings["early_calls"] = True
     implied = 1.0 if args.implied_windows is not None else None
 
     try:
@@ -830,13 +918,24 @@ def main(argv: list[str] | None = None) -> int:
                              f"record in the corpora being scored: {unknown}")
     dropped: dict = {}
     replaced: dict[str, dict] = {stage: {} for stage in REPLACEMENT_STAGES}
+    resolve_from: dict[str, Path] = {}
     resolutions = load_across(args.run, fresh(lambda run: R.load_sidecars(run, "resolve"), "resolve"),
                               drop=superseded_keys(manifest, root) if manifest else None, dropped=dropped,
                               replace=replacement_map(swaps, root, "resolve") if swaps else None,
-                              replaced=replaced["resolve"])
+                              replaced=replaced["resolve"], where=resolve_from)
     priors = load_across(args.run, fresh(lambda run: R.load_sidecars(run, "prior"), "prior"),
                          replace=replacement_map(swaps, root, "prior") if swaps else None,
                          replaced=replaced["prior"])
+    # Early calls (VD-5), read only when the config says so: absent, every early
+    # sidecar on disk is ignored, as it was before the stage existed.
+    earlies, early_report = {}, []
+    if args.early_calls:
+        earlies, _, early_report = load_early(args.run, fresh(lambda run: R.load_sidecars(run, "early"), "early"),
+                                              swaps, root, resolve_from)
+    elif swaps and any(e["stage"] == "early" for e in swaps["replacements"]):
+        raise SystemExit("the replacement manifest replaces early calls, but this board does not read early calls "
+                         "(early_calls is off)")
+    decided = {pid: e for pid, e in earlies.items() if e.get("outcome") != "still_open"}
     restated: dict[str, str] = {}
     if manifest is not None:
         check_restatement_records(manifest, {r["prediction_id"]: r for r in loaded})
@@ -853,6 +952,13 @@ def main(argv: list[str] | None = None) -> int:
                          f"resolved over: " + "; ".join(
                              f"{pid} prior {priors[pid].get('deadline')} resolution "
                              f"{resolutions[pid].get('deadline')}" for pid in split))
+    # The same for an early call: its prior is the at-deadline prior, over the full window.
+    split = sorted(pid for pid in decided.keys() & priors.keys() if "deadline" in priors[pid]
+                   and priors[pid]["deadline"] != decided[pid].get("deadline"))
+    if split:
+        raise SystemExit(f"{len(split)} predictions were priced over a different window than their early call "
+                         f"judged: " + "; ".join(f"{pid} prior {priors[pid].get('deadline')} early call "
+                                                f"{decided[pid].get('deadline')}" for pid in split))
     # Resolved trend records keep the window their resolution judged; see select().
     # That is the window of their FIRST resolution, so a replacement that judged
     # another window is named here and refused in select() if the record is a
@@ -860,15 +966,42 @@ def main(argv: list[str] | None = None) -> int:
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend, resolutions=resolutions,
                   date_overrides=ov_in, window_conflicts=moved_windows(replaced["resolve"], resolutions,
                                                                        swaps, root), implied=implied)
+    # An early call scores NOW (VD-5 (c)): a decided one before its deadline, and
+    # one past its deadline until the fresh check replaces it by name. A decided
+    # early call beside a fresh resolution that does not name it is refused.
+    past_ids = {r["prediction_id"] for r in rows}
+    both = sorted(pid for pid in decided if pid in past_ids and pid in resolutions)
+    if both:
+        raise SystemExit(f"{len(both)} prediction(s) past their deadline carry both an early call and a fresh "
+                         f"resolution, and no replacement names the early call: {both}. Add a replacement entry "
+                         f"(stage early, run = the early call's run, replacement = the resolution's run) so the "
+                         f"fresh answer replaces it, as VD-5 decided")
+    early_used = {pid: {"not_due": False} for pid in decided if pid in past_ids}
+    early_rows: list[dict] = []
+    if args.early_calls:
+        early_rows = [r for r in select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
+                                        resolutions=resolutions, date_overrides=ov_in, implied=implied, due="not_due")
+                      if r["prediction_id"] in decided]
+        early_used.update({r["prediction_id"]: {"not_due": True} for r in early_rows})
     repairs = load_across(args.run, fresh(R.load_repairs, "criteria_repair"))
-    applied, unrepairable = R.apply_repairs(rows, repairs)
-    releases = release_counts({"resolve": resolutions, "prior": priors}, args.policy_releases)
-    window_stale = stale_sidecars(rows, {"resolve": resolutions, "prior": priors}) if implied is not None else []
+    applied, unrepairable = R.apply_repairs(rows + early_rows, repairs)
+    stages = {"resolve": resolutions, "prior": priors}
+    if args.early_calls:
+        stages["early"] = earlies
+    releases = release_counts(stages, args.policy_releases)
+    window_stale = (stale_sidecars(rows + early_rows, {"resolve": resolutions, "prior": priors,
+                                                       "early": {p: decided[p] for p in early_used}},
+                                   also=set(early_used))
+                    if implied is not None or args.early_calls else [])
+    effective = dict(resolutions)
+    effective.update({pid: decided[pid] for pid in early_used})
+    everything = sorted(rows + early_rows, key=lambda r: (r["leader_slug"], r["prediction_id"])) if early_rows else rows
 
-    joined, why = join(rows, resolutions, priors, restated, stale={s["prediction_id"] for s in window_stale})
+    joined, why = join(everything, effective, priors, restated, stale={s["prediction_id"] for s in window_stale},
+                       early_used=early_used)
     index = json.loads(args.index.read_text())
     names = {l["slug"]: l["name"] for l in index["leaders"]}
-    leaders = per_leader(joined, names, with_restated=manifest is not None)
+    leaders = per_leader(joined, names, with_restated=manifest is not None, with_early=bool(args.early_calls))
 
     scored = [r for r in joined if r["scored"]]
     outcomes = collections.Counter(r["outcome"] for r in joined if r["outcome"])
@@ -896,7 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "corpus": {
             "past_due": len(rows),
-            "eligible": sum(1 for r in joined if r["flags"]["eligible"] and not is_restated(r)),
+            "eligible": sum(1 for r in joined if r["flags"]["eligible"] and not is_restated(r) and not r.get("not_due")),
             "criteria_repairs_applied": applied,
             "criteria_unrepairable": unrepairable,
             "resolutions_present": len(resolutions),
@@ -922,6 +1055,17 @@ def main(argv: list[str] | None = None) -> int:
         doc["corpus"]["stale_sidecars"] = window_stale
     if args.policy_releases is not None:
         doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
+    if args.early_calls:
+        doc["rule"]["early_calls"] = True
+        doc["corpus"]["stale_sidecars"] = window_stale
+        doc["corpus"]["early_calls"] = {
+            "scored_before_deadline": sum(1 for r in joined if r.get("not_due") and r["scored"]),
+            "scored_past_deadline_awaiting_fresh_check": sum(1 for r in joined if r.get("fresh_check_due") and r["scored"]),
+            "replaced_by_fresh_check": sum(1 for x in early_report if x["kind"] == "resolve"),
+            "still_open": sum(1 for e in earlies.values() if e.get("outcome") == "still_open"),
+            # The queue: past the deadline on an early call, waiting for the fresh check.
+            "awaiting_fresh_check": sorted(r["prediction_id"] for r in joined if r.get("fresh_check_due")),
+        }
     if manifest is not None:
         doc["corpus"]["restated"] = sum(1 for r in joined if is_restated(r))
         doc["restatements"] = restatement_report(
@@ -930,7 +1074,7 @@ def main(argv: list[str] | None = None) -> int:
     if swaps is not None:
         doc["replacements"] = replacement_report(
             swaps, settings["replacements"], hashlib.sha256(args.replacements.read_bytes()).hexdigest(),
-            replaced, {"resolve": resolutions, "prior": priors}, root)
+            replaced, {"resolve": resolutions, "prior": priors}, root, early_report)
     if ov_path is not None:
         doc["date_overrides"] = {
             "file": settings["date_overrides"],
