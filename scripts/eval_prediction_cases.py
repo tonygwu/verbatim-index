@@ -167,13 +167,16 @@ def judge_dating(case: dict, ctx: Context, text: str, checks: list[dict]) -> tup
     out = DL.merge_one(rec, {"proposal": obj, "harness": case["input"].get("harness")}, checks)
     ex = case["expect"]
     if out["outcome"] == "queue":
-        return "queued", f"queued: {out['reason']}: {out['detail'][:160]}"
+        # A negative case is one the stage must NOT move; the queue is its safe answer (review item 6).
+        return ("pass" if ex.get("negative") else "queued"), f"queued: {out['reason']}: {out['detail'][:160]}"
     e = out["entry"].get("statement_date_earliest") or out["entry"]["statement_date"]
     lat = out["entry"]["statement_date"]
-    what = f"confirmed {e}..{lat}"
+    what = f"confirmed ({out['outcome']}) {e}..{lat}"
     if ex.get("negative"):
-        return ("pass", f"{what}, inside {ex['pass_within']}") if _dates_ok(e, lat, ex["pass_within"]) else \
-            ("hard_fail", f"WRONG AUTO-CONFIRMATION: {what}, outside {ex['pass_within']}")
+        # Only the statement date can be a wrong confirmation; an unsourced first day is an estimate.
+        band = ex["pass_within"]
+        return ("pass", f"{what}; the statement date {lat} is inside {band}") if band[0] <= lat <= band[1] else \
+            ("hard_fail", f"WRONG AUTO-CONFIRMATION: {what}; the statement date {lat} is outside {band}")
     if _dates_ok(e, lat, ex["pass_within"]):
         return "pass", f"{what}, inside {ex['pass_within']}"
     hard = ex.get("hard_outside") or ex["pass_within"]
@@ -339,7 +342,15 @@ def judge(case, ctx, text, checks):
     return judge_resolve(case, ctx, text)
 
 
-def run_offline(case: dict, ctx: Context) -> tuple[str, str]:
+def requested_models(args) -> dict:
+    return {"gemini": args.gemini_model, "astra": args.astra_model, "fable": "claude-fable-5-1"}
+
+
+def case_harness(case: dict) -> str:
+    return case["input"].get("harness") or DEFAULT_HARNESS[case["stage"]]
+
+
+def run_offline(case: dict, ctx: Context, requested: dict) -> tuple[str, str]:
     prompt = build_prompt(case, ctx)
     sha = hashlib.sha256(prompt.encode()).hexdigest()
     recs = sorted((ctx.gold / "recordings" / case["id"]).glob("*.json"))
@@ -349,13 +360,23 @@ def run_offline(case: dict, ctx: Context) -> tuple[str, str]:
     stale = [p.name for p, d in zip(recs, docs) if d["prompt_sha256"] != sha]
     if stale:
         return "PROMPT_CHANGED", f"prompt changed; re-record live ({len(stale)} of {len(docs)} recordings: {stale[:3]})"
+    # A recording is this case's evidence only if the case's harness made it and the
+    # requested model served it (review item 5, probe E1).
+    harness = case_harness(case)
+    wrong = [f"{p.name}: recorded by {d.get('harness')!r} serving {d.get('served_model')!r}"
+             for p, d in zip(recs, docs)
+             if d.get("harness") != harness or d.get("served_model") != requested[harness]]
+    if wrong:
+        return "RECORDING_REFUSED", (f"this case runs on {harness} ({requested[harness]}); "
+                                     f"{len(wrong)} of {len(docs)} recordings do not: {wrong[:3]}")
     return aggregate([judge(case, ctx, d["response_text"], d.get("source_checks") or []) for d in docs], Counter())
 
 
 def run_live(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) -> tuple[str, str]:
     prompt = build_prompt(case, ctx)
     sha = hashlib.sha256(prompt.encode()).hexdigest()
-    harness = case["input"].get("harness") or DEFAULT_HARNESS[case["stage"]]
+    harness = case_harness(case)
+    want_model = requested_models(args)[harness]
     outcomes, infra = [], Counter()
     out_dir = record_dir / case["id"]
     for i in range(args.repeats):
@@ -370,6 +391,11 @@ def run_live(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) 
                 continue
             outcomes.append(("fail", f"{label}: {str(exc)[:200]}"))
             continue
+        if tel.get("served_model") != want_model:
+            # Another model answered: not this case's evidence, and not the model's fault either.
+            infra["model_identity_mismatch"] += 1
+            outcomes.append(("infra", f"served {tel.get('served_model')!r}, requested {want_model!r}"))
+            continue
         checks = []
         if case["stage"] == "dating":
             rec = json.loads(ctx.path(case["input"]["transcript"]).read_text())
@@ -383,7 +409,8 @@ def run_live(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) 
         n = len(list(out_dir.glob("*.json"))) if out_dir.exists() else 0
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"r{n:02d}.json").write_text(json.dumps(
-            {"case": case["id"], "prompt_sha256": sha, "harness": harness, "response_text": text,
+            {"case": case["id"], "prompt_sha256": sha, "harness": harness, "requested_model": want_model,
+             "response_text": text,
              "served_model": tel.get("served_model"), "served_model_verified": tel.get("served_model_verified"),
              "identity": identity, "telemetry": {k: v for k, v in tel.items() if k in (
                  "web_search_queries", "tool_use_counts", "attempts", "empty_retries", "requested_model")},
@@ -393,11 +420,14 @@ def run_live(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) 
 
 
 def estimate(cases: list[dict], repeats: int) -> str:
+    """What --live would spend. A pending or blocked case spends nothing, so it is not counted (review item 15)."""
     model = [c for c in cases if c["stage"] in MODEL_STAGES and not c.get("pending")]
-    by = Counter(c["input"].get("harness") or DEFAULT_HARNESS[c["stage"]] for c in model)
+    blocked = [c for c in model if c["stage"] == "resolve" and resolve_blocked(c)]
+    model = [c for c in model if c not in blocked]
+    by = Counter(case_harness(c) for c in model)
     return (f"live run: {len(model)} model cases x {repeats} repeats = {len(model) * repeats} calls "
-            f"({', '.join(f'{h} {n * repeats}' for h, n in sorted(by.items()))}); dating cases also fetch every "
-            f"cited page, direct then Wayback")
+            f"({', '.join(f'{h} {n * repeats}' for h, n in sorted(by.items()))}); {len(blocked)} blocked case(s) "
+            f"spend nothing; dating cases also fetch every cited page, direct then Wayback")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -442,8 +472,13 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
             raise SystemExit(f"the smoke list names unknown cases {missing}" if missing else "the gold file has no smoke list")
         cases = [by[x] for x in doc["smoke"]]
     if args.only:
-        want = args.only.split(",")
+        want = [x for x in args.only.split(",") if x]
+        unknown = [x for x in want if x not in {c["id"] for c in cases}]
+        if unknown:
+            raise SystemExit(f"--only names cases that are not in the selection: {unknown}")
         cases = [c for c in cases if c["id"] in want]
+    if not cases:
+        raise SystemExit("the selection is empty: no case would run")
     for c in cases:
         if c["stage"] not in STAGES:
             raise SystemExit(f"case {c['id']}: unknown stage {c['stage']!r}")
@@ -473,7 +508,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         elif args.live:
             status, detail = run_live(c, ctx, args, caller, fetcher, args.record_dir or args.gold / "recordings")
         else:
-            status, detail = run_offline(c, ctx)
+            status, detail = run_offline(c, ctx, requested_models(args))
         rows.append({"id": c["id"], "operator_case": c.get("operator_case"), "stage": c["stage"], "status": status,
                      "detail": detail})
         print(f"[{status}] {c['id']} ({detail})" if status == "PASS" and "valid repeats" in detail
@@ -490,7 +525,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps({"gold": str(args.gold), "mode": "live" if args.live else "offline",
                                            "rows": rows, "tally": tally, "at_utc": DL.utc_stamp()}, indent=1) + "\n")
-    if tally["FAIL"] or tally["HARD_FAIL"] or tally["PROMPT_CHANGED"]:
+    if tally["FAIL"] or tally["HARD_FAIL"] or tally["PROMPT_CHANGED"] or tally["RECORDING_REFUSED"]:
         return 1
     return 0 if set(tally) <= {"PASS"} else 3
 

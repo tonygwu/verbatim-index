@@ -147,17 +147,18 @@ class Offline(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("[FAIL] F-lead", out)
 
-    def record_dating(self, g, text, prompt_sha=None, checks=None):
+    def record_dating(self, g, text, prompt_sha=None, checks=None, harness="gemini", served="gemini-3.8-flash-high"):
         d = g / "recordings" / "D-dx"
         d.mkdir(parents=True, exist_ok=True)
         n = len(list(d.glob("*.json")))
         prompt = E.build_prompt(DATING, E.Context(self.data, g))
         (d / f"r{n:02d}.json").write_text(json.dumps({
             "prompt_sha256": prompt_sha or hashlib.sha256(prompt.encode()).hexdigest(), "response_text": text,
+            "harness": harness, "served_model": served, "requested_model": "gemini-3.8-flash-high",
             "telemetry": {}, "source_checks": checks or [], "recorded_at_utc": "2026-09-30T00:00:00Z"}))
 
-    def dx_checks(self, obj):
-        return [E.DL.check_source(s, D10, {"status": 200, "final_url": s["url"], "body": LIVEBLOG.encode(),
+    def dx_checks(self, obj, page=LIVEBLOG):
+        return [E.DL.check_source(s, D10, {"status": 200, "final_url": s["url"], "body": page.encode(),
                                            "via": "direct", "error": None}) for s in obj["sources"]]
 
     def test_replay_runs_the_real_merge_and_counts_a_wrong_auto_confirmation(self):
@@ -170,17 +171,49 @@ class Offline(unittest.TestCase):
         self.assertIn("[PASS] D-dx", out)
         self.assertIn("wrong auto-confirmations: 0", out)
 
-        wrong = proposal(e="2012-05-29", l="2012-05-31",
-                         sources=[{**good["sources"][0], "verbatim_excerpt": "Posted May 30, 2012 at 4:26 pm PT"}])
+        # A page that really says May 31 confirms the agent's May 31, and the gold says May 30.
+        wrong = proposal(e="2012-05-31", l="2012-05-31",
+                         sources=[{**good["sources"][0], "verbatim_excerpt": "Posted May 31, 2012 at 4:26 pm PT"}])
         g2 = self.root / "g2"
         g2.mkdir()
         (g2 / "cases.json").write_text((g / "cases.json").read_text())
         for _ in range(3):
-            self.record_dating(g2, json.dumps(wrong), checks=self.dx_checks(wrong))
+            self.record_dating(g2, json.dumps(wrong), checks=self.dx_checks(wrong, LIVEBLOG.replace("May 30", "May 31")))
         rc, out = run(["--gold", str(g2), "--data", str(self.data)])
         self.assertEqual(rc, 1, out)
         self.assertIn("[HARD_FAIL] D-dx", out)
         self.assertIn("wrong auto-confirmations: 1", out)
+
+    def test_a_recording_from_another_harness_or_model_is_refused(self):
+        """Review item 5 (probe E1): a fable answer, or another served model, is not this case's evidence."""
+        good = proposal()
+        for harness, served in (("fable", "gemini-3.8-flash-high"), ("gemini", "some-other-model")):
+            g = self.root / f"g-{harness}-{served}"
+            g.mkdir()
+            (g / "cases.json").write_text(json.dumps({"schema_version": 1, "cases": [DATING], "smoke": []}))
+            self.record_dating(g, json.dumps(good), checks=self.dx_checks(good), harness=harness, served=served)
+            self.record_dating(g, json.dumps(good), checks=self.dx_checks(good))
+            rc, out = run(["--gold", str(g), "--data", str(self.data)])
+            self.assertEqual(rc, 1, out)
+            self.assertIn("[RECORDING_REFUSED] D-dx", out)
+
+    def test_a_negative_case_passes_on_a_queue_and_fails_only_on_its_statement_date(self):
+        """Review item 6 (probes E2, E3): a queue is the safe answer; an unsourced first day is not a date."""
+        neg = {**DATING, "id": "N-dx", "expect": {"negative": True, "pass_within": ["2012-05-30", "2012-05-30"]}}
+        g = gold(self.root, [neg])
+        d = g / "recordings" / "N-dx"
+        d.mkdir(parents=True)
+        prompt = E.build_prompt(neg, E.Context(self.data, g))
+        sha = hashlib.sha256(prompt.encode()).hexdigest()
+        queued = proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None, event_kind=None)
+        wide = proposal(e="2012-05-01", l="2012-05-30")
+        for i, obj in enumerate((queued, queued, wide)):
+            (d / f"r{i:02d}.json").write_text(json.dumps({
+                "prompt_sha256": sha, "response_text": json.dumps(obj), "harness": "gemini",
+                "served_model": "gemini-3.8-flash-high", "source_checks": self.dx_checks(obj) if obj["sources"] else []}))
+        rc, out = run(["--gold", str(g), "--data", str(self.data)])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[PASS] N-dx (3 of 3 valid repeats pass", out)
 
     def test_a_changed_prompt_is_refused(self):
         g = gold(self.root, [DATING])
@@ -232,7 +265,7 @@ class Resolve(unittest.TestCase):
         g = gold(self.root, [CONTROL])
 
         def caller(*a):
-            return json.dumps(resolver_answer(date="2012-05-28")), {}, "codex"
+            return json.dumps(resolver_answer(date="2012-05-28")), {"served_model": "gpt-6-astra"}, "codex"
         with patch.object(R, "RESOLUTION_SCHEMA", SCHEMA_WITH_PUBLIC):
             rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"}, caller=caller)
         self.assertEqual(rc, 1, out)
@@ -247,10 +280,16 @@ class Live(unittest.TestCase):
         self.data = make_data(self.root)
 
     def test_refused_without_predict_live(self):
+        """Review item 7: a reviewer's mutation of the gate reached real agy and spent 3 Gemini calls.
+        The fakes raise, so a broken gate fails this test instead of spending quota."""
         g = gold(self.root, [DATING])
+
+        def must_not_call(*a):
+            raise AssertionError("the PREDICT_LIVE gate let a live call through")
         with patch.dict(os.environ, {"PREDICT_LIVE": ""}):
             with self.assertRaises(SystemExit) as cm:
-                E.main(["--gold", str(g), "--data", str(self.data), "--live"])
+                E.main(["--gold", str(g), "--data", str(self.data), "--live"], caller=must_not_call,
+                       opener=must_not_call, sleep=lambda s: None)
         self.assertIn("PREDICT_LIVE=1", str(cm.exception))
 
     def test_infrastructure_failures_are_excluded_and_too_few_is_inconclusive(self):
@@ -286,7 +325,7 @@ class Live(unittest.TestCase):
             x = next(answers)
             if isinstance(x, Exception):
                 raise x
-            return x, {}, "a@example.com"
+            return x, {"served_model": "gemini-3.8-flash-high"}, "a@example.com"
         rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"},
                       caller=caller, opener=lambda url, t: (200, url, LIVEBLOG.encode(), "text/html"), sleep=lambda s: None)
         self.assertEqual(rc, 3, out)
@@ -298,6 +337,24 @@ class Live(unittest.TestCase):
         lines = [x for x in out.splitlines() if x.startswith("[")]
         self.assertEqual([x.split()[1] for x in lines], ["H-override", "F-lead"])
         self.assertEqual(rc, 0, out)
+
+    def test_estimate_leaves_out_blocked_cases_and_a_bad_selection_exits(self):
+        """Review item 15."""
+        g = gold(self.root, [RESOLVE, DATING], smoke=["R-public", "D-dx"])
+        with patch.object(R, "RESOLUTION_SCHEMA", {**R.RESOLUTION_SCHEMA,
+                                                   "properties": {k: v for k, v in R.RESOLUTION_SCHEMA["properties"].items()
+                                                                  if k != "already_public"}}):
+            rc, out = run(["--gold", str(g), "--data", str(self.data), "--smoke", "--estimate"])
+        self.assertIn("live run: 1 model cases x 3 repeats = 3 calls (gemini 3); 1 blocked case(s) spend nothing", out)
+        for only in ("D-dx,NOPE", "NOPE"):
+            with self.assertRaises(SystemExit) as cm:
+                run(["--gold", str(g), "--data", str(self.data), "--only", only])
+            self.assertIn("NOPE", str(cm.exception))
+
+    def test_a_minority_of_passes_is_a_fail(self):
+        """Review mutation M44."""
+        from collections import Counter
+        self.assertEqual(E.aggregate([("pass", ""), ("fail", "x"), ("fail", "y")], Counter())[0], "FAIL")
 
     def test_smoke_cost_is_stated_before_a_live_run(self):
         g = gold(self.root, [RESOLVE, DATING], smoke=["R-public", "D-dx"])

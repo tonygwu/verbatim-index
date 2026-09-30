@@ -249,9 +249,9 @@ the validator name it.
 
 From release 2.3 a record also carries `date_hold`, recomputed here: a
 `statement_date_doubt` of `recording_older_than_stated` from either model, a
-placeholder year ("the statement year") in a field that names no year, or a
-relative year the funnel's own parser reads as earlier. A held record is not
-accepted. A 2.2 record has no `date_hold` and keeps its published `accepted`
+placeholder year ("the statement year") in a field that names no year, a
+relative year the funnel's reading puts earlier, or "this year" or "next year"
+on a date range that crosses 31 December. A held record is not accepted. A 2.2 record has no `date_hold` and keeps its published `accepted`
 flag; the validator reports what the 2.3 checks would hold there, without
 failing (9 accepted records on 2026-09-30).
 
@@ -264,9 +264,10 @@ failing (9 accepted records on 2026-09-30).
   (operator decision VD-8 (c)) dates recordings: one agent, Gemini by default,
   names the event and its date with sources, and a script must find each cited
   excerpt, with a date inside the agent's range, on a fetched page that is not the
-  recording's own. Confirmed dates go to the run's own override file, never
-  production's; the rest go to its queue. Its dry run on 2026-09-30 put 380
-  transcripts in scope.
+  recording's own; a source must show the statement date itself. An earlier date
+  goes to the run's own override file and a confirmation of the transcript's own
+  date to its checks file, never production's; the rest go to its queue. Its dry
+  run on 2026-09-30 put 380 transcripts in scope.
 - **Two model readings, not ground truth.** Agreement between the extractor
   and the verifier is evidence that a sentence is a prediction, not proof. The
   golden eval measures the extractor against hand-written gold, on synthetic
