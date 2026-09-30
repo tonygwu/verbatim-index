@@ -210,6 +210,9 @@ def main() -> int:
               st["early-late"]["line"])
         check("EXPLANATION: the score's explanation says how many scores rest on early calls",
               "2 scored predictions were called early" in page, "not found")
+        said = page[page.find("2 scored predictions were called early"):][:400]
+        check("EXPLANATION: the sentence renders as English, not as Python source",
+              "had already settled them before the deadline" in said and "{'" not in said and "}" not in said, said)
 
         print("already public, withdrawn, lead test")
         check("CARD: already public before it was said, with the source and its date",

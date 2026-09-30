@@ -2551,7 +2551,7 @@ def score_info(c: dict, rule: dict) -> str:
            "counted and scored once, as the earliest statement specific enough to settle it.</p>"
            if c.get("restated") else "")
         + (f"<p>{c['early_scored']} scored prediction{'s were' if c['early_scored'] != 1 else ' was'} called early: "
-           "a dated source had already settled {'them' if c['early_scored'] != 1 else 'it'} before the deadline, "
+           f"a dated source had already settled {'them' if c['early_scored'] != 1 else 'it'} before the deadline, "
            "either way. Each is checked again when its deadline passes, and that answer replaces the early one; "
            f"{c['early_before']} of them {'are' if c['early_before'] != 1 else 'is'} still before the deadline.</p>"
            if c.get("early_scored") else "")
