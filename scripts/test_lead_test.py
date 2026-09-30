@@ -113,6 +113,24 @@ def main() -> int:
           R.sidecar_path(pathlib.Path("/x"), "lead_test", "ada", "p").parts[-3] == "lead_tests")
     check("RELEASE: the lead-test prompt is part of the pinned release",
           "lead_test_task" in R._policy_parts() and R.check_policy_release() == REL)
+    # An implied row names no date, and one with no lower bound has no known lead,
+    # so the task may not tell the model it "names" a date it was said shortly
+    # before (review 2026-09-30, item 12b).
+    imp = rec("imp", target=None, claim="We will ship the new model in the coming weeks.",
+              quote="we'll ship it in the coming weeks")
+    imp["prediction"]["target_date_text"] = "in the coming weeks"
+    rows = [imp]
+    P2.attach_deadlines(rows, derive=True, implied=1.0)
+    imp = rows[0]
+    pi = R.build_lead_test_prompt(imp, imp["_deadline"]) if imp.get("_deadline") else ""
+    check("IMPLIED: the fixture is an implied row with a deadline", bool(imp.get("_implied")) and bool(pi),
+          json.dumps({k: imp.get(k) for k in ("_deadline", "_deadline_basis", "_implied")}, default=str)[:300])
+    check("IMPLIED: the task never says the statement was made shortly before a date it names",
+          all("shortly before the date it names" not in " ".join(x.split()) for x in (pi, p)))
+    check("IMPLIED: the task covers a statement that names no date, whose window its words set",
+          "names no date" in " ".join(pi.split()), pi[:900])
+    check("IMPLIED: the record block still says the window is implied, not a date the speaker gave",
+          "not a date the speaker gave" in pi)
 
     print("the funnel reads the label only under the floor")
     base = P2.funnel_flags(r, 60)

@@ -687,9 +687,11 @@ LEAD_TEST_TASK = """FORECAST OR ANNOUNCEMENT. You are sorting one statement into
 NOT asked whether it came true. Do not try to recall what happened after it was
 said; read only what was said, who said it and when.
 
-The statement was made shortly before the date it names. A statement like that
-can be an announcement of the speaker's own plan, which is not a forecast, or a
-real forecast. Decide which kind it is.
+This statement is here because its timing does not show whether it is a
+forecast. Either the date it names falls soon after it was said, or it names no
+date and only its words set a window, as the Deadline line below says. A
+statement like that can be an announcement of the speaker's own plan, which is
+not a forecast, or a real forecast. Decide which kind it is.
 
 KINDS
 
@@ -1179,7 +1181,7 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # Cutting a release: change the text, run test_resolution_policy.py, and put the
 # new id and sha256 below and in that test.
 
-POLICY_RELEASE = ("resolution-2026-09-30", "2775493e52d581d85231354a080ce46a1d060b3fe62d1a3e841288b3f758138f")
+POLICY_RELEASE = ("resolution-2026-09-30", "daf8df3e1cdbe2af764f2a1b11ebb14d942860315a216117ad3f9026754a7aeb")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.
