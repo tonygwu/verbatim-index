@@ -1247,7 +1247,14 @@ def main(argv: list[str] | None = None) -> int:
             "replaced_by_fresh_check": sum(1 for x in early_report if x["kind"] == "resolve"),
             "still_open": sum(1 for e in earlies.values() if e.get("outcome") == "still_open"),
             # The queue: past the deadline on an early call, waiting for the fresh check.
+            # The deploy refuses while it is not empty (review 2026-09-30, item 5).
             "awaiting_fresh_check": sorted(r["prediction_id"] for r in joined if r.get("fresh_check_due")),
+            # Interim inflation, visible: early calls mostly settle as hits.
+            "scored_by_outcome": dict(sorted(collections.Counter(
+                r["outcome"] for r in joined if r.get("early_called") and r["scored"]).items())),
+            # A decided early call that matches no row, past due or not (its record has
+            # no deadline now, or is gone): named, never dropped, and the deploy refuses.
+            "without_a_row": sorted(set(decided) - {r["prediction_id"] for r in joined}),
         }
     if manifest is not None:
         doc["corpus"]["restated"] = sum(1 for r in joined if is_restated(r))

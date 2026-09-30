@@ -751,11 +751,23 @@ def scores_blockers(doc: dict) -> list[str]:
     would drop those rows without anyone choosing to, so the deploy refuses until
     they are re-run or their sidecars removed."""
     out = []
-    stale = (doc.get("corpus") or {}).get("stale_sidecars") or []
+    corpus = doc.get("corpus") or {}
+    stale = corpus.get("stale_sidecars") or []
     if stale:
         ids = sorted({s["prediction_id"] for s in stale})
-        out.append(f"{len(stale)} stale sidecar(s) judged another window than the funnel's, for {len(ids)} "
-                   f"prediction(s) {ids[:8]}; re-run them, or remove the sidecars, before publishing")
+        out.append(f"{len(stale)} stale sidecar(s), judged over another window than the funnel's or priced on "
+                   f"another prompt than today's, for {len(ids)} prediction(s) {ids[:8]}; re-run them, or remove "
+                   f"the sidecars, before publishing")
+    early = corpus.get("early_calls") or {}
+    if early.get("awaiting_fresh_check"):
+        # VD-5: the fresh check at the deadline replaces the early call; a board
+        # may not keep scoring an early call past it (review 2026-09-30, item 5).
+        out.append(f"{len(early['awaiting_fresh_check'])} early call(s) past their deadline still await the fresh "
+                   f"check: {early['awaiting_fresh_check'][:8]}; resolve them and name each early call in the "
+                   f"replacement manifest before publishing")
+    if early.get("without_a_row"):
+        out.append(f"{len(early['without_a_row'])} decided early call(s) match no row: {early['without_a_row'][:8]}; "
+                   f"their records have no deadline now or are gone, so remove the sidecars or restore the window")
     return out
 
 

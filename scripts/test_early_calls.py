@@ -34,6 +34,7 @@ import tempfile
 ROOT = pathlib.Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
                                    capture_output=True, text=True, check=True).stdout.strip())
 sys.path.insert(0, str(ROOT / "scripts"))
+import data_clone_workflow as D  # noqa: E402
 import predictions_lib as L  # noqa: E402
 import resolution_lib as R  # noqa: E402
 import resolve_predictions as RP  # noqa: E402
@@ -162,7 +163,8 @@ def main() -> int:
                 rec("miss", target="2027-06-30"),                              # not due, target moved
                 rec("open", target="2027-06-30"),                              # not due, still open
                 rec("nopri", target="2027-06-30"),                             # not due, called, no prior
-                rec("stale", target="2027-06-30")]                             # early sidecar over another window
+                rec("stale", target="2027-06-30"),                             # early sidecar over another window
+                rec("nodl", target=None, tdt=None)]                            # called early, but no deadline
         (corpus / "ada" / "t1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
         (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada L"}]}))
 
@@ -210,6 +212,7 @@ def main() -> int:
         write(run, "open", "early", "2027-06-30", outcome="still_open", early_called=False)
         write(run, "nopri", "early", "2027-06-30")
         write(run, "stale", "early", "2027-03-31"); write(run, "stale", "prior", "2027-03-31")
+        write(run, "nodl", "early", "2027-06-30")
         write(run, "past", "resolve", "2021-12-31"); write(run, "past", "prior", "2021-12-31")
         # An early call is written under the release, so its prior must be priced on today's prompt,
         # the at-deadline prompt, as a real `--stage prior --not-due` run records (review 2026-09-30).
@@ -276,9 +279,17 @@ def main() -> int:
         check("STALE: an early answer over another window is a counted exclusion",
               st.get("not_scored_because") == "stale_sidecar:deadline_changed", json.dumps(st)[:300])
         e = doc.get("corpus", {}).get("early_calls", {})
-        check("REPORT: scores.json counts early calls scored before the deadline, queued, replaced and still open",
+        check("REPORT: scores.json counts early calls scored before the deadline, queued, replaced and still "
+              "open, splits the scored ones by outcome, and names a decided call with no row",
               e == {"scored_before_deadline": 2, "scored_past_deadline_awaiting_fresh_check": 1,
-                    "replaced_by_fresh_check": 1, "still_open": 1, "awaiting_fresh_check": ["late"]}, json.dumps(e))
+                    "replaced_by_fresh_check": 1, "still_open": 1, "awaiting_fresh_check": ["late"],
+                    "scored_by_outcome": {"not_occurred": 1, "occurred": 2}, "without_a_row": ["nodl"]},
+              json.dumps(e))
+        blocks = D.scores_blockers(doc)
+        check("FORCE THE FRESH CHECK: the deploy refuses while an early call past its deadline awaits it",
+              any("late" in b and "fresh check" in b for b in blocks), str(blocks))
+        check("NEVER VANISH: a decided early call on a record with no deadline blocks the deploy too",
+              any("nodl" in b for b in blocks), str(blocks))
         c = doc.get("corpus", {})
         check("REPORT: past_due counts only records whose deadline passed", c.get("past_due") == 3, str(c.get("past_due")))
         lead = {l["slug"]: l for l in doc.get("leaders", [])}.get("ada", {})
