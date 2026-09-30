@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""The dating driver, end to end, with a fake agent and a fake web. No quota, no network.
+
+What this pins (rescue round 4, VD-8 (c); operator changes of 2026-09-29):
+  DRYRUN   the default spends nothing and writes nothing; it prints the scope and
+           what a real run would spend
+  RUN      --run says SPENDS QUOTA first, then proposes, checks and merges into
+           the run's own directory; the override file it writes loads through the
+           production loader and vouches for itself
+  HARNESS  --harness gemini is the default; astra and fable are accepted; the
+           served model and the account identity are on every proposal; the help
+           says Fable has no working web tools
+  EMPTY    Gemini's empty answer (status SUCCESS, empty response) is counted as
+           empty_response, writes no proposal, is never cannot_date, and the next
+           run retries it
+  WHERE    a run directory in production, or outside a dating experiment, is
+           refused before anything is read or written
+  FETCH    a page that refuses the direct fetch is read from its Wayback copy; the
+           recording's own page is never fetched at all
+  SCOPE    upload-, publication- and un-dated transcripts with accepted records, and
+           held ones, are in; stated_in_page and operator-overridden ones are out,
+           and every exclusion is counted
+
+  .venv/bin/python scripts/test_date_recordings.py
+"""
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import date_recordings as DR  # noqa: E402
+import predictions_lib as L  # noqa: E402
+from test_dating import D10, LIVEBLOG, PODCAST, proposal  # noqa: E402
+
+LIVE_URL = "https://liveblog.example.com/2012/05/30/ada-live"
+
+
+def rec_line(tid, pid, basis, date, accepted=True, hold=None):
+    slug, sid = tid.split("/")
+    r = {"prediction_id": pid, "transcript_id": tid, "leader_slug": slug, "source_id": sid, "accepted": accepted,
+         "source": {"statement_date": date, "statement_date_basis": basis, "quote": "we will ship it next year for sure"},
+         "prediction": {"normalized_claim": "It ships.", "resolution_criteria": "By 2013, it ships."},
+         "extraction": {"gate_notes": "The title says DX 2012.", "qualifies": True},
+         "verification": {"notes": None, "qualifies": True}}
+    if hold is not None:
+        r["date_hold"] = hold
+    return json.dumps(r)
+
+
+class Fixture:
+    def __init__(self, root: Path):
+        self.root = root
+        self.data = root / "data"
+        tx = self.data / "transcripts_open" / "ada"
+        tx.mkdir(parents=True)
+        stated = {**PODCAST, "source_id": "letter-2025", "statement_date": "2025-02-27",
+                  "statement_date_basis": "stated_in_page"}
+        stated.pop("yt_upload_date")
+        held = {**PODCAST, "source_id": "held-ep"}
+        for rec in (D10, PODCAST, stated, held, {**PODCAST, "source_id": "operator-done"}):
+            (tx / f"{rec['source_id']}.json").write_text(json.dumps(rec))
+        pred = self.data / "predictions" / "ada"
+        pred.mkdir(parents=True)
+        (pred / "re-upload-abc123.jsonl").write_text(rec_line("ada/re-upload-abc123", "p1", "youtube_upload_date", "2019-02-27") + "\n")
+        (pred / "pod-ep-xyz789.jsonl").write_text(rec_line("ada/pod-ep-xyz789", "p2", "youtube_upload_date", "2025-09-12") + "\n")
+        (pred / "letter-2025.jsonl").write_text(rec_line("ada/letter-2025", "p3", "stated_in_page", "2025-02-27") + "\n")
+        (pred / "held-ep.jsonl").write_text(rec_line("ada/held-ep", "p4", "youtube_upload_date", "2025-09-12", accepted=False,
+                                                     hold=[{"check": "statement_date_doubt:extraction", "detail": "x"}]) + "\n")
+        (pred / "operator-done.jsonl").write_text(rec_line("ada/operator-done", "p5", "sourced_override", "2025-09-01") + "\n")
+        (self.data / "predictions" / "statement_date_overrides.json").write_text(json.dumps({"schema_version": 1, "overrides": {
+            "ada/operator-done": {"statement_date": "2025-09-01", "basis": "b", "source_url": "https://e.example.com/x",
+                                  "verbatim_evidence": "v", "confirmed_by": "operator", "confirmed_at_utc": "2026-09-28T00:00:00Z"}}}))
+        self.run = self.data / "predictions" / "_experiments" / "dating-test"
+
+    def argv(self, *extra):
+        return ["--run-dir", str(self.run), "--data-root", str(self.data), "--predictions", str(self.data / "predictions"),
+                "--transcripts", str(self.data / "transcripts_open"),
+                "--production-overrides", str(self.data / "predictions" / "statement_date_overrides.json"), *extra]
+
+
+class FakeAgent:
+    """Answers by transcript id; an entry may be an exception to raise once."""
+
+    def __init__(self, answers):
+        self.answers = {k: list(v) if isinstance(v, list) else [v] for k, v in answers.items()}
+        self.calls = []
+
+    def __call__(self, harness, prompt, timeout, workdir, args, idx):
+        tid = prompt.split("transcript_id must be exactly: ")[1].split("\n")[0]
+        self.calls.append((harness, tid))
+        ans = self.answers[tid].pop(0) if len(self.answers[tid]) > 1 else self.answers[tid][0]
+        if isinstance(ans, Exception):
+            raise ans
+        tel = {"requested_model": "gemini-3.8-flash-high", "served_model": "gemini-3.8-flash-high",
+               "served_model_verified": True, "profile_identity": "a@example.com", "web_search_queries": ["dx 2012"],
+               "tool_use_counts": {"search_web": 1}}
+        return json.dumps(ans), tel, "a@example.com"
+
+
+class FakeWeb:
+    def __init__(self, pages):
+        self.pages, self.asked = pages, []
+
+    def __call__(self, url, timeout):
+        self.asked.append(url)
+        if url.startswith("https://archive.org/wayback/available"):
+            inner = url.split("url=")[1]
+            snap = self.pages.get("wayback:" + urllib_unquote(inner))
+            return (200, url, json.dumps({"archived_snapshots": {"closest": {"available": True, "status": "200",
+                    "url": f"http://web.archive.org/web/20120601000000/{urllib_unquote(inner)}",
+                    "timestamp": "20120601000000"}} if snap else {}}).encode(), "application/json")
+        if url.startswith("http://web.archive.org/web/20120601000000id_/"):
+            return 200, url, self.pages["wayback:" + url.split("id_/", 1)[1]].encode(), "text/html"
+        if url in self.pages:
+            status = 403 if self.pages[url] == 403 else 200
+            return status, url, b"" if status != 200 else self.pages[url].encode(), "text/html"
+        return 404, url, b"", "text/html"
+
+
+def urllib_unquote(s):
+    from urllib.parse import unquote
+    return unquote(s)
+
+
+def pod_answer():
+    src = {"url": "https://thepod.example.com/episodes/ada", "publisher": "The Pod", "date_on_source": "2025-09-12",
+           "verbatim_excerpt": "Episode released September 12, 2025 in full", "kind": "primary"}
+    return proposal(verdict="publication_only", e="2025-09-12", l="2025-09-12", sources=[src], tid="ada/pod-ep-xyz789")
+
+
+def run(argv, agent=None, web=None):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        rc = DR.main(argv, caller=agent, opener=web, sleep=lambda s: None)
+    return rc, out.getvalue()
+
+
+class DryRun(unittest.TestCase):
+    def test_spends_nothing_writes_nothing_and_says_what_a_run_would_cost(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            agent = FakeAgent({})
+            rc, out = run(fx.argv(), agent, FakeWeb({}))
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(agent.calls, [])
+            self.assertFalse(fx.run.exists())
+            self.assertIn("DRY RUN", out)
+            self.assertIn("in scope: 3 transcripts", out)
+            self.assertIn("stated_in_page (not dated by this stage): 1", out)
+            self.assertIn("operator override already present: 1", out)
+            self.assertIn("a real run would spend 3 gemini calls", out)
+
+
+class Run(unittest.TestCase):
+    def test_propose_check_merge_into_the_run_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            agent = FakeAgent({"ada/re-upload-abc123": proposal(), "ada/pod-ep-xyz789": pod_answer(),
+                               "ada/held-ep": proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None,
+                                                       event_kind=None, tid="ada/held-ep")})
+            web = FakeWeb({LIVE_URL: 403, "wayback:" + LIVE_URL: LIVEBLOG,
+                           "https://thepod.example.com/episodes/ada":
+                               "<html><body><p>Episode released September 12, 2025 in full</p></body></html>"})
+            rc, out = run(fx.argv("--run"), agent, web)
+            self.assertEqual(rc, 0, out)
+            self.assertTrue(out.lstrip().startswith("SPENDS QUOTA: up to 3 gemini calls"), out[:200])
+            self.assertEqual(sorted(t for _, t in agent.calls), ["ada/held-ep", "ada/pod-ep-xyz789", "ada/re-upload-abc123"])
+            prop = json.loads((fx.run / "proposals" / "ada" / "re-upload-abc123.gemini.json").read_text())
+            self.assertEqual((prop["served_model"], prop["served_model_verified"], prop["identity"]),
+                             ("gemini-3.8-flash-high", True, "a@example.com"))
+            self.assertEqual(prop["telemetry"]["web_search_queries"], ["dx 2012"])
+            chk = json.loads((fx.run / "source_checks" / "ada" / "re-upload-abc123.json").read_text())
+            self.assertEqual(chk["checks"][0]["fetched_via"], "wayback")
+            ov = L.load_statement_date_overrides(fx.run / "overrides.json", [fx.data / "transcripts_open"])
+            self.assertEqual({k: v["statement_date"] for k, v in ov.items()},
+                             {"ada/re-upload-abc123": "2012-05-30", "ada/pod-ep-xyz789": "2025-09-12"})
+            queue = json.loads((fx.run / "queue.json").read_text())["queue"]
+            self.assertEqual([(q["transcript_id"], q["reason"]) for q in queue], [("ada/held-ep", "cannot_date")])
+            self.assertFalse((fx.data / "predictions" / "statement_date_overrides.json").read_text().count("abc123"))
+            report = json.loads(next((fx.run / "runs").glob("*.json")).read_text())
+            self.assertEqual(report["propose"]["succeeded"], 3)
+            self.assertEqual(report["merge"]["confirmed"], 2)
+            self.assertEqual(report["merge"]["queued_by_reason"], {"cannot_date": 1})
+
+    def test_a_rerun_spends_nothing_on_what_is_done(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            agent = FakeAgent({"ada/re-upload-abc123": proposal(), "ada/pod-ep-xyz789": pod_answer(),
+                               "ada/held-ep": proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None,
+                                                       event_kind=None, tid="ada/held-ep")})
+            web = FakeWeb({LIVE_URL: LIVEBLOG})
+            run(fx.argv("--run"), agent, web)
+            n = len(agent.calls)
+            rc, out = run(fx.argv("--run"), agent, web)
+            self.assertEqual(len(agent.calls), n, "a proposal on disk is reused, not paid for again")
+            self.assertIn("cached 3", out)
+
+
+class Harness(unittest.TestCase):
+    def test_default_is_gemini_and_fable_help_says_it_has_no_web(self):
+        ap = DR.build_parser()
+        self.assertEqual(ap.parse_args(["--run-dir", "x"]).harness, "gemini")
+        for h in ("gemini", "astra", "fable"):
+            self.assertEqual(ap.parse_args(["--run-dir", "x", "--harness", h]).harness, h)
+        self.assertIn("NO working web tools", ap.format_help())
+
+    def test_the_harness_reaches_the_caller_and_the_file_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            agent = FakeAgent({"ada/re-upload-abc123": proposal()})
+            ids = Path(td) / "ids.txt"
+            ids.write_text("ada/re-upload-abc123\n")
+            rc, out = run(fx.argv("--run", "--harness", "fable", "--ids", str(ids), "--stage", "propose"), agent,
+                          FakeWeb({}))
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(agent.calls, [("fable", "ada/re-upload-abc123")])
+            self.assertTrue((fx.run / "proposals" / "ada" / "re-upload-abc123.fable.json").exists())
+
+    def test_cl_is_refused_as_the_fable_binary(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            with self.assertRaises(SystemExit):
+                run(fx.argv("--harness", "fable", "--fable-bin", "cl"), FakeAgent({}), FakeWeb({}))
+
+
+class EmptyAnswer(unittest.TestCase):
+    def test_an_empty_answer_is_counted_retried_and_never_cannot_date(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            ids = Path(td) / "ids.txt"
+            ids.write_text("ada/re-upload-abc123\n")
+            empty = RuntimeError("empty_response: status SUCCESS with an empty response. denied_actions=[...]")
+            agent = FakeAgent({"ada/re-upload-abc123": [empty, proposal()]})
+            web = FakeWeb({LIVE_URL: LIVEBLOG})
+            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            self.assertEqual(rc, 1, out)
+            report = json.loads(sorted((fx.run / "runs").glob("*.json"))[-1].read_text())
+            self.assertEqual(report["propose"]["error_taxonomy"], {"empty_response": 1})
+            self.assertFalse((fx.run / "proposals" / "ada" / "re-upload-abc123.gemini.json").exists())
+            self.assertEqual(json.loads((fx.run / "queue.json").read_text())["queue"], [])
+            self.assertEqual(report["merge"]["not_proposed"], ["ada/re-upload-abc123"])
+            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            self.assertEqual(rc, 0, out)
+            ov = L.load_statement_date_overrides(fx.run / "overrides.json", [fx.data / "transcripts_open"])
+            self.assertEqual(ov["ada/re-upload-abc123"]["statement_date"], "2012-05-30")
+
+
+class Where(unittest.TestCase):
+    def test_production_and_non_dating_directories_are_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            for bad in (fx.data / "predictions", fx.data / "predictions" / "_experiments" / "rescue-x",
+                        fx.data / "transcripts_open" / "dating-x"):
+                argv = fx.argv("--run")
+                argv[argv.index("--run-dir") + 1] = str(bad)
+                with self.assertRaises(SystemExit) as cm:
+                    run(argv, FakeAgent({}), FakeWeb({}))
+                self.assertIn("dating-", str(cm.exception))
+
+
+class Fetch(unittest.TestCase):
+    def test_the_own_page_is_never_fetched(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            own = {"url": "https://www.youtube.com/watch?v=vid0000000A", "publisher": "YouTube", "date_on_source": None,
+                   "verbatim_excerpt": "Uploaded on Feb 27, 2019 by Re Uploads", "kind": "secondary"}
+            agent = FakeAgent({"ada/re-upload-abc123": proposal(verdict="publication_only", e="2019-02-27",
+                                                                 l="2019-02-27", sources=[own])})
+            ids = Path(td) / "ids.txt"
+            ids.write_text("ada/re-upload-abc123\n")
+            web = FakeWeb({})
+            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            self.assertEqual(web.asked, [])
+            q = json.loads((fx.run / "queue.json").read_text())["queue"]
+            self.assertEqual(q[0]["reason"], "no_confirming_source")
+
+    def test_throttling_backs_off_then_gives_up_loudly(self):
+        calls = []
+
+        def opener(url, timeout):
+            calls.append(url)
+            return 429, url, b"", "text/html"
+        f = DR.PoliteFetcher(opener, sleep=lambda s: None, interval=0.0)
+        got = f.fetch("https://slow.example.com/a")
+        self.assertIn("429", got["error"])
+        self.assertGreaterEqual(len([c for c in calls if "slow.example.com" in c]), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

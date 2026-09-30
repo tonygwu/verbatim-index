@@ -545,7 +545,11 @@ _LEAD_YEAR = re.compile(r"\b(?:19[89]\d|20[0-4]\d)\b")
 # carries one is dropped whole: the agent is told nothing about any prediction.
 _CLAIM_OUTCOME = re.compile(r"\b(?:will|would|predict\w*|forecast\w*|expect\w*|claim\w*|criterion|criteria|"
                             r"target\w*|deadline|occurred|came true|come true|happened|did not happen|"
-                            r"failed|succeeded|achieved|resolv\w*|outcome|turned out|in fact|actually)\b", re.I)
+                            r"fails?|failed|pass(?:es)?|succeeded|achieved|resolv\w*|outcome|turned out|in fact|"
+                            r"actually|G[1-5]|gates?|quot(?:e|es|ed|ing)|refer(?:s|red)? to)\b", re.I)
+# A note's date reasoning usually runs "<when the recording was made>, so <what that
+# makes the claim mean>". Only the first half is about the recording.
+_SO_CLAUSE = re.compile(r",?\s+so\s+.*$", re.S)
 
 
 def _grams(text: str, n: int = 4) -> set[tuple[str, ...]]:
@@ -572,6 +576,9 @@ def leads_from_records(records: list[dict], meta: dict | None) -> tuple[list[str
     def consider(text: str | None, rec: dict | None) -> None:
         for s in re.split(r"(?<=[.!?;])\s+", (text or "").strip()):
             s = s.strip()
+            cut = _SO_CLAUSE.sub("", s).rstrip(" .;:,")
+            if cut != s.rstrip(" .;:,"):
+                s = cut + "."
             if not s:
                 continue
             if _CLAIM_OUTCOME.search(s):
@@ -581,7 +588,7 @@ def leads_from_records(records: list[dict], meta: dict | None) -> tuple[list[str
             if not years:
                 dropped["no_date"] += 1
                 continue
-            said = ((rec or {}).get("source") or {}).get("statement_date")
+            said = ((rec or first or {}).get("source") or {}).get("statement_date")
             if said and years == {int(said[:4])}:
                 dropped["same_as_statement_date"] += 1
                 continue
@@ -601,6 +608,7 @@ def leads_from_records(records: list[dict], meta: dict | None) -> tuple[list[str
             seen.add(key)
             leads.append(s)
 
+    first = records[0] if records else None
     for r in records:
         consider((r.get("extraction") or {}).get("gate_notes"), r)
         consider(((r.get("extraction") or {}).get("statement_date_doubt") or {}).get("evidence"), r)

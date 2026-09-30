@@ -353,9 +353,28 @@ class Leads(unittest.TestCase):
         leads, dropped = DL.leads_from_records([rec], {"extract": {"attribution_notes": "Interview at DX in 2012 with a host."}})
         self.assertEqual(leads, ["Said at DX on May 30, 2012 according to the title.", "Title: DX Digital Conference 2012",
                                  "The session was held in 2012.", "Interview at DX in 2012 with a host."])
-        self.assertEqual(dropped["claim_or_outcome_words"], 2)
+        # "The quote is forward looking." is gate reasoning, so it goes as claim text before its missing date counts.
+        self.assertEqual(dropped["claim_or_outcome_words"], 3)
         self.assertEqual(dropped["same_as_statement_date"], 1)
-        self.assertEqual(dropped["no_date"], 1)
+        self.assertEqual(dropped["no_date"], 0)
+
+    def test_reasoning_about_the_claim_is_cut_even_beside_a_date(self):
+        """MEASURED on the D10 re-upload's real notes, 2026-09-30: the useful part of "The recording is from
+        the D10 conference in late May 2012, so 'next year' referred to 2013 rather than 2020" is before the
+        'so'; the rest is about the claim. Gate reasoning ("Fails G1 because ... quoting Oracle's 2011
+        announcement") is about the claim throughout."""
+        rec = {"prediction_id": "p1", "source": {"statement_date": "2019-02-27", "quote": "q q q q"},
+               "prediction": {}, "verification": {},
+               "extraction": {"gate_notes": "The recording is from the D10 conference in late May 2012, so 'next "
+                                            "year' referred to 2013 rather than 2020. Fails G1 because Ellison is "
+                                            "recounting past history, quoting Oracle's 2011 announcement. The recording "
+                                            "is from May 2012, so the June 6 date referred to June 6, 2012."}}
+        meta = {"extract": {"attribution_notes": "Dates from the supplied 2019-02-27 upload date are upper bounds."}}
+        leads, dropped = DL.leads_from_records([rec], meta)
+        self.assertEqual(leads, ["The recording is from the D10 conference in late May 2012.",
+                                 "The recording is from May 2012."])
+        self.assertEqual(dropped["claim_or_outcome_words"], 1)
+        self.assertEqual(dropped["same_as_statement_date"], 1)
 
 
 class Prompt(unittest.TestCase):
