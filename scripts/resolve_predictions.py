@@ -83,7 +83,8 @@ def utc_now() -> str:
 def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
            resolutions: dict | None = None,
            date_overrides: "dict | None" = None, superseded: "list | None" = None,
-           window_conflicts: "dict[str, list[str]] | None" = None) -> list[dict]:
+           window_conflicts: "dict[str, list[str]] | None" = None,
+           implied: "float | None" = None, due: str = "past") -> list[dict]:
     """Past-due accepted predictions, each carrying the funnel's deadline and flags.
 
     The deadline comes from `phase2_resolvability`, never from a second parser
@@ -105,10 +106,32 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
     it is unaffected. The resolver fills this from every run it reads
     (resolutions_across), the scorer from the sidecars a replacement manifest
     replaces.
+
+    `implied` switches on the implied-window table at that scale
+    (phase2_resolvability.implied_deadline). An implied window replaces the trend
+    window for a record not yet judged, but a trend record already RESOLVED keeps
+    the window its first resolution judged (operator decision, 2026-09-27), so
+    switching the table on moves no scored trend row.
+
+    `due` is "past" (the default: deadline on or before the cutoff, the only set
+    before 2026-09-29) or "not_due" (deadline after the cutoff: the early-call
+    stage and a prior priced before the deadline, VD-5).
     """
+    if due not in ("past", "not_due"):
+        raise SystemExit(f"select(due={due!r}): 'past' or 'not_due'")
     rows = P2.load(pred_dir, date_overrides=date_overrides, superseded=superseded)
     # The trend window is opt-in and dated by the caller's cutoff, never the clock.
-    P2.attach_deadlines(rows, derive=True, trend_cutoff=(cutoff if trend else None))
+    P2.attach_deadlines(rows, derive=True, trend_cutoff=(cutoff if trend and implied is None else None),
+                        implied=implied)
+    if implied is not None and trend:
+        for r in rows:
+            res = (resolutions or {}).get(r["prediction_id"])
+            if res is None or not str((res.get("funnel_flags") or {}).get("basis") or "").startswith("trend"):
+                continue
+            # Grandfathered: judged as a trend before implied windows existed. The
+            # freeze below re-checks the window against the trend rule.
+            r.pop("_implied", None)
+            r["_deadline"], r["_basis"], r["_why_none"] = cutoff, "trend: resolved as a trend before implied windows", None
     for r in rows:
         if not str(r.get("_basis") or "").startswith("trend"):
             continue
@@ -134,7 +157,7 @@ def select(pred_dir, cutoff: dt.date, min_lead: int, trend: bool = False,
         r["_deadline"], r["_basis"] = frozen, f"trend: {why}, frozen at its first resolution"
     out = []
     for r in rows:
-        if not r["_deadline"] or r["_deadline"] > cutoff:
+        if not r["_deadline"] or (r["_deadline"] > cutoff) == (due == "past"):
             continue
         # The operator's eligibility rule, in phase2_resolvability so the page asks
         # the same function about a record that is not past due yet.

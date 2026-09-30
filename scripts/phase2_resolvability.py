@@ -276,6 +276,176 @@ def trend_window(rec, cutoff: dt.date, min_years: float = MIN_TREND_YEARS):
     return cutoff, f"trend over {years:.1f}y since the statement"
 
 
+# ---------------------------------------------------------------------------
+# Implied windows (VD-6 (a), operator 2026-09-29)
+# ---------------------------------------------------------------------------
+#
+# A prediction with no stated deadline and no horizon the funnel can read is
+# judged over a FIXED window, chosen from the speaker's words when they gave
+# vague ones, else from what the claim is about. The operator fixed the table on
+# 2026-09-29, before any record was judged over it, and it is pinned by
+# implied_table_sha256(): a scoring config names the hash it was committed with,
+# and the scorer refuses a table that no longer hashes to it (critique 1 point 3
+# of the rescue round-4 design: a window chosen with the outcomes in view is not
+# a window).
+#
+# The guards from the critiques, each a row of the table rather than a
+# judgement made later:
+#   - the phrase rows read the verbatim quote as well as target_date_text,
+#     because release 2.2 copied vague words into neither field and 2.3 copies
+#     them into target_date_text; the two versions of one record get one window
+#     (critique 1 point 4);
+#   - lead is the SHORTEST reading of the words, so "in the coming weeks" (two
+#     weeks at the shortest) stays under the lead floor, and words with no lower
+#     bound, or no words at all, are a lead only when the speaker does not
+#     control the outcome (critique 1 point 2);
+#   - a conditional, ordering or recurring claim is screened out by these
+#     patterns over the pipeline's own claim text BEFORE any resolver runs, never
+#     by a resolver that has already seen what happened (critique 1 point 5);
+#   - a speaker whose own horizon is longer than the cap ("in my lifetime",
+#     "decades", "at least 10 years") gets no window at all, rather than a
+#     shorter one than they claimed.
+# A record with two phrase rows in one field is refused as ambiguous rather than
+# guessed between. MEASURED 2026-09-29 on production: 0 records.
+
+IMPLIED_SCALES = (0.5, 1.0, 2.0)   # half and double are the sensitivity report's
+
+IMPLIED_TABLE = {
+    "cap_years": 5,
+    # Read in this order; the first field holding a phrase row decides.
+    "phrase_fields": ["target_date_text", "quote"],
+    "phrases": [
+        {"row": "coming weeks", "pattern": r"\bcoming weeks\b", "window": [3, "month"], "shortest": [2, "week"]},
+        {"row": "coming months", "pattern": r"\b(?:coming months|next several months|in a few months)\b",
+         "window": [12, "month"], "shortest": [2, "month"]},
+        {"row": "soon", "pattern": r"\b(?:soon|shortly|near[- ]term)\b", "window": [1, "year"], "shortest": None},
+        {"row": "eventually", "pattern": r"\b(?:eventually|someday|some day|over time)\b",
+         "window": [5, "year"], "shortest": None},
+    ],
+    # First match wins. "control": null matches any subject_control.
+    "classes": [
+        {"row": "the speaker's own company or product", "categories": ["company_business", "technology_product"],
+         "control": ["own"], "window": [1, "year"]},
+        {"row": "another company", "categories": ["company_business", "technology_product"],
+         "control": None, "window": [3, "year"]},
+        {"row": "policy or regulation", "categories": ["policy_regulation"], "control": None, "window": [3, "year"]},
+        {"row": "everything else", "categories": None, "control": None, "window": [5, "year"]},
+    ],
+    # The speaker's own horizon is longer than the cap: no window.
+    "longer_fields": ["target_date_text", "quote", "normalized_claim", "resolution_criteria"],
+    "longer": [r"\blifetimes?\b", r"\bin (?:my|our|your|his|her|their) li(?:fe|ves)\b", r"\bdecades?\b",
+               r"\bforever\b"],
+    # "at least N years" and "more than N years" with N over the cap.
+    "longer_at_least": r"\b(?:at least|more than) (\w+) years?\b",
+    # Screened from the pipeline's own claim text, before any resolver runs.
+    "screen_fields": ["normalized_claim"],
+    "screens": [
+        ["conditional_claim", r"\b(?:if|unless|provided that|as long as|assuming|in the event that|once|when|whenever)\b"],
+        ["ordering_claim", r"\b(?:before(?!\s+(?:the\s+)?(?:end|start|beginning|middle|close)\b)"
+                           r"(?!\s+(?:\d|january|february|march|april|may|june|july|august|september|october|"
+                           r"november|december)\b)|first to|sooner than|earlier than)\b"],
+        ["recurring_claim", r"\b(?:every\s+(?:day|week|month|quarter|year|single)|each\s+(?:day|week|month|quarter|year)"
+                            r"|annually)\b"],
+    ],
+    "lead": ("the shortest reading of the words, in days (count times phase2_resolvability.DAYS[unit], "
+             "rounded); words with no lower bound, and a class row, which has no words, count as a lead only "
+             "when subject_control is not 'own'"),
+}
+
+
+def implied_table_sha256() -> str:
+    """The hash a scoring config names to switch implied windows on."""
+    import hashlib
+    return hashlib.sha256(json.dumps(IMPLIED_TABLE, sort_keys=True).encode()).hexdigest()
+
+
+_IMPLIED_PHRASES = [(p["row"], re.compile(p["pattern"], re.I), p) for p in IMPLIED_TABLE["phrases"]]
+_IMPLIED_LONGER = [re.compile(p, re.I) for p in IMPLIED_TABLE["longer"]]
+_IMPLIED_AT_LEAST = re.compile(IMPLIED_TABLE["longer_at_least"], re.I)
+_IMPLIED_SCREENS = [(name, re.compile(p, re.I)) for name, p in IMPLIED_TABLE["screens"]]
+
+
+def _span_words(count: float, unit: str) -> str:
+    return f"{count:g} {unit}{'' if count == 1 else 's'}"
+
+
+def implied_phrase_rows(text: str) -> list[str]:
+    """The phrase rows a text holds, in table order."""
+    return [row for row, pat, _ in _IMPLIED_PHRASES if pat.search(text or "")]
+
+
+def _longer_than_cap(text: str) -> bool:
+    if any(p.search(text or "") for p in _IMPLIED_LONGER):
+        return True
+    for m in _IMPLIED_AT_LEAST.finditer(text or ""):
+        w = m.group(1).lower()
+        n = int(w) if w.isdigit() else WORD_COUNTS.get(w)
+        if n is not None and n > IMPLIED_TABLE["cap_years"]:
+            return True
+    return False
+
+
+def implied_deadline(rec: dict, scale: float = 1.0):
+    """(deadline, basis, info) from the implied-window table, or (None, reason, None).
+
+    Pure: reads the record's own fields and the table. `scale` is 1 for the
+    board and 0.5 or 2 for the sensitivity report; it scales the window and never
+    the shortest reading, which is a property of the words.
+    """
+    if scale not in IMPLIED_SCALES:
+        raise SystemExit(f"implied window scale {scale!r}: the table is judged at {list(IMPLIED_SCALES)} only")
+    p, src = rec.get("prediction") or {}, rec.get("source") or {}
+    said = iso(src.get("statement_date"))
+    if said is None:
+        return None, "no_statement_date", None
+    fields = {"target_date_text": p.get("target_date_text") or "", "quote": src.get("quote") or "",
+              "normalized_claim": p.get("normalized_claim") or "",
+              "resolution_criteria": p.get("resolution_criteria") or ""}
+    if any(_longer_than_cap(fields[f]) for f in IMPLIED_TABLE["longer_fields"]):
+        return None, "speaker_horizon_longer", None
+    for name, pat in _IMPLIED_SCREENS:
+        if any(pat.search(fields[f]) for f in IMPLIED_TABLE["screen_fields"]):
+            return None, name, None
+    chosen, where, matched = None, None, None
+    for f in IMPLIED_TABLE["phrase_fields"]:
+        rows = implied_phrase_rows(fields[f])
+        if len(rows) > 1:
+            return None, "implied_ambiguous_words", None
+        if rows:
+            chosen = next(x for row, _, x in _IMPLIED_PHRASES if row == rows[0])
+            where = f
+            matched = next(pat for row, pat, _ in _IMPLIED_PHRASES if row == rows[0]).search(fields[f]).group(0)
+            break
+    if chosen is not None:
+        row, window, shortest = f"words: {chosen['row']}", chosen["window"], chosen["shortest"]
+    else:
+        cat, ctrl = p.get("category"), p.get("subject_control")
+        c = next(c for c in IMPLIED_TABLE["classes"]
+                 if (c["categories"] is None or cat in c["categories"])
+                 and (c["control"] is None or ctrl in c["control"]))
+        row, window, shortest = f"claim: {c['row']}", c["window"], None
+    count, unit = window[0] * scale, window[1]
+    d = add_span(said, count, unit)
+    words = _span_words(count, unit)
+    basis = f"implied: {row}" + (f" ({where})" if where else "") + f", {words}" + ("" if scale == 1 else f" at {scale:g}x")
+    info = {"row": row, "window": list(window), "window_words": words, "scale": scale,
+            "matched": matched, "matched_in": where,
+            "shortest_reading_days": round(shortest[0] * DAYS[shortest[1]]) if shortest else None}
+    return d, basis, info
+
+
+def implied_lead(info: dict, control: "str | None", min_lead: int) -> tuple[bool, str]:
+    """(lead_ok, why) for an implied window: the shortest reading of the words, never the window."""
+    s = info["shortest_reading_days"]
+    if s is not None:
+        return s >= min_lead, (f"the words ({info['matched']!r}) allow it within {s} days at the shortest, "
+                               f"{'at or over' if s >= min_lead else 'under'} the {min_lead}-day floor")
+    if control == "own":
+        return False, ("the words set no lower bound and the speaker controls the outcome, so it reads as an "
+                       "announcement")
+    return True, "the words set no lower bound, and the speaker does not control the outcome"
+
+
 def superseded_by_override(r: dict, date_overrides: dict) -> str | None:
     """Why a record no longer counts under the override file, or None when it does.
 
@@ -363,12 +533,24 @@ def load(pred_dir, date_overrides: "dict | None" = None, superseded: "list | Non
 
 
 def attach_deadlines(rows, derive: bool, trend_cutoff: "dt.date | None" = None,
-                     min_trend_years: float = MIN_TREND_YEARS):
+                     min_trend_years: float = MIN_TREND_YEARS, implied: "float | None" = None):
     """Give every row a deadline, its basis and the reason when it has none. Nothing is dropped here.
 
     `trend_cutoff` opts in to the open-ended trend window above. It is off unless
     a caller passes a date, so every existing number is reproduced exactly.
+
+    `implied` opts in to the implied-window table at that scale (1 for the
+    board, 0.5 or 2 for the sensitivity report). It is off unless a caller passes
+    one. With it, a record the funnel cannot date is judged over the table's
+    window instead of a trend window: the table is fixed at the statement date,
+    while a trend window grows with the as-of, so a record would otherwise change
+    basis as it aged. A trend record already RESOLVED keeps its frozen window;
+    resolve_predictions.select() restores it from the resolution. An implied row
+    carries `_implied`, the table row that set it; a row without one carries no
+    such key, so the policy switched off leaves every row as it was.
     """
+    if implied is not None and not derive:
+        raise SystemExit("implied windows come after the funnel's own reading of the words; pass derive=True")
     notes = collections.Counter()
     refusals = collections.Counter()
     expansions = []
@@ -381,6 +563,36 @@ def attach_deadlines(rows, derive: bool, trend_cutoff: "dt.date | None" = None,
             if len(raw) < 10:
                 expansions.append((raw, d))
             r["_deadline"], r["_basis"], r["_why_none"] = d, "stated", None
+            continue
+        if implied is not None and note == "missing":
+            # The operator's phrase rows beat the funnel's own word counts ("in a
+            # few months" is 12 months by the table, 3 by WORD_COUNTS), so the 2.2
+            # and 2.3 versions of one record agree; a number the speaker said still
+            # wins, because it is not a vague word.
+            tdt = r["prediction"].get("target_date_text") or ""
+            if not re.search(r"\d", tdt) and implied_phrase_rows(tdt):
+                d4, basis4, info4 = implied_deadline(r, implied)
+                if d4 is not None:
+                    r["_deadline"], r["_basis"], r["_why_none"], r["_implied"] = d4, basis4, None, info4
+                    notes["implied_windows"] += 1
+                    continue
+            d2, how = derived_deadline(r)
+            if d2 is not None:
+                r["_deadline"], r["_basis"], r["_why_none"] = d2, f"derived: {how}", None
+                continue
+            if how == "recurring":
+                # "every" names no closing date, and a window cannot settle a
+                # recurring claim either.
+                refusals[how] += 1
+                r["_deadline"], r["_basis"], r["_why_none"] = None, None, how
+                continue
+            d4, basis4, info4 = implied_deadline(r, implied)
+            if d4 is not None:
+                r["_deadline"], r["_basis"], r["_why_none"], r["_implied"] = d4, basis4, None, info4
+                notes["implied_windows"] += 1
+                continue
+            refusals[basis4] += 1
+            r["_deadline"], r["_basis"], r["_why_none"] = None, None, basis4
             continue
         if derive and note == "missing":
             d2, how = derived_deadline(r)
@@ -485,15 +697,26 @@ def funnel_flags(r: dict, min_lead: int) -> dict:
     said = iso((r.get("source") or {}).get("statement_date"))
     lead = lead_days(r)
     is_trend = str(r.get("_basis") or "").startswith("trend")
+    implied = r.get("_implied")
+    if implied is not None:
+        # An implied window is imposed, so the window itself is no lead: the
+        # shortest reading of the words is (critique 1 point 2).
+        lead_ok, lead_rule = implied_lead(implied, r["prediction"].get("subject_control"), min_lead)
+    else:
+        lead_ok = lead is not None and lead >= min_lead
     flags = {
         "basis": r["_basis"],
         "deadline_before_statement": bool(said and r["_deadline"] < said),
         "specificity_high": r["prediction"].get("specificity") == "high",
         "specificity_ok": r["prediction"].get("specificity") in ELIGIBLE_SPECIFICITY,
         "lead_days": lead,
-        "lead_ok": lead is not None and lead >= min_lead,
+        "lead_ok": lead_ok,
         "trend": is_trend,
     }
+    if implied is not None:
+        # Only on an implied row, so every other row's flags are byte-identical.
+        flags["implied"] = {**{k: implied[k] for k in ("row", "window_words", "scale", "matched", "matched_in",
+                                                         "shortest_reading_days")}, "lead_rule": lead_rule}
     flags["eligible"] = is_trend or (flags["specificity_ok"] and flags["lead_ok"]
                                      and not flags["deadline_before_statement"])
     return flags
