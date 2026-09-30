@@ -1,4 +1,4 @@
-# Shared prediction eligibility policy, release 2
+# Shared prediction eligibility policy, release 2.3
 
 The extractor and verifier apply these same rules. Precision matters more than
 recall. Judge eligibility from the supplied recording, not whether you believe
@@ -13,11 +13,15 @@ speaking. Present descriptions, history, missions and aspirations fail. Judge
 the recording date, not proof of the exact date spoken.
 
 **G2 `falsifiable`.** The words supply an observable outcome and a success
-condition. There are two permitted forms:
+condition. There are three permitted forms:
 
 - Dated prediction: write "By <date or dated event>, <observable> <verb phrase
   stating the outcome>." The date can come from an explicit phrase or unambiguous
   surrounding context. A nearby date does not automatically date every claim.
+- Result for a period: a figure for a year, a quarter or another period is
+  dated by the END of the period, never by when it is reported. Write "For
+  <period> (ending <date>), <observable figure> will be <outcome>, as reported
+  at any time."
 - Undated milestone: a specified numerical threshold, named deliverable, or
   completed task with an observable success condition can qualify without a
   deadline. Write "At an unspecified date, <observable milestone>." Mark the
@@ -56,6 +60,8 @@ can use "fewer unplanned disengagements" when the speaker supplies that measure
 in the evidence window. Do not require a named testing protocol unless the
 claim cannot be interpreted without one. Preserve an approximate quantity as
 approximate; do not manufacture precision or a deadline.
+A stated pace or schedule ("ten more each day") is part of the outcome and
+stays in the criterion.
 
 Examples of permitted undated milestones: a treatment restores independent
 walking after spinal cord injury; an application is created by assembling
@@ -115,8 +121,12 @@ is faithful. Adding a number, entity, direction, threshold or scope absent
 from the window is not. Losing a qualification or changing a general adoption
 claim into a single demonstration is not faithful either.
 
-Resolve explicit relative dates against the metadata date. "Next year" with
-a known statement year can supply the following year. "In a few years" cannot
-supply an invented exact year. If the recording appears older than its upload,
-record that limitation in notes; do not reject a correctly resolved relative
-date for following the supplied metadata.
+Resolve relative dates against the statement date. "Next year" means the
+following calendar year. "In a few years" cannot supply an exact year. When the
+date line gives a range of days that crosses 31 December, "this year" and "next
+year" name a different year for each end: do not resolve them; keep the words.
+If the window, the title or the description shows the recording is older than a
+date marked NOT checked against the event, set `statement_date_doubt` to
+`recording_older_than_stated`, quote the evidence, and do not resolve relative
+dates against that date. The pipeline reads that field and holds the record until
+the recording is dated. A note is not read by anything.

@@ -219,6 +219,22 @@ tree with `--scored`. The offline test `test_predictions_eval.py` proves the
 arithmetic on a hand-built tree with a known miss, a known false positive and a
 known wrong probability.
 
+### Tier R: the operator's audited cases (rescue round 4)
+
+`scripts/eval_prediction_cases.py --gold <dir>` runs the eleven cases the
+operator audited on 2026-09-29 (A1 to A11), plus the C1 hand-dated recordings,
+one assertion per case at the stage where it failed: the prompt header, the
+funnel, extraction, dating or the resolver. The gold file is private and lives
+in the data repository at `predictions/_eval/cases-20260929/cases.json`; the
+harness refuses to run without the data link. Offline it replays each recorded
+answer only while its prompt's sha256 still matches, and a case with no recording
+is UNRECORDED, never a pass. `--live` needs `PREDICT_LIVE=1` and runs 3 repeats:
+a case passes on a majority of its valid repeats with no hard failure, and a
+timeout, a quota stop or Gemini's empty answer is excluded from the count.
+`--smoke` runs the Buddy Media resolver case (`already_public`), its two
+controls and the D10 dating case, 12 calls; `--estimate` prints the cost first.
+The full live run is 174 calls (2026-09-30).
+
 ## 6. Validation
 
 `validate_predictions.py` recomputes every mechanical claim in every record
@@ -231,12 +247,27 @@ precedes the cutoff, the verifier used a different harness, and every contract
 id is known. `test_predictions_schema.py` breaks one thing at a time and demands
 the validator name it.
 
+From release 2.3 a record also carries `date_hold`, recomputed here: a
+`statement_date_doubt` of `recording_older_than_stated` from either model, a
+placeholder year ("the statement year") in a field that names no year, a
+relative year the funnel's reading puts earlier, or "this year" or "next year"
+on a date range that crosses 31 December. A held record is not accepted. A 2.2 record has no `date_hold` and keeps its published `accepted`
+flag; the validator reports what the 2.3 checks would hold there, without
+failing (9 accepted records on 2026-09-30).
+
 ## 7. Known limitations
 
-- **The statement date is an upper bound.** YouTube's upload date is the day
-  the recording was published, not the day the words were said. Every horizon
-  and every market cutoff inherits that. Thirty-four transcripts, mostly
-  HappyScribe-sourced, have no date at all.
+- **The statement date is an upper bound until the recording is dated.**
+  YouTube's upload date is the day the recording was published, not the day the
+  words were said. Every horizon and every market cutoff inherits that. Release
+  2.3 labels the date line by how the date is known, and `scripts/date_recordings.py`
+  (operator decision VD-8 (c)) dates recordings: one agent, Gemini by default,
+  names the event and its date with sources, and a script must find each cited
+  excerpt, with a date inside the agent's range, on a fetched page that is not the
+  recording's own; a source must show the statement date itself. An earlier date
+  goes to the run's own override file and a confirmation of the transcript's own
+  date to its checks file, never production's; the rest go to its queue. Its dry
+  run on 2026-09-30 put 380 transcripts in scope.
 - **Two model readings, not ground truth.** Agreement between the extractor
   and the verifier is evidence that a sentence is a prediction, not proof. The
   golden eval measures the extractor against hand-written gold, on synthetic

@@ -1,4 +1,4 @@
-# Prediction extraction specification, release 2
+# Prediction extraction specification, release 2.3
 
 You are reading one transcript of a named technology leader speaking in public. Your job is to
 return every statement in it that is a genuine, falsifiable prediction made by that speaker, and
@@ -16,9 +16,43 @@ You must work out from context who is speaking. Only the SUBJECT named in the me
 When you cannot tell whether a sentence was said by the subject or by someone else, it was not
 said by the subject. Do not resolve doubt in favour of extraction.
 
-The metadata gives the statement date when it is known. Judge "future" relative to that date, not
-relative to today. You are not told today's date on purpose. Do not judge whether any prediction
-came true, and do not let anything you know about later events change what you extract.
+## 1a. The statement date, and what you may compute from it
+
+The `Statement date` line says HOW the date is known. Read the words in brackets before you use
+the date. Judge "future" relative to that date, not relative to today. You are not told today's
+date on purpose. Do not judge whether any prediction came true, and do not let anything you know
+about later events change what you extract.
+
+- "stated in the source itself", "from a sourced correction", or "a dating check found": this is
+  when the words were spoken, or a close upper bound. Resolve relative time words ("this year",
+  "next quarter", "in two years") against it. When the line gives a range of days, resolve
+  "this year" or "next year" only if the whole range lies inside one calendar year, and a
+  quarter phrase only if it lies inside one quarter; otherwise treat the phrase as in the
+  "unknown" case below.
+- "NOT checked against the event": the date is only an upper bound, and the recording may be
+  years older. Test it against the title, the description and the transcript.
+  If nothing shows an older recording, resolve relative time words against it as the latest
+  possible date, as for any other date; the page labels the date "not checked". If anything
+  shows an older recording (a conference name with a year, "welcome to CES 2006", a product that
+  launched years before this date, a remark such as "here in 2008"), then:
+    1. set `statement_date_doubt.doubt` to `recording_older_than_stated` and copy the words
+       that show it into `statement_date_doubt.evidence`;
+    2. do not turn a relative time phrase into a calendar date: leave
+       `target_date` null and keep the speaker's words in `target_date_text`;
+    3. do not write a calendar year into the claim or the criterion unless the speaker said
+       that year.
+  The pipeline dates the recording and then extracts it again, and it holds every record of a
+  transcript with that doubt until then. Guessing the year does not save a prediction; it
+  produces a wrong claim.
+- "unknown": resolve no relative phrase. Keep the words in `target_date_text`.
+
+`statement_date_doubt` is one answer for the whole transcript. `none` means nothing you read
+contradicts the date line. `cannot_tell` means the evidence points both ways; it is recorded and
+does not hold records. `evidence_year` is the year your evidence names, or null. A doubt written
+only in `gate_notes` or `attribution_notes` is read by nobody.
+
+When the statement date is known, never write a placeholder such as "the statement year" or
+"the year following the recording" in a claim or a criterion. Write the year.
 
 ## 2. Shared eligibility and evidence rules
 
@@ -44,22 +78,33 @@ predicate, threshold, and date or dated event. Resolve every pronoun. Keep the s
 and units exactly. Do not add precision the speaker did not give: "a lot more" stays qualitative,
 "most" stays "most". Do not soften either.
 
+A CLAIM ABOUT A PERIOD'S RESULT. When the claim is about a figure for a year, a
+quarter or another period (revenue, profit, growth, a share of GDP), the date in
+the criterion is the END OF THE PERIOD, and the observable is the figure FOR that
+period, whenever it is published. Write: "For <period> (ending <date>),
+<observable figure> will be <outcome>, as reported at any time." Never write
+"By <period end>, X will report ...": a full-year result cannot be reported
+before the year ends, so that sentence can never come true.
+
 ## 5. Time horizon
 
 - `explicit`: the quote itself names a date, year, quarter, month or dated event ("by 2030",
   "next year", "this year", "within 18 months", "before the next election", "by re:Invent").
   Fill `target_date` (YYYY, YYYY-MM or YYYY-MM-DD, the latest date the words allow) and
   `target_date_text` (the speaker's exact words). A relative phrase such as "next year" is
-  explicit when the statement date is known; compute the date from it, and remember that the
-  statement date is an upper bound on when the words were said. If the statement date is
-  unknown, a relative phrase gives `target_date` null and `horizon` stays `explicit` with the
-  words in `target_date_text`.
+  explicit. Compute `target_date` from it only as section 1a allows; where section 1a forbids it,
+  `target_date` is null and `horizon` stays `explicit` with the words in `target_date_text`.
+  'Next year' means the whole following calendar year, so `target_date` is `<year+1>`, which the
+  pipeline reads as 31 December. A company's fiscal year is resolved later, by the resolver.
 - `inferable`: the quote has no date but the surrounding context fixes one ("that" refers to a
   named event whose date is known, "once the current fab is done"). Fill `horizon_years_inferred`
   (your best point estimate, in years from the statement date) and `horizon_evidence` (the words
   that fix it). Fill `target_date` only if the evidence gives a date.
 - `none`: no time anchor. Apply the shared policy's undated-milestone rule.
   Set `specificity` to `low` or `medium`; never invent a date.
+- Vague time words ("soon", "shortly", "in the coming weeks", "in the coming months",
+  "eventually", "over time") go into `target_date_text` exactly as said, even though they give
+  no date. `horizon` stays `none` and `target_date` stays null.
 
 ## 6. Confidence. Never invent a number.
 
@@ -101,6 +146,11 @@ specific thing happens or not by a date: "GPT-5 ships this year"), `trend_direct
 falls, overtakes: "rates will be lower", "open models will catch up"), `comparative` (X will be
 the largest, the first, ahead of Y, better than Z on a named measure), `other`.
 
+`claim_form`: `simple` (one outcome), `conditional` (the outcome is claimed only after a stated
+precondition: "once the recall passes, the mayor will appoint a Democrat"), `ordering` (one
+thing happens before another: "X will ship before Y"), `recurring` (a repeated event: "every
+year", "each quarter"). Choose it from the words, not from what you expect to happen.
+
 ## 9. Eligibility examples
 
 Use the shared policy above for both positive and negative cases.
@@ -109,11 +159,12 @@ Use the shared policy above for both positive and negative cases.
 
 - **Dated, numeric, external.** Quote: "the amount of compute the industry is building this year
   is 10-15 gigawatts and it goes up by roughly 3x a year so next year's 30-40 gigawatts".
-  Claim: "The AI industry will build 30-40 gigawatts of compute in <statement year + 1>."
+  Claim: "The AI industry will build 30-40 gigawatts of compute in <year+1>." Write the year
+  itself, for example 2026, never the words "statement year".
   horizon explicit, target_date <year+1>, target_date_text "next year", type numeric,
   category technology_product, subject_control external, confidence none, specificity high.
-  Criteria: "By the end of <year+1>, industry compute build-out for the year, as reported by a
-  major tracker, will be between 30 and 40 gigawatts."
+  Criteria: "For <year+1> (ending <year+1>-12-31), industry compute build-out for that year
+  will be between 30 and 40 gigawatts, as reported by a major tracker at any time."
 - **Dated, milestone, with explicit probability.** Quote: "I'd say there's a 70% chance we have a
   model that can do a full day of a software engineer's work by the end of 2027".
   confidence explicit_probability, probability 0.7, language "a 70% chance";
@@ -124,9 +175,9 @@ Use the shared policy above for both positive and negative cases.
   clinical treatment will be reported that restores independent walking in patients with
   complete spinal cord injury." Extract it; mark the horizon honestly.
 - **Company guidance, own control.** Quote: "we will have about 140 billion in revenue this
-  year". subject_control own, category company_business, type numeric, horizon explicit
-  (target_date is the fiscal year end), criteria "By fiscal year end <year>, reported revenue
-  will be about 140 billion."
+  year". subject_control own, category company_business, type numeric, horizon explicit,
+  target_date <year> (the resolver reads the company's fiscal year), criteria
+  "For fiscal year <year>, reported revenue will be about 140 billion, as reported at any time."
 - **Contrarian, qualitative.** Quote: "everyone thinks rates come down next year and I'm quite
   sure they will not". confidence qualitative, language "I'm quite sure"; type trend_direction;
   category macro_economy; target_date <year+1>-12-31.
@@ -138,7 +189,8 @@ Use the shared policy above for both positive and negative cases.
 
 Return one JSON object that validates against the schema you are given. Include ONLY candidates
 for which all five gates are true; do not include near-misses. `candidates_considered` is the
-number of forward-looking statements you weighed, including the ones you rejected. Return at most
+number of forward-looking statements you weighed, including the ones you rejected.
+`statement_date_doubt` is required even when there are no candidates. Return at most
 40 candidates. If more than 40 qualify, keep the 40 most specific, set `cap_hit` true, and put
 your estimate of the true total in `estimated_total_qualifying`. If nothing qualifies, return an
 empty `candidates` list; that is a correct and common result. `subject_speech_share_estimate_pct`

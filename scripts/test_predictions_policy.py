@@ -71,7 +71,10 @@ class PolicyTests(unittest.TestCase):
         obj = {"schema_version": "1", "transcript_id": "ada/s1", "attribution_notes": "",
                "subject_speech_share_estimate_pct": 100, "candidates_considered": 1,
                "cap_hit": False, "estimated_total_qualifying": 0 if empty else 1,
-               "candidates": [] if empty else [cand("I think by 2030 most code will be written by AI")]}
+               # Release 2.3 requires both of the models (the date line's doubt, the claim form).
+               "statement_date_doubt": {"doubt": "none", "evidence": None, "evidence_year": None},
+               "candidates": [] if empty else [cand("I think by 2030 most code will be written by AI",
+                                                    claim_form="simple")]}
         telemetry = {"requested_model": "gpt-6-astra", "served_model": "gpt-6-astra"}
         with patch.object(D, "call_harness", return_value=(json.dumps(obj), telemetry, "codex")):
             result = D.extract_one(self.job)
@@ -135,7 +138,8 @@ class PolicyTests(unittest.TestCase):
                    "gates": {g: True for g in L.GATES}, "claim_faithful": True,
                    "confidence_type_seen": "none", "qualifies": True,
                    "resolution_criteria": "By 2030, most code is AI-written.", "notes": None}
-        obj = {"schema_version": "1", "transcript_id": "ada/s1", "verdicts": [verdict]}
+        obj = {"schema_version": "1", "transcript_id": "ada/s1", "verdicts": [verdict],
+               "statement_date_doubt": {"doubt": "none", "evidence": None, "evidence_year": None}}
         tel = {"requested_model": "claude-fable-5-1", "judge_model": "claude-fable-5-1"}
         job = self.verifier_job()
         with patch.object(D, "call_harness", return_value=(json.dumps(obj), tel, "test")):

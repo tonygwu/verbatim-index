@@ -1636,3 +1636,46 @@ new grades incomparable with the corpus already graded.
   for cache and compatibility checks. A stale cache never triggers an automatic
   paid rerun. The bounded release-2 pilot and its frozen inputs are documented
   in `docs/PREDICTIONS-RERUN-2026-09-12.md`.
+  Since release `predictions-2.3` (2026-09-30) it also pins the header template,
+  `STATEMENT_DATE_HEADER.json`, as `contracts.header`: the date line is prompt
+  text outside both specs, so editing it is `policy_release_mismatch`. The line
+  says how the date is known, and an unchecked upload or publication date is
+  labelled an upper bound only. Relative time words still resolve against an
+  unchecked date (the card labels it "not checked"; coordinator decision
+  2026-09-30). Both models return `statement_date_doubt`; a
+  `recording_older_than_stated` doubt, a placeholder year in a field that names
+  no year, a relative year the funnel's reading puts earlier, or "this year" or
+  "next year" on a date range that crosses 31 December sets `date_hold`, and a
+  held 2.3 record is not accepted. For that last case the funnel derives no
+  deadline either: `phase2_resolvability.derived_deadline` calls
+  `predictions_lib.relative_phrase_crosses_new_year` first, a three-line hook.
+  The hold needs no checkout: `predictions_lib` keeps its own copy of the funnel's
+  relative-phrase reading, pinned to the funnel's by a test. A 2.2 record keeps its
+  published `accepted` flag. Proof: `.venv/bin/python scripts/test_predictions_release23.py`.
+- Recording dates (rescue round 4, operator decision VD-8 (c)):
+  `scripts/date_recordings.py --run-dir data/predictions/_experiments/dating-<name>`
+  is a dry run until `--run`, which SPENDS QUOTA. One agent per recording,
+  `--harness gemini` by default (Codex quota, operator 2026-09-29), names the event
+  and its date range with sources. `dating_lib.py`, with no model, must find each
+  cited excerpt with a date inside the range on the fetched page, and a source must
+  show the range's LAST day, the statement date. The recording's own page never
+  counts, checked on the cited and the final (redirected) address: its video id,
+  any YouTube page or front end, archive.today copies, google.com/url redirects,
+  the transcript's url whatever its query string, and a page that embeds the
+  recording or carries an uploadDate beside the excerpt. The window must name the
+  speaker or the event, a UTC timestamp cannot date a speech, a re-upload's
+  publication date is queued, and an undated source is bounded by its
+  `fetched_at_utc`. A date earlier than the transcript's own is written to the
+  run's `overrides.json`; one that CONFIRMS the transcript's own date to
+  `checks.json` (`load_statement_date_checks`, `--date-checks` on the extractor),
+  which supersedes no record. The rest go to `queue.json`. Never production's
+  files. Every agent entry re-verifies on every load from its proposal's sha256
+  and the window kept around each excerpt. Proof: `scripts/test_dating.py`,
+  `scripts/test_date_recordings.py`.
+- Tier R case evals: `scripts/eval_prediction_cases.py --gold
+  data/predictions/_eval/cases-20260929` replays the operator's audited cases
+  offline; `--smoke` runs the Buddy Media `already_public` case first;
+  `PREDICT_LIVE=1 ... --live` spends quota (`--estimate` first). A recorded answer
+  replays only under its prompt's sha256, from the case's own harness and the
+  requested model. The gold file is private data. Proof:
+  `scripts/test_eval_prediction_cases.py`.

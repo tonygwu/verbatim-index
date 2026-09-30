@@ -113,7 +113,8 @@ class G3PhraseTests(unittest.TestCase):
         self.assertEqual(
             release["contracts"],
             {"extract": L.extraction_contract()["contract_id"],
-             "verify": L.verification_contract()["contract_id"]},
+             "verify": L.verification_contract()["contract_id"],
+             "header": L.header_contract()["contract_id"]},
         )
         self.assertTrue(re.fullmatch(r"predictions-\d+\.\d+", release["release"]),
                         f"unexpected release name {release['release']!r}")

@@ -203,6 +203,8 @@ def derived_deadline(rec):
     said = iso(src.get("statement_date"))
     if said is None:
         return None, "no_statement_date"
+    if L.relative_phrase_crosses_new_year(rec):   # the rule lives in predictions_lib (release 2.3)
+        return None, L.RANGE_CROSSES_NEW_YEAR
     yrs = p.get("horizon_years_inferred")
     if yrs is not None:
         return add_span(said, float(yrs), "year"), "horizon_years_inferred"
