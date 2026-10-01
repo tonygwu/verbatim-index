@@ -123,6 +123,22 @@ def resolver_answer(pid=REC_ID, public=True, date="2012-05-29"):
 SEARCHED = {"served_model": "gpt-6-astra", "web_search": {"queries": ["q one", "q two", "q three"], "opens": 0}}
 
 
+MODELS = {"gemini": "gemini-3.8-flash-high", "fable": "claude-fable-5-1"}
+
+
+def fable_cannot_date(gemini_answers):
+    """A live caller: Gemini answers from the iterator (an exception is raised), Fable cannot date."""
+    def caller(harness, prompt, timeout, workdir, args, idx):
+        if harness == "fable":
+            return json.dumps(proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None,
+                                       event_kind=None)), {"served_model": MODELS["fable"]}, "f"
+        x = next(gemini_answers)
+        if isinstance(x, Exception):
+            raise x
+        return x, {"served_model": MODELS["gemini"]}, "a@example.com"
+    return caller
+
+
 class Offline(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -151,15 +167,26 @@ class Offline(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("[FAIL] F-lead", out)
 
-    def record_dating(self, g, text, prompt_sha=None, checks=None, harness="gemini", served="gemini-3.8-flash-high"):
-        d = g / "recordings" / "D-dx"
+    def record_dating(self, g, text, prompt_sha=None, checks=None, fable=None, served=None, case=DATING,
+                      wrong_harness=None):
+        """One repeat: Gemini's answer (text, checks) and Fable's (cannot_date unless given), one file each.
+
+        served overrides one dater's served model, {harness: model}; wrong_harness records Gemini's answer
+        under that harness name instead."""
+        d = g / "recordings" / case["id"]
         d.mkdir(parents=True, exist_ok=True)
-        n = len(list(d.glob("*.json")))
-        prompt = E.build_prompt(DATING, E.Context(self.data, g))
-        (d / f"r{n:02d}.json").write_text(json.dumps({
-            "prompt_sha256": prompt_sha or hashlib.sha256(prompt.encode()).hexdigest(), "response_text": text,
-            "harness": harness, "served_model": served, "requested_model": "gemini-3.8-flash-high",
-            "telemetry": {}, "source_checks": checks or [], "recorded_at_utc": "2026-09-30T00:00:00Z"}))
+        n = E._next_repeat(d)
+        fable_text = fable or json.dumps(proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None,
+                                                  event_kind=None))
+        for h, t, c in (("gemini", text, checks), ("fable", fable_text, [])):
+            label = wrong_harness if (h == "gemini" and wrong_harness) else h
+            prompt = E.build_prompt(case, E.Context(self.data, g), h)
+            (d / f"r{n:02d}.{label}.json").write_text(json.dumps({
+                "prompt_sha256": (prompt_sha if h == "gemini" and prompt_sha else
+                                  hashlib.sha256(prompt.encode()).hexdigest()),
+                "response_text": t, "harness": label, "served_model": (served or {}).get(h) or MODELS[h],
+                "requested_model": MODELS[h], "telemetry": {}, "source_checks": c or [],
+                "recorded_at_utc": "2026-09-30T00:00:00Z"}))
 
     def dx_checks(self, obj, page=LIVEBLOG):
         return [E.DL.check_source(s, D10, {"status": 200, "final_url": s["url"], "body": page.encode(),
@@ -189,13 +216,15 @@ class Offline(unittest.TestCase):
         self.assertIn("wrong auto-confirmations: 1", out)
 
     def test_a_recording_from_another_harness_or_model_is_refused(self):
-        """Review item 5 (probe E1): a fable answer, or another served model, is not this case's evidence."""
+        """Review item 5 (probe E1): an answer served by another model, or by a harness that is not one of the
+        case's daters, is not this case's evidence."""
         good = proposal()
-        for harness, served in (("fable", "gemini-3.8-flash-high"), ("gemini", "some-other-model")):
-            g = self.root / f"g-{harness}-{served}"
+        for i, kw in enumerate(({"served": {"fable": "gemini-3.8-flash-high"}}, {"served": {"gemini": "some-other-model"}},
+                                {"wrong_harness": "astra"})):
+            g = self.root / f"g-wrong-{i}"
             g.mkdir()
             (g / "cases.json").write_text(json.dumps({"schema_version": 1, "cases": [DATING], "smoke": []}))
-            self.record_dating(g, json.dumps(good), checks=self.dx_checks(good), harness=harness, served=served)
+            self.record_dating(g, json.dumps(good), checks=self.dx_checks(good), **kw)
             self.record_dating(g, json.dumps(good), checks=self.dx_checks(good))
             rc, out = run(["--gold", str(g), "--data", str(self.data)])
             self.assertEqual(rc, 1, out)
@@ -205,16 +234,10 @@ class Offline(unittest.TestCase):
         """Review item 6 (probes E2, E3): a queue is the safe answer; an unsourced first day is not a date."""
         neg = {**DATING, "id": "N-dx", "expect": {"negative": True, "pass_within": ["2012-05-30", "2012-05-30"]}}
         g = gold(self.root, [neg])
-        d = g / "recordings" / "N-dx"
-        d.mkdir(parents=True)
-        prompt = E.build_prompt(neg, E.Context(self.data, g))
-        sha = hashlib.sha256(prompt.encode()).hexdigest()
         queued = proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None, event_kind=None)
         wide = proposal(e="2012-05-01", l="2012-05-30")
-        for i, obj in enumerate((queued, queued, wide)):
-            (d / f"r{i:02d}.json").write_text(json.dumps({
-                "prompt_sha256": sha, "response_text": json.dumps(obj), "harness": "gemini",
-                "served_model": "gemini-3.8-flash-high", "source_checks": self.dx_checks(obj) if obj["sources"] else []}))
+        for obj in (queued, queued, wide):
+            self.record_dating(g, json.dumps(obj), checks=self.dx_checks(obj) if obj["sources"] else [], case=neg)
         rc, out = run(["--gold", str(g), "--data", str(self.data)])
         self.assertEqual(rc, 0, out)
         self.assertIn("[PASS] N-dx (3 of 3 valid repeats pass", out)
@@ -346,12 +369,7 @@ class Live(unittest.TestCase):
         self.assertIn("[INCONCLUSIVE] D-dx", out)
         self.assertIn("empty_response 3", out)
         answers = iter([RuntimeError("cli_timeout: no answer"), json.dumps(good), json.dumps(good)])
-
-        def caller2(*a):
-            x = next(answers)
-            if isinstance(x, Exception):
-                raise x
-            return x, {"served_model": "gemini-3.8-flash-high"}, "a@example.com"
+        caller2 = fable_cannot_date(answers)
         rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"},
                       caller=caller2, opener=lambda url, t: (200, url, LIVEBLOG.encode(), "text/html"), sleep=lambda s: None)
         self.assertEqual(rc, 0, out)
@@ -362,12 +380,7 @@ class Live(unittest.TestCase):
         g = gold(self.root, [DATING])
         answers = iter([RuntimeError("cli_timeout: no answer"), RuntimeError("auth_or_quota: spent"),
                         json.dumps(proposal())])
-
-        def caller(*a):
-            x = next(answers)
-            if isinstance(x, Exception):
-                raise x
-            return x, {"served_model": "gemini-3.8-flash-high"}, "a@example.com"
+        caller = fable_cannot_date(answers)
         rc, out = run(["--gold", str(g), "--data", str(self.data), "--live"], {"PREDICT_LIVE": "1"},
                       caller=caller, opener=lambda url, t: (200, url, LIVEBLOG.encode(), "text/html"), sleep=lambda s: None)
         self.assertEqual(rc, 3, out)
@@ -387,7 +400,8 @@ class Live(unittest.TestCase):
                                                    "properties": {k: v for k, v in R.RESOLUTION_SCHEMA["properties"].items()
                                                                   if k != "already_public"}}):
             rc, out = run(["--gold", str(g), "--data", str(self.data), "--smoke", "--estimate"])
-        self.assertIn("live run: 1 model cases x 3 repeats = 3 calls (gemini 3); 1 blocked case(s) spend nothing", out)
+        self.assertIn("live run: 1 model cases x 3 repeats: 6 calls (fable 3, gemini 3)", out)
+        self.assertIn("1 blocked case(s) spend nothing", out)
         for only in ("D-dx,NOPE", "NOPE"):
             with self.assertRaises(SystemExit) as cm:
                 run(["--gold", str(g), "--data", str(self.data), "--only", only])
@@ -401,7 +415,7 @@ class Live(unittest.TestCase):
     def test_smoke_cost_is_stated_before_a_live_run(self):
         g = gold(self.root, [RESOLVE, DATING], smoke=["R-public", "D-dx"])
         rc, out = run(["--gold", str(g), "--data", str(self.data), "--smoke", "--estimate"])
-        self.assertIn("live run: 2 model cases x 3 repeats = 6 calls (astra 3, gemini 3)", out)
+        self.assertIn("live run: 2 model cases x 3 repeats: 9 calls (astra 3, fable 3, gemini 3)", out)
 
 
 if __name__ == "__main__":

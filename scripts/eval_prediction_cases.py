@@ -21,8 +21,11 @@ STAGES
            null for off; required)
   extract  one extraction call (release 2.3), then the real parser and grounding;
            the operator's quote must still be extracted (critique 2 point 5)
-  dating   one dating agent call, the real page check, the real merge; a confirmed
-           date outside the gold band is a WRONG AUTO-CONFIRMATION
+  dating   one call per dater per repeat (dating_lib.DATERS, Gemini then Fable, VD-11),
+           the real page and description checks, the real two-proposal merge; a
+           confirmed date outside the gold band is a WRONG AUTO-CONFIRMATION. A
+           repeat is recorded as r<n>.<dater>.json and replays only with every
+           dater's answer; an infrastructure failure of either excludes the repeat
   resolve  one resolver call, validated by resolution_lib; a case needing a field
            the resolver contract lacks (already_public) is BLOCKED before any call
   early    one early-call check (VD-5 c) before the deadline, validated as
@@ -204,20 +207,31 @@ def preflight(cases: list[dict], ctx: Context) -> list[str]:
                 resolve_record(c, ctx)
             elif c["stage"] == "funnel":
                 funnel_implied(c)
+            elif c["stage"] == "dating":
+                case_harnesses(c)
         except SystemExit as exc:
             problems.append(str(exc))
     return problems
 
 
-def build_prompt(case: dict, ctx: Context) -> str:
+def case_leads(case: dict, ctx: Context) -> list[str]:
+    """The leads a dating case's prompt shows every dater, as production builds them. The merge reads them too:
+    two daters copying a shown day do not agree independently (review fix 3)."""
+    recs_path = case["input"].get("records")
+    recs = L.parse_lines(ctx.path(recs_path).read_text(), recs_path) if recs_path else []
+    meta_path = ctx.data / recs_path.replace(".jsonl", ".meta.json") if recs_path else None
+    meta = json.loads(meta_path.read_text()) if meta_path and meta_path.is_file() else None
+    return DL.leads_from_records(recs, meta)[0]
+
+
+def build_prompt(case: dict, ctx: Context, harness: str | None = None) -> str:
+    """The prompt production sends. A dating prompt differs per dater (its YOUR TOOLS block), so it names one."""
     st, inp = case["stage"], case["input"]
     if st == "dating":
+        if harness is None:
+            raise ValueError(f"{case['id']}: a dating prompt is built for one dater; name it")
         rec = json.loads(ctx.path(inp["transcript"]).read_text())
-        recs_path = inp.get("records")
-        recs = L.parse_lines(ctx.path(recs_path).read_text(), recs_path) if recs_path else []
-        meta_path = ctx.data / recs_path.replace(".jsonl", ".meta.json") if recs_path else None
-        meta = json.loads(meta_path.read_text()) if meta_path and meta_path.is_file() else None
-        return DL.build_dating_prompt(rec, DL.leads_from_records(recs, meta)[0], harness=case_harness(case))[0]
+        return DL.build_dating_prompt(rec, case_leads(case, ctx), harness=harness)[0]
     if st == "extract":
         rec = _transcript(case, ctx)
         roster = {r["slug"]: r for r in json.loads(ctx.path(inp.get("roster", "roster/final.json")).read_text())["roster"]}
@@ -243,17 +257,23 @@ def _dates_ok(lo, hi, band):
     return band is not None and band[0] <= lo and hi <= band[1]
 
 
-def judge_dating(case: dict, ctx: Context, text: str, checks: list[dict]) -> tuple[str, str]:
+def judge_dating(case: dict, ctx: Context, answers: dict) -> tuple[str, str]:
+    """One repeat: every dater's answer and its page checks, {harness: (text, checks)}, through the real merge."""
     rec = json.loads(ctx.path(case["input"]["transcript"]).read_text())
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
-    try:
-        obj = L.extract_json(text)
-    except (ValueError, json.JSONDecodeError) as exc:
-        return "fail", f"no JSON in the answer: {exc}"
-    errs = DL.validate_proposal(obj, tid)
-    if errs:
-        return "fail", f"invalid proposal: {'; '.join(errs[:3])}"
-    out = DL.merge_one(rec, {"proposal": obj, "harness": case["input"].get("harness")}, checks)
+    docs, checks_by = [], {}
+    for h, (text, checks) in answers.items():
+        # An answer that is not valid JSON, or fails validation, is an invalid proposal, as
+        # date_recordings stores it (review fix 5): the merge reads it as invalid_proposal and
+        # the other dater's confirmation stands.
+        try:
+            obj = L.extract_json(text)
+            obj = obj if isinstance(obj, dict) else {}
+        except (ValueError, json.JSONDecodeError):
+            obj = {}
+        docs.append({"proposal": obj, "harness": h, "daters": list(answers), "leads": case_leads(case, ctx)})
+        checks_by[h] = checks if not DL.validate_proposal(obj, tid) else []
+    out = DL.merge(rec, docs, checks_by)
     ex = case["expect"]
     if out["outcome"] == "queue":
         # A negative case is one the stage must NOT move; the queue is its safe answer (review item 6).
@@ -466,8 +486,9 @@ def aggregate(outcomes: list[tuple[str, str]], infra: Counter) -> tuple[str, str
 
 
 def judge(case, ctx, text, checks, telemetry=None):
+    """A one-harness stage's answer. A dating repeat holds every dater's answer and goes to judge_dating."""
     if case["stage"] == "dating":
-        return judge_dating(case, ctx, text, checks)
+        raise ValueError(f"{case['id']}: a dating repeat is judged with every dater's answer (judge_dating)")
     if case["stage"] == "extract":
         return judge_extract(case, ctx, text)
     if case["stage"] == "early":
@@ -481,6 +502,122 @@ def requested_models(args) -> dict:
 
 def case_harness(case: dict) -> str:
     return case["input"].get("harness") or DEFAULT_HARNESS[case["stage"]]
+
+
+def case_harnesses(case: dict) -> list[str]:
+    """The harnesses ONE repeat of this case calls, each once.
+
+    A dating case runs the stage's daters, DL.DATERS (operator decision VD-11), or
+    the list its input.daters names. The gold's older input.harness, written when
+    dating had one agent, must name one of them; it no longer chooses the daters.
+    """
+    if case["stage"] != "dating":
+        return [case_harness(case)]
+    hs = list(case["input"].get("daters") or DL.DATERS)
+    legacy = case["input"].get("harness")
+    if legacy is not None and legacy not in hs:
+        raise SystemExit(f"REFUSING {case['id']}: input.harness {legacy!r} is not one of the case's daters {hs}; "
+                         f"a dating case runs every dater (VD-11)")
+    return hs
+
+
+_REPEAT = re.compile(r"^r(\d+)(?:\.([a-z]+))?\.json$")
+
+
+def _next_repeat(d: Path) -> int:
+    ns = [int(m.group(1)) for p in d.glob("r*.json") if (m := _REPEAT.match(p.name))] if d.exists() else []
+    return max(ns) + 1 if ns else 0
+
+
+def run_offline_dating(case: dict, ctx: Context, requested: dict) -> tuple[str, str]:
+    """Replay each repeat's recordings, one per dater (r<n>.<dater>.json), through the real merge."""
+    hs = case_harnesses(case)
+    shas = {h: hashlib.sha256(build_prompt(case, ctx, h).encode()).hexdigest() for h in hs}
+    paths = sorted((ctx.gold / "recordings" / case["id"]).glob("r*.json"))
+    if not paths:
+        return "UNRECORDED", (f"no recorded answer; run --live to record one (prompt sha256 "
+                              f"{', '.join(f'{h} {s[:12]}' for h, s in shas.items())})")
+    docs = []
+    for p in paths:
+        m = _REPEAT.match(p.name)
+        d = json.loads(p.read_text())
+        if m is None or (m.group(2) and m.group(2) != d.get("harness")):
+            return "RECORDING_REFUSED", f"{p.name} is not r<n>.<dater>.json for the harness it records"
+        docs.append((int(m.group(1)), p, d))
+    stale = [p.name for _, p, d in docs if d.get("harness") in shas and d["prompt_sha256"] != shas[d["harness"]]]
+    if stale:
+        return "PROMPT_CHANGED", f"prompt changed; re-record live ({len(stale)} of {len(docs)} recordings: {stale[:3]})"
+    # A recording is this case's evidence only if one of its daters made it and the
+    # requested model served it (review item 5, probe E1).
+    wrong = [f"{p.name}: recorded by {d.get('harness')!r} serving {d.get('served_model')!r}" for _, p, d in docs
+             if d.get("harness") not in hs or d.get("served_model") != requested[d["harness"]]]
+    if wrong:
+        return "RECORDING_REFUSED", (f"this case's daters are {', '.join(f'{h} ({requested[h]})' for h in hs)}; "
+                                     f"{len(wrong)} of {len(docs)} recordings are not: {wrong[:3]}")
+    by_n: dict[int, dict] = {}
+    for n, _, d in docs:
+        by_n.setdefault(n, {})[d["harness"]] = d
+    lacking = [f"r{n:02d} lacks {sorted(set(hs) - set(g))}" for n, g in sorted(by_n.items()) if set(g) != set(hs)]
+    if lacking:
+        return "RECORDING_REFUSED", f"a repeat replays only with every dater's answer ({hs}): {lacking[:3]}"
+    return aggregate([judge_dating(case, ctx, {h: (g[h]["response_text"], g[h].get("source_checks") or [])
+                                               for h in hs}) for _, g in sorted(by_n.items())], Counter())
+
+
+def run_live_dating(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) -> tuple[str, str]:
+    """Each repeat calls every dater once, records every answer, and judges them together.
+
+    The merge needs every dater, so an infrastructure failure of any one excludes
+    the whole repeat; what the others already answered is kept under partial/,
+    never replayed. A dater whose call fails for another reason fails the repeat.
+    """
+    hs = case_harnesses(case)
+    prompts = {h: build_prompt(case, ctx, h) for h in hs}
+    want = requested_models(args)
+    rec = json.loads(ctx.path(case["input"]["transcript"]).read_text())
+    out_dir = record_dir / case["id"]
+    outcomes, infra = [], Counter()
+    for i in range(args.repeats):
+        got, stop = {}, None
+        for h in hs:
+            try:
+                text, tel, identity = caller(h, prompts[h], args.timeout, Path(args.workroot) / f"{case['id']}-r{i}-{h}",
+                                             args, i)
+            except Exception as exc:  # noqa: BLE001 -- labelled, and never read as the model's answer
+                label = L.classify_exception_detail(str(exc))
+                stop = (label if label in INFRA else "fail", f"{h}: {label}: {str(exc)[:200]}")
+                break
+            if tel.get("served_model") != want[h]:
+                # Another model answered: not this case's evidence, and not the model's fault either.
+                stop = ("model_identity_mismatch", f"{h} served {tel.get('served_model')!r}, requested {want[h]!r}")
+                break
+            checks = []
+            try:
+                for src in L.extract_json(text).get("sources") or []:
+                    why = DL.own_page_reason(src["url"], rec)
+                    checks.append(DL.refused_check(src, why) if why else DL.check_source(src, rec, fetcher.fetch(src["url"])))
+            except (ValueError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
+                checks = []
+            got[h] = {"case": case["id"], "repeat_of_run": i, "prompt_sha256": hashlib.sha256(prompts[h].encode()).hexdigest(),
+                      "harness": h, "requested_model": want[h], "response_text": text,
+                      "served_model": tel.get("served_model"), "served_model_verified": tel.get("served_model_verified"),
+                      "identity": identity, "telemetry": {k: v for k, v in tel.items() if k in (
+                          "web_search", "web_search_queries", "tool_use_counts", "attempts", "empty_retries",
+                          "requested_model")},
+                      "source_checks": checks, "recorded_at_utc": DL.utc_stamp()}
+        where = out_dir / "partial" if stop else out_dir
+        n = _next_repeat(where)
+        where.mkdir(parents=True, exist_ok=True)
+        for h, doc in got.items():
+            (where / f"r{n:02d}.{h}.json").write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + "\n")
+        if stop is None:
+            outcomes.append(judge_dating(case, ctx, {h: (got[h]["response_text"], got[h]["source_checks"]) for h in hs}))
+        elif stop[0] == "fail":
+            outcomes.append(("fail", stop[1]))
+        else:
+            infra[stop[0]] += 1
+            outcomes.append(("infra", stop[1]))
+    return aggregate(outcomes, infra)
 
 
 def run_offline(case: dict, ctx: Context, requested: dict) -> tuple[str, str]:
@@ -530,16 +667,7 @@ def run_live(case: dict, ctx: Context, args, caller, fetcher, record_dir: Path) 
             infra["model_identity_mismatch"] += 1
             outcomes.append(("infra", f"served {tel.get('served_model')!r}, requested {want_model!r}"))
             continue
-        checks = []
-        if case["stage"] == "dating":
-            rec = json.loads(ctx.path(case["input"]["transcript"]).read_text())
-            try:
-                obj = L.extract_json(text)
-                for src in obj.get("sources") or []:
-                    why = DL.own_page_reason(src["url"], rec)
-                    checks.append(DL.refused_check(src, why) if why else DL.check_source(src, rec, fetcher.fetch(src["url"])))
-            except (ValueError, json.JSONDecodeError, KeyError, TypeError):
-                checks = []
+        checks = []    # a one-harness stage cites no pages; dating runs in run_live_dating
         n = len(list(out_dir.glob("*.json"))) if out_dir.exists() else 0
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"r{n:02d}.json").write_text(json.dumps(
@@ -559,10 +687,18 @@ def estimate(cases: list[dict], repeats: int) -> str:
     model = [c for c in cases if c["stage"] in MODEL_STAGES and not c.get("pending")]
     blocked = [c for c in model if c["stage"] == "resolve" and resolve_blocked(c)]
     model = [c for c in model if c not in blocked]
-    by = Counter(case_harness(c) for c in model)
-    return (f"live run: {len(model)} model cases x {repeats} repeats = {len(model) * repeats} calls "
-            f"({', '.join(f'{h} {n * repeats}' for h, n in sorted(by.items()))}); {len(blocked)} blocked case(s) "
-            f"spend nothing; dating cases also fetch every cited page, direct then Wayback")
+    by: Counter = Counter()
+    for c in model:
+        try:
+            hs = case_harnesses(c)
+        except SystemExit:
+            continue          # preflight names it, and --estimate then refuses
+        for h in hs:
+            by[h] += repeats
+    return (f"live run: {len(model)} model cases x {repeats} repeats: {sum(by.values())} calls "
+            f"({', '.join(f'{h} {n}' for h, n in sorted(by.items()))}); a dating repeat calls each of its daters "
+            f"once ({', '.join(DL.DATERS)}); {len(blocked)} blocked case(s) spend nothing; dating cases also fetch "
+            f"every cited page, direct then Wayback")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -648,8 +784,12 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         elif c["stage"] == "funnel":
             status, detail = run_funnel(c, ctx)
             status = status.upper()
+        elif args.live and c["stage"] == "dating":
+            status, detail = run_live_dating(c, ctx, args, caller, fetcher, args.record_dir or args.gold / "recordings")
         elif args.live:
             status, detail = run_live(c, ctx, args, caller, fetcher, args.record_dir or args.gold / "recordings")
+        elif c["stage"] == "dating":
+            status, detail = run_offline_dating(c, ctx, requested_models(args))
         else:
             status, detail = run_offline(c, ctx, requested_models(args))
         rows.append({"id": c["id"], "operator_case": c.get("operator_case"), "stage": c["stage"], "status": status,

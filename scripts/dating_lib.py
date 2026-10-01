@@ -2,12 +2,18 @@
 """Pure functions for the dating stage: when were the words in a recording spoken?
 
 Rescue round 4 (design section 1, critiques 1 and 3), operator decision VD-8 (c)
-of 2026-09-29, "see what happens": ONE agent identifies the event and its date
-range and cites sources with verbatim excerpts. A script with no model then
-fetches each cited page and must find the excerpt on it, with a date inside the
-agent's own range. The recording's own page never counts. A confirmed result is
-an override entry that vouches for itself on every load; anything else is queued
-for a person with its reason.
+of 2026-09-29, "see what happens", with two daters since VD-11 (2026-10-01): each
+dater (DATERS, Gemini then Fable) identifies the event and its date range and
+cites sources with verbatim excerpts. A script with no model then fetches each
+cited page and must find the excerpt on it, with a date inside that dater's own
+range. The recording's own page never counts, with one exception: its stored
+DESCRIPTION, when it states the event's date (the dater's description_evidence, or
+Tier 0, the description's one full day), strictly before the upload and never next
+to a cue word such as "born", "released" or "use code". merge() combines the
+daters (rule R1, two_agent_agreement, dater_disagreement; see merge). A confirmed
+result is an entry that vouches for itself on every load; anything else is queued
+for a person with its reason. A single-dater merge is the one-agent rule of VD-8
+(c) and its entries load like any other; production uses both daters.
 
 WHY. No stage ever tried to find out when a recording was made. Code copied the
 YouTube upload date, or nothing, into the date the card prints as "Said", and a
@@ -23,8 +29,10 @@ What lives here, and nothing else (no network, no model, no argparse):
     mirror), an archive copy, the transcript's own url and a Wayback copy of any
     of them never confirm
   - the source check of one fetched page, and the stored window it keeps
-  - the merge of one proposal (MERGE_VERSION), and the loader's re-verification
-    of an entry from its stored proposal and windows
+  - the description check and Tier 0, with the cue-word filter
+  - the merge of every dater's proposal (MERGE_VERSION), and the loader's
+    re-verification of an entry from its stored proposals, windows and the
+    transcript's own description
   - the leads block: dated sentences from extraction and verification notes,
     with claim and outcome text removed (critique 1 point 14)
 
@@ -49,9 +57,18 @@ import predictions_lib as L  # noqa: E402
 # it and the loader re-runs exactly that version, so an edit that changes what
 # confirms a date must bump this, or every stored entry refuses to load (loud,
 # by design: critique 3 C3).
-MERGE_VERSION = "merge-2"   # merge-1 never shipped; review fixes of 2026-09-30 changed what confirms
+# merge-1 never shipped; merge-2 was the review fixes of 2026-09-30. merge-3 (2026-10-01): the
+# recording's own description counts when it states the event's date (cited, or Tier 0).
+MERGE_VERSION = "merge-3"
 MERGE_VERSIONS = (MERGE_VERSION,)
-METHOD = "one_agent_plus_source_check"
+# How an entry was confirmed. A cited page or the description of ONE dater's proposal
+# (METHOD), or two daters naming the same last day with nothing confirmed (VD-11).
+METHOD = "agent_plus_source_check"
+AGREEMENT_METHOD = "two_agent_agreement"
+METHODS = (METHOD, AGREEMENT_METHOD)
+# The daters each in-scope recording gets, in the order the merge reads them
+# (operator decision VD-11, 2026-10-01): Gemini searches, Fable answers from memory.
+DATERS = ("gemini", "fable")
 
 VERDICTS = ("dated", "publication_only", "cannot_date")
 EVENT_KINDS = ("conference_session", "keynote", "earnings_call", "podcast_episode", "interview", "lecture",
@@ -64,10 +81,15 @@ MAX_LEADS = 12
 MIN_EXCERPT_WORDS = 4        # a bare "May 30, 2012" would match any page that prints the day
 WINDOW_CHARS = 1000          # kept each side of the excerpt (about 2 KB); the page itself is only hashed
 
+AGREEMENT_RULE = ("statement_date is the last day that every dater named independently, exactly that day; "
+                  "each proposal passed every rule before the source checks, so none ends after the upper "
+                  "bound; no cited page or description confirmed it")
 ZONE_RULE = ("a speech, session or interview is dated in the local time of the place where it happened; "
              "a publication (verdict publication_only) is dated in UTC")
 RULE = ("statement_date is the latest day of the agent's range; the range is confirmed only when a fetched "
-        "page that is not the recording's own carries the cited excerpt and a date inside the range")
+        "page that is not the recording's own carries the cited excerpt and a date inside the range, or the "
+        "recording's stored description states a date inside the range (cited, or its one full day: Tier 0); "
+        "a confirming source must show the latest day")
 
 # ---------------------------------------------------------------------------
 # Dates in text
@@ -137,7 +159,12 @@ def _mk(y: int, m: int, d: int) -> date | None:
 
 
 def dates_in_text(text: str) -> list[dict]:
-    """Every date WITH A YEAR in the text, in order: {lo, hi, text, utc_lo, utc_hi}.
+    """Every date WITH A YEAR in the text, in order: {lo, hi, text, utc_lo, utc_hi, utc_stamp}."""
+    return [{k: v for k, v in d.items() if k not in ("at", "end")} for d in _dates_located(text)]
+
+
+def _dates_located(text: str) -> list[dict]:
+    """dates_in_text with each date's character offsets, "at" and "end".
 
     A day gives lo == hi; "September 7-9, 2025" a range; "August 2023" the whole
     month. A time with a zone ("4:26 pm PT", "T01:30:00+02:00") also gives the UTC
@@ -154,7 +181,7 @@ def dates_in_text(text: str) -> list[dict]:
         if lo is None or hi is None or hi < lo:
             return
         taken.append((m.start(), m.end()))
-        out.append({"at": m.start(), "lo": lo, "hi": hi, "text": m.group(0).strip(),
+        out.append({"at": m.start(), "end": m.end(), "lo": lo, "hi": hi, "text": m.group(0).strip(),
                     "utc_lo": utc or lo, "utc_hi": utc or hi, "utc_stamp": utc_stamp})
 
     for m in _ISO.finditer(text):
@@ -185,7 +212,7 @@ def dates_in_text(text: str) -> list[dict]:
         last = (_mk(y + (mon == 12), mon % 12 + 1, 1) - timedelta(days=1)) if first else None
         add(m, first, last)
     out.sort(key=lambda d: d["at"])
-    return [{k: v for k, v in d.items() if k != "at"} for d in out]
+    return out
 
 
 def date_for_verdict(d: dict, verdict: str) -> tuple[date, date] | None:
@@ -433,13 +460,219 @@ def context_tokens(rec: dict, prop: dict) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# The recording's own description (operator, 2026-10-01)
+# ---------------------------------------------------------------------------
+#
+# FOUND by the operator: the own-page rule stopped Gemini from using the strongest
+# evidence it had. bill-gates/techno-optimism-t3p9ko's description says "Bill Gates,
+# Mehtap Ozkan, Saturday, February 25, 2023", the upload is 2023-04-02, and Gemini
+# answered cannot_date, quoting the rule. The rule stops an agent passing off the
+# UPLOAD date as the event's; a date the description STATES about the event is
+# evidence. It is read from the transcript record, never fetched, so the loader
+# re-checks it from the same stored text. Never the title: "What Aaron Levie Saw in
+# 2004" (aaron-levie/hd-in-hd-podcast--u5-zt) names the subject, not the event.
+
+def recording_description(rec: dict) -> str | None:
+    """The description stored with the transcript: yt_description, else declared_description, else None.
+
+    MEASURED 2026-10-01 over the 1,027 stored transcripts: yt_description on 675,
+    declared_description on none (the name is kept for a web source that stores
+    one). hs_description is Happy Scribe's boilerplate ("Read the full transcript
+    of ..."), never the show's own words, so it is not read.
+    """
+    for k in ("yt_description", "declared_description"):
+        v = rec.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+    return None
+
+
+def upper_bound(rec: dict) -> tuple[str, str] | None:
+    """(YYYY-MM-DD, what it is): the own date, else the fetch date, else None. Never the local clock."""
+    own_date, own_basis = L.own_statement_date(rec)
+    if own_date is not None:
+        return own_date, f"the {own_basis}"
+    if fetch_bound(rec):
+        return fetch_bound(rec), "the day this transcript was fetched (the source carries no date)"
+    return None
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _spans_in_range(text: str, prop: dict) -> list[tuple[date, date]]:
+    """The dates in text, read for the proposal's verdict, that lie wholly inside its range."""
+    e, lat = date.fromisoformat(prop["speech_date_earliest"]), date.fromisoformat(prop["speech_date_latest"])
+    out = []
+    for d in dates_in_text(text):
+        r = date_for_verdict(d, prop["verdict"])
+        if r is not None and e <= r[0] and r[1] <= lat:
+            out.append(r)
+    return out
+
+
+# Words that, next to a day in a description, say the day dates something other than
+# this event (review fixes 6 and 7): a birth, a founding, a release, premiere, upload,
+# livestream, broadcast or launch, an older original, a sponsor's code or deadline,
+# and the next event. Judged within the date's own sentence, up to CUE_WORDS_BEFORE
+# words before it and CUE_WORDS_AFTER after it.
+_CUE = re.compile(r"\b(?:born|birth(?:day)?|founded|founding|established|released?|premiere[sd]?|uploaded|"
+                  r"upload|streamed|aired|launch(?:ed|es|ing)?|originally|"
+                  r"(?:use|promo|discount|coupon)\s+code|sponsor(?:ed)?|deadline|until|before|expires?|"
+                  r"next\s+(?:event|week|month|year|episode|show|session|time)|upcoming|coming\s+up)\b", re.I)
+_LINK = re.compile(r"(?:https?://|www\.)\S+|\b[\w.-]+\.(?:com|org|net|io|co|tv|fm|me|ly|be|app|news)/\S*", re.I)
+CUE_WORDS_BEFORE, CUE_WORDS_AFTER = 12, 3
+
+
+def description_cue(desc: str, at: int, end: int) -> str | None:
+    """Why the date at desc[at:end] is not this event's, or None. Never reads the title."""
+    for m in _LINK.finditer(desc):
+        if m.start() <= at and end <= m.end():
+            return f"it is part of a link, {m.group(0)[:80]!r}"
+    start = max([desc.rfind("\n", 0, at)] + [desc.rfind(p, 0, at) for p in (". ", "! ", "? ")]) + 1
+    stops = [i for i in [desc.find("\n", end)] + [desc.find(p, end) for p in (". ", "! ", "? ")] if i >= 0]
+    near = " ".join(desc[start:at].split()[-CUE_WORDS_BEFORE:] + ["|"]
+                    + desc[end:min(stops) if stops else len(desc)].split()[:CUE_WORDS_AFTER])
+    m = _CUE.search(near)
+    return f"it sits next to {m.group(0)!r}, so it dates something other than this event" if m else None
+
+
+def check_description(rec: dict, prop: dict) -> dict | None:
+    """The agent's description_evidence checked as a page excerpt is checked, or None when it gave none.
+
+    A normalised match on word boundaries, at least MIN_EXCERPT_WORDS words, a
+    date with its year inside the agent's range, STRICTLY before the transcript's
+    own date (review fix 2), and not next to a cue word or inside a link (fixes 6
+    and 7). The context and embed rules of a page do not apply: the description is
+    this recording's own text by construction. "spans" keeps the days that passed,
+    which are the only ones the latest-day rule may read.
+    """
+    ev = prop.get("description_evidence")
+    if not ev:
+        return None
+    desc = recording_description(rec) or ""
+    out = {"route": "description", "basis": "cited", "cited_excerpt": ev,
+           "description_sha256": _sha(desc) if desc else None, "span": None, "spans": [], "ok": False, "why": None}
+
+    def no(why: str) -> dict:
+        out["why"] = why
+        return out
+    if not desc:
+        return no("the recording has no stored description")
+    if not rec.get("url"):
+        return no("the recording has no url to cite its description by")
+    if len(L.normalise(ev).split()) < MIN_EXCERPT_WORDS:
+        return no(f"the description excerpt has fewer than {MIN_EXCERPT_WORDS} words")
+    hit = _find(desc, ev)
+    if hit is None:
+        return no(f"the cited words are not in the description: {ev[:80]!r}")
+    out["span"] = span = desc[hit[0]:hit[1]]
+    found = _dates_located(span)
+    if not found:
+        return no(f"the cited description words carry no date with a year: {span[:80]!r}")
+    if not any(date_for_verdict(d, prop["verdict"]) for d in found):
+        return no(f"the cited description dates are UTC timestamps, which cannot give the venue's day ({ZONE_RULE})")
+    e, lat = date.fromisoformat(prop["speech_date_earliest"]), date.fromisoformat(prop["speech_date_latest"])
+    inside = [(d, r) for d, r in ((d, date_for_verdict(d, prop["verdict"])) for d in found)
+              if r is not None and e <= r[0] and r[1] <= lat]
+    if not inside:
+        return no(f"the description's dates {[d['text'] for d in found]} are outside the range {e}..{lat}")
+    ub = upper_bound(rec)
+    if ub is None:
+        return no("nothing bounds the recording from above, so a description date cannot be checked against it")
+    # STRICTLY before the own date (review fix 2): a description day ON the upload day is
+    # an upload, premiere or livestream day, and confirming it would CHECK the upload date.
+    early = [(d, r) for d, r in inside if r[1] < date.fromisoformat(ub[0])]
+    if not early:
+        return no(f"the description's dates in the range are not before {ub[1]}, {ub[0]}; a description date on "
+                  f"or after the upload is not the event's")
+    clean, cued = [], []
+    for d, r in early:
+        cue = description_cue(desc, hit[0] + d["at"], hit[0] + d["end"])
+        (cued if cue else clean).append((d, r, cue))
+    if not clean:
+        return no(f"the description's date {cued[0][0]['text']!r}: {cued[0][2]}")
+    out.update(ok=True, why="confirms", spans=[[r[0].isoformat(), r[1].isoformat()] for _, r, _ in clean])
+    return out
+
+
+def _tier0_days(desc: str) -> tuple[list[dict], list[str]]:
+    """The description's full days with their year that no cue word or link disqualifies, and the ones that do."""
+    days, cued = [], []
+    for d in _dates_located(desc):
+        if d["lo"] != d["hi"]:
+            continue
+        cue = description_cue(desc, d["at"], d["end"])
+        if cue:
+            cued.append(f"{d['text']!r}: {cue}")
+        else:
+            days.append(d)
+    return days, cued
+
+
+def tier0_day(rec: dict, verdict: str) -> tuple[str | None, str]:
+    """(YYYY-MM-DD, why) when the stored description names exactly ONE full day with its year that no cue word
+    disqualifies, STRICTLY before the upper bound; (None, why) otherwise. Deterministic, no model.
+
+    Only day-precision dates count: a month, a range of days or a bare year is not
+    the day of an event. A day next to a cue word or inside a link is dropped first
+    (review fixes 6 and 7). Two different remaining days mean the description dates
+    more than one thing, so neither is taken. The title is never read.
+    """
+    desc = recording_description(rec)
+    if not desc:
+        return None, "the recording has no stored description"
+    found, cued = _tier0_days(desc)
+    days: dict[date, dict] = {}
+    for d in found:
+        days.setdefault(d["lo"], d)
+    if not days:
+        return None, ("the description's only full days are not this event's: " + "; ".join(cued) if cued else
+                      "the description names no full day with its year")
+    if len(days) > 1:
+        return None, (f"the description names {len(days)} different days "
+                      f"({', '.join(sorted(x.isoformat() for x in days))}), so none is taken as the event's")
+    (only, d), = days.items()
+    r = date_for_verdict(d, verdict)
+    if r is None:
+        return None, f"the description's one day is a UTC timestamp, {d['text']!r} ({ZONE_RULE})"
+    ub = upper_bound(rec)
+    if ub is None:
+        return None, "nothing bounds the recording from above"
+    if r[0] >= date.fromisoformat(ub[0]):
+        return None, f"the description's one day {r[0]} is not before {ub[1]}, {ub[0]}"
+    return r[0].isoformat(), f"the description names one day, {r[0]}"
+
+
+def tier0_check(rec: dict, day: str, verdict: str) -> dict:
+    """The Tier 0 confirmation as a stored check: the description line that carries the day.
+
+    The day is matched as tier0_day read it, among the same uncued days and through
+    date_for_verdict, so a publication read in UTC finds its own text (review fix 4:
+    matching the local day, with an eager fallback, raised IndexError).
+    """
+    desc = recording_description(rec) or ""
+    found = [d for d in _tier0_days(desc)[0]
+             if (date_for_verdict(d, verdict) or (None,))[0] is not None
+             and date_for_verdict(d, verdict)[0].isoformat() == day]
+    if not found:
+        raise ValueError(f"tier0_check: the description carries no {verdict} day {day}; tier0_day and tier0_check "
+                         f"disagree")
+    text = found[0]["text"]
+    line = next((ln.strip() for ln in desc.splitlines() if text in ln), text)
+    return {"route": "description", "basis": "tier0", "cited_excerpt": None, "description_sha256": _sha(desc),
+            "span": line[:300], "day": day, "ok": True, "why": f"the description names one day, {day}"}
+
+
+# ---------------------------------------------------------------------------
 # The prompt
 # ---------------------------------------------------------------------------
 
 DATING_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["transcript_id", "verdict", "event", "event_kind", "speech_date_earliest", "speech_date_latest",
-                 "sources", "transcript_evidence", "reupload", "reasoning"],
+                 "sources", "transcript_evidence", "description_evidence", "reupload", "reasoning"],
     "properties": {
         "transcript_id": {"type": "string", "minLength": 3},
         "verdict": {"enum": list(VERDICTS)},
@@ -455,6 +688,7 @@ DATING_SCHEMA = {
                            "verbatim_excerpt": {"type": "string", "minLength": 1},
                            "kind": {"enum": ["primary", "secondary"]}}}},
         "transcript_evidence": {"type": ["string", "null"]},
+        "description_evidence": {"type": ["string", "null"]},
         "reupload": {"enum": ["yes", "no", "unclear"]},
         "reasoning": {"type": "string", "minLength": 1},
     },
@@ -483,10 +717,19 @@ WORK IN THIS ORDER.
    opens every page you cite and checks your excerpt against it, which is where a
    summary that gave the wrong day (3 of 10 checks in this project) is caught.
 
-   THE RECORDING'S OWN PAGE NEVER COUNTS. A YouTube page of any kind, the page
-   named under URL below, another page of the same show on a transcript site, and
-   a web.archive.org copy of any of them date an upload, not the event. The script
-   refuses them without opening them. Cite the event's own record instead.
+   THE RECORDING'S OWN PAGE NEVER COUNTS AS A SOURCE. A YouTube page of any kind,
+   the page named under URL below, another page of the same show on a transcript
+   site, and a web.archive.org copy of any of them date an upload, not the event.
+   The script refuses them without opening them. Cite the event's own record
+   instead.
+
+   THE DESCRIPTION IS THE ONE EXCEPTION. If the Description below states when the
+   event itself happened ("Recorded August 2023", "Bill Gates, Mehtap Ozkan,
+   Saturday, February 25, 2023"), that date counts as evidence. Copy those words
+   exactly into "description_evidence", at least four words with the date and its
+   year; the script checks them against the stored description. The upload date,
+   a "premiered" or "streamed live" date that YouTube shows, and a date the
+   description gives for anything other than this event never count.
 
 3. TEST THE DATE AGAINST THE TRANSCRIPT. Look for remarks that date the talk:
    "this afternoon", "welcome to the second developer conference", "we
@@ -518,7 +761,8 @@ punctuation, and nothing else. An excerpt the script cannot find, or whose date
 is outside your range, confirms nothing.
 
 VERDICT
-  "dated"            you identified the event and a source dates it.
+  "dated"            you identified the event and a source, or the description,
+                     dates it.
   "publication_only" the recording is its own event (a podcast episode, a studio
                      interview, a letter) and the best evidence is when it was
                      published. The last day is the publication date. The first
@@ -530,8 +774,10 @@ VERDICT
                      days, for "event" and for "event_kind".
 
 "transcript_evidence" is words copied exactly from the transcript that date the
-talk, or null. "reupload" says whether the channel re-uploaded someone else's
-recording.
+talk, or null. "description_evidence" is words copied exactly from the
+Description below that state when the event happened, or null. Give at least one
+source or description_evidence with "dated" or "publication_only". "reupload"
+says whether the channel re-uploaded someone else's recording.
 
 Answer with one JSON object and nothing else."""
 
@@ -629,7 +875,7 @@ Source id: {rec['source_id']}
 Dates the page itself carried: {json.dumps(page_dates) if page_dates else 'none recorded'}
 
 Description:
-{rec.get('yt_description') or '(none)'}
+{recording_description(rec) or '(none)'}
 
 Transcript opening (first {len(opening)} words):
 {' '.join(opening)}
@@ -665,8 +911,8 @@ def validate_proposal(obj: dict, tid: str) -> list[str]:
             errs.append(f"{name} {v!r} is not a real YYYY-MM-DD date")
     if not errs and e > lat:
         errs.append(f"speech_date_earliest {e} is after speech_date_latest {lat}")
-    if not obj["sources"]:
-        errs.append(f"verdict {obj['verdict']} cites no source")
+    if not obj["sources"] and not (obj.get("description_evidence") or "").strip():
+        errs.append(f"verdict {obj['verdict']} cites no source and no description_evidence")
     if not (obj["event"] or "").strip() or obj["event_kind"] is None:
         errs.append(f"verdict {obj['verdict']} names no event or event kind")
     return errs
@@ -769,108 +1015,293 @@ def strong_years(rec: dict) -> set[int]:
     return {s["year"] for s in ev["signals"] if s["source"] in SDE.STRONG and (up is None or s["year"] <= up)}
 
 
+PAGE_CHECK_KEYS = ("url", "publisher", "cited_excerpt", "fetched_via", "http_status", "final_url", "page_sha256",
+                   "found_in", "window", "page_span", "refused", "fetched", "fetch_error", "excerpt_found",
+                   "page_title", "page_names_video_id")
+
+
 def _queue(reason: str, detail: str, checks: list | None = None) -> dict:
     return {"outcome": "queue", "reason": reason, "detail": detail, "checks": checks or []}
 
 
-def merge_one(rec: dict, doc: dict, checks: list[dict], proposal_ref: dict | None = None,
-              run_rel: str | None = None) -> dict:
-    """One proposal and its source checks -> {"outcome": "override", "entry"} or {"outcome": "queue", reason}.
+def assess(rec: dict, doc: dict, checks: list[dict]) -> dict:
+    """One proposal under the rules for ONE proposal, before any other dater's proposal is read.
 
-    Deterministic, and the same function the loader re-runs. The order of the
-    rules is the order of the reasons a person reads in the queue:
+    Returns {"harness", "prop", "eligible", "confirmed", "queue", "good", "spans"}.
+    eligible: the proposal passed every rule before the source checks (valid, a date,
+    not a re-upload's publication date, inside the upper bound, its transcript
+    evidence found), which is what two_agent_agreement needs. confirmed: a
+    confirming source also shows its last day. The rules run in the order of the
+    reasons a person reads in the queue:
       invalid_proposal, cannot_date, reupload_publication_only,
       no_upper_bound / after_upper_bound (design 1.5 rule 5: the Singju "Sep 13"
       for a Sep 12 upload; an undated source is bounded by its fetch date),
       transcript_evidence_not_found, no_confirming_source (with every check's
-      reason), latest_day_unsourced, strong_year_conflict (a title or source-id
-      year the range misses: "CES 2006" on a 2013 upload, and also "What Aaron
-      Levie Saw in 2004", which a person reads).
-    The outcome is "override" for a date before the transcript's own, "check" for
-    one that confirms it. The entry has no confirmed_at_utc; the caller stamps it.
+      reason), latest_day_unsourced.
     """
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
+    out = {"harness": doc.get("harness") or "agent", "prop": doc["proposal"], "eligible": False,
+           "confirmed": False, "queue": None, "good": [], "spans": []}
+
+    def queued(reason: str, detail: str, cks: list | None = None) -> dict:
+        out["queue"] = _queue(reason, detail, cks)
+        return out
     prop = doc["proposal"]
     errs = validate_proposal(prop, tid)
     if errs:
-        return _queue("invalid_proposal", "; ".join(errs[:5]))
+        return queued("invalid_proposal", "; ".join(errs[:5]))
     if prop["verdict"] == "cannot_date":
-        return _queue("cannot_date", prop["reasoning"][:400])
+        return queued("cannot_date", prop["reasoning"][:400])
     if prop["verdict"] == "publication_only" and prop.get("reupload") == "yes":
-        return _queue("reupload_publication_only", "the agent says the channel re-uploaded someone else's recording, "
+        return queued("reupload_publication_only", "the agent says the channel re-uploaded someone else's recording, "
                                                    "so the date it was published there is not the event's")
     e, lat = prop["speech_date_earliest"], prop["speech_date_latest"]
-    own_date, own_basis = L.own_statement_date(rec)
-    if own_date is not None:
-        bound, what = own_date, f"the {own_basis}"
-    elif fetch_bound(rec):
-        bound, what = fetch_bound(rec), "the day this transcript was fetched (the source carries no date)"
-    else:
-        return _queue("no_upper_bound", "the source carries no date and the record no fetched_at_utc, so nothing "
+    ub = upper_bound(rec)
+    if ub is None:
+        return queued("no_upper_bound", "the source carries no date and the record no fetched_at_utc, so nothing "
                                         "bounds the range from above")
+    bound, what = ub
     if lat > bound:
-        return _queue("after_upper_bound", f"the range ends {lat}, after {what}, {bound}; the words cannot have "
+        return queued("after_upper_bound", f"the range ends {lat}, after {what}, {bound}; the words cannot have "
                                            f"been spoken after that")
     te = prop.get("transcript_evidence")
     if te and "error" in L.locate_quote(rec.get("text") or "", te) and \
             L.locate_quote(rec.get("text") or "", te)["error"] in ("not_found", "empty_quote"):
-        return _queue("transcript_evidence_not_found", f"{te[:200]!r} is not in the transcript")
+        return queued("transcript_evidence_not_found", f"{te[:200]!r} is not in the transcript")
+    out["eligible"] = True
     # A check counts only for a url AND excerpt the proposal itself cited (review item 10), so
     # neither a stray check nor one swapped in later can confirm, at merge or at load.
+    # Description checks are DERIVED here from the transcript, never taken as input: a
+    # stored one (route "description") is what an entry recorded, and is re-derived.
+    pages = [c for c in checks if c.get("route", "page") == "page"]
     cited = {(s["url"], L.normalise(s["verbatim_excerpt"])) for s in prop["sources"]}
     verdicts = [(c, False, "the proposal did not cite this url and excerpt")
                 if (c["url"], L.normalise(c["cited_excerpt"])) not in cited else (c, *confirms(c, prop, rec))
-                for c in checks]
+                for c in pages]
     good = [c for c, ok, _ in verdicts if ok]
+    reasons = [f"{c['url']}: {why}" for c, _, why in verdicts]
+    desc = check_description(rec, prop)
+    if desc is not None:
+        if desc["ok"]:
+            good.append(desc)
+        else:
+            reasons.append(f"description: {desc['why']}")
+    if not (desc and desc["ok"]):
+        # Tier 0: one day in the description, inside the agent's range, needs no citation.
+        day, why = tier0_day(rec, prop["verdict"])
+        if day is not None and e <= day <= lat:
+            good.append(tier0_check(rec, day, prop["verdict"]))
+        else:
+            reasons.append(f"description, Tier 0: {why if day is None else f'its one day {day} is outside the range {e}..{lat}'}")
     if not good:
-        return _queue("no_confirming_source", "; ".join(f"{c['url']}: {why}" for c, _, why in verdicts)
-                      or "no source was checked", [dict(c) for c in checks])
+        return queued("no_confirming_source", "; ".join(reasons) or "no source was checked",
+                      [dict(c) for c in pages] + ([desc] if desc else []))
     # The statement date is the LAST day of the range, so a source must show that day
     # (review item 2): "September 7-9, 2025", "May 2012" or the publication day itself.
     spans = []
     for c in good:
+        if c.get("route") == "description":
+            # Only the days the description check accepted, never every date in its span (review
+            # fixes 2, 6, 7): a cued or upload-day date beside a good one must not source the last day.
+            spans += ([(date.fromisoformat(c["day"]),) * 2] if c["basis"] == "tier0" else
+                      [(date.fromisoformat(a), date.fromisoformat(b)) for a, b in c["spans"]])
+            continue
         s, t_ = _find(c["window"], c["cited_excerpt"])
-        for d in dates_in_text(c["window"][s:t_]):
-            r = date_for_verdict(d, prop["verdict"])
-            if r is not None and date.fromisoformat(e) <= r[0] and r[1] <= date.fromisoformat(lat):
-                spans.append(r)
+        spans += _spans_in_range(c["window"][s:t_], prop)
     if not any(a <= date.fromisoformat(lat) <= b for a, b in spans):
-        return _queue("latest_day_unsourced", f"no confirming excerpt shows {lat}, the last day of the range and so "
-                                              f"the statement date; they show {sorted({(a.isoformat(), b.isoformat()) for a, b in spans})}")
+        return queued("latest_day_unsourced", f"no confirming excerpt shows {lat}, the last day of the range and so "
+                                              f"the statement date; they show "
+                                              f"{sorted({(a.isoformat(), b.isoformat()) for a, b in spans})}")
+    out.update(confirmed=True, good=good, spans=spans)
+    return out
+
+
+def _check_record(c: dict, harness: str) -> dict:
+    """A confirming check as an entry stores it, tagged with the dater whose proposal it checked."""
+    if c.get("route") == "description":
+        return {**c, "proposal": harness}
+    return {"route": "page", "proposal": harness, **{k: c[k] for k in PAGE_CHECK_KEYS}}
+
+
+def _proposal_record(doc: dict, ref: dict | None) -> dict:
+    prop = doc["proposal"] if isinstance(doc.get("proposal"), dict) else {}
+    return {"harness": doc.get("harness") or "agent", "path": (ref or {}).get("path"),
+            "sha256": (ref or {}).get("sha256"), "requested_model": doc.get("requested_model"),
+            "served_model": doc.get("served_model"), "served_model_verified": doc.get("served_model_verified"),
+            "identity": doc.get("identity"), "verdict": prop.get("verdict"),
+            "range": [prop.get("speech_date_earliest"), prop.get("speech_date_latest")]}
+
+
+def _shared_input(rec: dict, docs: list[dict], lat: str) -> str | None:
+    """Why two daters naming `lat` are not independent, or None (review fix 3).
+
+    Both prompts print the same UPPER BOUND, the same leads and the same page
+    dates; two agents copying one of them agree by construction, not by finding
+    the event. A full day in a lead or a page date counts; a month or a year does
+    not, since it names no day. A proposal file that does not record the leads it
+    was shown cannot be checked, so it cannot agree.
+    """
+    ub = upper_bound(rec)
+    if ub is not None and lat == ub[0]:
+        return f"both daters named {lat}, the upper bound ({ub[1]}) their prompts printed; that is not independent"
+    if any("leads" not in d for d in docs):
+        return (f"a proposal file does not record the leads its prompt showed ({[d.get('harness') for d in docs if 'leads' not in d]}), "
+                f"so the agreement on {lat} cannot be checked against them")
+    texts = [x for d in docs for x in (d["leads"] or [])]
+    if rec.get("page_dates"):
+        texts.append(json.dumps(rec["page_dates"]))
+    days = {x["lo"].isoformat() for t in texts for x in dates_in_text(t) if x["lo"] == x["hi"]}
+    if lat in days:
+        return (f"both daters named {lat}, a day that appears in the leads or the page dates both prompts showed; "
+                f"that is not independent")
+    return None
+
+
+def _strong_year_conflict(rec: dict, e: str, lat: str) -> dict | None:
     years = strong_years(rec)
-    span_years = set(range(int(e[:4]), int(lat[:4]) + 1))
-    if years and not (years & span_years):
+    if years and not (years & set(range(int(e[:4]), int(lat[:4]) + 1))):
         return _queue("strong_year_conflict", f"the title or source id names {sorted(years)}; the confirmed range "
                                               f"{e}..{lat} does not include it")
-    evidenced = any(a == date.fromisoformat(e) for a, _ in spans)
-    lead = good[0]
+    return None
+
+
+def _entry(rec: dict, prop: dict, verdict: str, e: str, lat: str, evidence: dict, confirmed_by: str,
+           evidenced: bool, te: str | None, confirmation: dict, basis_note: str = "") -> dict:
+    """The override or check entry. `evidence` is {source_url, verbatim_evidence} for a confirmed source, or
+    {agents_named} for two agents that agreed with no source (review fix 1)."""
+    own_date, _ = L.own_statement_date(rec)
     kind = "check" if own_date is not None and lat == own_date else "override"
-    entry = {
+    return {
         "statement_date": lat,
         "basis": f"{prop['event'].strip()} ({prop['event_kind']}"
-                 + ("; publication date" if prop["verdict"] == "publication_only" else "") + ")",
-        "source_url": lead["url"],
-        "verbatim_evidence": lead["page_span"],
-        "confirmed_by": L.AGENT_CONFIRMATION,
+                 + ("; publication date" if verdict == "publication_only" else "") + basis_note + ")",
+        **evidence,
+        "confirmed_by": confirmed_by,
         "earliest_evidenced": evidenced,
         **({"statement_date_earliest": e, "precision": L.date_precision(e, lat)} if e != lat else {}),
         **({"internal_evidence": f"Transcript: {te}"} if te else {}),
-        "confirmation": {
-            "method": METHOD, "merge_version": MERGE_VERSION, "kind": kind, "run": run_rel, "proposal": proposal_ref,
-            "verdict": prop["verdict"], "range": [e, lat], "rule": RULE, "zone_rule": ZONE_RULE,
-            "harness": doc.get("harness"), "requested_model": doc.get("requested_model"),
-            "served_model": doc.get("served_model"), "served_model_verified": doc.get("served_model_verified"),
-            "identity": doc.get("identity"),
-            "source_checks": [{k: c[k] for k in ("url", "publisher", "cited_excerpt", "fetched_via", "http_status",
-                                                 "final_url", "page_sha256", "found_in", "window", "page_span",
-                                                 "refused", "fetched", "fetch_error", "excerpt_found",
-                                                 "page_title", "page_names_video_id")}
-                              for c in good],
-        },
+        "confirmation": {"merge_version": MERGE_VERSION, "kind": kind, "verdict": verdict, "range": [e, lat],
+                         "zone_rule": ZONE_RULE, **confirmation},
     }
-    # A confirmation of the transcript's own date is a CHECK, which supersedes no record
-    # (review item 14); an earlier date is an OVERRIDE.
-    return {"outcome": kind, "entry": entry}
+
+
+def _agents_named(found: list[dict]) -> list[dict]:
+    """What each agreeing agent named, copied from its proposal and labelled unconfirmed: its words, not a source."""
+    return [{"agent": a["harness"], "unconfirmed": True, "event": a["prop"]["event"],
+             "event_kind": a["prop"]["event_kind"], "verdict": a["prop"]["verdict"],
+             "range": [a["prop"]["speech_date_earliest"], a["prop"]["speech_date_latest"]],
+             "cited": [{"url": s["url"], "verbatim_excerpt": s["verbatim_excerpt"]} for s in a["prop"]["sources"]],
+             **({"description_evidence": a["prop"]["description_evidence"]}
+                if a["prop"].get("description_evidence") else {})} for a in found]
+
+
+def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: dict | None = None,
+          run_rel: str | None = None) -> dict:
+    """Every dater's proposal for one recording -> {"outcome": "override" | "check", "entry"} or a queue row.
+
+    Operator decision VD-11 (2026-10-01). Deterministic, and the function the loader
+    re-runs. In order:
+      1. each proposal is assessed alone (assess);
+      2. two proposals confirmed by their own checks on DIFFERENT last days:
+         queued as dater_disagreement, never one of them;
+      3. any confirmed proposal: its last day, from the first confirmed dater in
+         the order given (DATERS), recording every proposal the merge read;
+      4. nothing confirmed, two or more proposals, every one past the rules before
+         the checks, and every one naming the SAME last day, exactly: that day,
+         with method two_agent_agreement;
+      5. otherwise queued: one proposal's own reason, or for several the common
+         reason, else no_confirmation, with each dater's reason in by_dater.
+    A strong title or source-id year the range misses queues 3 and 4 alike.
+    The outcome is "override" for a date before the transcript's own, "check" for
+    one that confirms it. The entry has no confirmed_at_utc; the caller stamps it.
+    """
+    hs = [d.get("harness") or "agent" for d in docs]
+    if not docs or len(set(hs)) != len(hs):
+        raise ValueError(f"merge takes one proposal per dater; got harnesses {hs}")
+    # A proposal names the daters of the run that made it (sha256-pinned), so a merge or a
+    # stored entry that leaves one out, where a disagreement could hide, is refused.
+    for d, h in zip(docs, hs):
+        if d.get("daters") is not None and sorted(d["daters"]) != sorted(hs):
+            raise ValueError(f"the {h} proposal was made in a run whose daters are {d['daters']}, but the merge "
+                             f"read {hs}; a dater's proposal is missing or extra")
+    refs = refs or {}
+    found = [assess(rec, d, checks_by.get(h) or []) for d, h in zip(docs, hs)]
+    proposals = [_proposal_record(d, refs.get(h)) for d, h in zip(docs, hs)]
+    confirmed = [a for a in found if a["confirmed"]]
+    if len({a["prop"]["speech_date_latest"] for a in confirmed}) > 1:
+        return {**_queue("dater_disagreement", "; ".join(
+            f"{a['harness']} confirmed {a['prop']['speech_date_latest']} by "
+            f"{', '.join(c.get('route') or 'page' for c in a['good'])}" for a in confirmed),
+            [_check_record(c, a["harness"]) for a in confirmed for c in a["good"]]),
+            "by_dater": {a["harness"]: ("confirmed" if a["confirmed"] else a["queue"]["reason"]) for a in found}}
+    if confirmed:
+        lead = confirmed[0]
+        prop = lead["prop"]
+        e, lat = prop["speech_date_earliest"], prop["speech_date_latest"]
+        # Rule R1 (coordinator's decision, 2026-10-01, reversible): every other dater whose
+        # proposal passed the rules before the checks must not contradict the confirmed day,
+        # meaning its own range contains it. Measured on the pilot: it removes the one wrong
+        # confirmation (A9, a publication day) and loses one right one (evan-spiegel).
+        against = [a for a in found if a is not lead and a["eligible"]
+                   and not (a["prop"]["speech_date_earliest"] <= lat <= a["prop"]["speech_date_latest"])]
+        if against:
+            return {**_queue("dater_disagreement", f"{lead['harness']} confirmed {lat}; " + "; ".join(
+                f"{a['harness']} named {a['prop']['speech_date_earliest']}..{a['prop']['speech_date_latest']}, "
+                f"which does not contain it (rule R1)" for a in against),
+                [_check_record(c, a["harness"]) for a in confirmed for c in a["good"]]),
+                "by_dater": {a["harness"]: ("confirmed" if a["confirmed"] else a["queue"]["reason"]) for a in found}}
+        conflict = _strong_year_conflict(rec, e, lat)
+        if conflict:
+            return conflict
+        first = lead["good"][0]
+        desc = first.get("route") == "description"
+        return _confirmed(_entry(
+            rec, prop, prop["verdict"], e, lat,
+            # A description lives on the recording's own page, so that page is its address.
+            {"source_url": rec["url"] if desc else first["url"],
+             "verbatim_evidence": first["span"] if desc else first["page_span"]}, L.AGENT_CONFIRMATION,
+            any(a == date.fromisoformat(e) for a, _ in lead["spans"]), prop.get("transcript_evidence"),
+            {"method": METHOD, "rule": RULE, "run": run_rel, "lead": lead["harness"], "proposals": proposals,
+             "source_checks": [_check_record(c, a["harness"]) for a in confirmed for c in a["good"]]}))
+    lats = {a["prop"].get("speech_date_latest") for a in found}
+    if len(found) >= 2 and all(a["eligible"] for a in found) and len(lats) == 1:
+        lat = lats.pop()
+        shared = _shared_input(rec, docs, lat)
+        if shared:
+            return _queue("agreement_on_shared_input", shared)
+        e = min(a["prop"]["speech_date_earliest"] for a in found)
+        conflict = _strong_year_conflict(rec, e, lat)
+        if conflict:
+            return conflict
+        verdict = "dated" if all(a["prop"]["verdict"] == "dated" for a in found) else "publication_only"
+        te = next((a["prop"]["transcript_evidence"] for a in found if a["prop"].get("transcript_evidence")), None)
+        # No source confirmed this day, so the entry names none (review fix 1): it records what
+        # the agents named, labelled as their words, and says so wherever the date is shown.
+        return _confirmed(_entry(
+            rec, found[0]["prop"], verdict, e, lat, {"agents_named": _agents_named(found)},
+            L.AGREEMENT_CONFIRMATION, False, te,
+            {"method": AGREEMENT_METHOD, "rule": AGREEMENT_RULE, "run": run_rel, "lead": None,
+             "proposals": proposals, "source_checks": []}, basis_note="; two daters agree"))
+    if len(found) == 1:
+        return found[0]["queue"]
+    by = {a["harness"]: a["queue"]["reason"] for a in found}
+    reason = next(iter(set(by.values()))) if len(set(by.values())) == 1 else "no_confirmation"
+    return {**_queue(reason, "; ".join(f"{a['harness']}: {a['queue']['reason']}: {a['queue']['detail'][:300]}"
+                                       for a in found),
+                     [{**c, "proposal": a["harness"]} for a in found for c in a["queue"]["checks"]]),
+            "by_dater": by}
+
+
+def _confirmed(entry: dict) -> dict:
+    """A CHECK confirms the own date and supersedes no record (review item 14); an earlier date is an OVERRIDE."""
+    return {"outcome": entry["confirmation"]["kind"], "entry": entry}
+
+
+def merge_one(rec: dict, doc: dict, checks: list[dict], proposal_ref: dict | None = None,
+              run_rel: str | None = None) -> dict:
+    """One proposal and its source checks: merge() over a single dater."""
+    h = doc.get("harness") or "agent"
+    return merge(rec, [doc], {h: checks}, {h: proposal_ref} if proposal_ref else {}, run_rel)
 
 
 def _find_run_dir(run_rel: str, override_path: Path) -> Path:
@@ -885,29 +1316,51 @@ def _find_run_dir(run_rel: str, override_path: Path) -> Path:
 def verify_agent_entry(tid: str, entry: dict, trec: dict, override_path, kind: str = "override") -> None:
     """Re-verify an agent entry from what it stored, or raise. Called by the override loader.
 
-    The proposal file must match its sha256, and re-running this module's merge
-    (the version the entry names) over the proposal and the stored windows must
-    give exactly the stored entry. The page itself is not re-fetched: its sha256
-    and a window around the excerpt are what was kept (critique 3 C3).
+    Every proposal file the merge read must match its sha256 and be the named
+    dater's, and re-running this module's merge (the version the entry names) over
+    those proposals and the stored windows must give exactly the stored entry. The
+    page itself is not re-fetched: its sha256 and a window around the excerpt are
+    what was kept (critique 3 C3). A description check is re-derived from the
+    transcript's own stored description.
     """
     c = entry.get("confirmation")
     if not isinstance(c, dict):
         raise L.PredictionError(f"statement_date_override: {tid}: confirmation is not an object")
-    if c.get("method") != METHOD or c.get("merge_version") not in MERGE_VERSIONS:
+    if c.get("method") not in METHODS or c.get("merge_version") not in MERGE_VERSIONS:
         raise L.PredictionError(f"statement_date_override: {tid}: confirmation method {c.get('method')!r} / "
                                 f"merge_version {c.get('merge_version')!r} is not one this code can re-run "
-                                f"({METHOD}, {list(MERGE_VERSIONS)})")
-    prop = c.get("proposal") or {}
-    if not isinstance(c.get("run"), str) or not prop.get("path") or not prop.get("sha256"):
-        raise L.PredictionError(f"statement_date_override: {tid}: confirmation names no run or proposal file")
-    path = _find_run_dir(c["run"], override_path) / prop["path"]
+                                f"({list(METHODS)}, {list(MERGE_VERSIONS)})")
+    props = c.get("proposals")
+    if not isinstance(c.get("run"), str) or not isinstance(props, list) or not props or \
+            not all(isinstance(p, dict) and p.get("harness") and p.get("path") and p.get("sha256") for p in props):
+        raise L.PredictionError(f"statement_date_override: {tid}: confirmation names no run or proposal files")
+    run_dir = _find_run_dir(c["run"], override_path)
+    docs, refs = [], {}
+    for p in props:
+        path = run_dir / p["path"]
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise L.PredictionError(f"statement_date_override: {tid}: proposal {path} is missing") from exc
+        if hashlib.sha256(raw).hexdigest() != p["sha256"]:
+            raise L.PredictionError(f"statement_date_override: {tid}: proposal {path} does not match its recorded "
+                                    f"sha256")
+        doc = json.loads(raw)
+        if not isinstance(doc.get("daters"), list) or not doc["daters"]:
+            raise L.PredictionError(f"statement_date_override: {tid}: proposal {path} names no daters, so the "
+                                    f"re-merge cannot tell whether a dater's proposal is missing")
+        if (doc.get("harness") or "agent") != p["harness"]:
+            raise L.PredictionError(f"statement_date_override: {tid}: proposal {path} was made by harness "
+                                    f"{doc.get('harness')!r}, but the entry lists it as {p['harness']!r}")
+        docs.append(doc)
+        refs[p["harness"]] = {"path": p["path"], "sha256": p["sha256"]}
+    stored = c.get("source_checks") or []
+    checks_by = {p["harness"]: [ck for ck in stored if ck.get("route", "page") == "page"
+                                and ck.get("proposal") == p["harness"]] for p in props}
     try:
-        raw = path.read_bytes()
-    except FileNotFoundError as exc:
-        raise L.PredictionError(f"statement_date_override: {tid}: proposal {path} is missing") from exc
-    if hashlib.sha256(raw).hexdigest() != prop["sha256"]:
-        raise L.PredictionError(f"statement_date_override: {tid}: proposal {path} does not match its recorded sha256")
-    out = merge_one(trec, json.loads(raw), c.get("source_checks") or [], proposal_ref=prop, run_rel=c["run"])
+        out = merge(trec, docs, checks_by, refs, run_rel=c["run"])
+    except ValueError as exc:
+        raise L.PredictionError(f"statement_date_override: {tid}: {exc}") from exc
     if out["outcome"] == "queue":
         raise L.PredictionError(f"statement_date_override: {tid}: the stored evidence no longer confirms the entry "
                                 f"on re-merge ({out['reason']}: {out['detail'][:300]})")

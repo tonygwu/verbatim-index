@@ -1,28 +1,49 @@
 #!/usr/bin/env python3
-"""The dating stage: find when each recording's words were spoken, and prove it from a page.
+"""The dating stage: find when each recording's words were spoken, and prove it from a page or the description.
 
-Rescue round 4, design section 1, as the operator decided it on 2026-09-29
-(VD-8 (c), "see what happens"): ONE agent per recording names the event and its
-date range and cites sources with verbatim excerpts; a script with no model then
-fetches every cited page and must find the excerpt on it, with a date inside the
-agent's range. The recording's own page never counts. A confirmed date becomes an
-entry in THIS RUN's override file, never production's (critique 3 A5); anything
-else goes to the run's queue with its reason, for a person.
+Rescue round 4, design section 1 (VD-8 (c), operator 2026-09-29, "see what
+happens"), with two daters since operator decision VD-11 (2026-10-01): for each
+recording, Gemini and Fable each name the event and its date range and cite
+sources with verbatim excerpts. A script with no model then fetches every cited
+page and must find the excerpt on it, with a date inside that dater's range. The
+recording's own page never counts; its stored DESCRIPTION does when it states the
+event's date (the dater's description_evidence, or Tier 0, the description's one
+uncued full day), strictly before the upload. A confirmed date becomes an entry in
+THIS RUN's override file, never production's (critique 3 A5); anything else goes
+to the run's queue with its reason, for a person.
+
+THE MERGE (dating_lib.merge). A date is confirmed when one dater's cited page or
+description check passes the rules for its own proposal and no other usable dater's
+range contradicts it (rule R1), or, with nothing confirmed, when both daters name
+exactly the same last day and it is not something both prompts showed (the upper
+bound, a lead or a page date). An agreed date is labelled "two dating agents named
+this day; no source confirms it" in its entry, the header and the card, and is never
+an exact date for the scorer. Two days each confirmed by a check, or a confirmed
+day the other dater's range misses, queue as dater_disagreement.
 
 Three stages, run in order by default:
-  propose   one agent call per transcript (SPENDS QUOTA). A proposal on disk is
-            reused, so a re-run pays only for what failed.
+  propose   one call per transcript per dater (SPENDS QUOTA), written to
+            proposals/<slug>/<sid>.<dater>.json. A proposal on disk is reused, so a
+            re-run pays only for what failed. An answer that fails validation is
+            stored as an invalid proposal (reported failed, final, --redo asks again);
+            only an infrastructure failure writes nothing and is retried. A proposal
+            from a run with other daters stops the run before any call.
   check     one polite HTTP fetch per cited page, direct and then from its
             Wayback copy. No model. Keeps each page's sha256 and a window
-            around the excerpt, never the page.
-  merge     dating_lib.merge_one per transcript. Writes <run-dir>/overrides.json
-            (loaded back through the production loader before it is kept),
-            <run-dir>/queue.json and <run-dir>/runs/<run_id>.json.
+            around the excerpt, never the page. Per dater:
+            source_checks/<slug>/<sid>.<dater>.json.
+  merge     dating_lib.merge per transcript, once every dater's proposal is on disk.
+            Writes <run-dir>/overrides.json and checks.json (each loaded back through
+            the production loader before it is kept), <run-dir>/queue.json and
+            <run-dir>/runs/<run_id>.json. One transcript's error is queued as
+            merge_error and never stops the others.
 
-THE HARNESS (operator, 2026-09-29): Gemini by default, because the Codex quota is
-short; Astra and Fable on request. Both Gemini and Astra have live web search.
-Fable in this harness has NO working web tools, so its proposal comes from memory;
-the page check applies to it exactly as to any other.
+THE DATERS (--harness, comma-separated). Production uses both, gemini,fable, the
+default (VD-11). Gemini has live web search; Fable in this harness has
+NO working web tools, so its proposal comes from memory, and the page check applies to it
+exactly as to any other. Astra (web search) on request. A single-dater run, such
+as --harness gemini, is the one-agent rule of VD-8 (c): its entries load and
+re-verify like any other, but production dating uses both daters.
 
 Dry run by default: prints the scope and what a run would spend, writes nothing.
 --run spends quota and says so first.
@@ -210,42 +231,72 @@ def call_agent(harness: str, prompt: str, timeout: int, workdir: Path, args, idx
     raise RuntimeError(f"cli_nonzero_exit: unknown harness {harness}")
 
 
-def requested_model(args) -> str:
-    return {"gemini": args.gemini_model, "astra": args.astra_model, "fable": "claude-fable-5-1"}[args.harness]
+HARNESSES = ("gemini", "astra", "fable")
 
 
-def propose_one(job: dict, args, run_dir: Path, run_id: str, caller, idx: int) -> dict:
+def daters(args) -> list[str]:
+    """The harnesses that propose a date for each transcript, in the order the merge reads them.
+
+    Default DL.DATERS, Gemini then Fable (operator decision VD-11, 2026-10-01). A
+    single name runs one dater, whose merge is the one-agent rule of VD-8 (c).
+    """
+    names = [x.strip() for x in (args.harness or "").split(",")]
+    bad = [x for x in names if x not in HARNESSES]
+    if not names or bad or len(set(names)) != len(names):
+        raise SystemExit(f"--harness {args.harness!r}: give one or more of {list(HARNESSES)}, comma-separated, "
+                         f"each once")
+    return names
+
+
+def requested_model(args, harness: str) -> str:
+    return {"gemini": args.gemini_model, "astra": args.astra_model, "fable": "claude-fable-5-1"}[harness]
+
+
+def proposal_path(run_dir: Path, tid: str, harness: str) -> Path:
+    slug, sid = tid.split("/", 1)
+    return run_dir / "proposals" / slug / f"{sid}.{harness}.json"
+
+
+def propose_one(job: dict, harness: str, args, run_dir: Path, run_id: str, caller, idx: int) -> dict:
     tid = job["tid"]
     slug, sid = tid.split("/", 1)
-    dest = run_dir / "proposals" / slug / f"{sid}.{args.harness}.json"
-    base = {"id": tid, "stage": "propose"}
+    dest = proposal_path(run_dir, tid, harness)
+    base = {"id": tid, "stage": "propose", "harness": harness}
     if dest.exists() and not args.redo:
-        return {**base, "status": "cached"}
+        cached = json.loads(dest.read_text())
+        return {**base, "status": "cached", **({"invalid": True} if cached.get("answer_errors") else {})}
     rec = json.loads(Path(job["path"]).read_text())
     leads, dropped = DL.leads_from_records(job["records"], job["meta"])
-    prompt, meta = DL.build_dating_prompt(rec, leads, harness=args.harness)
+    prompt, meta = DL.build_dating_prompt(rec, leads, harness=harness)
     sha = hashlib.sha256(prompt.encode()).hexdigest()
-    write(run_dir / "prompts" / slug / f"{sid}.txt", prompt)
+    write(run_dir / "prompts" / slug / f"{sid}.{harness}.txt", prompt)
     t0 = time.time()
     try:
-        text, tel, identity = caller(args.harness, prompt, args.timeout, Path(args.workroot) / run_id / f"{slug}-{sid}",
-                                     args, idx)
+        text, tel, identity = caller(harness, prompt, args.timeout,
+                                     Path(args.workroot) / run_id / f"{slug}-{sid}-{harness}", args, idx)
     except Exception as exc:  # noqa: BLE001 -- every failure is labelled, and none becomes a date
         detail = str(exc)[:500]
         return {**base, "status": "failed", "error_type": L.classify_exception_detail(detail), "detail": detail,
                 "prompt_sha256": sha}
-    write(run_dir / "raw" / slug / f"{sid}.{args.harness}.{run_id}.txt", text)
+    write(run_dir / "raw" / slug / f"{sid}.{harness}.{run_id}.txt", text)
+    # An answer the model gave but that fails validation is STORED as an invalid proposal
+    # (review fix 5): the merge reads it as invalid_proposal, so it neither confirms nor
+    # agrees, and the other dater's confirmation stands. It is final, like any answer on
+    # disk; --redo asks again. Only infrastructure failures above write nothing.
+    failure = None
     try:
         obj = L.extract_json(text)
+        if not isinstance(obj, dict):
+            raise ValueError(f"the answer is a {type(obj).__name__}, not a JSON object")
+        errs = DL.validate_proposal(obj, tid)
+        if errs:
+            failure = (L.E_SCHEMA, errs)
     except (ValueError, json.JSONDecodeError) as exc:
-        return {**base, "status": "failed", "error_type": L.E_NOJSON, "detail": str(exc)[:300], "prompt_sha256": sha}
-    errs = DL.validate_proposal(obj, tid)
-    if errs:
-        return {**base, "status": "failed", "error_type": L.E_SCHEMA, "detail": "; ".join(errs[:4]),
-                "prompt_sha256": sha}
+        obj, failure = {}, (L.E_NOJSON, [str(exc)[:300]])
     own_date, own_basis = L.own_statement_date(rec)
-    doc = {"schema_version": 1, "transcript_id": tid, "run_id": run_id, "harness": args.harness,
-           "requested_model": tel.get("requested_model") or requested_model(args),
+    # daters: every harness this run asked, so a merge or entry that leaves one out is refused.
+    doc = {"schema_version": 1, "transcript_id": tid, "run_id": run_id, "harness": harness, "daters": daters(args),
+           "requested_model": tel.get("requested_model") or requested_model(args, harness),
            "served_model": tel.get("served_model"), "served_model_verified": bool(tel.get("served_model_verified")),
            "identity": identity, "profile_home": tel.get("profile_home"),
            "prompt_sha256": sha, "prompt_meta": meta, "leads": leads, "leads_dropped": dropped,
@@ -253,8 +304,12 @@ def propose_one(job: dict, args, run_dir: Path, run_id: str, caller, idx: int) -
            "telemetry": {k: tel.get(k) for k in ("web_search_queries", "tool_use_counts", "denied_actions",
                                                  "input_tokens", "output_tokens", "thinking_tokens",
                                                  "reasoning_output_tokens", "attempts", "empty_retries")},
-           "elapsed_sec": round(time.time() - t0, 1), "proposed_at_utc": DL.utc_stamp()}
+           "elapsed_sec": round(time.time() - t0, 1), "proposed_at_utc": DL.utc_stamp(),
+           **({"answer_errors": failure[1], "answer_error_type": failure[0]} if failure else {})}
     write(dest, json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+    if failure:
+        return {**base, "status": "failed", "error_type": failure[0], "detail": "; ".join(failure[1][:4]),
+                "prompt_sha256": sha, "stored": True}
     return {**base, "status": "ok", "verdict": obj["verdict"], "identity": identity}
 
 
@@ -347,11 +402,46 @@ class PoliteFetcher:
         return {**wb, "via": "wayback", "error": f"direct: {direct['error']}; wayback: {wb['error']}"}
 
 
-def check_one(tid: str, rec: dict, doc_path: Path, run_dir: Path, fetcher: PoliteFetcher, redo: bool) -> dict:
+def refuse_other_dater_sets(jobs: list[dict], hs: list[str], run_dir: Path, args) -> None:
+    """Exit before any call when a proposal on disk was made by a run with other daters (review fix 9).
+
+    Such a file names other daters, so the merge would refuse it after this run had
+    spent its calls. --redo re-proposes every transcript, which replaces those files,
+    and is allowed when this run proposes; otherwise use a new --run-dir.
+    """
+    stale = []
+    for j in jobs:
+        for h in hs:
+            pp = proposal_path(run_dir, j["tid"], h)
+            if pp.exists():
+                named = json.loads(pp.read_text()).get("daters")
+                if not isinstance(named, list) or sorted(named) != sorted(hs):
+                    stale.append(f"{pp.relative_to(run_dir)} (daters {named})")
+    if stale and not (args.redo and args.stage in ("propose", "all")):
+        raise SystemExit(f"REFUSING before any call: {len(stale)} proposal file(s) under {run_dir} were made by a run "
+                         f"whose daters are not this run's {hs}: {stale[:5]}. Re-propose them with --redo (spends "
+                         f"calls), or use a new --run-dir.")
+
+
+def no_pages_to_check(doc: dict, tid: str) -> str | None:
+    """Why a stored proposal needs no page fetch, or None: cannot_date, or an answer that failed validation (the
+    merge reads it as invalid_proposal; review fix 5)."""
+    prop = doc.get("proposal")
+    if doc.get("answer_errors") or not isinstance(prop, dict) or DL.validate_proposal(prop, tid):
+        return "invalid answer"
+    return "cannot_date" if prop["verdict"] == "cannot_date" else None
+
+
+def checks_path(run_dir: Path, tid: str, harness: str) -> Path:
     slug, sid = tid.split("/", 1)
-    dest = run_dir / "source_checks" / slug / f"{sid}.json"
+    return run_dir / "source_checks" / slug / f"{sid}.{harness}.json"
+
+
+def check_one(tid: str, harness: str, rec: dict, doc_path: Path, run_dir: Path, fetcher: PoliteFetcher,
+              redo: bool) -> dict:
+    dest = checks_path(run_dir, tid, harness)
     sha = hashlib.sha256(doc_path.read_bytes()).hexdigest()
-    base = {"id": tid, "stage": "check"}
+    base = {"id": tid, "stage": "check", "harness": harness}
     if dest.exists() and not redo and json.loads(dest.read_text()).get("proposal_sha256") == sha:
         return {**base, "status": "cached"}
     prop = json.loads(doc_path.read_text())["proposal"]
@@ -374,7 +464,9 @@ def summarise(results: list[dict], stage: str) -> dict:
     tax = Counter(r["error_type"] for r in rs if r["status"] == "failed")
     s = {"attempted": len(rs), "succeeded": sum(1 for r in rs if r["status"] in ("ok", "cached")),
          "cached": sum(1 for r in rs if r["status"] == "cached"), "failed": sum(1 for r in rs if r["status"] == "failed"),
-         "skipped": sum(1 for r in rs if r["status"] == "skipped"), "error_taxonomy": dict(tax)}
+         "skipped": sum(1 for r in rs if r["status"] == "skipped"), "error_taxonomy": dict(tax),
+         # Invalid answers stored on disk (review fix 5): failed when made, cached after, never hidden.
+         "invalid_answers_on_disk": sum(1 for r in rs if r.get("invalid") or r.get("stored"))}
     return s
 
 
@@ -383,10 +475,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--run-dir", required=True, help="this run's own directory, data/predictions/_experiments/dating-<name>")
     ap.add_argument("--run", action="store_true", help="SPEND QUOTA and fetch pages; without it, a dry run that writes nothing")
     ap.add_argument("--stage", choices=["propose", "check", "merge", "all"], default="all")
-    ap.add_argument("--harness", choices=["gemini", "astra", "fable"], default="gemini",
-                    help="the agent that proposes dates. gemini (default; web search, operator 2026-09-29) or astra "
-                         "(web search). fable has NO working web tools in this harness, so its proposal comes from "
-                         "memory; every excerpt it cites must still pass the same page check as any other")
+    ap.add_argument("--harness", default=",".join(DL.DATERS),
+                    help="the daters, comma-separated: each proposes a date for every transcript, and the merge "
+                         "reads them all. Default gemini,fable (operator decision VD-11, 2026-10-01): gemini has web "
+                         "search; fable has NO working web tools in this harness, so its proposal comes from memory, "
+                         "and every excerpt it cites must still pass the same page check as any other. astra (web "
+                         "search) on request. One name runs one dater")
     ap.add_argument("--data-root", type=Path, default=None,
                     help="the data checkout the run belongs to; default this clone's data link. The run directory "
                          "must be <data-root>/predictions/_experiments/dating-<name>")
@@ -412,6 +506,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sleep) -> int:
     args = build_parser().parse_args(argv)
+    hs = daters(args)
     if Path(args.fable_bin).name == "cl":
         raise SystemExit("REFUSING --fable-bin cl: it injects --dangerously-skip-permissions (see AGENTS.md)")
     data = (args.data_root or L.data_root()).resolve()
@@ -423,24 +518,28 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     jobs, excluded, missing = select_scope(pred_dirs, troots, args.ids, production, args.limit)
     by_tid = {j["tid"]: j for j in jobs}
 
+    refuse_other_dater_sets(jobs, hs, run_dir, args)
     lines = [f"in scope: {len(jobs)} transcripts"] + [f"  excluded, {k}: {v}" for k, v in sorted(excluded.items())]
     if missing:
         lines.append(f"  transcript file missing under every root: {len(missing)} {missing[:5]}")
+    calls = len(jobs) * len(hs)
     if not args.run:
         sample = DL.build_dating_prompt(json.loads(jobs[0]["path"].read_text()),
                                         DL.leads_from_records(jobs[0]["records"], jobs[0]["meta"])[0],
-                                        harness=args.harness)[1] if jobs else None
+                                        harness=hs[0])[1] if jobs else None
         print("DRY RUN: nothing is called, fetched or written.")
         print("\n".join(lines).replace("  excluded, ", "  "))
-        print(f"a real run would spend {len(jobs)} {args.harness} calls ({requested_model(args)}), one per transcript "
-              f"(call_gemini may retry an empty or transient answer inside one call), and up to "
-              f"{len(jobs) * 3 * 3} HTTP GETs at about 3 cited pages each, direct then Wayback")
+        print(f"a real run would spend {calls} calls: "
+              + ", ".join(f"{h} {len(jobs)} ({requested_model(args, h)})" for h in hs)
+              + f", one per transcript per dater (call_gemini may retry an empty or transient answer inside one call), "
+                f"and up to {calls * 3 * 3} HTTP GETs at about 3 cited pages each, direct then Wayback")
         if sample:
-            print(f"first prompt: {sample}")
+            print(f"first prompt ({hs[0]}): {sample}")
         return 0
 
-    print(f"SPENDS QUOTA: up to {len(jobs)} {args.harness} calls ({requested_model(args)}) for the proposals not "
-          f"already on disk under {run_dir}, and HTTP fetches of every page they cite.")
+    print(f"SPENDS QUOTA: up to {calls} calls ("
+          + ", ".join(f"{h} {len(jobs)} {requested_model(args, h)}" for h in hs)
+          + f") for the proposals not already on disk under {run_dir}, and HTTP fetches of every page they cite.")
     print("\n".join(lines))
     run_id = f"{DL.utc_stamp().replace(':', '').replace('-', '')}-{secrets.token_hex(3)}"
     caller = caller or call_agent
@@ -450,52 +549,70 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
 
     if "propose" in stages:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futs = [ex.submit(propose_one, j, args, run_dir, run_id, caller, i) for i, j in enumerate(jobs)]
+            futs = [ex.submit(propose_one, j, h, args, run_dir, run_id, caller, i * len(hs) + k)
+                    for i, j in enumerate(jobs) for k, h in enumerate(hs)]
             for f in cf.as_completed(futs):
                 r = f.result()
                 results.append(r)
                 log(json.dumps(r)[:300])
 
-    def proposal_path(tid: str) -> Path:
-        slug, sid = tid.split("/", 1)
-        return run_dir / "proposals" / slug / f"{sid}.{args.harness}.json"
-
     if "check" in stages:
         for tid, job in by_tid.items():
-            pp = proposal_path(tid)
-            if not pp.exists():
-                results.append({"id": tid, "stage": "check", "status": "skipped", "reason": "no proposal"})
-                continue
-            if json.loads(pp.read_text())["proposal"]["verdict"] == "cannot_date":
-                results.append({"id": tid, "stage": "check", "status": "skipped", "reason": "cannot_date"})
-                continue
-            rec = json.loads(job["path"].read_text())
-            r = check_one(tid, rec, pp, run_dir, fetcher, args.redo)
-            results.append(r)
-            log(json.dumps(r)[:300])
+            for h in hs:
+                pp = proposal_path(run_dir, tid, h)
+                if not pp.exists():
+                    results.append({"id": tid, "harness": h, "stage": "check", "status": "skipped",
+                                    "reason": "no proposal"})
+                    continue
+                why_not = no_pages_to_check(json.loads(pp.read_text()), tid)
+                if why_not:
+                    results.append({"id": tid, "harness": h, "stage": "check", "status": "skipped",
+                                    "reason": why_not})
+                    continue
+                r = check_one(tid, h, json.loads(job["path"].read_text()), pp, run_dir, fetcher, args.redo)
+                results.append(r)
+                log(json.dumps(r)[:300])
 
     merge_report = None
     if "merge" in stages:
         overrides, checks_out, queue, not_proposed = {}, {}, [], []
+        missing_proposals: dict[str, list[str]] = {}
+        missing_checks: dict[str, list[str]] = {}
+        merge_errors: list[str] = []
         rel = str(run_dir.relative_to(data)) if data in run_dir.parents else str(run_dir)
         for tid, job in sorted(by_tid.items()):
-            pp = proposal_path(tid)
-            if not pp.exists():
+            # Every dater's proposal, or no merge: one dater alone could confirm a day the
+            # other's own page contradicts (VD-11). The transcript waits, named, for a re-run.
+            lacking = [h for h in hs if not proposal_path(run_dir, tid, h).exists()]
+            if lacking:
                 not_proposed.append(tid)
+                missing_proposals[tid] = lacking
                 continue
-            doc = json.loads(pp.read_text())
-            slug, sid = tid.split("/", 1)
-            cp = run_dir / "source_checks" / slug / f"{sid}.json"
-            sha = hashlib.sha256(pp.read_bytes()).hexdigest()
-            checks = []
-            if doc["proposal"]["verdict"] != "cannot_date":
-                cdoc = json.loads(cp.read_text()) if cp.exists() else None
-                if cdoc is None or cdoc["proposal_sha256"] != sha:
-                    not_proposed.append(tid)
-                    continue
-                checks = cdoc["checks"]
-            out = DL.merge_one(json.loads(job["path"].read_text()), doc, checks,
-                               proposal_ref={"path": str(pp.relative_to(run_dir)), "sha256": sha}, run_rel=rel)
+            docs, checks_by, refs, unchecked = [], {}, {}, []
+            for h in hs:
+                pp = proposal_path(run_dir, tid, h)
+                doc = json.loads(pp.read_text())
+                sha = hashlib.sha256(pp.read_bytes()).hexdigest()
+                docs.append(doc)
+                refs[h] = {"path": str(pp.relative_to(run_dir)), "sha256": sha}
+                checks_by[h] = []
+                if not no_pages_to_check(doc, tid):
+                    cp = checks_path(run_dir, tid, h)
+                    cdoc = json.loads(cp.read_text()) if cp.exists() else None
+                    if cdoc is None or cdoc["proposal_sha256"] != sha:
+                        unchecked.append(h)
+                        continue
+                    checks_by[h] = cdoc["checks"]
+            if unchecked:
+                not_proposed.append(tid)
+                missing_checks[tid] = unchecked
+                continue
+            try:
+                out = DL.merge(json.loads(job["path"].read_text()), docs, checks_by, refs, run_rel=rel)
+            except Exception as exc:  # noqa: BLE001 -- one transcript's defect never stops the others (review fix 4)
+                out = {"outcome": "queue", "reason": "merge_error", "detail": f"{type(exc).__name__}: {exc}"[:500],
+                       "checks": []}
+                merge_errors.append(tid)
             if out["outcome"] == "override":
                 overrides[tid] = {**out["entry"], "confirmed_at_utc": DL.utc_stamp()}
             elif out["outcome"] == "check":
@@ -503,16 +620,18 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                 checks_out[tid] = {**out["entry"], "confirmed_at_utc": DL.utc_stamp()}
             else:
                 queue.append({"transcript_id": tid, "reason": out["reason"], "detail": out["detail"],
-                              "proposal": str(pp.relative_to(run_dir)), "checks": out["checks"]})
+                              "by_dater": out.get("by_dater") or {hs[0]: out["reason"]},
+                              "proposals": {h: r["path"] for h, r in refs.items()}, "checks": out["checks"]})
         ov_path = run_dir / "overrides.json"
+        how = (f"daters {', '.join(hs)}: a cited page or description check of either, or both naming the same day "
+               f"(VD-11)" if len(hs) > 1 else f"one {hs[0]} agent plus a page or description check (VD-8 (c))")
         body = json.dumps({"schema_version": 1, "notes": f"Dating run {run_dir.name}, merge {DL.MERGE_VERSION}, "
-                           f"one {args.harness} agent plus a page check per entry (VD-8 (c)). Not production: pass "
-                           f"this file with --date-overrides.", "overrides": overrides},
+                           f"{how}. Not production: pass this file with --date-overrides.", "overrides": overrides},
                           indent=1, sort_keys=True, ensure_ascii=False) + "\n"
         staged = run_dir / "overrides.json.candidate"
         write(staged, body)
         # The file must load through the loader every stage uses, re-verifying each
-        # entry from its stored proposal and windows, before it replaces the last one.
+        # entry from its stored proposals and windows, before it replaces the last one.
         L.load_statement_date_overrides(staged, troots)
         write(ov_path, body)
         staged.unlink()
@@ -527,9 +646,14 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         write(run_dir / "queue.json", json.dumps({"schema_version": 1, "queue": queue}, indent=1, sort_keys=True,
                                                  ensure_ascii=False) + "\n")
         merge_report = {"confirmed": len(overrides), "checked": len(checks_out), "queued": len(queue),
-                        "queued_by_reason": dict(Counter(q["reason"] for q in queue)), "not_proposed": not_proposed}
+                        "queued_by_reason": dict(Counter(q["reason"] for q in queue)), "not_proposed": not_proposed,
+                        "missing_proposals": missing_proposals, "missing_checks": missing_checks,
+                        "merge_errors": merge_errors,
+                        "by_method": dict(Counter(e["confirmation"]["method"]
+                                                  for e in list(overrides.values()) + list(checks_out.values())))}
 
-    report = {"run_id": run_id, "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+    report = {"run_id": run_id, "daters": hs,
+              "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
               "scope": len(jobs), "excluded": dict(excluded), "missing": missing,
               "propose": summarise(results, "propose"), "check": summarise(results, "check"),
               "fetch_outcomes": dict(fetcher.outcomes), "merge": merge_report, "results": results,
@@ -539,13 +663,20 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     for st in ("propose", "check"):
         s = report[st]
         print(f"{st}: attempted {s['attempted']}, succeeded {s['succeeded']} (cached {s['cached']}), "
-              f"failed {s['failed']} {s['error_taxonomy']}, skipped {s['skipped']}")
+              f"failed {s['failed']} {s['error_taxonomy']}, skipped {s['skipped']}, "
+              f"invalid answers on disk {s['invalid_answers_on_disk']}")
     print(f"fetch outcomes: {dict(fetcher.outcomes)}")
     if merge_report:
+        waiting = Counter(h for v in merge_report["missing_proposals"].values() for h in v)
+        unchecked_n = Counter(h for v in merge_report["missing_checks"].values() for h in v)
         print(f"merge: confirmed {merge_report['confirmed']} (overrides), checked {merge_report['checked']} "
-              f"(own date confirmed), queued {merge_report['queued']} "
-              f"{merge_report['queued_by_reason']}, not proposed or not checked {len(merge_report['not_proposed'])}")
-    return 1 if report["propose"]["failed"] or report["check"]["failed"] else 0
+              f"(own date confirmed), by method {merge_report['by_method']}, queued {merge_report['queued']} "
+              f"{merge_report['queued_by_reason']}; not merged {len(merge_report['not_proposed'])}"
+              + "".join(f"; waiting for {h}: {n}" for h, n in sorted(waiting.items()))
+              + "".join(f"; {h} proposal not checked: {n}" for h, n in sorted(unchecked_n.items()))
+              + (f"; merge errors: {len(merge_report['merge_errors'])}" if merge_report["merge_errors"] else ""))
+    return 1 if report["propose"]["failed"] or report["check"]["failed"] or (merge_report or {}).get("merge_errors") \
+        else 0
 
 
 if __name__ == "__main__":

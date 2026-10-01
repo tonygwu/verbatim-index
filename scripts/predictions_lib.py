@@ -56,7 +56,8 @@ POLICY_MARKER = "{{ELIGIBILITY_POLICY}}"
 # hash (rescue round 4, critique 3 B2): a wording change needs a new release.
 HEADER_TEMPLATE_FILE = "STATEMENT_DATE_HEADER.json"
 HEADER_DATE_LINES = ("stated_in_page", "publication_date", "youtube_upload_date", "unknown", "override_day",
-                     "override_published", "override_range", "override_range_unsourced", "own_later", "own_none",
+                     "override_published", "override_range", "override_range_unsourced", "override_agreed_day",
+                     "override_agreed_range", "own_later", "own_none",
                      "check_day", "check_published", "check_sourced", "check_unsourced")
 # What a stage may say about the date line (release 2.3). Only the first of the
 # two doubts holds a record; cannot_tell is recorded and does not.
@@ -459,6 +460,16 @@ OVERRIDE_OPTIONAL = ("internal_evidence", "confidence", "confirmation_note", "re
 # Who may confirm an entry. An operator entry is taken on the operator's word; an
 # agent entry must carry its confirmation and is re-verified from it on every load.
 AGENT_CONFIRMATION = "agent_plus_source_check"
+# Two dating agents named the same last day and no source confirmed it (operator decision
+# VD-11; review fix 1, 2026-10-01). Such an entry names no source: it carries what the
+# agents named, labelled as their unconfirmed words, and never source_url or
+# verbatim_evidence. It is re-verified on load like any agent entry, never read as an
+# exact day of speech (score_predictions.exact_statement_date), and its header and card
+# lines say "two dating agents named this day; no source confirms it".
+AGREEMENT_CONFIRMATION = "two_agent_agreement"
+AGENT_CONFIRMATIONS = (AGENT_CONFIRMATION, AGREEMENT_CONFIRMATION)
+AGREEMENT_REQUIRED = ("statement_date", "basis", "agents_named", "confirmed_by", "confirmed_at_utc", "confirmation")
+AGREEMENT_OPTIONAL = ("internal_evidence", "statement_date_earliest", "precision", "earliest_evidenced")
 PRECISIONS = ("day", "days", "months", "years")
 _UTC_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 
@@ -487,16 +498,26 @@ def check_override_entry(tid: str, entry) -> dict:
         raise PredictionError(f"statement_date_override: key {tid!r} is not a transcript id of the form slug/source")
     if not isinstance(entry, dict):
         raise PredictionError(f"statement_date_override: {tid}: entry is {type(entry).__name__}, not an object")
-    missing = [k for k in OVERRIDE_REQUIRED if k not in entry]
-    unknown = sorted(set(entry) - set(OVERRIDE_REQUIRED) - set(OVERRIDE_OPTIONAL))
+    agreed = entry.get("confirmed_by") == AGREEMENT_CONFIRMATION
+    required, optional = (AGREEMENT_REQUIRED, AGREEMENT_OPTIONAL) if agreed else (OVERRIDE_REQUIRED, OVERRIDE_OPTIONAL)
+    missing = [k for k in required if k not in entry]
+    unknown = sorted(set(entry) - set(required) - set(optional))
     if missing or unknown:
-        raise PredictionError(f"statement_date_override: {tid}: missing {missing}, unknown {unknown}; an entry "
-                              f"carries {list(OVERRIDE_REQUIRED)} and optionally {list(OVERRIDE_OPTIONAL)}")
+        what = ("an agreement entry names no source: it carries" if agreed else "an entry carries")
+        raise PredictionError(f"statement_date_override: {tid}: missing {missing}, unknown {unknown}; {what} "
+                              f"{list(required)} and optionally {list(optional)}")
     _strict_date(entry["statement_date"], tid)
-    for k in ("basis", "source_url", "verbatim_evidence", "confirmed_by"):
+    for k in ("basis", "confirmed_by") + (() if agreed else ("source_url", "verbatim_evidence")):
         if not isinstance(entry[k], str) or not entry[k].strip():
             raise PredictionError(f"statement_date_override: {tid}: {k} is empty")
-    if not re.match(r"https?://", entry["source_url"]):
+    if agreed:
+        named = entry["agents_named"]
+        if not isinstance(named, list) or len(named) < 2 or not all(
+                isinstance(x, dict) and isinstance(x.get("agent"), str) and x["agent"].strip()
+                and x.get("unconfirmed") is True for x in named):
+            raise PredictionError(f"statement_date_override: {tid}: agents_named must list at least two agents, each "
+                                  f"with its name and unconfirmed: true")
+    elif not re.match(r"https?://", entry["source_url"]):
         raise PredictionError(f"statement_date_override: {tid}: source_url {entry['source_url']!r} is not http(s)")
     if not isinstance(entry["confirmed_at_utc"], str) or not _UTC_STAMP.fullmatch(entry["confirmed_at_utc"]):
         raise PredictionError(f"statement_date_override: {tid}: confirmed_at_utc {entry['confirmed_at_utc']!r} "
@@ -511,10 +532,10 @@ def check_override_entry(tid: str, entry) -> dict:
                                   f"span's own, {want!r}")
     if "earliest_evidenced" in entry and not isinstance(entry["earliest_evidenced"], bool):
         raise PredictionError(f"statement_date_override: {tid}: earliest_evidenced must be true or false")
-    if (entry["confirmed_by"] == AGENT_CONFIRMATION) != ("confirmation" in entry):
-        raise PredictionError(f"statement_date_override: {tid}: an entry is confirmed_by {AGENT_CONFIRMATION!r} "
-                              f"exactly when it carries a confirmation block; confirmed_by is "
-                              f"{entry['confirmed_by']!r}")
+    if (entry["confirmed_by"] in AGENT_CONFIRMATIONS) != ("confirmation" in entry):
+        raise PredictionError(f"statement_date_override: {tid}: an entry is confirmed_by one of "
+                              f"{list(AGENT_CONFIRMATIONS)} exactly when it carries a confirmation block; "
+                              f"confirmed_by is {entry['confirmed_by']!r}")
     return dict(entry)
 
 
@@ -563,7 +584,7 @@ def load_statement_date_overrides(path, transcript_roots) -> dict[str, dict]:
         for h in hits:
             trec = json.loads(h.read_text())
             check_override_against_transcript(tid, e["statement_date"], trec)
-            if e["confirmed_by"] == AGENT_CONFIRMATION:
+            if e["confirmed_by"] in AGENT_CONFIRMATIONS:
                 # An agent entry vouches for itself from what it stored: the proposal
                 # file by sha256, and each confirming page by the window kept around its
                 # excerpt. Re-checked here, in every stage that loads the file, so an
@@ -656,7 +677,7 @@ def load_statement_date_checks(path, transcript_roots) -> dict[str, dict]:
         for h in hits:
             trec = json.loads(h.read_text())
             _check_matches_own_date(tid, e, trec)
-            if e["confirmed_by"] == AGENT_CONFIRMATION:
+            if e["confirmed_by"] in AGENT_CONFIRMATIONS:
                 import dating_lib  # noqa: PLC0415 -- dating_lib imports this module
                 dating_lib.verify_agent_entry(tid, e, trec, path, kind="check")
         out[tid] = e
@@ -687,13 +708,22 @@ def apply_statement_date_check(rec: dict, checks: dict | None) -> dict:
     return {**rec, "statement_date_check": e}
 
 
+def _evidence_fields(entry: dict) -> dict:
+    """What a record carries as the entry's evidence: the source and its words, or, for two agents that agreed
+    with no source, what they named, labelled unconfirmed. A sourced entry keeps its keys in their old order, so
+    every record built from one is byte-identical."""
+    if entry["confirmed_by"] == AGREEMENT_CONFIRMATION:
+        return {"agents_named": entry["agents_named"]}
+    return {"source_url": entry["source_url"], "verbatim_evidence": entry["verbatim_evidence"]}
+
+
 def check_block(rec: dict) -> dict | None:
     """What a record carries about its dating check: the evidence, the verdict and any range."""
     ck = rec.get("statement_date_check")
     if ck is None:
         return None
     verdict = (ck.get("confirmation") or {}).get("verdict")
-    return {"basis": ck["basis"], "source_url": ck["source_url"], "verbatim_evidence": ck["verbatim_evidence"],
+    return {"basis": ck["basis"], **_evidence_fields(ck),
             "confirmed_by": ck["confirmed_by"], "confirmed_at_utc": ck["confirmed_at_utc"],
             **({"verdict": verdict} if verdict else {}),
             **{k: ck[k] for k in ("statement_date_earliest", "precision", "earliest_evidenced") if k in ck}}
@@ -748,7 +778,7 @@ def override_block(rec: dict) -> dict | None:
     # byte-identical. The scorer reads the verdict: a publication date is not the day
     # of speech (score_predictions.exact_statement_date, final review item 2).
     verdict = (ov.get("confirmation") or {}).get("verdict")
-    return {"basis": ov["basis"], "source_url": ov["source_url"], "verbatim_evidence": ov["verbatim_evidence"],
+    return {"basis": ov["basis"], **_evidence_fields(ov),
             "confirmed_by": ov["confirmed_by"], "confirmed_at_utc": ov["confirmed_at_utc"],
             "replaced_date": own_date, "replaced_basis": own_basis,
             **({"verdict": verdict} if verdict else {}),
@@ -991,7 +1021,11 @@ def statement_date_line(rec: dict, template: dict) -> str:
     fields = {"date": date, "earliest": earliest, "basis": ov["basis"]}
     own_sentence = (lines["own_none"] if own_date is None else
                     lines["own_later"].format(own_label=template["own_basis_labels"][own_basis], own_date=own_date))
-    if earliest == date:
+    if ov.get("confirmed_by") == AGREEMENT_CONFIRMATION:
+        # Two agents named this day and no source confirms it (review fix 1): never "the
+        # day the words were spoken" and never "from a sourced correction".
+        key = "override_agreed_day" if earliest == date else "override_agreed_range"
+    elif earliest == date:
         # A publication-only verdict dates when the recording was PUBLISHED, which the
         # dating stage makes an override when it is earlier than the upload; the words
         # may be older, so it never reads as the day of speech (final review item 2).
@@ -1009,6 +1043,10 @@ def _check_line(rec: dict, entry: dict, date: str, own_basis: str, template: dic
     lines = template["date_lines"]
     if own_basis not in template["own_basis_labels"]:
         raise PredictionError(f"header: no label for the transcript's own basis {own_basis!r}")
+    if entry.get("confirmed_by") == AGREEMENT_CONFIRMATION:
+        raise PredictionError(f"header: {rec.get('leader_slug')}/{rec.get('source_id')}: two agents agreeing cannot "
+                              f"confirm the transcript's own date; the dating merge refuses an agreement on the "
+                              f"upper bound both were shown")
     earliest = entry.get("statement_date_earliest") or date
     fields = {"date": date, "earliest": earliest, "basis": entry["basis"],
               "own_label": template["own_basis_labels"][own_basis],
