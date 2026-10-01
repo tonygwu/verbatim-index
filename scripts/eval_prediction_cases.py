@@ -214,6 +214,16 @@ def preflight(cases: list[dict], ctx: Context) -> list[str]:
     return problems
 
 
+def case_leads(case: dict, ctx: Context) -> list[str]:
+    """The leads a dating case's prompt shows every dater, as production builds them. The merge reads them too:
+    two daters copying a shown day do not agree independently (review fix 3)."""
+    recs_path = case["input"].get("records")
+    recs = L.parse_lines(ctx.path(recs_path).read_text(), recs_path) if recs_path else []
+    meta_path = ctx.data / recs_path.replace(".jsonl", ".meta.json") if recs_path else None
+    meta = json.loads(meta_path.read_text()) if meta_path and meta_path.is_file() else None
+    return DL.leads_from_records(recs, meta)[0]
+
+
 def build_prompt(case: dict, ctx: Context, harness: str | None = None) -> str:
     """The prompt production sends. A dating prompt differs per dater (its YOUR TOOLS block), so it names one."""
     st, inp = case["stage"], case["input"]
@@ -221,11 +231,7 @@ def build_prompt(case: dict, ctx: Context, harness: str | None = None) -> str:
         if harness is None:
             raise ValueError(f"{case['id']}: a dating prompt is built for one dater; name it")
         rec = json.loads(ctx.path(inp["transcript"]).read_text())
-        recs_path = inp.get("records")
-        recs = L.parse_lines(ctx.path(recs_path).read_text(), recs_path) if recs_path else []
-        meta_path = ctx.data / recs_path.replace(".jsonl", ".meta.json") if recs_path else None
-        meta = json.loads(meta_path.read_text()) if meta_path and meta_path.is_file() else None
-        return DL.build_dating_prompt(rec, DL.leads_from_records(recs, meta)[0], harness=harness)[0]
+        return DL.build_dating_prompt(rec, case_leads(case, ctx), harness=harness)[0]
     if st == "extract":
         rec = _transcript(case, ctx)
         roster = {r["slug"]: r for r in json.loads(ctx.path(inp.get("roster", "roster/final.json")).read_text())["roster"]}
@@ -264,7 +270,7 @@ def judge_dating(case: dict, ctx: Context, answers: dict) -> tuple[str, str]:
         errs = DL.validate_proposal(obj, tid)
         if errs:
             return "fail", f"{h}: invalid proposal: {'; '.join(errs[:3])}"
-        docs.append({"proposal": obj, "harness": h, "daters": list(answers)})
+        docs.append({"proposal": obj, "harness": h, "daters": list(answers), "leads": case_leads(case, ctx)})
         checks_by[h] = checks
     out = DL.merge(rec, docs, checks_by)
     ex = case["expect"]

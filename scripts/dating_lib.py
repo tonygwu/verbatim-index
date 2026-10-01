@@ -1126,6 +1126,31 @@ def _proposal_record(doc: dict, ref: dict | None) -> dict:
             "range": [prop.get("speech_date_earliest"), prop.get("speech_date_latest")]}
 
 
+def _shared_input(rec: dict, docs: list[dict], lat: str) -> str | None:
+    """Why two daters naming `lat` are not independent, or None (review fix 3).
+
+    Both prompts print the same UPPER BOUND, the same leads and the same page
+    dates; two agents copying one of them agree by construction, not by finding
+    the event. A full day in a lead or a page date counts; a month or a year does
+    not, since it names no day. A proposal file that does not record the leads it
+    was shown cannot be checked, so it cannot agree.
+    """
+    ub = upper_bound(rec)
+    if ub is not None and lat == ub[0]:
+        return f"both daters named {lat}, the upper bound ({ub[1]}) their prompts printed; that is not independent"
+    if any("leads" not in d for d in docs):
+        return (f"a proposal file does not record the leads its prompt showed ({[d.get('harness') for d in docs if 'leads' not in d]}), "
+                f"so the agreement on {lat} cannot be checked against them")
+    texts = [x for d in docs for x in (d["leads"] or [])]
+    if rec.get("page_dates"):
+        texts.append(json.dumps(rec["page_dates"]))
+    days = {x["lo"].isoformat() for t in texts for x in dates_in_text(t) if x["lo"] == x["hi"]}
+    if lat in days:
+        return (f"both daters named {lat}, a day that appears in the leads or the page dates both prompts showed; "
+                f"that is not independent")
+    return None
+
+
 def _strong_year_conflict(rec: dict, e: str, lat: str) -> dict | None:
     years = strong_years(rec)
     if years and not (years & set(range(int(e[:4]), int(lat[:4]) + 1))):
@@ -1211,6 +1236,9 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
     lats = {a["prop"].get("speech_date_latest") for a in found}
     if len(found) >= 2 and all(a["eligible"] for a in found) and len(lats) == 1:
         lat = lats.pop()
+        shared = _shared_input(rec, docs, lat)
+        if shared:
+            return _queue("agreement_on_shared_input", shared)
         e = min(a["prop"]["speech_date_earliest"] for a in found)
         conflict = _strong_year_conflict(rec, e, lat)
         if conflict:

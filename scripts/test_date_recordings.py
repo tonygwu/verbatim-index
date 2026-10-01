@@ -246,11 +246,15 @@ class TwoDaters(unittest.TestCase):
     def test_two_proposal_files_per_transcript_and_the_merge_reads_both(self):
         with tempfile.TemporaryDirectory() as td:
             fx = Fixture(Path(td))
-            pod_unread = pod_answer()     # its page is not on the fake web, so only agreement can date it
+            # Neither answer's page is on the fake web, so only agreement can date them. The podcast's
+            # day is two days before its upload; held-ep's is its upload day, which BOTH prompts
+            # printed as the upper bound, so the two daters are not independent there (review fix 3).
+            pod_unread = {**pod_answer(), "speech_date_earliest": "2025-09-10", "speech_date_latest": "2025-09-10"}
+            held_upload = {**pod_answer(), "transcript_id": "ada/held-ep"}
             agent = FakeAgent({("gemini", "ada/re-upload-abc123"): proposal(),
                                ("fable", "ada/re-upload-abc123"): proposal(**CANNOT),
                                "ada/pod-ep-xyz789": pod_unread,
-                               "ada/held-ep": proposal(**CANNOT, tid="ada/held-ep")})
+                               "ada/held-ep": held_upload})
             rc, out = run(fx.argv("--run"), agent, FakeWeb({LIVE_URL: LIVEBLOG}))
             self.assertEqual(rc, 0, out)
             self.assertTrue(out.lstrip().startswith("SPENDS QUOTA: up to 6 calls (gemini 3 gemini-3.8-flash-high, "
@@ -267,11 +271,12 @@ class TwoDaters(unittest.TestCase):
             self.assertEqual(ov["ada/re-upload-abc123"]["confirmation"]["lead"], "gemini")
             self.assertEqual([p["harness"] for p in ov["ada/re-upload-abc123"]["confirmation"]["proposals"]],
                              ["gemini", "fable"])
-            ck = L.load_statement_date_checks(fx.run / "checks.json", roots)
-            self.assertEqual(ck["ada/pod-ep-xyz789"]["confirmation"]["method"], "two_agent_agreement")
+            self.assertEqual(ov["ada/pod-ep-xyz789"]["confirmation"]["method"], "two_agent_agreement")
+            self.assertEqual(ov["ada/pod-ep-xyz789"]["statement_date"], "2025-09-10")
+            self.assertEqual(L.load_statement_date_checks(fx.run / "checks.json", roots), {})
             queue = json.loads((fx.run / "queue.json").read_text())["queue"]
-            self.assertEqual([(q["transcript_id"], q["reason"], q["by_dater"]) for q in queue],
-                             [("ada/held-ep", "cannot_date", {"gemini": "cannot_date", "fable": "cannot_date"})])
+            self.assertEqual([(q["transcript_id"], q["reason"]) for q in queue],
+                             [("ada/held-ep", "agreement_on_shared_input")])
 
     def test_a_transcript_missing_one_daters_proposal_is_not_merged(self):
         """A merge without Fable could confirm a day Fable's own page contradicts; it waits for both."""

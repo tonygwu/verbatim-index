@@ -182,5 +182,42 @@ class CueWords(unittest.TestCase):
         self.assertEqual((out["outcome"], out.get("reason")), ("queue", "latest_day_unsourced"), out)
 
 
+class AgreementOnSharedInput(unittest.TestCase):
+    """Fix 3: two daters that copy the same thing they were both SHOWN are not independent (probes 3a, 3b): the
+    upper bound printed in both prompts, a day in the shared leads, a day in the page's own dates."""
+
+    def test_both_naming_the_upper_bound_is_refused(self):
+        out = merge(rec_with(""), {"gemini": P("2015-01-01", "2019-02-27"), "fable": P("2012-01-01", "2019-02-27")})
+        self.assertEqual((out["outcome"], out.get("reason")), ("queue", "agreement_on_shared_input"), out)
+        self.assertIn("upper bound", out["detail"])
+
+    def test_both_copying_a_lead_day_is_refused(self):
+        lead = ["Ada spoke at the summit on June 10, 2014 according to the title."]
+        out = merge(rec_with(""), {"gemini": P("2014-06-10", "2014-06-10"), "fable": P("2014-06-10", "2014-06-10")},
+                    leads=lead)
+        self.assertEqual((out["outcome"], out.get("reason")), ("queue", "agreement_on_shared_input"), out)
+        self.assertIn("leads", out["detail"])
+
+    def test_both_copying_a_page_date_is_refused(self):
+        rec = rec_with("", page_dates={"published": "2014-06-10T09:00:00Z"})
+        out = merge(rec, {"gemini": P("2014-06-10", "2014-06-10"), "fable": P("2014-06-10", "2014-06-10")})
+        self.assertEqual((out["outcome"], out.get("reason")), ("queue", "agreement_on_shared_input"), out)
+
+    def test_an_agreement_on_a_day_nobody_was_shown_still_confirms(self):
+        out = merge(rec_with(""), {"gemini": P("2014-06-10", "2014-06-10"), "fable": P("2014-06-01", "2014-06-10")},
+                    leads=["The talk was given in 2014, before the 2019 upload."])
+        self.assertEqual(out["outcome"], "override", out)
+        self.assertEqual(out["entry"]["confirmation"]["method"], DL.AGREEMENT_METHOD)
+
+    def test_a_proposal_that_does_not_record_its_leads_cannot_agree(self):
+        hs = ("gemini", "fable")
+        rec = rec_with("")
+        docs = [doc(P("2014-06-10", "2014-06-10"), h, rec, hs) for h in hs]
+        del docs[1]["leads"]
+        out = DL.merge(rec, docs, {h: checks_for(P("2014-06-10", "2014-06-10"), PAGES, rec) for h in hs})
+        self.assertEqual((out["outcome"], out.get("reason")), ("queue", "agreement_on_shared_input"), out)
+        self.assertIn("leads", out["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

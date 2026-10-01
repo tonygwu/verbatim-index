@@ -50,7 +50,7 @@ CANNOT = dict(verdict="cannot_date", e=None, l=None, sources=[], event=None, eve
 
 
 def dd(obj, harness, rec=D10, daters=DL.DATERS):
-    return {**doc_for(obj, rec), "harness": harness, "daters": list(daters), "requested_model": MODELS[harness],
+    return {**doc_for(obj, rec), "harness": harness, "daters": list(daters), "leads": [], "requested_model": MODELS[harness],
             "served_model": MODELS[harness]}
 
 
