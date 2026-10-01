@@ -5,9 +5,11 @@ Rescue round 4 (design section 1, critiques 1 and 3), operator decision VD-8 (c)
 of 2026-09-29, "see what happens": ONE agent identifies the event and its date
 range and cites sources with verbatim excerpts. A script with no model then
 fetches each cited page and must find the excerpt on it, with a date inside the
-agent's own range. The recording's own page never counts. A confirmed result is
-an override entry that vouches for itself on every load; anything else is queued
-for a person with its reason.
+agent's own range. The recording's own page never counts, with one exception
+since 2026-10-01: its stored DESCRIPTION, when it states the event's date (the
+agent's description_evidence, or Tier 0, the description's one full day). A
+confirmed result is an override entry that vouches for itself on every load;
+anything else is queued for a person with its reason.
 
 WHY. No stage ever tried to find out when a recording was made. Code copied the
 YouTube upload date, or nothing, into the date the card prints as "Said", and a
@@ -49,7 +51,9 @@ import predictions_lib as L  # noqa: E402
 # it and the loader re-runs exactly that version, so an edit that changes what
 # confirms a date must bump this, or every stored entry refuses to load (loud,
 # by design: critique 3 C3).
-MERGE_VERSION = "merge-2"   # merge-1 never shipped; review fixes of 2026-09-30 changed what confirms
+# merge-1 never shipped; merge-2 was the review fixes of 2026-09-30. merge-3 (2026-10-01): the
+# recording's own description counts when it states the event's date (cited, or Tier 0).
+MERGE_VERSION = "merge-3"
 MERGE_VERSIONS = (MERGE_VERSION,)
 METHOD = "one_agent_plus_source_check"
 
@@ -67,7 +71,9 @@ WINDOW_CHARS = 1000          # kept each side of the excerpt (about 2 KB); the p
 ZONE_RULE = ("a speech, session or interview is dated in the local time of the place where it happened; "
              "a publication (verdict publication_only) is dated in UTC")
 RULE = ("statement_date is the latest day of the agent's range; the range is confirmed only when a fetched "
-        "page that is not the recording's own carries the cited excerpt and a date inside the range")
+        "page that is not the recording's own carries the cited excerpt and a date inside the range, or the "
+        "recording's stored description states a date inside the range (cited, or its one full day: Tier 0); "
+        "a confirming source must show the latest day")
 
 # ---------------------------------------------------------------------------
 # Dates in text
@@ -433,13 +439,154 @@ def context_tokens(rec: dict, prop: dict) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# The recording's own description (operator, 2026-10-01)
+# ---------------------------------------------------------------------------
+#
+# FOUND by the operator: the own-page rule stopped Gemini from using the strongest
+# evidence it had. bill-gates/techno-optimism-t3p9ko's description says "Bill Gates,
+# Mehtap Ozkan, Saturday, February 25, 2023", the upload is 2023-04-02, and Gemini
+# answered cannot_date, quoting the rule. The rule stops an agent passing off the
+# UPLOAD date as the event's; a date the description STATES about the event is
+# evidence. It is read from the transcript record, never fetched, so the loader
+# re-checks it from the same stored text. Never the title: "What Aaron Levie Saw in
+# 2004" (aaron-levie/hd-in-hd-podcast--u5-zt) names the subject, not the event.
+
+def recording_description(rec: dict) -> str | None:
+    """The description stored with the transcript: yt_description, else declared_description, else None.
+
+    MEASURED 2026-10-01 over the 1,027 stored transcripts: yt_description on 675,
+    declared_description on none (the name is kept for a web source that stores
+    one). hs_description is Happy Scribe's boilerplate ("Read the full transcript
+    of ..."), never the show's own words, so it is not read.
+    """
+    for k in ("yt_description", "declared_description"):
+        v = rec.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+    return None
+
+
+def upper_bound(rec: dict) -> tuple[str, str] | None:
+    """(YYYY-MM-DD, what it is): the own date, else the fetch date, else None. Never the local clock."""
+    own_date, own_basis = L.own_statement_date(rec)
+    if own_date is not None:
+        return own_date, f"the {own_basis}"
+    if fetch_bound(rec):
+        return fetch_bound(rec), "the day this transcript was fetched (the source carries no date)"
+    return None
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _spans_in_range(text: str, prop: dict) -> list[tuple[date, date]]:
+    """The dates in text, read for the proposal's verdict, that lie wholly inside its range."""
+    e, lat = date.fromisoformat(prop["speech_date_earliest"]), date.fromisoformat(prop["speech_date_latest"])
+    out = []
+    for d in dates_in_text(text):
+        r = date_for_verdict(d, prop["verdict"])
+        if r is not None and e <= r[0] and r[1] <= lat:
+            out.append(r)
+    return out
+
+
+def check_description(rec: dict, prop: dict) -> dict | None:
+    """The agent's description_evidence checked as a page excerpt is checked, or None when it gave none.
+
+    A normalised match on word boundaries, at least MIN_EXCERPT_WORDS words, a
+    date with its year inside the agent's range, and that date no later than the
+    upper bound. The context and embed rules of a page do not apply: the
+    description is this recording's own text by construction.
+    """
+    ev = prop.get("description_evidence")
+    if not ev:
+        return None
+    desc = recording_description(rec) or ""
+    out = {"route": "description", "basis": "cited", "cited_excerpt": ev,
+           "description_sha256": _sha(desc) if desc else None, "span": None, "ok": False, "why": None}
+
+    def no(why: str) -> dict:
+        out["why"] = why
+        return out
+    if not desc:
+        return no("the recording has no stored description")
+    if not rec.get("url"):
+        return no("the recording has no url to cite its description by")
+    if len(L.normalise(ev).split()) < MIN_EXCERPT_WORDS:
+        return no(f"the description excerpt has fewer than {MIN_EXCERPT_WORDS} words")
+    hit = _find(desc, ev)
+    if hit is None:
+        return no(f"the cited words are not in the description: {ev[:80]!r}")
+    out["span"] = span = desc[hit[0]:hit[1]]
+    found = dates_in_text(span)
+    if not found:
+        return no(f"the cited description words carry no date with a year: {span[:80]!r}")
+    if not any(date_for_verdict(d, prop["verdict"]) for d in found):
+        return no(f"the cited description dates are UTC timestamps, which cannot give the venue's day ({ZONE_RULE})")
+    inside = _spans_in_range(span, prop)
+    if not inside:
+        return no(f"the description's dates {[d['text'] for d in found]} are outside the range "
+                  f"{prop['speech_date_earliest']}..{prop['speech_date_latest']}")
+    ub = upper_bound(rec)
+    if ub is None:
+        return no("nothing bounds the recording from above, so a description date cannot be checked against it")
+    if not [r for r in inside if r[1] <= date.fromisoformat(ub[0])]:
+        return no(f"the description's dates in the range are later than {ub[1]}, {ub[0]}; a description date "
+                  f"after the upload is not the event's")
+    out.update(ok=True, why="confirms")
+    return out
+
+
+def tier0_day(rec: dict, verdict: str) -> tuple[str | None, str]:
+    """(YYYY-MM-DD, why) when the stored description names exactly ONE full day with its year, on or before the
+    upper bound; (None, why) otherwise. Deterministic, no model.
+
+    Only day-precision dates count: a month, a range of days or a bare year is not
+    the day of an event. Two different days mean the description dates more than
+    one thing, so neither is taken. The title is never read.
+    """
+    desc = recording_description(rec)
+    if not desc:
+        return None, "the recording has no stored description"
+    days: dict[date, dict] = {}
+    for d in dates_in_text(desc):
+        if d["lo"] == d["hi"]:
+            days.setdefault(d["lo"], d)
+    if not days:
+        return None, "the description names no full day with its year"
+    if len(days) > 1:
+        return None, (f"the description names {len(days)} different days "
+                      f"({', '.join(sorted(x.isoformat() for x in days))}), so none is taken as the event's")
+    (only, d), = days.items()
+    r = date_for_verdict(d, verdict)
+    if r is None:
+        return None, f"the description's one day is a UTC timestamp, {d['text']!r} ({ZONE_RULE})"
+    ub = upper_bound(rec)
+    if ub is None:
+        return None, "nothing bounds the recording from above"
+    if r[0] > date.fromisoformat(ub[0]):
+        return None, f"the description's one day {r[0]} is after {ub[1]}, {ub[0]}"
+    return r[0].isoformat(), f"the description names one day, {r[0]}"
+
+
+def tier0_check(rec: dict, day: str) -> dict:
+    """The Tier 0 confirmation as a stored check: the description line that carries the day."""
+    desc = recording_description(rec) or ""
+    found = [d for d in dates_in_text(desc) if d["lo"] == d["hi"] and d["lo"].isoformat() == day]
+    line = next((ln.strip() for ln in desc.splitlines() if found and found[0]["text"] in ln), found[0]["text"])
+    return {"route": "description", "basis": "tier0", "cited_excerpt": None, "description_sha256": _sha(desc),
+            "span": line[:300], "day": day, "ok": True, "why": f"the description names one day, {day}"}
+
+
+# ---------------------------------------------------------------------------
 # The prompt
 # ---------------------------------------------------------------------------
 
 DATING_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["transcript_id", "verdict", "event", "event_kind", "speech_date_earliest", "speech_date_latest",
-                 "sources", "transcript_evidence", "reupload", "reasoning"],
+                 "sources", "transcript_evidence", "description_evidence", "reupload", "reasoning"],
     "properties": {
         "transcript_id": {"type": "string", "minLength": 3},
         "verdict": {"enum": list(VERDICTS)},
@@ -455,6 +602,7 @@ DATING_SCHEMA = {
                            "verbatim_excerpt": {"type": "string", "minLength": 1},
                            "kind": {"enum": ["primary", "secondary"]}}}},
         "transcript_evidence": {"type": ["string", "null"]},
+        "description_evidence": {"type": ["string", "null"]},
         "reupload": {"enum": ["yes", "no", "unclear"]},
         "reasoning": {"type": "string", "minLength": 1},
     },
@@ -483,10 +631,19 @@ WORK IN THIS ORDER.
    opens every page you cite and checks your excerpt against it, which is where a
    summary that gave the wrong day (3 of 10 checks in this project) is caught.
 
-   THE RECORDING'S OWN PAGE NEVER COUNTS. A YouTube page of any kind, the page
-   named under URL below, another page of the same show on a transcript site, and
-   a web.archive.org copy of any of them date an upload, not the event. The script
-   refuses them without opening them. Cite the event's own record instead.
+   THE RECORDING'S OWN PAGE NEVER COUNTS AS A SOURCE. A YouTube page of any kind,
+   the page named under URL below, another page of the same show on a transcript
+   site, and a web.archive.org copy of any of them date an upload, not the event.
+   The script refuses them without opening them. Cite the event's own record
+   instead.
+
+   THE DESCRIPTION IS THE ONE EXCEPTION. If the Description below states when the
+   event itself happened ("Recorded August 2023", "Bill Gates, Mehtap Ozkan,
+   Saturday, February 25, 2023"), that date counts as evidence. Copy those words
+   exactly into "description_evidence", at least four words with the date and its
+   year; the script checks them against the stored description. The upload date,
+   a "premiered" or "streamed live" date that YouTube shows, and a date the
+   description gives for anything other than this event never count.
 
 3. TEST THE DATE AGAINST THE TRANSCRIPT. Look for remarks that date the talk:
    "this afternoon", "welcome to the second developer conference", "we
@@ -518,7 +675,8 @@ punctuation, and nothing else. An excerpt the script cannot find, or whose date
 is outside your range, confirms nothing.
 
 VERDICT
-  "dated"            you identified the event and a source dates it.
+  "dated"            you identified the event and a source, or the description,
+                     dates it.
   "publication_only" the recording is its own event (a podcast episode, a studio
                      interview, a letter) and the best evidence is when it was
                      published. The last day is the publication date. The first
@@ -530,8 +688,10 @@ VERDICT
                      days, for "event" and for "event_kind".
 
 "transcript_evidence" is words copied exactly from the transcript that date the
-talk, or null. "reupload" says whether the channel re-uploaded someone else's
-recording.
+talk, or null. "description_evidence" is words copied exactly from the
+Description below that state when the event happened, or null. Give at least one
+source or description_evidence with "dated" or "publication_only". "reupload"
+says whether the channel re-uploaded someone else's recording.
 
 Answer with one JSON object and nothing else."""
 
@@ -629,7 +789,7 @@ Source id: {rec['source_id']}
 Dates the page itself carried: {json.dumps(page_dates) if page_dates else 'none recorded'}
 
 Description:
-{rec.get('yt_description') or '(none)'}
+{recording_description(rec) or '(none)'}
 
 Transcript opening (first {len(opening)} words):
 {' '.join(opening)}
@@ -665,8 +825,8 @@ def validate_proposal(obj: dict, tid: str) -> list[str]:
             errs.append(f"{name} {v!r} is not a real YYYY-MM-DD date")
     if not errs and e > lat:
         errs.append(f"speech_date_earliest {e} is after speech_date_latest {lat}")
-    if not obj["sources"]:
-        errs.append(f"verdict {obj['verdict']} cites no source")
+    if not obj["sources"] and not (obj.get("description_evidence") or "").strip():
+        errs.append(f"verdict {obj['verdict']} cites no source and no description_evidence")
     if not (obj["event"] or "").strip() or obj["event_kind"] is None:
         errs.append(f"verdict {obj['verdict']} names no event or event kind")
     return errs
@@ -769,6 +929,11 @@ def strong_years(rec: dict) -> set[int]:
     return {s["year"] for s in ev["signals"] if s["source"] in SDE.STRONG and (up is None or s["year"] <= up)}
 
 
+PAGE_CHECK_KEYS = ("url", "publisher", "cited_excerpt", "fetched_via", "http_status", "final_url", "page_sha256",
+                   "found_in", "window", "page_span", "refused", "fetched", "fetch_error", "excerpt_found",
+                   "page_title", "page_names_video_id")
+
+
 def _queue(reason: str, detail: str, checks: list | None = None) -> dict:
     return {"outcome": "queue", "reason": reason, "detail": detail, "checks": checks or []}
 
@@ -800,14 +965,12 @@ def merge_one(rec: dict, doc: dict, checks: list[dict], proposal_ref: dict | Non
         return _queue("reupload_publication_only", "the agent says the channel re-uploaded someone else's recording, "
                                                    "so the date it was published there is not the event's")
     e, lat = prop["speech_date_earliest"], prop["speech_date_latest"]
-    own_date, own_basis = L.own_statement_date(rec)
-    if own_date is not None:
-        bound, what = own_date, f"the {own_basis}"
-    elif fetch_bound(rec):
-        bound, what = fetch_bound(rec), "the day this transcript was fetched (the source carries no date)"
-    else:
+    own_date, _ = L.own_statement_date(rec)
+    ub = upper_bound(rec)
+    if ub is None:
         return _queue("no_upper_bound", "the source carries no date and the record no fetched_at_utc, so nothing "
                                         "bounds the range from above")
+    bound, what = ub
     if lat > bound:
         return _queue("after_upper_bound", f"the range ends {lat}, after {what}, {bound}; the words cannot have "
                                            f"been spoken after that")
@@ -817,23 +980,40 @@ def merge_one(rec: dict, doc: dict, checks: list[dict], proposal_ref: dict | Non
         return _queue("transcript_evidence_not_found", f"{te[:200]!r} is not in the transcript")
     # A check counts only for a url AND excerpt the proposal itself cited (review item 10), so
     # neither a stray check nor one swapped in later can confirm, at merge or at load.
+    # Description checks are DERIVED here from the transcript, never taken as input: a
+    # stored one (route "description") is what an entry recorded, and is re-derived.
+    pages = [c for c in checks if c.get("route", "page") == "page"]
     cited = {(s["url"], L.normalise(s["verbatim_excerpt"])) for s in prop["sources"]}
     verdicts = [(c, False, "the proposal did not cite this url and excerpt")
                 if (c["url"], L.normalise(c["cited_excerpt"])) not in cited else (c, *confirms(c, prop, rec))
-                for c in checks]
+                for c in pages]
     good = [c for c, ok, _ in verdicts if ok]
+    reasons = [f"{c['url']}: {why}" for c, _, why in verdicts]
+    desc = check_description(rec, prop)
+    if desc is not None:
+        if desc["ok"]:
+            good.append(desc)
+        else:
+            reasons.append(f"description: {desc['why']}")
+    if not (desc and desc["ok"]):
+        # Tier 0: one day in the description, inside the agent's range, needs no citation.
+        day, why = tier0_day(rec, prop["verdict"])
+        if day is not None and e <= day <= lat:
+            good.append(tier0_check(rec, day))
+        else:
+            reasons.append(f"description, Tier 0: {why if day is None else f'its one day {day} is outside the range {e}..{lat}'}")
     if not good:
-        return _queue("no_confirming_source", "; ".join(f"{c['url']}: {why}" for c, _, why in verdicts)
-                      or "no source was checked", [dict(c) for c in checks])
+        return _queue("no_confirming_source", "; ".join(reasons) or "no source was checked",
+                      [dict(c) for c in pages] + ([desc] if desc else []))
     # The statement date is the LAST day of the range, so a source must show that day
     # (review item 2): "September 7-9, 2025", "May 2012" or the publication day itself.
     spans = []
     for c in good:
+        if c.get("route") == "description":
+            spans += ([(date.fromisoformat(c["day"]),) * 2] if c["basis"] == "tier0" else _spans_in_range(c["span"], prop))
+            continue
         s, t_ = _find(c["window"], c["cited_excerpt"])
-        for d in dates_in_text(c["window"][s:t_]):
-            r = date_for_verdict(d, prop["verdict"])
-            if r is not None and date.fromisoformat(e) <= r[0] and r[1] <= date.fromisoformat(lat):
-                spans.append(r)
+        spans += _spans_in_range(c["window"][s:t_], prop)
     if not any(a <= date.fromisoformat(lat) <= b for a, b in spans):
         return _queue("latest_day_unsourced", f"no confirming excerpt shows {lat}, the last day of the range and so "
                                               f"the statement date; they show {sorted({(a.isoformat(), b.isoformat()) for a, b in spans})}")
@@ -849,8 +1029,9 @@ def merge_one(rec: dict, doc: dict, checks: list[dict], proposal_ref: dict | Non
         "statement_date": lat,
         "basis": f"{prop['event'].strip()} ({prop['event_kind']}"
                  + ("; publication date" if prop["verdict"] == "publication_only" else "") + ")",
-        "source_url": lead["url"],
-        "verbatim_evidence": lead["page_span"],
+        # A description lives on the recording's own page, so that page is its address.
+        "source_url": rec["url"] if lead.get("route") == "description" else lead["url"],
+        "verbatim_evidence": lead["span"] if lead.get("route") == "description" else lead["page_span"],
         "confirmed_by": L.AGENT_CONFIRMATION,
         "earliest_evidenced": evidenced,
         **({"statement_date_earliest": e, "precision": L.date_precision(e, lat)} if e != lat else {}),
@@ -861,11 +1042,8 @@ def merge_one(rec: dict, doc: dict, checks: list[dict], proposal_ref: dict | Non
             "harness": doc.get("harness"), "requested_model": doc.get("requested_model"),
             "served_model": doc.get("served_model"), "served_model_verified": doc.get("served_model_verified"),
             "identity": doc.get("identity"),
-            "source_checks": [{k: c[k] for k in ("url", "publisher", "cited_excerpt", "fetched_via", "http_status",
-                                                 "final_url", "page_sha256", "found_in", "window", "page_span",
-                                                 "refused", "fetched", "fetch_error", "excerpt_found",
-                                                 "page_title", "page_names_video_id")}
-                              for c in good],
+            "source_checks": [dict(c) if c.get("route") == "description" else
+                              {"route": "page", **{k: c[k] for k in PAGE_CHECK_KEYS}} for c in good],
         },
     }
     # A confirmation of the transcript's own date is a CHECK, which supersedes no record

@@ -66,7 +66,8 @@ def proposal(verdict="dated", e="2012-05-30", l="2012-05-30", sources=None, tid=
                {"url": "https://liveblog.example.com/2012/05/30/ada-live", "publisher": "Liveblog",
                 "date_on_source": "2012-05-30", "verbatim_excerpt": "Posted May 30, 2012 at 4:26 pm PT",
                 "kind": "primary"}],
-           "transcript_evidence": None, "reupload": "yes", "reasoning": "The liveblog is dated."}
+           "transcript_evidence": None, "description_evidence": None, "reupload": "yes",
+           "reasoning": "The liveblog is dated."}
     obj.update(over)
     return obj
 
