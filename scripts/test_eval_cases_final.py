@@ -119,7 +119,7 @@ class GoldBeforeAnyCall(Base):
         g = gold(self.root, [RESOLVE, EARLY])
         rc, out = run(["--gold", str(g), "--data", str(self.data), "--estimate"])
         self.assertEqual(rc, 0, out)
-        self.assertIn("live run: 2 model cases x 3 repeats = 6 calls (astra 6)", out)
+        self.assertIn("live run: 2 model cases x 3 repeats: 6 calls (astra 6)", out)
 
 
 class FunnelConfiguration(Base):
@@ -202,19 +202,22 @@ class EarlyStage(Base):
 
 
 class JudgedCount(Base):
-    def record(self, g, case, harness="gemini", served="gemini-3.8-flash-high", n=1):
+    def record(self, g, case, fable_served="claude-fable-5-1", n=1):
+        """n repeats: Gemini's proposal with no page checks, and Fable's cannot_date, so the merge queues them."""
         d = g / "recordings" / case["id"]
         d.mkdir(parents=True, exist_ok=True)
-        sha = hashlib.sha256(E.build_prompt(case, E.Context(self.data, g)).encode()).hexdigest()
+        cannot = proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None, event_kind=None)
         for i in range(n):
-            (d / f"r{i:02d}.json").write_text(json.dumps({
-                "prompt_sha256": sha, "response_text": json.dumps(proposal()), "harness": harness,
-                "served_model": served, "source_checks": [], "telemetry": {}}))
+            for h, obj, served in (("gemini", proposal(), "gemini-3.8-flash-high"), ("fable", cannot, fable_served)):
+                sha = hashlib.sha256(E.build_prompt(case, E.Context(self.data, g), h).encode()).hexdigest()
+                (d / f"r{i:02d}.{h}.json").write_text(json.dumps({
+                    "prompt_sha256": sha, "response_text": json.dumps(obj), "harness": h,
+                    "served_model": served, "source_checks": [], "telemetry": {}}))
 
     def test_refused_and_inconclusive_cases_are_not_judged(self):
         refused, thin, queued = (dict(copy.deepcopy(DATING), id=x) for x in ("D-refused", "D-thin", "D-queued"))
         g = gold(self.root, [refused, thin, queued])
-        self.record(g, refused, harness="fable")         # RECORDING_REFUSED
+        self.record(g, refused, fable_served="gemini-3.8-flash-high")   # RECORDING_REFUSED
         self.record(g, thin, n=1)                         # one valid repeat: INCONCLUSIVE
         self.record(g, queued, n=2)                       # no checks, so the merge queues it: QUEUED, judged
         rc, out = run(["--gold", str(g), "--data", str(self.data)])

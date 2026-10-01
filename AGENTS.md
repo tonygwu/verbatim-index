@@ -1654,9 +1654,17 @@ new grades incomparable with the corpus already graded.
   published `accepted` flag. Proof: `.venv/bin/python scripts/test_predictions_release23.py`.
 - Recording dates (rescue round 4, operator decision VD-8 (c)):
   `scripts/date_recordings.py --run-dir data/predictions/_experiments/dating-<name>`
-  is a dry run until `--run`, which SPENDS QUOTA. One agent per recording,
-  `--harness gemini` by default (Codex quota, operator 2026-09-29), names the event
-  and its date range with sources. `dating_lib.py`, with no model, must find each
+  is a dry run until `--run`, which SPENDS QUOTA. Two daters per recording since
+  2026-10-01 (operator decision VD-11): `--harness gemini,fable` is the default, and
+  each writes its own proposal, `<sid>.gemini.json` and `<sid>.fable.json`, naming the
+  event and its date range with sources. The merge confirms a date when either
+  proposal's page or description check passes, or when both name exactly the same
+  last day with nothing confirmed (method `two_agent_agreement`, both proposal
+  sha256s). Two days each confirmed by a check queue as `dater_disagreement`. A
+  transcript is merged only when every dater's proposal is on disk. The recording's
+  DESCRIPTION counts when it states the event's date: the agent's
+  `description_evidence`, or Tier 0, a description with exactly one full day on or
+  before the upload, never the title. `dating_lib.py`, with no model, must find each
   cited excerpt with a date inside the range on the fetched page, and a source must
   show the range's LAST day, the statement date. The recording's own page never
   counts, checked on the cited and the final (redirected) address: its video id,
@@ -1669,13 +1677,16 @@ new grades incomparable with the corpus already graded.
   run's `overrides.json`; one that CONFIRMS the transcript's own date to
   `checks.json` (`load_statement_date_checks`, `--date-checks` on the extractor),
   which supersedes no record. The rest go to `queue.json`. Never production's
-  files. Every agent entry re-verifies on every load from its proposal's sha256
-  and the window kept around each excerpt. Proof: `scripts/test_dating.py`,
-  `scripts/test_date_recordings.py`.
+  files. Every agent entry re-verifies on every load from every proposal file's
+  sha256, the window kept around each excerpt and the transcript's stored
+  description. Proof: `scripts/test_dating.py`, `scripts/test_dating_description.py`,
+  `scripts/test_dating_two_daters.py`, `scripts/test_date_recordings.py`.
 - Tier R case evals: `scripts/eval_prediction_cases.py --gold
   data/predictions/_eval/cases-20260929` replays the operator's audited cases
   offline; `--smoke` runs the Buddy Media `already_public` case first;
   `PREDICT_LIVE=1 ... --live` spends quota (`--estimate` first). A recorded answer
   replays only under its prompt's sha256, from the case's own harness and the
-  requested model. The gold file is private data. Proof:
-  `scripts/test_eval_prediction_cases.py`.
+  requested model. A dating repeat calls each dater once and replays only with
+  every dater's answer, so a dating case costs two calls per repeat. The gold file
+  is private data. Proof: `scripts/test_eval_prediction_cases.py`,
+  `scripts/test_eval_dating_daters.py`.
