@@ -96,5 +96,33 @@ class TierZeroNeverCrashes(unittest.TestCase):
             self.assertIn("merge errors: 1", out)
 
 
+class DescriptionDayBeforeOwnDate(unittest.TestCase):
+    """Fix 2: a description day ON the upload day gave a CHECK of the upload date (probes 1e, 1f, 2b). The day
+    must be STRICTLY before the transcript's own date, on both routes. No cue word here, so only this rule bites."""
+
+    DESC = "Ada at the archive studio, February 27, 2019, with the whole team."
+
+    def test_a_cited_description_day_on_the_upload_day_confirms_nothing(self):
+        rec = rec_with(self.DESC)
+        out = merge(rec, {"gemini": P("2019-02-27", "2019-02-27", sources=[],
+                                      desc="Ada at the archive studio, February 27, 2019")})
+        self.assertEqual((out["outcome"], out.get("reason")), ("queue", "no_confirming_source"), out)
+        self.assertIn("not before", out["detail"])
+
+    def test_tier0_skips_a_day_on_the_upload_day(self):
+        rec = rec_with(self.DESC)
+        day, why = DL.tier0_day(rec, "dated")
+        self.assertIsNone(day)
+        self.assertIn("not before", why)
+        out = merge(rec, {"gemini": P("2019-02-20", "2019-02-27")})
+        self.assertEqual(out["outcome"], "queue", out)
+
+    def test_the_day_before_the_upload_still_counts(self):
+        rec = rec_with(self.DESC.replace("February 27", "February 26"))
+        out = merge(rec, {"gemini": P("2019-02-26", "2019-02-26", sources=[],
+                                      desc="Ada at the archive studio, February 26, 2019")})
+        self.assertEqual(out["outcome"], "override", out)
+
+
 if __name__ == "__main__":
     unittest.main()

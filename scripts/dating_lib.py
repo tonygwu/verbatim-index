@@ -541,9 +541,11 @@ def check_description(rec: dict, prop: dict) -> dict | None:
     ub = upper_bound(rec)
     if ub is None:
         return no("nothing bounds the recording from above, so a description date cannot be checked against it")
-    if not [r for r in inside if r[1] <= date.fromisoformat(ub[0])]:
-        return no(f"the description's dates in the range are later than {ub[1]}, {ub[0]}; a description date "
-                  f"after the upload is not the event's")
+    # STRICTLY before the own date (review fix 2): a description day ON the upload day is
+    # an upload, premiere or livestream day, and confirming it would CHECK the upload date.
+    if not [r for r in inside if r[1] < date.fromisoformat(ub[0])]:
+        return no(f"the description's dates in the range are not before {ub[1]}, {ub[0]}; a description date on "
+                  f"or after the upload is not the event's")
     out.update(ok=True, why="confirms")
     return out
 
@@ -575,8 +577,8 @@ def tier0_day(rec: dict, verdict: str) -> tuple[str | None, str]:
     ub = upper_bound(rec)
     if ub is None:
         return None, "nothing bounds the recording from above"
-    if r[0] > date.fromisoformat(ub[0]):
-        return None, f"the description's one day {r[0]} is after {ub[1]}, {ub[0]}"
+    if r[0] >= date.fromisoformat(ub[0]):
+        return None, f"the description's one day {r[0]} is not before {ub[1]}, {ub[0]}"
     return r[0].isoformat(), f"the description names one day, {r[0]}"
 
 

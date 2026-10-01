@@ -127,7 +127,7 @@ class Cited(unittest.TestCase):
         c = DL.check_description(rec, techno(e="2023-04-03", l="2023-04-03",
                                              desc="Premiered Monday, April 3, 2023 on our channel"))
         self.assertFalse(c["ok"], c)
-        self.assertIn("later than", c["why"])
+        self.assertIn("not before", c["why"])
 
     def test_an_excerpt_under_four_words_confirms_nothing(self):
         c = DL.check_description(TECHNO, techno(desc="February 25, 2023"))
@@ -174,7 +174,7 @@ class Tier0(unittest.TestCase):
         rec = {**TECHNO, "yt_description": "Premiered Monday, April 3, 2023 on our channel"}
         day, why = DL.tier0_day(rec, "dated")
         self.assertIsNone(day)
-        self.assertIn("after", why)
+        self.assertIn("not before", why)
 
 
 class TitleNeverCounts(unittest.TestCase):
