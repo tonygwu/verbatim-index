@@ -37,22 +37,42 @@
         "statement_date": {"type": ["string", "null"], "description": "YYYY-MM-DD, or null when the record carries no date."},
         "statement_date_basis": {"enum": ["youtube_upload_date", "stated_in_page", "publication_date", "sourced_override", "unknown"], "description": "How the statement date is known. sourced_override is a date of speech taken from the reviewed override file (predictions_lib.DATE_OVERRIDES_FILE), with its evidence in statement_date_override; it replaces an upload date that post-dates the recording. youtube_upload_date is an UPPER bound on the recording date. stated_in_page and publication_date belong to a source that is not a YouTube recording, such as an earnings-call transcript, a shareholder letter or written testimony: the first is a date the page states about itself, the second is the date it was published. Neither is an upper bound in the YouTube sense, so a horizon computed from them is tighter. unknown is a source that admits no date at all, and such a record carries no horizon. declared_year is never used: it is a hardcoded constant in the corpus."},
         "statement_date_override": {
-          "type": "object", "additionalProperties": false,
-          "required": ["basis", "source_url", "verbatim_evidence", "confirmed_by", "confirmed_at_utc", "replaced_date", "replaced_basis"],
-          "description": "Present exactly when statement_date_basis is sourced_override: why the date is what it is, who confirmed it, and the transcript's own date it replaced.",
-          "properties": {
-            "basis": {"type": "string", "minLength": 1},
-            "source_url": {"type": "string", "minLength": 1},
-            "verbatim_evidence": {"type": "string", "minLength": 1},
-            "confirmed_by": {"type": "string", "minLength": 1},
-            "confirmed_at_utc": {"type": "string", "minLength": 1},
-            "replaced_date": {"type": ["string", "null"]},
-            "replaced_basis": {"enum": ["youtube_upload_date", "publication_date", "unknown"]},
-            "verdict": {"enum": ["dated", "publication_only"], "description": "Optional. The dating stage's verdict, when an agent entry set the date. publication_only dates when the recording was published, so the words may be older and the date is not an exact day of speech."},
-            "statement_date_earliest": {"type": "string", "minLength": 10, "maxLength": 10, "description": "Optional. The first day the words could have been spoken; statement_date is the last."},
-            "precision": {"enum": ["day", "days", "months", "years"], "description": "Optional, with statement_date_earliest. DERIVED from the span between the two days."},
-            "earliest_evidenced": {"type": "boolean", "description": "Optional. Whether a checked source shows the first day, not only the dating agent's estimate."}
-          }
+          "description": "Present exactly when statement_date_basis is sourced_override: why the date is what it is, who confirmed it, and the transcript's own date it replaced. Either a SOURCED block (a source and its words) or an AGREED block (confirmed_by two_agent_agreement: what two dating agents named, no source), never both.",
+          "anyOf": [
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["basis", "source_url", "verbatim_evidence", "confirmed_by", "confirmed_at_utc", "replaced_date", "replaced_basis"],
+              "properties": {
+                "basis": {"type": "string", "minLength": 1},
+                "source_url": {"type": "string", "minLength": 1},
+                "verbatim_evidence": {"type": "string", "minLength": 1},
+                "confirmed_by": {"type": "string", "minLength": 1},
+                "confirmed_at_utc": {"type": "string", "minLength": 1},
+                "replaced_date": {"type": ["string", "null"]},
+                "replaced_basis": {"enum": ["youtube_upload_date", "publication_date", "unknown"]},
+                "verdict": {"enum": ["dated", "publication_only"], "description": "Optional. The dating stage's verdict, when an agent entry set the date. publication_only dates when the recording was published, so the words may be older and the date is not an exact day of speech."},
+                "statement_date_earliest": {"type": "string", "minLength": 10, "maxLength": 10, "description": "Optional. The first day the words could have been spoken; statement_date is the last."},
+                "precision": {"enum": ["day", "days", "months", "years"], "description": "Optional, with statement_date_earliest. DERIVED from the span between the two days."},
+                "earliest_evidenced": {"type": "boolean", "description": "Optional. Whether a checked source shows the first day, not only the dating agent's estimate."}
+              }
+            },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["basis", "agents_named", "confirmed_by", "confirmed_at_utc", "replaced_date", "replaced_basis"],
+              "properties": {
+                "basis": {"type": "string", "minLength": 1},
+                "agents_named": {"type": "array", "description": "What each dating agent named, in its own words and UNCONFIRMED: no source confirms this date."},
+                "confirmed_by": {"const": "two_agent_agreement"},
+                "confirmed_at_utc": {"type": "string", "minLength": 1},
+                "replaced_date": {"type": ["string", "null"]},
+                "replaced_basis": {"enum": ["youtube_upload_date", "publication_date", "unknown"]},
+                "verdict": {"enum": ["dated", "publication_only"]},
+                "statement_date_earliest": {"type": "string", "minLength": 10, "maxLength": 10},
+                "precision": {"enum": ["day", "days", "months", "years"]},
+                "earliest_evidenced": {"type": "boolean"}
+              }
+            }
+          ]
         },
         "statement_date_check": {
           "type": "object", "additionalProperties": false,

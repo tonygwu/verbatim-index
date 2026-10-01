@@ -97,7 +97,8 @@ class Agree(unittest.TestCase):
         self.assertEqual(e["statement_date_earliest"], "2012-05-28")
         self.assertIs(e["earliest_evidenced"], False)
         self.assertEqual(c["source_checks"], [])
-        self.assertEqual(e["confirmed_by"], L.AGENT_CONFIRMATION)
+        self.assertEqual(e["confirmed_by"], L.AGREEMENT_CONFIRMATION)
+        self.assertNotIn("source_url", e)
 
     def test_one_day_apart_is_not_agreement(self):
         out = merge({"gemini": proposal(sources=[GONE]),

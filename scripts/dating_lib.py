@@ -1159,23 +1159,34 @@ def _strong_year_conflict(rec: dict, e: str, lat: str) -> dict | None:
     return None
 
 
-def _entry(rec: dict, prop: dict, verdict: str, e: str, lat: str, source_url: str, evidence: str,
+def _entry(rec: dict, prop: dict, verdict: str, e: str, lat: str, evidence: dict, confirmed_by: str,
            evidenced: bool, te: str | None, confirmation: dict, basis_note: str = "") -> dict:
+    """The override or check entry. `evidence` is {source_url, verbatim_evidence} for a confirmed source, or
+    {agents_named} for two agents that agreed with no source (review fix 1)."""
     own_date, _ = L.own_statement_date(rec)
     kind = "check" if own_date is not None and lat == own_date else "override"
     return {
         "statement_date": lat,
         "basis": f"{prop['event'].strip()} ({prop['event_kind']}"
                  + ("; publication date" if verdict == "publication_only" else "") + basis_note + ")",
-        "source_url": source_url,
-        "verbatim_evidence": evidence,
-        "confirmed_by": L.AGENT_CONFIRMATION,
+        **evidence,
+        "confirmed_by": confirmed_by,
         "earliest_evidenced": evidenced,
         **({"statement_date_earliest": e, "precision": L.date_precision(e, lat)} if e != lat else {}),
         **({"internal_evidence": f"Transcript: {te}"} if te else {}),
         "confirmation": {"merge_version": MERGE_VERSION, "kind": kind, "verdict": verdict, "range": [e, lat],
                          "zone_rule": ZONE_RULE, **confirmation},
     }
+
+
+def _agents_named(found: list[dict]) -> list[dict]:
+    """What each agreeing agent named, copied from its proposal and labelled unconfirmed: its words, not a source."""
+    return [{"agent": a["harness"], "unconfirmed": True, "event": a["prop"]["event"],
+             "event_kind": a["prop"]["event_kind"], "verdict": a["prop"]["verdict"],
+             "range": [a["prop"]["speech_date_earliest"], a["prop"]["speech_date_latest"]],
+             "cited": [{"url": s["url"], "verbatim_excerpt": s["verbatim_excerpt"]} for s in a["prop"]["sources"]],
+             **({"description_evidence": a["prop"]["description_evidence"]}
+                if a["prop"].get("description_evidence") else {})} for a in found]
 
 
 def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: dict | None = None,
@@ -1229,7 +1240,8 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
         return _confirmed(_entry(
             rec, prop, prop["verdict"], e, lat,
             # A description lives on the recording's own page, so that page is its address.
-            rec["url"] if desc else first["url"], first["span"] if desc else first["page_span"],
+            {"source_url": rec["url"] if desc else first["url"],
+             "verbatim_evidence": first["span"] if desc else first["page_span"]}, L.AGENT_CONFIRMATION,
             any(a == date.fromisoformat(e) for a, _ in lead["spans"]), prop.get("transcript_evidence"),
             {"method": METHOD, "rule": RULE, "run": run_rel, "lead": lead["harness"], "proposals": proposals,
              "source_checks": [_check_record(c, a["harness"]) for a in confirmed for c in a["good"]]}))
@@ -1243,15 +1255,13 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
         conflict = _strong_year_conflict(rec, e, lat)
         if conflict:
             return conflict
-        if not rec.get("url"):
-            return _queue("agreement_without_address", "two daters agree, but the record has no url to name as the "
-                                                       "entry's source")
         verdict = "dated" if all(a["prop"]["verdict"] == "dated" for a in found) else "publication_only"
         te = next((a["prop"]["transcript_evidence"] for a in found if a["prop"].get("transcript_evidence")), None)
+        # No source confirmed this day, so the entry names none (review fix 1): it records what
+        # the agents named, labelled as their words, and says so wherever the date is shown.
         return _confirmed(_entry(
-            rec, found[0]["prop"], verdict, e, lat, rec["url"],
-            f"No page or description confirmed this day: {' and '.join(hs)} each named {lat} independently as the "
-            f"last day the words could have been spoken.", False, te,
+            rec, found[0]["prop"], verdict, e, lat, {"agents_named": _agents_named(found)},
+            L.AGREEMENT_CONFIRMATION, False, te,
             {"method": AGREEMENT_METHOD, "rule": AGREEMENT_RULE, "run": run_rel, "lead": None,
              "proposals": proposals, "source_checks": []}, basis_note="; two daters agree"))
     if len(found) == 1:

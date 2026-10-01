@@ -219,5 +219,78 @@ class AgreementOnSharedInput(unittest.TestCase):
         self.assertIn("leads", out["detail"])
 
 
+class AgreementLabels(unittest.TestCase):
+    """Fix 1 (blocking): an agreed date had confirmed_by "agent_plus_source_check", the recording's own URL as
+    source_url and a code-written sentence as verbatim_evidence, read as the day of speech by the header and the
+    card, and counted as an exact date by the scorer. Now it says what it is everywhere."""
+
+    AGREED = "two dating agents named this day; no source confirms it"
+
+    def agreed(self, e_gemini="2014-06-10"):
+        out = merge(rec_with(""), {"gemini": P(e_gemini, "2014-06-10"), "fable": P("2014-06-10", "2014-06-10")})
+        self.assertEqual(out["outcome"], "override", out)
+        return {**out["entry"], "confirmed_at_utc": "2026-10-01T00:00:00Z"}
+
+    def block(self, entry):
+        r = L.apply_statement_date_override(rec_with(""), {TID: entry})
+        src = {"statement_date": entry["statement_date"], "statement_date_basis": L.OVERRIDE_DATE_BASIS,
+               "statement_date_override": L.override_block(r)}
+        return r, src
+
+    def test_the_entry_names_no_source_and_records_the_agents_words(self):
+        e = self.agreed()
+        self.assertEqual(e["confirmed_by"], L.AGREEMENT_CONFIRMATION)
+        self.assertNotEqual(L.AGREEMENT_CONFIRMATION, L.AGENT_CONFIRMATION)
+        self.assertNotIn("source_url", e)
+        self.assertNotIn("verbatim_evidence", e)
+        named = e["agents_named"]
+        self.assertEqual([x["agent"] for x in named], ["gemini", "fable"])
+        self.assertTrue(all(x["unconfirmed"] is True for x in named))
+        self.assertEqual(named[0]["event"], "Ada compute talk")
+        self.assertEqual(named[0]["cited"], [{"url": GONE["url"], "verbatim_excerpt": GONE["verbatim_excerpt"]}])
+        self.assertEqual(L.check_override_entry(TID, e)["statement_date"], "2014-06-10")
+
+    def test_the_entry_shape_is_enforced(self):
+        e = self.agreed()
+        with self.assertRaisesRegex(L.PredictionError, "source_url"):
+            L.check_override_entry(TID, {**e, "source_url": BASE["url"], "verbatim_evidence": "x"})
+        with self.assertRaisesRegex(L.PredictionError, "agents_named"):
+            L.check_override_entry(TID, {k: v for k, v in e.items() if k != "agents_named"})
+
+    def test_the_header_says_so_for_a_day_and_a_range(self):
+        day, _ = self.block(self.agreed())
+        line = L.statement_date_line(day, L.load_header_template())
+        self.assertIn(self.AGREED, line)
+        self.assertNotIn("the day the words were spoken", line)
+        rng, _ = self.block(self.agreed(e_gemini="2014-06-01"))
+        line = L.statement_date_line(rng, L.load_header_template())
+        self.assertIn(self.AGREED, line)
+        self.assertIn("2014-06-01", line)
+
+    def test_the_policy_release_pins_the_new_header(self):
+        self.assertEqual(L.load_policy_release()["contracts"]["header"], L.header_contract()["contract_id"])
+
+    def test_the_card_says_so(self):
+        import build_predictions_site as B  # noqa: PLC0415
+        _, src = self.block(self.agreed())
+        card = B.said_label(src, TID)
+        self.assertIn(self.AGREED, card["card"])
+        self.assertIn(self.AGREED, card["also"])
+
+    def test_the_scorer_never_reads_an_agreed_day_as_exact(self):
+        import score_predictions as SP  # noqa: PLC0415
+        _, src = self.block(self.agreed())
+        self.assertNotIn("statement_date_earliest", src["statement_date_override"])
+        self.assertIs(SP.exact_statement_date(src), False)
+
+    def test_the_record_schema_accepts_the_block_and_refuses_a_mixed_one(self):
+        schema = L.load_record_schema()
+        sub = schema["properties"]["source"]["properties"]["statement_date_override"]
+        _, src = self.block(self.agreed())
+        self.assertEqual(L.check_schema(src["statement_date_override"], sub, "$", schema), [])
+        mixed = {**src["statement_date_override"], "source_url": BASE["url"]}
+        self.assertNotEqual(L.check_schema(mixed, sub, "$", schema), [])
+
+
 if __name__ == "__main__":
     unittest.main()

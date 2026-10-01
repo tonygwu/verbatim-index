@@ -1213,6 +1213,11 @@ def said_label(src: dict, where: str) -> dict:
         old, was = blk["replaced_date"], blk["replaced_basis"]
         if old and was not in REPLACED_DATE:
             raise SystemExit(f"REFUSING: {where}'s override replaced a {was!r} date, which the Said line cannot name")
+        if blk.get("confirmed_by") == L.AGREEMENT_CONFIRMATION:
+            # Two dating agents named this day and no source confirms it (dating review fix 1).
+            agreed = "two dating agents named this day; no source confirms it"
+            return {"card": (f"{d} ({agreed}; the {REPLACED_DATE[was]} is {old})" if old else f"{d} ({agreed})"),
+                    "also": f"on {d} ({agreed})"}
         if blk.get("verdict") == "publication_only":
             # A sourced PUBLICATION date bounds the words from above and is not the day
             # they were said (final review item 2), whatever it replaced.

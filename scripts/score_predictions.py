@@ -305,6 +305,10 @@ def exact_statement_date(src: dict) -> bool:
     if basis != "sourced_override":
         return True
     ov = src.get("statement_date_override") or {}
+    if ov.get("confirmed_by") == L.AGREEMENT_CONFIRMATION:
+        # Two dating agents named the day and no source confirms it (dating review fix 1),
+        # so already_public never excludes a record on an agreed date.
+        return False
     first = ov.get("statement_date_earliest")
     ranged = first is not None and first != src.get("statement_date")
     return not ranged and ov.get("verdict") != "publication_only"
