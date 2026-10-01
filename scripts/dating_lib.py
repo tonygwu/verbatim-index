@@ -1232,6 +1232,18 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
         lead = confirmed[0]
         prop = lead["prop"]
         e, lat = prop["speech_date_earliest"], prop["speech_date_latest"]
+        # Rule R1 (coordinator's decision, 2026-10-01, reversible): every other dater whose
+        # proposal passed the rules before the checks must not contradict the confirmed day,
+        # meaning its own range contains it. Measured on the pilot: it removes the one wrong
+        # confirmation (A9, a publication day) and loses one right one (evan-spiegel).
+        against = [a for a in found if a is not lead and a["eligible"]
+                   and not (a["prop"]["speech_date_earliest"] <= lat <= a["prop"]["speech_date_latest"])]
+        if against:
+            return {**_queue("dater_disagreement", f"{lead['harness']} confirmed {lat}; " + "; ".join(
+                f"{a['harness']} named {a['prop']['speech_date_earliest']}..{a['prop']['speech_date_latest']}, "
+                f"which does not contain it (rule R1)" for a in against),
+                [_check_record(c, a["harness"]) for a in confirmed for c in a["good"]]),
+                "by_dater": {a["harness"]: ("confirmed" if a["confirmed"] else a["queue"]["reason"]) for a in found}}
         conflict = _strong_year_conflict(rec, e, lat)
         if conflict:
             return conflict

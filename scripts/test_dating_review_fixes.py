@@ -343,5 +343,39 @@ class InvalidAnswers(unittest.TestCase):
         self.assertEqual(out["by_dater"]["fable"], "invalid_proposal")
 
 
+class RuleR1(unittest.TestCase):
+    """Fix 8, rule R1 (coordinator's decision, reversible): a confirmed dater wins only if every other dater that
+    gave a usable dated proposal does not contradict it, meaning its range contains the confirmed day. The
+    reviewer's probe 4a is the A9 shape: Fable's page shows the publication day, Gemini named the event's."""
+
+    SUMMIT = ("<html><head><title>Ada keynote recap</title></head><body><p>Published September 12, 2025: "
+              "Ada told the summit that compute is the bottleneck</p></body></html>")
+    SRC = {"url": "https://recap.example.com/ada-summit", "publisher": "Recap", "date_on_source": "2025-09-12",
+           "verbatim_excerpt": "Published September 12, 2025: Ada told the summit", "kind": "secondary"}
+    REC = {**BASE, "yt_upload_date": "20250915"}
+
+    def run_with(self, gemini):
+        return merge(self.REC, {"gemini": gemini, "fable": P("2025-09-12", "2025-09-12", sources=[self.SRC])},
+                     pages={**PAGES, self.SRC["url"]: self.SUMMIT})
+
+    def test_a_usable_other_range_that_misses_the_day_queues(self):
+        out = self.run_with(P("2025-09-09", "2025-09-09"))
+        self.assertEqual((out["outcome"], out.get("reason")), ("queue", "dater_disagreement"), out)
+        self.assertIn("2025-09-09", out["detail"])
+        self.assertIn("2025-09-12", out["detail"])
+
+    def test_an_other_range_that_contains_the_day_lets_it_stand(self):
+        out = self.run_with(P("2025-09-01", "2025-09-12"))
+        self.assertEqual(out["outcome"], "override", out)
+        self.assertEqual(out["entry"]["statement_date"], "2025-09-12")
+
+    def test_a_dater_that_could_not_date_or_answered_invalidly_contradicts_nothing(self):
+        for gemini in (P(None, None, verdict="cannot_date", sources=[], event=None), P("2025-09-09", "2025-09-09", sources=[])):
+            if gemini["verdict"] == "cannot_date":
+                gemini["event_kind"] = None
+            out = self.run_with(gemini)
+            self.assertEqual(out["outcome"], "override", (gemini["verdict"], out))
+
+
 if __name__ == "__main__":
     unittest.main()
