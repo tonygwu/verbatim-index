@@ -512,6 +512,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         overrides, checks_out, queue, not_proposed = {}, {}, [], []
         missing_proposals: dict[str, list[str]] = {}
         missing_checks: dict[str, list[str]] = {}
+        merge_errors: list[str] = []
         rel = str(run_dir.relative_to(data)) if data in run_dir.parents else str(run_dir)
         for tid, job in sorted(by_tid.items()):
             # Every dater's proposal, or no merge: one dater alone could confirm a day the
@@ -540,7 +541,12 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                 not_proposed.append(tid)
                 missing_checks[tid] = unchecked
                 continue
-            out = DL.merge(json.loads(job["path"].read_text()), docs, checks_by, refs, run_rel=rel)
+            try:
+                out = DL.merge(json.loads(job["path"].read_text()), docs, checks_by, refs, run_rel=rel)
+            except Exception as exc:  # noqa: BLE001 -- one transcript's defect never stops the others (review fix 4)
+                out = {"outcome": "queue", "reason": "merge_error", "detail": f"{type(exc).__name__}: {exc}"[:500],
+                       "checks": []}
+                merge_errors.append(tid)
             if out["outcome"] == "override":
                 overrides[tid] = {**out["entry"], "confirmed_at_utc": DL.utc_stamp()}
             elif out["outcome"] == "check":
@@ -576,6 +582,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         merge_report = {"confirmed": len(overrides), "checked": len(checks_out), "queued": len(queue),
                         "queued_by_reason": dict(Counter(q["reason"] for q in queue)), "not_proposed": not_proposed,
                         "missing_proposals": missing_proposals, "missing_checks": missing_checks,
+                        "merge_errors": merge_errors,
                         "by_method": dict(Counter(e["confirmation"]["method"]
                                                   for e in list(overrides.values()) + list(checks_out.values())))}
 
@@ -599,8 +606,10 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
               f"(own date confirmed), by method {merge_report['by_method']}, queued {merge_report['queued']} "
               f"{merge_report['queued_by_reason']}; not merged {len(merge_report['not_proposed'])}"
               + "".join(f"; waiting for {h}: {n}" for h, n in sorted(waiting.items()))
-              + "".join(f"; {h} proposal not checked: {n}" for h, n in sorted(unchecked_n.items())))
-    return 1 if report["propose"]["failed"] or report["check"]["failed"] else 0
+              + "".join(f"; {h} proposal not checked: {n}" for h, n in sorted(unchecked_n.items()))
+              + (f"; merge errors: {len(merge_report['merge_errors'])}" if merge_report["merge_errors"] else ""))
+    return 1 if report["propose"]["failed"] or report["check"]["failed"] or (merge_report or {}).get("merge_errors") \
+        else 0
 
 
 if __name__ == "__main__":

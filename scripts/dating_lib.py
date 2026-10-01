@@ -580,11 +580,22 @@ def tier0_day(rec: dict, verdict: str) -> tuple[str | None, str]:
     return r[0].isoformat(), f"the description names one day, {r[0]}"
 
 
-def tier0_check(rec: dict, day: str) -> dict:
-    """The Tier 0 confirmation as a stored check: the description line that carries the day."""
+def tier0_check(rec: dict, day: str, verdict: str) -> dict:
+    """The Tier 0 confirmation as a stored check: the description line that carries the day.
+
+    The day is matched as tier0_day read it, through date_for_verdict, so a
+    publication read in UTC finds its own text (review fix 4: matching the local
+    day, with an eager fallback, raised IndexError).
+    """
     desc = recording_description(rec) or ""
-    found = [d for d in dates_in_text(desc) if d["lo"] == d["hi"] and d["lo"].isoformat() == day]
-    line = next((ln.strip() for ln in desc.splitlines() if found and found[0]["text"] in ln), found[0]["text"])
+    found = [d for d in dates_in_text(desc) if d["lo"] == d["hi"]
+             and (date_for_verdict(d, verdict) or (None,))[0] is not None
+             and date_for_verdict(d, verdict)[0].isoformat() == day]
+    if not found:
+        raise ValueError(f"tier0_check: the description carries no {verdict} day {day}; tier0_day and tier0_check "
+                         f"disagree")
+    text = found[0]["text"]
+    line = next((ln.strip() for ln in desc.splitlines() if text in ln), text)
     return {"route": "description", "basis": "tier0", "cited_excerpt": None, "description_sha256": _sha(desc),
             "span": line[:300], "day": day, "ok": True, "why": f"the description names one day, {day}"}
 
@@ -1014,7 +1025,7 @@ def assess(rec: dict, doc: dict, checks: list[dict]) -> dict:
         # Tier 0: one day in the description, inside the agent's range, needs no citation.
         day, why = tier0_day(rec, prop["verdict"])
         if day is not None and e <= day <= lat:
-            good.append(tier0_check(rec, day))
+            good.append(tier0_check(rec, day, prop["verdict"]))
         else:
             reasons.append(f"description, Tier 0: {why if day is None else f'its one day {day} is outside the range {e}..{lat}'}")
     if not good:
