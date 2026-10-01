@@ -2,14 +2,18 @@
 """Pure functions for the dating stage: when were the words in a recording spoken?
 
 Rescue round 4 (design section 1, critiques 1 and 3), operator decision VD-8 (c)
-of 2026-09-29, "see what happens": ONE agent identifies the event and its date
-range and cites sources with verbatim excerpts. A script with no model then
-fetches each cited page and must find the excerpt on it, with a date inside the
-agent's own range. The recording's own page never counts, with one exception
-since 2026-10-01: its stored DESCRIPTION, when it states the event's date (the
-agent's description_evidence, or Tier 0, the description's one full day). A
-confirmed result is an override entry that vouches for itself on every load;
-anything else is queued for a person with its reason.
+of 2026-09-29, "see what happens", with two daters since VD-11 (2026-10-01): each
+dater (DATERS, Gemini then Fable) identifies the event and its date range and
+cites sources with verbatim excerpts. A script with no model then fetches each
+cited page and must find the excerpt on it, with a date inside that dater's own
+range. The recording's own page never counts, with one exception: its stored
+DESCRIPTION, when it states the event's date (the dater's description_evidence, or
+Tier 0, the description's one full day), strictly before the upload and never next
+to a cue word such as "born", "released" or "use code". merge() combines the
+daters (rule R1, two_agent_agreement, dater_disagreement; see merge). A confirmed
+result is an entry that vouches for itself on every load; anything else is queued
+for a person with its reason. A single-dater merge is the one-agent rule of VD-8
+(c) and its entries load like any other; production uses both daters.
 
 WHY. No stage ever tried to find out when a recording was made. Code copied the
 YouTube upload date, or nothing, into the date the card prints as "Said", and a
@@ -25,8 +29,10 @@ What lives here, and nothing else (no network, no model, no argparse):
     mirror), an archive copy, the transcript's own url and a Wayback copy of any
     of them never confirm
   - the source check of one fetched page, and the stored window it keeps
-  - the merge of one proposal (MERGE_VERSION), and the loader's re-verification
-    of an entry from its stored proposal and windows
+  - the description check and Tier 0, with the cue-word filter
+  - the merge of every dater's proposal (MERGE_VERSION), and the loader's
+    re-verification of an entry from its stored proposals, windows and the
+    transcript's own description
   - the leads block: dated sentences from extraction and verification notes,
     with claim and outcome text removed (critique 1 point 14)
 

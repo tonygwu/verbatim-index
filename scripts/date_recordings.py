@@ -1,28 +1,49 @@
 #!/usr/bin/env python3
-"""The dating stage: find when each recording's words were spoken, and prove it from a page.
+"""The dating stage: find when each recording's words were spoken, and prove it from a page or the description.
 
-Rescue round 4, design section 1, as the operator decided it on 2026-09-29
-(VD-8 (c), "see what happens"): ONE agent per recording names the event and its
-date range and cites sources with verbatim excerpts; a script with no model then
-fetches every cited page and must find the excerpt on it, with a date inside the
-agent's range. The recording's own page never counts. A confirmed date becomes an
-entry in THIS RUN's override file, never production's (critique 3 A5); anything
-else goes to the run's queue with its reason, for a person.
+Rescue round 4, design section 1 (VD-8 (c), operator 2026-09-29, "see what
+happens"), with two daters since operator decision VD-11 (2026-10-01): for each
+recording, Gemini and Fable each name the event and its date range and cite
+sources with verbatim excerpts. A script with no model then fetches every cited
+page and must find the excerpt on it, with a date inside that dater's range. The
+recording's own page never counts; its stored DESCRIPTION does when it states the
+event's date (the dater's description_evidence, or Tier 0, the description's one
+uncued full day), strictly before the upload. A confirmed date becomes an entry in
+THIS RUN's override file, never production's (critique 3 A5); anything else goes
+to the run's queue with its reason, for a person.
+
+THE MERGE (dating_lib.merge). A date is confirmed when one dater's cited page or
+description check passes the rules for its own proposal and no other usable dater's
+range contradicts it (rule R1), or, with nothing confirmed, when both daters name
+exactly the same last day and it is not something both prompts showed (the upper
+bound, a lead or a page date). An agreed date is labelled "two dating agents named
+this day; no source confirms it" in its entry, the header and the card, and is never
+an exact date for the scorer. Two days each confirmed by a check, or a confirmed
+day the other dater's range misses, queue as dater_disagreement.
 
 Three stages, run in order by default:
-  propose   one agent call per transcript (SPENDS QUOTA). A proposal on disk is
-            reused, so a re-run pays only for what failed.
+  propose   one call per transcript per dater (SPENDS QUOTA), written to
+            proposals/<slug>/<sid>.<dater>.json. A proposal on disk is reused, so a
+            re-run pays only for what failed. An answer that fails validation is
+            stored as an invalid proposal (reported failed, final, --redo asks again);
+            only an infrastructure failure writes nothing and is retried. A proposal
+            from a run with other daters stops the run before any call.
   check     one polite HTTP fetch per cited page, direct and then from its
             Wayback copy. No model. Keeps each page's sha256 and a window
-            around the excerpt, never the page.
-  merge     dating_lib.merge_one per transcript. Writes <run-dir>/overrides.json
-            (loaded back through the production loader before it is kept),
-            <run-dir>/queue.json and <run-dir>/runs/<run_id>.json.
+            around the excerpt, never the page. Per dater:
+            source_checks/<slug>/<sid>.<dater>.json.
+  merge     dating_lib.merge per transcript, once every dater's proposal is on disk.
+            Writes <run-dir>/overrides.json and checks.json (each loaded back through
+            the production loader before it is kept), <run-dir>/queue.json and
+            <run-dir>/runs/<run_id>.json. One transcript's error is queued as
+            merge_error and never stops the others.
 
-THE HARNESS (operator, 2026-09-29): Gemini by default, because the Codex quota is
-short; Astra and Fable on request. Both Gemini and Astra have live web search.
-Fable in this harness has NO working web tools, so its proposal comes from memory;
-the page check applies to it exactly as to any other.
+THE DATERS (--harness, comma-separated). Production uses both, gemini,fable, the
+default (VD-11). Gemini has live web search; Fable in this harness has
+NO working web tools, so its proposal comes from memory, and the page check applies to it
+exactly as to any other. Astra (web search) on request. A single-dater run, such
+as --harness gemini, is the one-agent rule of VD-8 (c): its entries load and
+re-verify like any other, but production dating uses both daters.
 
 Dry run by default: prints the scope and what a run would spend, writes nothing.
 --run spends quota and says so first.
