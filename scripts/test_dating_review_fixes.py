@@ -377,5 +377,31 @@ class RuleR1(unittest.TestCase):
             self.assertEqual(out["outcome"], "override", (gemini["verdict"], out))
 
 
+class DaterSetMismatch(unittest.TestCase):
+    """Fix 9 (the reviewer's mixed.py): a run with --harness gemini, then one with the default gemini,fable, spent
+    the Fable calls and then died in the merge on the Gemini files' dater list. Now the second run refuses before
+    its first call; --redo re-proposes them."""
+
+    def test_a_proposal_from_another_dater_set_is_refused_before_any_call(self):
+        from test_date_recordings import Fixture, FakeAgent, FakeWeb, LIVE_URL, run  # noqa: PLC0415
+        from test_dating import LIVEBLOG  # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            agent = FakeAgent({"ada/re-upload-abc123": proposal(), "ada/pod-ep-xyz789": proposal(tid="ada/pod-ep-xyz789"),
+                               "ada/held-ep": proposal(tid="ada/held-ep")})
+            web = FakeWeb({LIVE_URL: LIVEBLOG})
+            rc, out = run(fx.argv("--run", "--harness", "gemini"), agent, web)
+            self.assertEqual(rc, 0, out)
+            n = len(agent.calls)
+            with self.assertRaises(SystemExit) as cm:
+                run(fx.argv("--run"), agent, web)
+            self.assertEqual(len(agent.calls), n, "no call may be spent before the refusal")
+            self.assertIn("daters", str(cm.exception))
+            self.assertIn("--redo", str(cm.exception))
+            rc, out = run(fx.argv("--run", "--redo"), agent, web)
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(len(agent.calls), n + 6)
+
+
 if __name__ == "__main__":
     unittest.main()

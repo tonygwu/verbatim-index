@@ -381,6 +381,27 @@ class PoliteFetcher:
         return {**wb, "via": "wayback", "error": f"direct: {direct['error']}; wayback: {wb['error']}"}
 
 
+def refuse_other_dater_sets(jobs: list[dict], hs: list[str], run_dir: Path, args) -> None:
+    """Exit before any call when a proposal on disk was made by a run with other daters (review fix 9).
+
+    Such a file names other daters, so the merge would refuse it after this run had
+    spent its calls. --redo re-proposes every transcript, which replaces those files,
+    and is allowed when this run proposes; otherwise use a new --run-dir.
+    """
+    stale = []
+    for j in jobs:
+        for h in hs:
+            pp = proposal_path(run_dir, j["tid"], h)
+            if pp.exists():
+                named = json.loads(pp.read_text()).get("daters")
+                if not isinstance(named, list) or sorted(named) != sorted(hs):
+                    stale.append(f"{pp.relative_to(run_dir)} (daters {named})")
+    if stale and not (args.redo and args.stage in ("propose", "all")):
+        raise SystemExit(f"REFUSING before any call: {len(stale)} proposal file(s) under {run_dir} were made by a run "
+                         f"whose daters are not this run's {hs}: {stale[:5]}. Re-propose them with --redo (spends "
+                         f"calls), or use a new --run-dir.")
+
+
 def no_pages_to_check(doc: dict, tid: str) -> str | None:
     """Why a stored proposal needs no page fetch, or None: cannot_date, or an answer that failed validation (the
     merge reads it as invalid_proposal; review fix 5)."""
@@ -476,6 +497,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     jobs, excluded, missing = select_scope(pred_dirs, troots, args.ids, production, args.limit)
     by_tid = {j["tid"]: j for j in jobs}
 
+    refuse_other_dater_sets(jobs, hs, run_dir, args)
     lines = [f"in scope: {len(jobs)} transcripts"] + [f"  excluded, {k}: {v}" for k, v in sorted(excluded.items())]
     if missing:
         lines.append(f"  transcript file missing under every root: {len(missing)} {missing[:5]}")
