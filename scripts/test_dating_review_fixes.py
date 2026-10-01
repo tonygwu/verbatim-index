@@ -124,5 +124,63 @@ class DescriptionDayBeforeOwnDate(unittest.TestCase):
         self.assertEqual(out["outcome"], "override", out)
 
 
+class CueWords(unittest.TestCase):
+    """Fixes 6 and 7: a description day next to a word that dates something else is not the event's, on both
+    routes: born, founded, released, premiered, streamed, launched, "originally", sponsor or promo wording, the
+    next event, and any date inside a link (the reviewer's probes 1a, 1b, 1d, 2a, 2c)."""
+
+    def refused_both_ways(self, desc, cited, day, cue):
+        rec = rec_with(desc)
+        d, why = DL.tier0_day(rec, "dated")
+        self.assertIsNone(d, desc)
+        self.assertIn(cue, why)
+        c = DL.check_description(rec, P(day, day, sources=[], desc=cited))
+        self.assertFalse(c["ok"], c)
+        self.assertIn(cue, c["why"])
+
+    def test_a_founding_date(self):
+        self.refused_both_ways("Ada founded Compute Labs on March 3, 2004. In this talk she looks back.",
+                               "Ada founded Compute Labs on March 3, 2004", "2004-03-03", "founded")
+
+    def test_a_birth_date(self):
+        self.refused_both_ways("Ada was born on March 3, 1984 in Leeds and studied there.",
+                               "Ada was born on March 3, 1984 in Leeds", "1984-03-03", "born")
+
+    def test_originally_released(self):
+        self.refused_both_ways("Originally released March 9, 2018 on our old channel.",
+                               "Originally released March 9, 2018 on our old channel", "2018-03-09", "Originally")
+
+    def test_a_sponsor_deadline(self):
+        self.refused_both_ways("Use code ADA20 before December 31, 2018 at shop.example.com. Thanks to our sponsor!",
+                               "Use code ADA20 before December 31, 2018", "2018-12-31", "code")
+
+    def test_the_next_event(self):
+        self.refused_both_ways("Next event: Ada returns to the DX stage on May 30, 2017. Get tickets!",
+                               "Ada returns to the DX stage on May 30, 2017", "2017-05-30", "Next event")
+
+    def test_a_date_inside_a_link(self):
+        rec = rec_with("Show notes: https://blog.example.com/2018-11-04-ada-episode and more.")
+        d, why = DL.tier0_day(rec, "dated")
+        self.assertIsNone(d)
+        self.assertIn("link", why)
+        out = merge(rec, {"gemini": P("2018-11-04", "2018-11-04")})
+        self.assertEqual(out["outcome"], "queue", out)
+
+    def test_a_plain_recording_day_still_counts(self):
+        rec = rec_with("Recorded live in London on March 3, 2018 with a small audience.")
+        self.assertEqual(DL.tier0_day(rec, "dated")[0], "2018-03-03")
+
+    def test_a_cued_day_is_dropped_before_the_days_are_counted(self):
+        rec = rec_with("Recorded in London on March 3, 2018. Originally released May 1, 2018 on our channel.")
+        self.assertEqual(DL.tier0_day(rec, "dated")[0], "2018-03-03")
+
+    def test_a_cued_day_inside_a_cited_excerpt_never_sources_the_last_day(self):
+        """Only the days the check accepted feed the latest-day rule, or the release day would be confirmed."""
+        rec = rec_with("Recorded in London on March 3, 2018. Originally released May 1, 2018 on our channel.")
+        out = merge(rec, {"gemini": P("2018-03-03", "2018-05-01", sources=[],
+                                      desc="Recorded in London on March 3, 2018. Originally released May 1, 2018")})
+        self.assertEqual((out["outcome"], out.get("reason")), ("queue", "latest_day_unsourced"), out)
+
+
 if __name__ == "__main__":
     unittest.main()

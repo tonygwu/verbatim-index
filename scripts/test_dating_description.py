@@ -171,7 +171,7 @@ class Tier0(unittest.TestCase):
         self.assertEqual(out["outcome"], "queue", out)
 
     def test_a_day_after_the_upload_gives_no_tier0(self):
-        rec = {**TECHNO, "yt_description": "Premiered Monday, April 3, 2023 on our channel"}
+        rec = {**TECHNO, "yt_description": "Ada at the studio on Monday, April 3, 2023 with the team"}
         day, why = DL.tier0_day(rec, "dated")
         self.assertIsNone(day)
         self.assertIn("not before", why)

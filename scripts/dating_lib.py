@@ -153,7 +153,12 @@ def _mk(y: int, m: int, d: int) -> date | None:
 
 
 def dates_in_text(text: str) -> list[dict]:
-    """Every date WITH A YEAR in the text, in order: {lo, hi, text, utc_lo, utc_hi}.
+    """Every date WITH A YEAR in the text, in order: {lo, hi, text, utc_lo, utc_hi, utc_stamp}."""
+    return [{k: v for k, v in d.items() if k not in ("at", "end")} for d in _dates_located(text)]
+
+
+def _dates_located(text: str) -> list[dict]:
+    """dates_in_text with each date's character offsets, "at" and "end".
 
     A day gives lo == hi; "September 7-9, 2025" a range; "August 2023" the whole
     month. A time with a zone ("4:26 pm PT", "T01:30:00+02:00") also gives the UTC
@@ -170,7 +175,7 @@ def dates_in_text(text: str) -> list[dict]:
         if lo is None or hi is None or hi < lo:
             return
         taken.append((m.start(), m.end()))
-        out.append({"at": m.start(), "lo": lo, "hi": hi, "text": m.group(0).strip(),
+        out.append({"at": m.start(), "end": m.end(), "lo": lo, "hi": hi, "text": m.group(0).strip(),
                     "utc_lo": utc or lo, "utc_hi": utc or hi, "utc_stamp": utc_stamp})
 
     for m in _ISO.finditer(text):
@@ -201,7 +206,7 @@ def dates_in_text(text: str) -> list[dict]:
         last = (_mk(y + (mon == 12), mon % 12 + 1, 1) - timedelta(days=1)) if first else None
         add(m, first, last)
     out.sort(key=lambda d: d["at"])
-    return [{k: v for k, v in d.items() if k != "at"} for d in out]
+    return out
 
 
 def date_for_verdict(d: dict, verdict: str) -> tuple[date, date] | None:
@@ -501,20 +506,48 @@ def _spans_in_range(text: str, prop: dict) -> list[tuple[date, date]]:
     return out
 
 
+# Words that, next to a day in a description, say the day dates something other than
+# this event (review fixes 6 and 7): a birth, a founding, a release, premiere, upload,
+# livestream, broadcast or launch, an older original, a sponsor's code or deadline,
+# and the next event. Judged within the date's own sentence, up to CUE_WORDS_BEFORE
+# words before it and CUE_WORDS_AFTER after it.
+_CUE = re.compile(r"\b(?:born|birth(?:day)?|founded|founding|established|released?|premiere[sd]?|uploaded|"
+                  r"upload|streamed|aired|launch(?:ed|es|ing)?|originally|"
+                  r"(?:use|promo|discount|coupon)\s+code|sponsor(?:ed)?|deadline|until|before|expires?|"
+                  r"next\s+(?:event|week|month|year|episode|show|session|time)|upcoming|coming\s+up)\b", re.I)
+_LINK = re.compile(r"(?:https?://|www\.)\S+|\b[\w.-]+\.(?:com|org|net|io|co|tv|fm|me|ly|be|app|news)/\S*", re.I)
+CUE_WORDS_BEFORE, CUE_WORDS_AFTER = 12, 3
+
+
+def description_cue(desc: str, at: int, end: int) -> str | None:
+    """Why the date at desc[at:end] is not this event's, or None. Never reads the title."""
+    for m in _LINK.finditer(desc):
+        if m.start() <= at and end <= m.end():
+            return f"it is part of a link, {m.group(0)[:80]!r}"
+    start = max([desc.rfind("\n", 0, at)] + [desc.rfind(p, 0, at) for p in (". ", "! ", "? ")]) + 1
+    stops = [i for i in [desc.find("\n", end)] + [desc.find(p, end) for p in (". ", "! ", "? ")] if i >= 0]
+    near = " ".join(desc[start:at].split()[-CUE_WORDS_BEFORE:] + ["|"]
+                    + desc[end:min(stops) if stops else len(desc)].split()[:CUE_WORDS_AFTER])
+    m = _CUE.search(near)
+    return f"it sits next to {m.group(0)!r}, so it dates something other than this event" if m else None
+
+
 def check_description(rec: dict, prop: dict) -> dict | None:
     """The agent's description_evidence checked as a page excerpt is checked, or None when it gave none.
 
     A normalised match on word boundaries, at least MIN_EXCERPT_WORDS words, a
-    date with its year inside the agent's range, and that date no later than the
-    upper bound. The context and embed rules of a page do not apply: the
-    description is this recording's own text by construction.
+    date with its year inside the agent's range, STRICTLY before the transcript's
+    own date (review fix 2), and not next to a cue word or inside a link (fixes 6
+    and 7). The context and embed rules of a page do not apply: the description is
+    this recording's own text by construction. "spans" keeps the days that passed,
+    which are the only ones the latest-day rule may read.
     """
     ev = prop.get("description_evidence")
     if not ev:
         return None
     desc = recording_description(rec) or ""
     out = {"route": "description", "basis": "cited", "cited_excerpt": ev,
-           "description_sha256": _sha(desc) if desc else None, "span": None, "ok": False, "why": None}
+           "description_sha256": _sha(desc) if desc else None, "span": None, "spans": [], "ok": False, "why": None}
 
     def no(why: str) -> dict:
         out["why"] = why
@@ -529,44 +562,68 @@ def check_description(rec: dict, prop: dict) -> dict | None:
     if hit is None:
         return no(f"the cited words are not in the description: {ev[:80]!r}")
     out["span"] = span = desc[hit[0]:hit[1]]
-    found = dates_in_text(span)
+    found = _dates_located(span)
     if not found:
         return no(f"the cited description words carry no date with a year: {span[:80]!r}")
     if not any(date_for_verdict(d, prop["verdict"]) for d in found):
         return no(f"the cited description dates are UTC timestamps, which cannot give the venue's day ({ZONE_RULE})")
-    inside = _spans_in_range(span, prop)
+    e, lat = date.fromisoformat(prop["speech_date_earliest"]), date.fromisoformat(prop["speech_date_latest"])
+    inside = [(d, r) for d, r in ((d, date_for_verdict(d, prop["verdict"])) for d in found)
+              if r is not None and e <= r[0] and r[1] <= lat]
     if not inside:
-        return no(f"the description's dates {[d['text'] for d in found]} are outside the range "
-                  f"{prop['speech_date_earliest']}..{prop['speech_date_latest']}")
+        return no(f"the description's dates {[d['text'] for d in found]} are outside the range {e}..{lat}")
     ub = upper_bound(rec)
     if ub is None:
         return no("nothing bounds the recording from above, so a description date cannot be checked against it")
     # STRICTLY before the own date (review fix 2): a description day ON the upload day is
     # an upload, premiere or livestream day, and confirming it would CHECK the upload date.
-    if not [r for r in inside if r[1] < date.fromisoformat(ub[0])]:
+    early = [(d, r) for d, r in inside if r[1] < date.fromisoformat(ub[0])]
+    if not early:
         return no(f"the description's dates in the range are not before {ub[1]}, {ub[0]}; a description date on "
                   f"or after the upload is not the event's")
-    out.update(ok=True, why="confirms")
+    clean, cued = [], []
+    for d, r in early:
+        cue = description_cue(desc, hit[0] + d["at"], hit[0] + d["end"])
+        (cued if cue else clean).append((d, r, cue))
+    if not clean:
+        return no(f"the description's date {cued[0][0]['text']!r}: {cued[0][2]}")
+    out.update(ok=True, why="confirms", spans=[[r[0].isoformat(), r[1].isoformat()] for _, r, _ in clean])
     return out
 
 
+def _tier0_days(desc: str) -> tuple[list[dict], list[str]]:
+    """The description's full days with their year that no cue word or link disqualifies, and the ones that do."""
+    days, cued = [], []
+    for d in _dates_located(desc):
+        if d["lo"] != d["hi"]:
+            continue
+        cue = description_cue(desc, d["at"], d["end"])
+        if cue:
+            cued.append(f"{d['text']!r}: {cue}")
+        else:
+            days.append(d)
+    return days, cued
+
+
 def tier0_day(rec: dict, verdict: str) -> tuple[str | None, str]:
-    """(YYYY-MM-DD, why) when the stored description names exactly ONE full day with its year, on or before the
-    upper bound; (None, why) otherwise. Deterministic, no model.
+    """(YYYY-MM-DD, why) when the stored description names exactly ONE full day with its year that no cue word
+    disqualifies, STRICTLY before the upper bound; (None, why) otherwise. Deterministic, no model.
 
     Only day-precision dates count: a month, a range of days or a bare year is not
-    the day of an event. Two different days mean the description dates more than
-    one thing, so neither is taken. The title is never read.
+    the day of an event. A day next to a cue word or inside a link is dropped first
+    (review fixes 6 and 7). Two different remaining days mean the description dates
+    more than one thing, so neither is taken. The title is never read.
     """
     desc = recording_description(rec)
     if not desc:
         return None, "the recording has no stored description"
+    found, cued = _tier0_days(desc)
     days: dict[date, dict] = {}
-    for d in dates_in_text(desc):
-        if d["lo"] == d["hi"]:
-            days.setdefault(d["lo"], d)
+    for d in found:
+        days.setdefault(d["lo"], d)
     if not days:
-        return None, "the description names no full day with its year"
+        return None, ("the description's only full days are not this event's: " + "; ".join(cued) if cued else
+                      "the description names no full day with its year")
     if len(days) > 1:
         return None, (f"the description names {len(days)} different days "
                       f"({', '.join(sorted(x.isoformat() for x in days))}), so none is taken as the event's")
@@ -585,13 +642,13 @@ def tier0_day(rec: dict, verdict: str) -> tuple[str | None, str]:
 def tier0_check(rec: dict, day: str, verdict: str) -> dict:
     """The Tier 0 confirmation as a stored check: the description line that carries the day.
 
-    The day is matched as tier0_day read it, through date_for_verdict, so a
-    publication read in UTC finds its own text (review fix 4: matching the local
-    day, with an eager fallback, raised IndexError).
+    The day is matched as tier0_day read it, among the same uncued days and through
+    date_for_verdict, so a publication read in UTC finds its own text (review fix 4:
+    matching the local day, with an eager fallback, raised IndexError).
     """
     desc = recording_description(rec) or ""
-    found = [d for d in dates_in_text(desc) if d["lo"] == d["hi"]
-             and (date_for_verdict(d, verdict) or (None,))[0] is not None
+    found = [d for d in _tier0_days(desc)[0]
+             if (date_for_verdict(d, verdict) or (None,))[0] is not None
              and date_for_verdict(d, verdict)[0].isoformat() == day]
     if not found:
         raise ValueError(f"tier0_check: the description carries no {verdict} day {day}; tier0_day and tier0_check "
@@ -1038,7 +1095,10 @@ def assess(rec: dict, doc: dict, checks: list[dict]) -> dict:
     spans = []
     for c in good:
         if c.get("route") == "description":
-            spans += ([(date.fromisoformat(c["day"]),) * 2] if c["basis"] == "tier0" else _spans_in_range(c["span"], prop))
+            # Only the days the description check accepted, never every date in its span (review
+            # fixes 2, 6, 7): a cued or upload-day date beside a good one must not source the last day.
+            spans += ([(date.fromisoformat(c["day"]),) * 2] if c["basis"] == "tier0" else
+                      [(date.fromisoformat(a), date.fromisoformat(b)) for a, b in c["spans"]])
             continue
         s, t_ = _find(c["window"], c["cited_excerpt"])
         spans += _spans_in_range(c["window"][s:t_], prop)
