@@ -29,6 +29,11 @@ about later events change what you extract.
   "this year" or "next year" only if the whole range lies inside one calendar year, and a
   quarter phrase only if it lies inside one quarter; otherwise treat the phrase as in the
   "unknown" case below.
+- "two dating agents named this day; no source confirms it": two independent agents named this
+  day for the event, but no page confirmed it. Resolve relative time words against it as for a
+  checked date, with the same rule for a range. It is still an estimate: if the title, the
+  description or the transcript contradicts it, set `statement_date_doubt` exactly as in the
+  next case, and the pipeline dates the recording again.
 - "NOT checked against the event": the date is only an upper bound, and the recording may be
   years older. Test it against the title, the description and the transcript.
   If nothing shows an older recording, resolve relative time words against it as the latest
