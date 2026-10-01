@@ -149,6 +149,23 @@ class Replay(Base):
         self.assertIn("[PASS] D-dx (2 of 2 valid repeats pass", out)
 
 
+class InvalidAnswer(Base):
+    """Review fix 5, as production merges it: a dater's invalid answer is an invalid proposal, so the other
+    dater's confirmation stands; the repeat is judged on the merge, never failed for the answer alone."""
+
+    def test_an_unparseable_fable_answer_leaves_geminis_confirmation_standing(self):
+        g = gold(self.root, [DATING])
+        d = g / "recordings" / DATING["id"]
+        for n in range(2):
+            self.record(g, DATING, n, "gemini", proposal())
+            self.record(g, DATING, n, "fable", proposal(**CANNOT))
+            f = d / f"r{n:02d}.fable.json"
+            f.write_text(json.dumps({**json.loads(f.read_text()), "response_text": "I could not find it."}))
+        rc, out = run(["--gold", str(g), "--data", str(self.data)])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[PASS] D-dx (2 of 2 valid repeats pass", out)
+
+
 class Gold(Base):
     def test_a_dating_case_naming_a_harness_that_is_not_a_dater_is_refused(self):
         bad = copy.deepcopy(DATING)

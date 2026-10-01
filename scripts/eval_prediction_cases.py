@@ -263,15 +263,16 @@ def judge_dating(case: dict, ctx: Context, answers: dict) -> tuple[str, str]:
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
     docs, checks_by = [], {}
     for h, (text, checks) in answers.items():
+        # An answer that is not valid JSON, or fails validation, is an invalid proposal, as
+        # date_recordings stores it (review fix 5): the merge reads it as invalid_proposal and
+        # the other dater's confirmation stands.
         try:
             obj = L.extract_json(text)
-        except (ValueError, json.JSONDecodeError) as exc:
-            return "fail", f"{h}: no JSON in the answer: {exc}"
-        errs = DL.validate_proposal(obj, tid)
-        if errs:
-            return "fail", f"{h}: invalid proposal: {'; '.join(errs[:3])}"
+            obj = obj if isinstance(obj, dict) else {}
+        except (ValueError, json.JSONDecodeError):
+            obj = {}
         docs.append({"proposal": obj, "harness": h, "daters": list(answers), "leads": case_leads(case, ctx)})
-        checks_by[h] = checks
+        checks_by[h] = checks if not DL.validate_proposal(obj, tid) else []
     out = DL.merge(rec, docs, checks_by)
     ex = case["expect"]
     if out["outcome"] == "queue":

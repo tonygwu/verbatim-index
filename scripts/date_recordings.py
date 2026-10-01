@@ -242,7 +242,8 @@ def propose_one(job: dict, harness: str, args, run_dir: Path, run_id: str, calle
     dest = proposal_path(run_dir, tid, harness)
     base = {"id": tid, "stage": "propose", "harness": harness}
     if dest.exists() and not args.redo:
-        return {**base, "status": "cached"}
+        cached = json.loads(dest.read_text())
+        return {**base, "status": "cached", **({"invalid": True} if cached.get("answer_errors") else {})}
     rec = json.loads(Path(job["path"]).read_text())
     leads, dropped = DL.leads_from_records(job["records"], job["meta"])
     prompt, meta = DL.build_dating_prompt(rec, leads, harness=harness)
@@ -257,14 +258,20 @@ def propose_one(job: dict, harness: str, args, run_dir: Path, run_id: str, calle
         return {**base, "status": "failed", "error_type": L.classify_exception_detail(detail), "detail": detail,
                 "prompt_sha256": sha}
     write(run_dir / "raw" / slug / f"{sid}.{harness}.{run_id}.txt", text)
+    # An answer the model gave but that fails validation is STORED as an invalid proposal
+    # (review fix 5): the merge reads it as invalid_proposal, so it neither confirms nor
+    # agrees, and the other dater's confirmation stands. It is final, like any answer on
+    # disk; --redo asks again. Only infrastructure failures above write nothing.
+    failure = None
     try:
         obj = L.extract_json(text)
+        if not isinstance(obj, dict):
+            raise ValueError(f"the answer is a {type(obj).__name__}, not a JSON object")
+        errs = DL.validate_proposal(obj, tid)
+        if errs:
+            failure = (L.E_SCHEMA, errs)
     except (ValueError, json.JSONDecodeError) as exc:
-        return {**base, "status": "failed", "error_type": L.E_NOJSON, "detail": str(exc)[:300], "prompt_sha256": sha}
-    errs = DL.validate_proposal(obj, tid)
-    if errs:
-        return {**base, "status": "failed", "error_type": L.E_SCHEMA, "detail": "; ".join(errs[:4]),
-                "prompt_sha256": sha}
+        obj, failure = {}, (L.E_NOJSON, [str(exc)[:300]])
     own_date, own_basis = L.own_statement_date(rec)
     # daters: every harness this run asked, so a merge or entry that leaves one out is refused.
     doc = {"schema_version": 1, "transcript_id": tid, "run_id": run_id, "harness": harness, "daters": daters(args),
@@ -276,8 +283,12 @@ def propose_one(job: dict, harness: str, args, run_dir: Path, run_id: str, calle
            "telemetry": {k: tel.get(k) for k in ("web_search_queries", "tool_use_counts", "denied_actions",
                                                  "input_tokens", "output_tokens", "thinking_tokens",
                                                  "reasoning_output_tokens", "attempts", "empty_retries")},
-           "elapsed_sec": round(time.time() - t0, 1), "proposed_at_utc": DL.utc_stamp()}
+           "elapsed_sec": round(time.time() - t0, 1), "proposed_at_utc": DL.utc_stamp(),
+           **({"answer_errors": failure[1], "answer_error_type": failure[0]} if failure else {})}
     write(dest, json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+    if failure:
+        return {**base, "status": "failed", "error_type": failure[0], "detail": "; ".join(failure[1][:4]),
+                "prompt_sha256": sha, "stored": True}
     return {**base, "status": "ok", "verdict": obj["verdict"], "identity": identity}
 
 
@@ -370,6 +381,15 @@ class PoliteFetcher:
         return {**wb, "via": "wayback", "error": f"direct: {direct['error']}; wayback: {wb['error']}"}
 
 
+def no_pages_to_check(doc: dict, tid: str) -> str | None:
+    """Why a stored proposal needs no page fetch, or None: cannot_date, or an answer that failed validation (the
+    merge reads it as invalid_proposal; review fix 5)."""
+    prop = doc.get("proposal")
+    if doc.get("answer_errors") or not isinstance(prop, dict) or DL.validate_proposal(prop, tid):
+        return "invalid answer"
+    return "cannot_date" if prop["verdict"] == "cannot_date" else None
+
+
 def checks_path(run_dir: Path, tid: str, harness: str) -> Path:
     slug, sid = tid.split("/", 1)
     return run_dir / "source_checks" / slug / f"{sid}.{harness}.json"
@@ -402,7 +422,9 @@ def summarise(results: list[dict], stage: str) -> dict:
     tax = Counter(r["error_type"] for r in rs if r["status"] == "failed")
     s = {"attempted": len(rs), "succeeded": sum(1 for r in rs if r["status"] in ("ok", "cached")),
          "cached": sum(1 for r in rs if r["status"] == "cached"), "failed": sum(1 for r in rs if r["status"] == "failed"),
-         "skipped": sum(1 for r in rs if r["status"] == "skipped"), "error_taxonomy": dict(tax)}
+         "skipped": sum(1 for r in rs if r["status"] == "skipped"), "error_taxonomy": dict(tax),
+         # Invalid answers stored on disk (review fix 5): failed when made, cached after, never hidden.
+         "invalid_answers_on_disk": sum(1 for r in rs if r.get("invalid") or r.get("stored"))}
     return s
 
 
@@ -499,9 +521,10 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                     results.append({"id": tid, "harness": h, "stage": "check", "status": "skipped",
                                     "reason": "no proposal"})
                     continue
-                if json.loads(pp.read_text())["proposal"]["verdict"] == "cannot_date":
+                why_not = no_pages_to_check(json.loads(pp.read_text()), tid)
+                if why_not:
                     results.append({"id": tid, "harness": h, "stage": "check", "status": "skipped",
-                                    "reason": "cannot_date"})
+                                    "reason": why_not})
                     continue
                 r = check_one(tid, h, json.loads(job["path"].read_text()), pp, run_dir, fetcher, args.redo)
                 results.append(r)
@@ -530,7 +553,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                 docs.append(doc)
                 refs[h] = {"path": str(pp.relative_to(run_dir)), "sha256": sha}
                 checks_by[h] = []
-                if doc["proposal"]["verdict"] != "cannot_date":
+                if not no_pages_to_check(doc, tid):
                     cp = checks_path(run_dir, tid, h)
                     cdoc = json.loads(cp.read_text()) if cp.exists() else None
                     if cdoc is None or cdoc["proposal_sha256"] != sha:
@@ -597,7 +620,8 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     for st in ("propose", "check"):
         s = report[st]
         print(f"{st}: attempted {s['attempted']}, succeeded {s['succeeded']} (cached {s['cached']}), "
-              f"failed {s['failed']} {s['error_taxonomy']}, skipped {s['skipped']}")
+              f"failed {s['failed']} {s['error_taxonomy']}, skipped {s['skipped']}, "
+              f"invalid answers on disk {s['invalid_answers_on_disk']}")
     print(f"fetch outcomes: {dict(fetcher.outcomes)}")
     if merge_report:
         waiting = Counter(h for v in merge_report["missing_proposals"].values() for h in v)

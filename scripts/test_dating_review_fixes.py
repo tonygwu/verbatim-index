@@ -292,5 +292,56 @@ class AgreementLabels(unittest.TestCase):
         self.assertNotEqual(L.check_schema(mixed, sub, "$", schema), [])
 
 
+class InvalidAnswers(unittest.TestCase):
+    """Fix 5: a dater whose answer fails validation every time (Fable's "dated, cites no source") left the
+    transcript waiting for ever, though Gemini had confirmed it (the reviewer's strand.py). The answer is stored
+    as a proposal the merge reads as invalid_proposal: it neither confirms nor agrees, and the other dater's
+    confirmation stands."""
+
+    def test_a_stored_invalid_answer_lets_the_other_daters_confirmation_stand(self):
+        from test_date_recordings import Fixture, FakeAgent, FakeWeb, LIVE_URL, run  # noqa: PLC0415
+        from test_dating import LIVEBLOG  # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            ids = Path(td) / "ids.txt"
+            ids.write_text("ada/re-upload-abc123\n")
+            agent = FakeAgent({("gemini", "ada/re-upload-abc123"): proposal(),
+                               ("fable", "ada/re-upload-abc123"): proposal(sources=[], description_evidence=None)})
+            web = FakeWeb({LIVE_URL: LIVEBLOG})
+            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            self.assertEqual(rc, 1, out)                       # the invalid answer is a failure, and named
+            fable = json.loads((fx.run / "proposals" / "ada" / "re-upload-abc123.fable.json").read_text())
+            self.assertTrue(any("cites no source" in e for e in fable["answer_errors"]), fable)
+            ov = L.load_statement_date_overrides(fx.run / "overrides.json", [fx.data / "transcripts_open"])
+            self.assertEqual(ov["ada/re-upload-abc123"]["confirmation"]["lead"], "gemini")
+            n = len(agent.calls)
+            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            self.assertEqual(len(agent.calls), n, "a stored invalid answer is final; it is not re-asked")
+            self.assertEqual(rc, 0, out)
+
+    def test_an_unparseable_answer_is_stored_too(self):
+        from test_date_recordings import Fixture, FakeAgent, FakeWeb, LIVE_URL, run  # noqa: PLC0415
+        from test_dating import LIVEBLOG  # noqa: PLC0415
+
+        class Garbled(FakeAgent):
+            def __call__(self, harness, prompt, timeout, workdir, args, idx):
+                text, tel, ident = super().__call__(harness, prompt, timeout, workdir, args, idx)
+                return ("I could not find it." if harness == "fable" else text), tel, ident
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            ids = Path(td) / "ids.txt"
+            ids.write_text("ada/re-upload-abc123\n")
+            rc, out = run(fx.argv("--run", "--ids", str(ids)), Garbled({"ada/re-upload-abc123": proposal()}),
+                          FakeWeb({LIVE_URL: LIVEBLOG}))
+            ov = json.loads((fx.run / "overrides.json").read_text())["overrides"]
+            self.assertIn("ada/re-upload-abc123", ov, out)
+
+    def test_the_merge_reads_an_invalid_proposal_as_invalid(self):
+        out = merge(rec_with(""), {"gemini": P("2014-06-10", "2014-06-10"),
+                                   "fable": P("2014-06-10", "2014-06-10", sources=[])})
+        self.assertEqual(out["outcome"], "queue", out)
+        self.assertEqual(out["by_dater"]["fable"], "invalid_proposal")
+
+
 if __name__ == "__main__":
     unittest.main()
