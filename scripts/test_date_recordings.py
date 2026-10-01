@@ -84,8 +84,11 @@ class Fixture:
                 "--production-overrides", str(self.data / "predictions" / "statement_date_overrides.json"), *extra]
 
 
+MODELS = {"gemini": "gemini-3.8-flash-high", "fable": "claude-fable-5-1", "astra": "gpt-6-astra"}
+
+
 class FakeAgent:
-    """Answers by transcript id; an entry may be an exception to raise once."""
+    """Answers by (harness, transcript id), else by transcript id; an entry may be an exception to raise once."""
 
     def __init__(self, answers):
         self.answers = {k: list(v) if isinstance(v, list) else [v] for k, v in answers.items()}
@@ -94,10 +97,11 @@ class FakeAgent:
     def __call__(self, harness, prompt, timeout, workdir, args, idx):
         tid = prompt.split("transcript_id must be exactly: ")[1].split("\n")[0]
         self.calls.append((harness, tid))
-        ans = self.answers[tid].pop(0) if len(self.answers[tid]) > 1 else self.answers[tid][0]
+        q = self.answers[(harness, tid)] if (harness, tid) in self.answers else self.answers[tid]
+        ans = q.pop(0) if len(q) > 1 else q[0]
         if isinstance(ans, Exception):
             raise ans
-        tel = {"requested_model": "gemini-3.8-flash-high", "served_model": "gemini-3.8-flash-high",
+        tel = {"requested_model": MODELS[harness], "served_model": MODELS[harness],
                "served_model_verified": True, "profile_identity": "a@example.com", "web_search_queries": ["dx 2012"],
                "tool_use_counts": {"search_web": 1}}
         return json.dumps(ans), tel, "a@example.com"
@@ -155,7 +159,8 @@ class DryRun(unittest.TestCase):
             self.assertIn("in scope: 3 transcripts", out)
             self.assertIn("stated_in_page (not dated by this stage): 1", out)
             self.assertIn("operator override already present: 1", out)
-            self.assertIn("a real run would spend 3 gemini calls", out)
+            self.assertIn("a real run would spend 6 calls: gemini 3 (gemini-3.8-flash-high), "
+                          "fable 3 (claude-fable-5-1)", out)
 
 
 class Run(unittest.TestCase):
@@ -169,15 +174,15 @@ class Run(unittest.TestCase):
                            "https://thepod.example.com/episodes/ada":
                                "<html><body><h1>Ada on the pod</h1><p>Episode released September 12, 2025 in full</p>"
                                "</body></html>"})
-            rc, out = run(fx.argv("--run"), agent, web)
+            rc, out = run(fx.argv("--run", "--harness", "gemini"), agent, web)
             self.assertEqual(rc, 0, out)
-            self.assertTrue(out.lstrip().startswith("SPENDS QUOTA: up to 3 gemini calls"), out[:200])
+            self.assertTrue(out.lstrip().startswith("SPENDS QUOTA: up to 3 calls (gemini 3"), out[:200])
             self.assertEqual(sorted(t for _, t in agent.calls), ["ada/held-ep", "ada/pod-ep-xyz789", "ada/re-upload-abc123"])
             prop = json.loads((fx.run / "proposals" / "ada" / "re-upload-abc123.gemini.json").read_text())
             self.assertEqual((prop["served_model"], prop["served_model_verified"], prop["identity"]),
                              ("gemini-3.8-flash-high", True, "a@example.com"))
             self.assertEqual(prop["telemetry"]["web_search_queries"], ["dx 2012"])
-            chk = json.loads((fx.run / "source_checks" / "ada" / "re-upload-abc123.json").read_text())
+            chk = json.loads((fx.run / "source_checks" / "ada" / "re-upload-abc123.gemini.json").read_text())
             self.assertEqual(chk["checks"][0]["fetched_via"], "wayback")
             ov = L.load_statement_date_overrides(fx.run / "overrides.json", [fx.data / "transcripts_open"])
             self.assertEqual({k: v["statement_date"] for k, v in ov.items()}, {"ada/re-upload-abc123": "2012-05-30"})
@@ -198,9 +203,9 @@ class Run(unittest.TestCase):
                                "ada/held-ep": proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None,
                                                        event_kind=None, tid="ada/held-ep")})
             web = FakeWeb({LIVE_URL: LIVEBLOG})
-            run(fx.argv("--run"), agent, web)
+            run(fx.argv("--run", "--harness", "gemini"), agent, web)
             n = len(agent.calls)
-            rc, out = run(fx.argv("--run"), agent, web)
+            rc, out = run(fx.argv("--run", "--harness", "gemini"), agent, web)
             self.assertEqual(len(agent.calls), n, "a proposal on disk is reused, not paid for again")
             self.assertIn("cached 3", out)
 
@@ -208,9 +213,9 @@ class Run(unittest.TestCase):
 class Harness(unittest.TestCase):
     def test_default_is_gemini_and_fable_help_says_it_has_no_web(self):
         ap = DR.build_parser()
-        self.assertEqual(ap.parse_args(["--run-dir", "x"]).harness, "gemini")
+        self.assertEqual(DR.daters(ap.parse_args(["--run-dir", "x"])), ["gemini", "fable"])
         for h in ("gemini", "astra", "fable"):
-            self.assertEqual(ap.parse_args(["--run-dir", "x", "--harness", h]).harness, h)
+            self.assertEqual(DR.daters(ap.parse_args(["--run-dir", "x", "--harness", h])), [h])
         self.assertIn("NO working web tools", ap.format_help())
 
     def test_the_harness_reaches_the_caller_and_the_file_name(self):
@@ -232,6 +237,67 @@ class Harness(unittest.TestCase):
                 run(fx.argv("--harness", "fable", "--fable-bin", "cl"), FakeAgent({}), FakeWeb({}))
 
 
+CANNOT = dict(verdict="cannot_date", e=None, l=None, sources=[], event=None, event_kind=None)
+
+
+class TwoDaters(unittest.TestCase):
+    """Operator decision VD-11: a Gemini and a Fable proposal per transcript, merged together."""
+
+    def test_two_proposal_files_per_transcript_and_the_merge_reads_both(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            pod_unread = pod_answer()     # its page is not on the fake web, so only agreement can date it
+            agent = FakeAgent({("gemini", "ada/re-upload-abc123"): proposal(),
+                               ("fable", "ada/re-upload-abc123"): proposal(**CANNOT),
+                               "ada/pod-ep-xyz789": pod_unread,
+                               "ada/held-ep": proposal(**CANNOT, tid="ada/held-ep")})
+            rc, out = run(fx.argv("--run"), agent, FakeWeb({LIVE_URL: LIVEBLOG}))
+            self.assertEqual(rc, 0, out)
+            self.assertTrue(out.lstrip().startswith("SPENDS QUOTA: up to 6 calls (gemini 3 gemini-3.8-flash-high, "
+                                                    "fable 3 claude-fable-5-1)"), out[:200])
+            self.assertEqual(sorted(agent.calls), sorted((h, t) for h in ("gemini", "fable") for t in
+                                                         ("ada/held-ep", "ada/pod-ep-xyz789", "ada/re-upload-abc123")))
+            for h in ("gemini", "fable"):
+                doc = json.loads((fx.run / "proposals" / "ada" / f"re-upload-abc123.{h}.json").read_text())
+                self.assertEqual((doc["harness"], doc["served_model"], doc["daters"]),
+                                 (h, MODELS[h], ["gemini", "fable"]))
+            self.assertTrue((fx.run / "source_checks" / "ada" / "re-upload-abc123.gemini.json").exists())
+            roots = [fx.data / "transcripts_open"]
+            ov = L.load_statement_date_overrides(fx.run / "overrides.json", roots)
+            self.assertEqual(ov["ada/re-upload-abc123"]["confirmation"]["lead"], "gemini")
+            self.assertEqual([p["harness"] for p in ov["ada/re-upload-abc123"]["confirmation"]["proposals"]],
+                             ["gemini", "fable"])
+            ck = L.load_statement_date_checks(fx.run / "checks.json", roots)
+            self.assertEqual(ck["ada/pod-ep-xyz789"]["confirmation"]["method"], "two_agent_agreement")
+            queue = json.loads((fx.run / "queue.json").read_text())["queue"]
+            self.assertEqual([(q["transcript_id"], q["reason"], q["by_dater"]) for q in queue],
+                             [("ada/held-ep", "cannot_date", {"gemini": "cannot_date", "fable": "cannot_date"})])
+
+    def test_a_transcript_missing_one_daters_proposal_is_not_merged(self):
+        """A merge without Fable could confirm a day Fable's own page contradicts; it waits for both."""
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            ids = Path(td) / "ids.txt"
+            ids.write_text("ada/re-upload-abc123\n")
+            agent = FakeAgent({("gemini", "ada/re-upload-abc123"): proposal(),
+                               ("fable", "ada/re-upload-abc123"): RuntimeError("cli_timeout: no answer")})
+            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, FakeWeb({LIVE_URL: LIVEBLOG}))
+            self.assertEqual(rc, 1, out)
+            ov = json.loads((fx.run / "overrides.json").read_text())["overrides"]
+            self.assertEqual(ov, {})
+            report = json.loads(next((fx.run / "runs").glob("*.json")).read_text())
+            self.assertEqual(report["merge"]["missing_proposals"], {"ada/re-upload-abc123": ["fable"]})
+            self.assertIn("waiting for fable: 1", out)
+
+    def test_an_unknown_or_repeated_dater_is_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            for bad in ("gemini,gemini", "gemini,codex", ""):
+                with self.assertRaises(SystemExit) as cm:
+                    run(fx.argv("--harness", bad), FakeAgent({}), FakeWeb({}))
+                self.assertIn("--harness", str(cm.exception))
+
+
 class EmptyAnswer(unittest.TestCase):
     def test_an_empty_answer_is_counted_retried_and_never_cannot_date(self):
         with tempfile.TemporaryDirectory() as td:
@@ -241,14 +307,14 @@ class EmptyAnswer(unittest.TestCase):
             empty = RuntimeError("empty_response: status SUCCESS with an empty response. denied_actions=[...]")
             agent = FakeAgent({"ada/re-upload-abc123": [empty, proposal()]})
             web = FakeWeb({LIVE_URL: LIVEBLOG})
-            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            rc, out = run(fx.argv("--run", "--harness", "gemini", "--ids", str(ids)), agent, web)
             self.assertEqual(rc, 1, out)
             report = json.loads(sorted((fx.run / "runs").glob("*.json"))[-1].read_text())
             self.assertEqual(report["propose"]["error_taxonomy"], {"empty_response": 1})
             self.assertFalse((fx.run / "proposals" / "ada" / "re-upload-abc123.gemini.json").exists())
             self.assertEqual(json.loads((fx.run / "queue.json").read_text())["queue"], [])
             self.assertEqual(report["merge"]["not_proposed"], ["ada/re-upload-abc123"])
-            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            rc, out = run(fx.argv("--run", "--harness", "gemini", "--ids", str(ids)), agent, web)
             self.assertEqual(rc, 0, out)
             ov = L.load_statement_date_overrides(fx.run / "overrides.json", [fx.data / "transcripts_open"])
             self.assertEqual(ov["ada/re-upload-abc123"]["statement_date"], "2012-05-30")
@@ -310,7 +376,7 @@ class Fetch(unittest.TestCase):
             ids = Path(td) / "ids.txt"
             ids.write_text("ada/re-upload-abc123\n")
             web = FakeWeb({})
-            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            rc, out = run(fx.argv("--run", "--harness", "gemini", "--ids", str(ids)), agent, web)
             self.assertEqual(web.asked, [])
             q = json.loads((fx.run / "queue.json").read_text())["queue"]
             self.assertEqual(q[0]["reason"], "no_confirming_source")

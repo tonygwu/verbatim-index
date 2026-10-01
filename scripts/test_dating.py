@@ -74,7 +74,7 @@ def proposal(verdict="dated", e="2012-05-30", l="2012-05-30", sources=None, tid=
 
 def doc_for(obj, rec=D10):
     own, basis = L.own_statement_date(rec)
-    return {"schema_version": 1, "transcript_id": obj["transcript_id"], "harness": "gemini",
+    return {"schema_version": 1, "transcript_id": obj["transcript_id"], "harness": "gemini", "daters": ["gemini"],
             "requested_model": "gemini-3.8-flash-high", "served_model": "gemini-3.8-flash-high",
             "served_model_verified": True, "identity": "a@example.com", "own_date": own, "own_basis": basis,
             "prompt_sha256": "p" * 64, "proposal": obj}
@@ -461,7 +461,7 @@ class Loader(unittest.TestCase):
         self.path.write_text(json.dumps({"schema_version": 1, "overrides": {"ada/re-upload-abc123": entry}}))
 
     def test_a_tampered_proposal_is_refused(self):
-        prop = self.path.parent / self.entry["confirmation"]["proposal"]["path"]
+        prop = self.path.parent / self.entry["confirmation"]["proposals"][0]["path"]
         prop.write_text(prop.read_text().replace("2012-05-30", "2012-05-29"))
         with self.assertRaisesRegex(L.PredictionError, "sha256"):
             L.load_statement_date_overrides(self.path, self.roots)
