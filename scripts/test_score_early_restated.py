@@ -57,6 +57,10 @@ try:
           by["member"]["not_scored_because"] == "restated:spec", str(by["member"].get("not_scored_because")))
     check("the restated member carries no early call of its own",
           "early" not in by["member"] and not by["member"].get("early_called"), str(by["member"]))
+    # FOUND the same day: without its not_due mark the member counted as past due in its person's
+    # figures but not in the corpus block, and the page refused the board (665 against 662).
+    check("a restated member that is not yet due still says not_due, so it is not counted as past due",
+          by["member"].get("not_due") is True, str(by["member"]))
     check("the specific member still scores on its early call and says so",
           by["spec"]["scored"] and by["spec"].get("early_called") and by["spec"].get("not_due"), str(by["spec"]))
 except AttributeError as exc:

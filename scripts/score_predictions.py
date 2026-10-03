@@ -171,6 +171,10 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
                 row["already_public_review"] = True
         # A restated member's early call is not its own result (res is None above): its cluster's
         # specific member carries the cluster's outcome, so the member carries no early call either.
+        # It still keeps the not_due mark when it is not due, or per_leader counts it as past due
+        # while the corpus block does not (665 against 662 on 2026-10-03, and the page refused).
+        if pid in early_used and own is not None and early_used[pid]["not_due"]:
+            row["not_due"] = True
         if pid in early_used and own is None:
             row["early_called"] = True
             row["early"] = {k: res.get(k) for k in ("as_of", "outcome", "not_occurred_basis", "run_id")}
