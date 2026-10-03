@@ -561,6 +561,33 @@ def count_tool_events(events: list[dict]) -> dict[str, int]:
     return counts
 
 
+def parse_jsonl_events(stdout: str | None) -> tuple[list[dict], int]:
+    """(events, count of lines that are not a JSON event) from a CLI's JSONL stream.
+
+    Split on "\n" ONLY. JSON escapes a newline inside a string, so a real newline
+    always ends an event, but str.splitlines() also splits on U+2028, U+2029, U+0085
+    and other separators that JSON leaves raw. FOUND 2026-10-03: a codex event whose
+    web text held U+2028 came apart, both halves were dropped in silence, and the
+    search inside it vanished from telemetry, so the resolver's effort floor refused
+    an honest answer three times as "searched lists queries the harness never ran".
+    A line that still fails to parse is counted (telemetry unparsed_event_lines),
+    never dropped without a trace. Guarded by scripts/test_jsonl_events.py.
+    """
+    events, unparsed = [], 0
+    for line in (stdout or "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if not line.startswith("{"):
+            unparsed += 1
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            unparsed += 1
+    return events, unparsed
+
+
 def web_search_actions(events: list[dict]) -> dict:
     """What a codex judge searched, from its completed web_search items.
 
@@ -1078,14 +1105,7 @@ def call_astra(prompt: str, timeout: int, workdir: Path,
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL, cwd=str(workdir), env=env)
     save_cli_response(raw_response_path, proc)
-    events = []
-    for line in (proc.stdout or "").splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+    events, unparsed = parse_jsonl_events(proc.stdout)
     errors = [e for e in events if e.get("type") == "error"
               or (e.get("item") or {}).get("type") == "error"]
     fatal = [e for e in events if e.get("type") in ("turn.failed", "error")]
@@ -1135,6 +1155,8 @@ def call_astra(prompt: str, timeout: int, workdir: Path,
         # the resolver's effort floor counts (resolution_lib.validate_effort).
         "web_search": web_search_actions(events),
     }
+    if unparsed:
+        telemetry["unparsed_event_lines"] = unparsed
     if telemetry["reasoning_output_tokens"] in (None, 0):
         raise RuntimeError(f"{E_MODEL_MISMATCH}: no reasoning tokens reported; "
                            f"max reasoning effort did not take effect. usage={usage}")
@@ -1730,14 +1752,7 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
             f"({empty_retries} after an empty answer) "
             f"({profile_label(profile_home)})")
 
-    events = []
-    for line in (proc.stdout or "").splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+    events, unparsed = parse_jsonl_events(proc.stdout)
 
     init = next((e.get("init") for e in events if e.get("event") == "init"), None)
     result = next((e.get("result") for e in reversed(events) if e.get("event") == "result"), None)
@@ -1801,6 +1816,8 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         "tool_use_counts": counts,
         "web_search_queries": queries,
     }
+    if unparsed:
+        telemetry["unparsed_event_lines"] = unparsed
     if telemetry["thinking_tokens"] in (None, 0):
         # The "-high" suffix IS the reasoning setting for this model family, so
         # zero thinking tokens means the high-effort variant did not take effect.
