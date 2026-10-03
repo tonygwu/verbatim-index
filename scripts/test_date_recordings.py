@@ -211,6 +211,40 @@ class Run(unittest.TestCase):
             self.assertIn("cached 3", out)
 
 
+    def test_a_remerge_keeps_the_stamp_of_an_unchanged_entry(self):
+        """FOUND 2026-10-03: every merge re-stamped confirmed_at_utc on every entry, so an entry already
+        promoted to production differed from its own re-merge in the stamp alone, and promotion refused it."""
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            agent = FakeAgent({"ada/re-upload-abc123": proposal(), "ada/pod-ep-xyz789": pod_answer(),
+                               "ada/held-ep": proposal(verdict="cannot_date", e=None, l=None, sources=[], event=None,
+                                                       event_kind=None, tid="ada/held-ep")})
+            web = FakeWeb({LIVE_URL: LIVEBLOG, "https://thepod.example.com/episodes/ada":
+                           "<html><body><h1>Ada on the pod</h1><p>Episode released September 12, 2025 in full</p>"
+                           "</body></html>"})
+            with patch.object(DR.DL, "utc_stamp", return_value="2026-01-01T00:00:00Z"):
+                run(fx.argv("--run", "--harness", "gemini"), agent, web)
+            first = {f: json.loads((fx.run / f).read_text()) for f in ("overrides.json", "checks.json")}
+            self.assertEqual(first["overrides.json"]["overrides"]["ada/re-upload-abc123"]["confirmed_at_utc"],
+                             "2026-01-01T00:00:00Z")
+            with patch.object(DR.DL, "utc_stamp", return_value="2026-02-02T00:00:00Z"):
+                rc, out = run(fx.argv("--run", "--harness", "gemini"), agent, web)
+            self.assertEqual(rc, 0, out)
+            again = {f: json.loads((fx.run / f).read_text()) for f in ("overrides.json", "checks.json")}
+            self.assertEqual(again, first, "an unchanged entry keeps the stamp it was first confirmed with")
+            # An entry that DID change is stamped again: here the stored one is edited behind the merge's back.
+            doc = first["overrides.json"]
+            doc["overrides"]["ada/re-upload-abc123"]["basis"] = "edited"
+            (fx.run / "overrides.json").write_text(json.dumps(doc))
+            with patch.object(DR.DL, "utc_stamp", return_value="2026-03-03T00:00:00Z"):
+                run(fx.argv("--run", "--harness", "gemini"), agent, web)
+            third = json.loads((fx.run / "overrides.json").read_text())["overrides"]["ada/re-upload-abc123"]
+            self.assertEqual(third["confirmed_at_utc"], "2026-03-03T00:00:00Z")
+            self.assertNotEqual(third["basis"], "edited")
+            self.assertEqual(json.loads((fx.run / "checks.json").read_text())["checks"]["ada/pod-ep-xyz789"]
+                             ["confirmed_at_utc"], "2026-01-01T00:00:00Z")
+
+
 class Harness(unittest.TestCase):
     def test_default_is_gemini_and_fable_help_says_it_has_no_web(self):
         ap = DR.build_parser()

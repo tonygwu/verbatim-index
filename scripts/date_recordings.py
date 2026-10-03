@@ -235,6 +235,22 @@ def call_agent(harness: str, prompt: str, timeout: int, workdir: Path, args, idx
 HARNESSES = ("gemini", "astra", "fable")
 
 
+def previous_stamps(run_dir: Path) -> dict:
+    """{(kind, transcript id): (entry without its stamp, stamp)} from the run's last merge, if any.
+
+    FOUND 2026-10-03: every merge stamped every entry afresh, so an entry already
+    promoted to production differed from its own re-merge in confirmed_at_utc alone,
+    and promote_dating_run.py refused it as a conflicting date.
+    """
+    out = {}
+    for kind, name, key in (("override", "overrides.json", "overrides"), ("check", "checks.json", "checks")):
+        f = run_dir / name
+        if f.exists():
+            for tid, e in json.loads(f.read_text())[key].items():
+                out[(kind, tid)] = ({k: v for k, v in e.items() if k != "confirmed_at_utc"}, e["confirmed_at_utc"])
+    return out
+
+
 def fable_dirs(args) -> list[str]:
     """The Claude config dirs Fable calls rotate over, in order; the default account when none is named.
 
@@ -594,6 +610,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     merge_report = None
     if "merge" in stages:
         overrides, checks_out, queue, not_proposed = {}, {}, [], []
+        prior = previous_stamps(run_dir)
         missing_proposals: dict[str, list[str]] = {}
         missing_checks: dict[str, list[str]] = {}
         merge_errors: list[str] = []
@@ -631,11 +648,14 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                 out = {"outcome": "queue", "reason": "merge_error", "detail": f"{type(exc).__name__}: {exc}"[:500],
                        "checks": []}
                 merge_errors.append(tid)
-            if out["outcome"] == "override":
-                overrides[tid] = {**out["entry"], "confirmed_at_utc": DL.utc_stamp()}
-            elif out["outcome"] == "check":
-                # It confirms the transcript's own date: a check, which supersedes no record.
-                checks_out[tid] = {**out["entry"], "confirmed_at_utc": DL.utc_stamp()}
+            if out["outcome"] in ("override", "check"):
+                # An entry the last merge already confirmed, unchanged, keeps its first stamp, so a
+                # re-run of the merge leaves a promoted entry identical to production's copy.
+                was = prior.get((out["outcome"], tid))
+                stamp = was[1] if was and was[0] == out["entry"] else DL.utc_stamp()
+                # A check confirms the transcript's own date and supersedes no record.
+                (overrides if out["outcome"] == "override" else checks_out)[tid] = {**out["entry"],
+                                                                                   "confirmed_at_utc": stamp}
             else:
                 queue.append({"transcript_id": tid, "reason": out["reason"], "detail": out["detail"],
                               "by_dater": out.get("by_dater") or {hs[0]: out["reason"]},
