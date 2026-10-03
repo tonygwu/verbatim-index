@@ -169,7 +169,9 @@ def join(rows: list[dict], resolutions: dict, priors: dict,
             row["already_public"] = res["already_public"]
             if not exact_statement_date(r.get("source") or {}):
                 row["already_public_review"] = True
-        if pid in early_used:
+        # A restated member's early call is not its own result (res is None above): its cluster's
+        # specific member carries the cluster's outcome, so the member carries no early call either.
+        if pid in early_used and own is None:
             row["early_called"] = True
             row["early"] = {k: res.get(k) for k in ("as_of", "outcome", "not_occurred_basis", "run_id")}
             row["not_due" if early_used[pid]["not_due"] else "fresh_check_due"] = True
