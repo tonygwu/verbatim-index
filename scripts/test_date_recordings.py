@@ -31,6 +31,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -229,6 +230,22 @@ class Harness(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             self.assertEqual(agent.calls, [("fable", "ada/re-upload-abc123")])
             self.assertTrue((fx.run / "proposals" / "ada" / "re-upload-abc123.fable.json").exists())
+
+    def test_fable_calls_rotate_over_the_named_accounts(self):
+        # FOUND 2026-10-03: every Fable dating call went to the one default account,
+        # which ran out of its Fable allowance after about 380 calls; 144 proposals
+        # failed auth_or_quota while four other accounts had Fable left.
+        import grade as G
+        ap = DR.build_parser()
+        args = ap.parse_args(["--run-dir", "x", "--fable-config-dir", "/acct/a,/acct/b"])
+        used = []
+        with patch.object(G, "call_fable", lambda prompt, cfg, *a, **k: (used.append(cfg) or "{}",
+                                                                          {"judge_model": "claude-fable-5-1"})):
+            for i in range(3):
+                DR.call_agent("fable", "p", 10, Path(tempfile.mkdtemp()), args, i)
+        self.assertEqual(used, ["/acct/a", "/acct/b", "/acct/a"])
+        with self.assertRaises(SystemExit):
+            DR.fable_dirs(ap.parse_args(["--run-dir", "x", "--fable-config-dir", "/acct/a,,/acct/b"]))
 
     def test_cl_is_refused_as_the_fable_binary(self):
         with tempfile.TemporaryDirectory() as td:

@@ -225,13 +225,29 @@ def call_agent(harness: str, prompt: str, timeout: int, workdir: Path, args, idx
                                  config_dir=args.codex_home or None)
         return text, {**tel, "served_model_verified": False}, G.account_label(args.codex_home or "__DEFAULT__")
     if harness == "fable":
-        cfg = args.fable_config_dir or "__DEFAULT__"
+        dirs = fable_dirs(args)
+        cfg = dirs[idx % len(dirs)]
         text, tel = G.call_fable(prompt, cfg, timeout, binary=args.fable_bin, workdir=str(workdir))
         return text, {**tel, "served_model": tel.get("judge_model"), "served_model_verified": True}, G.account_label(cfg)
     raise RuntimeError(f"cli_nonzero_exit: unknown harness {harness}")
 
 
 HARNESSES = ("gemini", "astra", "fable")
+
+
+def fable_dirs(args) -> list[str]:
+    """The Claude config dirs Fable calls rotate over, in order; the default account when none is named.
+
+    FOUND 2026-10-03: one account took every Fable dating call and ran out of its
+    Fable allowance after about 380 calls, failing 144 proposals as auth_or_quota
+    while four other accounts had Fable left. Name several to spread the load.
+    """
+    if not args.fable_config_dir:
+        return ["__DEFAULT__"]
+    dirs = [d.strip() for d in args.fable_config_dir.split(",")]
+    if any(not d for d in dirs):
+        raise SystemExit(f"--fable-config-dir {args.fable_config_dir!r} has an empty entry")
+    return dirs
 
 
 def daters(args) -> list[str]:
@@ -499,7 +515,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--codex-home", default=None)
     ap.add_argument("--fable-bin", default="claude")
-    ap.add_argument("--fable-config-dir", default=None)
+    ap.add_argument("--fable-config-dir", default=None,
+                    help="comma-separated Claude config dirs; Fable calls rotate over them in order. "
+                         "With none, every call goes to the default account, which one full run can exhaust")
     ap.add_argument("--workroot", default=str(Path(os.environ.get("TMPDIR", "/tmp")) / "dating-work"))
     return ap
 
