@@ -1681,10 +1681,21 @@ new grades incomparable with the corpus already graded.
 - Recording dates (rescue round 4, operator decision VD-8 (c)):
   `scripts/date_recordings.py --run-dir data/predictions/_experiments/dating-<name>`
   is a dry run until `--run`, which SPENDS QUOTA. Two daters per recording since
-  2026-10-01 (operator decision VD-11): production uses both, and `--harness
-  gemini,fable` is the default. Each dater writes its own proposal, `<sid>.gemini.json`
-  and `<sid>.fable.json`, naming the event and its date range with sources. A
-  single-dater run such as `--harness gemini` is the one-agent rule of VD-8 (c): its
+  2026-10-01. Since 2026-10-05 (operator decision) production uses Astra and Fable with
+  its web tools, and `--harness astra,fable_web` is the default; it was gemini,fable
+  under VD-11. A run directory made with other daters is refused before any call, so
+  production's `dating-run-20261001` (gemini,fable) stays as it is and a new production
+  dating run uses a NEW `--run-dir`. Fable's account is picked per call by the
+  quota-router library, `select_account(model="fable", only=<the enabled Claude
+  accounts>, record=True, no_sticky=True)`, as `extract_predictions.Router` picks; never
+  the `cl` launcher. A degraded, exhausted or empty pick is refused as
+  `router_no_account` unless `--allow-degraded` is given, and the picked account and
+  the router's reason are in each proposal's `telemetry.router`. `--fable-config-dir`
+  pins the accounts instead. Every proposal file records the roster's company for the
+  speaker, `speaker_company`, which merge-5 reads; a speaker the roster lacks stops the
+  run before any call. Each dater writes its own proposal, `<sid>.<dater>.json`,
+  naming the event and its date range with sources. A
+  single-dater run such as `--harness astra` is the one-agent rule of VD-8 (c): its
   entries load and re-verify like any other, but it is not how production dates. The
   merge confirms a date when one dater's page or description check passes and no
   other usable dater's range misses that day (rule R1, coordinator 2026-10-01,
@@ -1723,9 +1734,9 @@ new grades incomparable with the corpus already graded.
   `scripts/test_date_recordings.py`. Header lines `override_agreed_day` and
   `override_agreed_range` are pinned with the rest of the header in release
   `predictions-2.3`'s `contracts.header`.
-  **merge-4 (2026-10-04) is `MERGE_VERSION`.** The operator audited seven recordings
-  the stage failed to date, and every date was findable. A new run writes merge-4
-  entries; merge-3 stays re-runnable, because the loader re-merges each entry under
+  **merge-4 (2026-10-04)** was `MERGE_VERSION` until merge-5. The operator audited seven
+  recordings the stage failed to date, and every date was findable. merge-3 stays
+  re-runnable, because the loader re-merges each entry under
   the version it names, and production holds 205 merge-3 entries. merge-4 changes
   five rules. (a) A page that embeds the recording may confirm a day strictly before
   the upload, if no uploadDate in its window names that day. Such a page is an
@@ -1750,10 +1761,56 @@ new grades incomparable with the corpus already graded.
   and confirms 11 queued ones. Five of the 11 are not among the operator's seven and
   are not audited. `--harness fable_web` is Fable with exactly WebSearch and
   WebFetch under `sandbox-exec`, through `date_recordings.call_fable_web`. It is for
-  dating only and is not a production default. The judge harness and the
-  outcome-blind prior and lead-test stages keep their tools off. Proof:
+  dating only, and since 2026-10-05 it is one of the two production daters. The judge
+  harness and the outcome-blind prior and lead-test stages keep their tools off. Proof:
   `scripts/test_dating_operator_rules.py`, `scripts/test_dating_fable_web.py`,
   `scripts/test_dating_operator_cases.py`, which reads the data link.
+  **merge-5 (2026-10-05) is `MERGE_VERSION`.** A new run writes merge-5 entries;
+  merge-3 and merge-4 stay re-runnable, and `date_recordings.py --merge-version
+  merge-4` re-merges a run whose proposal files lack `speaker_company`. merge-5 closes
+  the operator's three gaps and adds the rules drawn from `dating-vp34-20261005`.
+  (a) A page confirms only when it names the speaker AND one NAME of this occasion,
+  every word of it: the host organization, an interviewer, the channel, the event's
+  name (the dater's text before a colon or "about"), or a run of two or more
+  capitalised title words. Generic words are optional, the speaker's company (the
+  roster's) never counts, and a page on the host's own domain names the host. FOUND:
+  a casino.org article on Robinhood "dated" the Tenev podcast (OP7 r01), and a Big
+  Technology post that never names Mensch dated `arthur-mensch/alex-kantrowitz-xxutdy`.
+  (b) A yearless month or month-day counts when the same page shows its publication
+  date ("In February" on a page "Published: 03.02.21" is February 2021): the latest
+  such day not after it, every reading of a numeric anchor giving one year; an update
+  date never anchors and a re-publication anchors only on its "originally published"
+  date. A yearless period may end on the range's last day; a dated span must still lie
+  inside the range. A numeric date with a four-digit year counts when it has one
+  reading ("10/13/2025", never "2/12/2020"). An upcoming yearless day the transcript
+  names ("we're doing one on December 16th") is a CEILING once a cited page that
+  passed the check gives a floor for its year, and only when no second such day lies
+  between the floor and the upper bound. A floor page dates a past event the talk
+  mentions and shares a two-word phrase with the transcript; it confirms nothing alone.
+  (c) Rule R1: a dissenting dater blocks a confirmed day only when a check of its own
+  passed, or the day is a publication date (a publication word or UTC stamp beside it,
+  or a `publication_only` verdict). The overruled dater is recorded. Release rule
+  (operator): the podcaster's own episode (`publication_only`, `podcast_episode`, not a
+  re-upload, channel = host or interviewer) is dated by its release when a podcast
+  platform or the show's own site shows the upload day; it is a check, and as a
+  publication day R1 still applies in full. Day words (operator): "yesterday", "last
+  night", "today", "this morning", "tonight" or "tomorrow" in the transcript words,
+  beside an event that a CITED page dates and ties by a two-word phrase, pins the day
+  of speech, narrows the range and outranks a later release day
+  (`palmer-luckey/hs-2394-palmer-luckey`: AUSA's 2025-10-13 address "yesterday" is
+  2025-10-14). Sponsor reads date nothing: words within 600 characters of a sponsor
+  cue never pin, ceil or tie a floor, and the prompt says so; it also says an upcoming
+  day is a ceiling, never a floor. MEASURED by offline replay of every stored answer
+  (`data/predictions/_eval/cases-20261005-merge5/logs`): on the operator's seven,
+  astra+fable_web passes 8 of 8 cases (seven plus control (ii)) under both merges, now
+  without the casino.org confirmation and with OP3 and OP7 confirmed by the script
+  rather than by agreement; gemini+fable_web goes from 7 to 8 of 8. Pilot A9 stays
+  queued. Over the 487 transcripts of the three stored production runs, merge-5 loses
+  37 merge-4 confirmations, gains 1 and changes no confirmed date; most lost pages do
+  not name the speaker (event schedules, press releases, Wikipedia pages on a product),
+  and several are about another occasion. 119 stored proposals in 79 transcripts use a
+  day word; 3 pin a day, each the day merge-4 had confirmed. Proof:
+  `scripts/test_dating_merge5.py`, which fails 50 of 50 on the code before merge-5.
 - Tier R case evals: `scripts/eval_prediction_cases.py --gold
   data/predictions/_eval/cases-20260929` replays the operator's audited cases
   offline; `--smoke` runs the Buddy Media `already_public` case first;
@@ -1768,4 +1825,12 @@ new grades incomparable with the corpus already graded.
   gemini+fable, gemini+fable_web and gemini+astra, so the pairs share Gemini's
   answer. Stage `dating_stored` replays stored proposals and checks, pinned by
   sha256, through the real merge with no model. The `truth` expectation judges the
-  last day. Proof: `scripts/test_eval_dating_pairs.py`.
+  last day. Proof: `scripts/test_eval_dating_pairs.py`. merge-5's gold set is
+  `data/predictions/_eval/cases-20261005-merge5`: the seven, Mensch, hs-2394 and
+  control (ii) live with astra,fable_web, and stored regressions and controls for each
+  merge-5 rule (`make_gold.py` builds it; `logs/stored_table.py` runs each stored case
+  under merge-4 and merge-5). An expectation may name `forbid_sources`, pages the
+  operator found to be about another occasion: a confirmation from one is a wrong
+  auto-confirmation whatever its day. A stored case gives the speaker's company as
+  `input.speaker_company` for files made before merge-5. A legacy single-dater case
+  (`input.harness`, cases-20260929) runs the daters of its era, gemini and fable.
