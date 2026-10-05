@@ -276,10 +276,32 @@ stale login back into the Keychain item that agy reads. If the wrapper exits
 75, that user has no login session, so the profile is benched for the whole
 run with a WARNING. If it exits 77, the binary is wrong and the pass stops at
 preflight. VERIFIED 2026-10-04 on a 2-call smoke: one grade from each address,
-both `profile_identity_verified`. `date_recordings.py`, `extract_predictions.py`
-and `market_consensus.py` still use `agy_profiles()`, which reads only
-`GEMINI_USERS` and checks no identity. They have no preflight for exit 77.
-Guarded by `scripts/test_gemini_config_rotation.py`.
+both `profile_identity_verified`. Guarded by
+`scripts/test_gemini_config_rotation.py`.
+
+**All four Gemini callers share one entry point, and every call records its agy
+build (2026-10-04).** `grade.py`, `date_recordings.py`, `extract_predictions.py`
+and `market_consensus.py` build the rotation with
+`grade.gemini_rotation_preflight()`, which reads the router config, runs the
+exit 75/77 preflight, and prints each profile's account and `agy --version` in
+its header. Every `call_gemini` passes `expected_identity`, and every
+`--agy-bin` defaults to `grade.AGY_JUDGE_BIN`, `/usr/local/bin/agy`. Before
+this the three prediction scripts used `agy_profiles()`, with no identity check,
+no preflight, and a bare `agy` that the wrapper refuses with exit 77.
+`call_gemini` reads `agy_version` from that call's own `--log-file`, the line
+`Language server version: X`, and never from the binary. A log with no such
+line, or two different ones, fails the call as `agy_version_unreadable`. The
+version lands in a grade's `telemetry`, a prediction record's extraction or
+verification `telemetry`, the prediction meta file (`extract.agy_version`, and
+`verify.agy_versions` with one entry per batch), a dating proposal's
+`telemetry`, and a market match's `matcher.agy_version`. The prediction scripts
+preflight Gemini only when the router could reach it: a run pinned to another
+harness, or with every Gemini account excluded, skips it. In
+`extract_predictions.py` the round-robin, not the quota router, picks the
+profile, so a Gemini route's `account_id` is the account of the profile it
+runs. VERIFIED 2026-10-04 on a 2-call `extract_predictions.py` smoke: one call
+served by each address, both `agy_version` 1.2.0. Guarded by
+`scripts/test_gemini_rotation_everywhere.py`.
 
 **`sudo -u <user>` alone does NOT work, and fails in a way that looks like a
 login problem.** MEASURED 2026-09-11: with the sudoers rule correct and the

@@ -41,8 +41,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import predictions_lib as L  # noqa: E402
 from grade import (  # noqa: E402
-    E_CLI, E_TIMEOUT, account_label, agy_profiles, apply_per_leader_limit, assign_accounts,
-    call_astra, call_fable, call_gemini, pick_gemini_profile, stamp_failure,
+    AGY_JUDGE_BIN, E_CLI, E_TIMEOUT, GeminiRotation, account_label, apply_per_leader_limit, assign_accounts,
+    call_astra, call_fable, call_gemini, gemini_rotation_preflight, pick_gemini_profile, stamp_failure,
 )
 import subprocess  # noqa: E402
 
@@ -152,10 +152,21 @@ def accounts_of_harness(accounts: list[tuple], harness: str) -> list[str]:
     return [a[0] for a in accounts if L.PROVIDER_TO_HARNESS.get(a[1]) == harness]
 
 
+def gemini_reachable(accounts: list[tuple], exclude_ids: list[str], pins: list[str]) -> bool:
+    """Whether the router could send any job of this run to Gemini.
+
+    True when some Gemini-harness account is not excluded and some stage's pin
+    is "auto" or "gemini". Only then is the Gemini preflight run: a Fable-only
+    run should not stop because the second macOS user is logged out.
+    """
+    eligible = [a for a in accounts_of_harness(accounts, "gemini") if a not in exclude_ids]
+    return bool(eligible) and any(p in ("auto", "gemini") for p in pins)
+
+
 class Router:
     """One quota-router pick per job, with a reservation so concurrent workers spread."""
 
-    def __init__(self, exclude_ids: list[str], allow_degraded: bool, gemini_profiles: list[str]):
+    def __init__(self, exclude_ids: list[str], allow_degraded: bool, gemini: GeminiRotation | None):
         from quota_router import select_account
         from quota_router.config import load_config
         self._select = select_account
@@ -163,7 +174,9 @@ class Router:
         self.accounts = [(a.id, a.provider, a.config_dir, a.is_default_config_dir) for a in cfg.enabled_accounts()]
         self.exclude_ids = list(exclude_ids)
         self.allow_degraded = allow_degraded
-        self.gemini_profiles = gemini_profiles
+        # None when the run cannot reach Gemini (see gemini_reachable); a pick
+        # that lands there anyway is refused as router_no_account.
+        self.gemini = gemini
         self._n = 0
         self._lock = threading.Lock()
 
@@ -180,10 +193,16 @@ class Router:
             with self._lock:
                 idx = self._n
                 self._n += 1
-            if not self.gemini_profiles:
+            if self.gemini is None or not self.gemini.profiles:
                 raise RouterUnavailable(f"{L.E_ROUTER}: router chose Gemini but no agy profile is available")
-            want = assign_accounts("gemini", idx, self.gemini_profiles, ["gemini"])
-            route["profile_home"] = pick_gemini_profile(want, self.gemini_profiles)
+            want = assign_accounts("gemini", idx, self.gemini.profiles, ["gemini"])
+            route["profile_home"] = pick_gemini_profile(want, self.gemini.profiles)
+            # The account that profile must prove it served, from the router config.
+            route["expected_identity"] = self.gemini.identities[route["profile_home"]]
+            # Round-robin, not the router, chose the profile, so with two real
+            # accounts the router's pick can name the other one. The record names
+            # the account whose profile this call runs on.
+            route["account_id"] = self.gemini.accounts[route["profile_home"]]
         return route
 
 
@@ -206,7 +225,8 @@ def call_harness(route: dict, prompt: str, timeout: int, workdir: Path, args,
         return text, tel, route["account_id"]
     if h == "gemini":
         text, tel = call_gemini(prompt, route["profile_home"], timeout, workdir=str(workdir),
-                                model=args.gemini_model, binary=args.agy_bin)
+                                model=args.gemini_model, binary=args.agy_bin,
+                                expected_identity=route["expected_identity"])
         return text, tel, tel.get("profile_identity")
     raise RuntimeError(f"{E_CLI}: unknown harness {h}")
 
@@ -421,6 +441,9 @@ def extract_one(job: dict) -> dict:
         # On the meta file too, so the dating stage finds a doubted transcript even when
         # every one of its candidates was refused (review item 18).
         **({"statement_date_doubt": obj["statement_date_doubt"]} if "statement_date_doubt" in obj else {}),
+        # The agy build that served a Gemini call, read from that call's own log. On
+        # the meta file because a call that writes no record leaves no other trace.
+        **({"agy_version": telemetry["agy_version"]} if route["harness"] == "gemini" else {}),
     }
     # A forced re-extraction replaces the file, so any earlier verification is void.
     meta["verify"] = {"status": "not_run"}
@@ -550,6 +573,7 @@ def verify_one(job: dict) -> dict:
     doubts: list[dict] = []
     provenance = None
     telemetry_all: list[dict] = []
+    harnesses: list[str] = []
     for bi, (batch, prompt) in enumerate(zip(batches, prompts)):
         if args.dry_run:
             (workdir / f"prompt_{bi}.txt").write_text(prompt)
@@ -577,6 +601,7 @@ def verify_one(job: dict) -> dict:
                                   f"{L.E_SCHEMA}: verdict ids {sorted(got)} != candidates {sorted(want)}", t0, args)
         provenance = L.normalise_provenance(route["harness"], telemetry, account, route["account_id"])
         telemetry_all.append(telemetry)
+        harnesses.append(route["harness"])
         all_verdicts.extend(obj["verdicts"])
         if "statement_date_doubt" in obj:
             doubts.append(obj["statement_date_doubt"])
@@ -595,7 +620,13 @@ def verify_one(job: dict) -> dict:
                       "candidates_verified": len(pending), "batches": len(batches),
                       "accepted": accepted, "rejected": len(pending) - sum(1 for r in pending if r["accepted"]),
                       "disagreements": sum(1 for r in pending if r["verification"]["agreement"] is False),
-                      **({"statement_date_doubt": merged_doubt} if merged_doubt else {})}
+                      **({"statement_date_doubt": merged_doubt} if merged_doubt else {}),
+                      # One per batch, in batch order, since each batch is its own call and
+                      # an auto run can route batches to different harnesses. None marks a
+                      # batch another harness served.
+                      **({"agy_versions": [t["agy_version"] if h == "gemini" else None
+                                           for h, t in zip(harnesses, telemetry_all)]}
+                         if "gemini" in harnesses else {})}
     write_meta(meta_path, meta)
     return {**base, "status": "ok", "harness": provenance["harness"], "verified": len(pending),
             "accepted": accepted, "elapsed": round(time.time() - t0, 1)}
@@ -662,7 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--allow-degraded", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="build prompts into the workdir; no calls, no writes under --out")
     ap.add_argument("--fable-bin", default="claude")
-    ap.add_argument("--agy-bin", default="agy")
+    ap.add_argument("--agy-bin", default=AGY_JUDGE_BIN)
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--gemini-model", default=GEMINI_MODEL)
     ap.add_argument("--skill-dir", default=str(L.SKILL))
@@ -763,10 +794,12 @@ def main(argv: list[str] | None = None) -> int:
 
     router = None
     if not args.dry_run:
-        profiles = agy_profiles()
-        router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, profiles)
+        router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, None)
+        pins = [args.extractor if s == "extract" else args.verifier for s in stages]
+        if gemini_reachable(router.accounts, router.exclude_ids, pins):
+            router.gemini = gemini_rotation_preflight(args.agy_bin)
         log(f"[run {run_id}] router accounts: {[a[0] for a in router.accounts]}; excluded {router.exclude_ids}; "
-            f"agy profiles {len(profiles)}")
+            f"agy profiles {len(router.gemini.profiles) if router.gemini else 0}")
 
     results: list[dict] = []
     for stage in stages:

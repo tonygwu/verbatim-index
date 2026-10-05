@@ -101,7 +101,9 @@ check("a config with no Antigravity account raises rather than running an empty 
 src = (REPO / "scripts" / "grade.py").read_text()
 body = src.split("def gemini_rotation_from_config")[1].split("\ndef ")[0] if "def gemini_rotation_from_config" in src else ""
 check("no macOS user name is hardcoded in the rotation", body and "tonyagents" not in body)
-check("main builds the rotation from the config", "gemini_rotation_from_config(" in src.split("def main")[1])
+check("main builds the rotation from the config, through the shared preflight",
+      "gemini_rotation_preflight(" in src.split("def main")[1]
+      and "gemini_rotation_from_config(" in src.split("def gemini_rotation_preflight")[1].split("\ndef ")[0])
 
 print("2. a call whose log names another account is an identity failure")
 check("the taxonomy has an identity label", hasattr(g, "E_IDENTITY") and g.E_IDENTITY in g.ALL_ERROR_TYPES)
@@ -111,7 +113,8 @@ def fake_agy(log_email, rc=0, stdout=None):
     def run(argv, **kw):
         log_path = Path(argv[argv.index("--log-file") + 1])
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(f"ChainedAuth: authenticated via keyring\nuser {log_email}\n" if log_email else "no address\n")
+        log_path.write_text("server.go:1595] Language server version: 1.2.0\n"
+                            + (f"ChainedAuth: authenticated via keyring\nuser {log_email}\n" if log_email else "no address\n"))
         out = stdout if stdout is not None else "\n".join(json.dumps(e) for e in [
             {"event": "init", "init": {"model": g.GEMINI_MODEL}},
             {"event": "result", "result": {"status": "SUCCESS", "response": "{\"ok\": 1}",

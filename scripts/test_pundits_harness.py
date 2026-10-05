@@ -59,6 +59,12 @@ class Captured:
 
     def __call__(self, argv, **kw):
         self.argv = list(argv)
+        if "--log-file" in argv:
+            # Real agy writes this log on every call, and call_gemini reads the
+            # served build out of it (grade.agy_version_from_log).
+            log = Path(argv[argv.index("--log-file") + 1])
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text("server.go:1595] Language server version: 1.2.0\n")
         return subprocess.CompletedProcess(argv, self.rc, self.stdout, "")
 
 

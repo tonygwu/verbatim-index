@@ -206,24 +206,34 @@ def select_scope(pred_dirs: list[Path], troots: list[Path], ids_file: Path | Non
 # ---------------------------------------------------------------------------
 
 _gemini_lock = threading.Lock()
-_gemini_profiles: list[str] | None = None
+#: grade.GeminiRotation, built once per run by gemini_rotation_preflight(): main
+#: builds it before any call when Gemini is a dater, and call_agent builds it
+#: on first use otherwise.
+_gemini_rotation = None
+
+
+def gemini_rotation(args):
+    """The run's Gemini rotation, from the router config, preflighted once (see grade.gemini_rotation_preflight)."""
+    import grade as G  # noqa: PLC0415 -- the harness module is heavy and only a real run needs it
+    global _gemini_rotation
+    with _gemini_lock:
+        if _gemini_rotation is None:
+            _gemini_rotation = G.gemini_rotation_preflight(args.agy_bin)
+        return _gemini_rotation
 
 
 def call_agent(harness: str, prompt: str, timeout: int, workdir: Path, args, idx: int) -> tuple[str, dict, str | None]:
     """One call on the chosen harness: (text, telemetry, account identity). Raises with a taxonomy label."""
     import grade as G  # noqa: PLC0415 -- the harness module is heavy and only a real run needs it
-    global _gemini_profiles
     workdir.mkdir(parents=True, exist_ok=True)
     if harness == "gemini":
-        with _gemini_lock:
-            if _gemini_profiles is None:
-                _gemini_profiles = G.agy_profiles()
-            profiles = list(_gemini_profiles)
+        rotation = gemini_rotation(args)
+        profiles = list(rotation.profiles)
         if not profiles:
             raise RuntimeError(f"{G.E_CLI}: no Antigravity profile is available")
         home = G.pick_gemini_profile(G.assign_accounts("gemini", idx, profiles, ["gemini"]), profiles)
         text, tel = G.call_gemini(prompt, home, timeout, workdir=str(workdir), model=args.gemini_model,
-                                  binary=args.agy_bin)
+                                  binary=args.agy_bin, expected_identity=rotation.identities[home])
         return text, tel, tel.get("profile_identity")
     if harness == "astra":
         homes = codex_homes(args)
@@ -494,7 +504,9 @@ def propose_one(job: dict, harness: str, args, run_dir: Path, run_id: str, calle
            "own_date": own_date, "own_basis": own_basis, "proposal": obj,
            "telemetry": {k: tel.get(k) for k in ("web_search_queries", "tool_use_counts", "denied_actions",
                                                  "input_tokens", "output_tokens", "thinking_tokens",
-                                                 "reasoning_output_tokens", "attempts", "empty_retries")},
+                                                 "reasoning_output_tokens", "attempts", "empty_retries",
+                                                 "agy_version", "profile_identity_expected",
+                                                 "profile_identity_verified")},
            "elapsed_sec": round(time.time() - t0, 1), "proposed_at_utc": DL.utc_stamp(),
            **({"answer_errors": failure[1], "answer_error_type": failure[0]} if failure else {})}
     write(dest, json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
@@ -687,7 +699,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--gemini-model", default=GEMINI_MODEL)
-    ap.add_argument("--agy-bin", default="agy")
+    ap.add_argument("--agy-bin", default="/usr/local/bin/agy",
+                    help="the one path the agy-as-user wrapper runs (grade.AGY_JUDGE_BIN)")
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--codex-home", default=None,
                     help="comma-separated Codex homes; Astra calls rotate over them in order. With none, the "
@@ -733,6 +746,9 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
             print(f"first prompt ({hs[0]}): {sample}")
         return 0
 
+    if "gemini" in hs and "propose" in (["propose", "check", "merge"] if args.stage == "all" else [args.stage]) \
+            and caller is None:
+        gemini_rotation(args)  # preflight before any call: exit 77 stops here, exit 75 benches
     print(f"SPENDS QUOTA: up to {calls} calls ("
           + ", ".join(f"{h} {len(jobs)} {requested_model(args, h)}" for h in hs)
           + f") for the proposals not already on disk under {run_dir}, and HTTP fetches of every page they cite.")

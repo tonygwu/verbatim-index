@@ -42,6 +42,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / ".claude" / "skills" / "leader-transcript-grader"
@@ -104,6 +105,11 @@ E_TRANSIENT = "transient_retryable"
 # running Antigravity desktop app can write a stale login back into the Keychain
 # item agy reads, and the rotation would then send both profiles to one account.
 E_IDENTITY = "account_identity_mismatch"
+# The call's own log names no agy version, or names two. Not a grade: from
+# 2026-10-04 every Gemini answer records which agy build served it, so that a
+# binary upgrade mid-corpus is visible per answer, and an answer that cannot say
+# is the silent gap that rule exists to close.
+E_AGY_VERSION = "agy_version_unreadable"
 
 # A judge can return valid JSON that is not a grade. GPT-6 Astra declined to
 # score a Palantir CEO transcript, saying it "cannot assign the requested
@@ -130,7 +136,7 @@ REFUSAL_TEXT_KEYS = ("reason", "status", "note", "error", "message", "explanatio
 #: first version enumerated a subset inline and silently relabelled the rest.
 ALL_ERROR_TYPES = (E_CLI, E_TIMEOUT, E_EMPTY, E_NOJSON, E_BADJSON, E_SCHEMA,
                    E_MODEL_MISMATCH, E_AUTH, E_REFUSED, E_TOOL_ATTEMPT, E_TRANSIENT,
-                   E_STALE_CACHE, E_NO_TRANSCRIPT, E_IDENTITY)
+                   E_STALE_CACHE, E_NO_TRANSCRIPT, E_IDENTITY, E_AGY_VERSION)
 
 
 def classify_exception_detail(detail: str) -> str:
@@ -1204,6 +1210,10 @@ GEMINI_USER_WRAPPER = os.environ.get("AGY_AS_USER_WRAPPER", "/usr/local/libexec/
 #: 77: the judge binary is not the one path the wrapper will run.
 WRAPPER_NO_SESSION = 75
 WRAPPER_WRONG_BINARY = 77
+#: The judge binary every Gemini caller defaults to: the one path the wrapper
+#: runs. A bare "agy" resolves to ~/.local/bin/agy, which the wrapper refuses
+#: with exit 77, so a rotation with a user profile could never start on it.
+AGY_JUDGE_BIN = "/usr/local/bin/agy"
 
 
 def is_user_profile(profile: str) -> bool:
@@ -1476,6 +1486,106 @@ def gemini_rotation_from_config(accounts=None, default_home: str | None = None,
                              f"macOS users {sorted(have)}. The config is the source now; unset "
                              f"GEMINI_USERS or make it match.")
     return out
+
+
+class GeminiRotation(NamedTuple):
+    """The Gemini profiles one run may call, as gemini_rotation_preflight() left them.
+
+    `identities` maps every profile to the address its calls must prove they were
+    served by. `benched` lists profiles the preflight benched for the run (wrapper
+    exit 75). `versions` maps each profile that was not benched to the agy build
+    it reported at preflight; each call still records its own, from its own log.
+    `accounts` maps every profile to its router-config account id.
+    """
+    profiles: list[str]
+    identities: dict[str, str]
+    benched: list[str]
+    versions: dict[str, str]
+    accounts: dict[str, str]
+
+
+def agy_reported_version(profile: str, binary: str, runner=subprocess.run) -> str:
+    """`agy --version` through this profile's own launch path, so a user profile
+    asks the binary its wrapper actually runs. Raises when nothing is printed."""
+    argv, env = gemini_launch(profile, [binary, "--version"], dict(os.environ))
+    proc = runner(argv, capture_output=True, text=True, env=env)
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out or len(out.split()) != 1:
+        raise SystemExit(f"Gemini profile {profile!r}: `{binary} --version` exited {proc.returncode} and printed "
+                         f"{out[:120]!r} {(proc.stderr or '').strip()[:200]!r}; expected one version string")
+    return out
+
+
+def gemini_rotation_preflight(binary: str, select: str | None = None, runner=subprocess.run,
+                              accounts=None, default_home: str | None = None) -> GeminiRotation:
+    """Build the Gemini rotation from the router config and check it before any call.
+
+    The ONE entry point for every script that calls the Gemini judge: grade.py,
+    date_recordings.py, extract_predictions.py and market_consensus.py. Before
+    2026-10-04 the three prediction scripts built their own list with
+    agy_profiles(), so they had no identity check, no preflight, and a default
+    binary the agy-as-user wrapper refuses.
+
+    `select` narrows the rotation to a comma-separated list of profiles, profile
+    basenames or router account ids. Exit 77 stops here; exit 75 benches the
+    profile for the run. The header names each profile, its account, and the agy
+    version it reports, so a run spanning an agy upgrade says so at the top.
+    """
+    rotation = gemini_rotation_from_config(accounts, default_home=default_home)
+    if os.environ.get("GEMINI_EXTRA_HOMES", "") not in ("", "0"):
+        raise SystemExit("GEMINI_EXTRA_HOMES is set, but the Gemini rotation now comes from the router "
+                         "config and an extra HOME has no account there to verify its calls against. "
+                         "Unset it, or declare the account in ~/.config/quota-router/config.toml.")
+    if select:
+        resolved = []
+        for w in (w.strip() for w in select.split(",")):
+            if not w:
+                continue
+            hits = [t for t in rotation if w in (t[0], Path(t[0]).name, t[2])]
+            if not hits:
+                raise SystemExit(f"--gemini-profiles: no Antigravity profile matches {w!r}. "
+                                 f"Known: {[(t[0], t[2]) for t in rotation]}")
+            resolved.append(hits[0])
+        rotation = resolved
+    profiles = [t[0] for t in rotation]
+    identities = {t[0]: t[1] for t in rotation}
+    benched = check_user_profiles(profiles, binary, runner)
+    versions = {p: agy_reported_version(p, binary, runner) for p in profiles if p not in benched}
+    log(f"gemini profiles in rotation (round-robin, no headroom is measurable), binary {binary}: "
+        + ", ".join(f"{p} -> {acct} ({identities[p]}) "
+                    + ("BENCHED: no login session" if p in benched else f"agy {versions[p]}")
+                    for p, _, acct in rotation))
+    return GeminiRotation(profiles, identities, benched, versions, {t[0]: t[2] for t in rotation})
+
+
+#: The line agy writes near the top of every --log-file, for example
+#: "I1004 22:57:18.478391  39 server.go:1595] Language server version: 1.2.0".
+#: The server.go line number moves between builds (1595 in 1.2.0, 1663 in
+#: 1.2.16), so the pattern anchors on the words, not on the prefix.
+AGY_VERSION_LINE = re.compile(r"Language server version:\s*(\S+)")
+
+
+def agy_version_from_log(log_path: Path) -> str:
+    """Which agy build served ONE call, read from the log that call wrote.
+
+    Same rule as agy_identity_from_log: the call names its own log with
+    --log-file, so there is nothing to search or sort. The binary on disk is
+    never consulted, because the operator replaces it between runs and a
+    timestamp says when a file was touched, not what ran.
+
+    Unlike the identity reading this is not best-effort. A log with no version
+    line, or with two different ones, raises E_AGY_VERSION, so an answer is
+    never written without the build that produced it.
+    """
+    try:
+        text = log_path.read_text(errors="ignore")
+    except OSError as exc:
+        raise RuntimeError(f"{E_AGY_VERSION}: the call's log {log_path} could not be read: {exc}") from exc
+    found = sorted(set(AGY_VERSION_LINE.findall(text)))
+    if len(found) != 1:
+        what = "no 'Language server version:' line" if not found else f"several versions {found}"
+        raise RuntimeError(f"{E_AGY_VERSION}: the call's log {log_path} carries {what}")
+    return found[0]
 
 
 def agy_identity_from_log(log_path: Path) -> str | None:
@@ -1953,6 +2063,9 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         raise RuntimeError(f"{E_IDENTITY}: {profile_label(profile_home)} should serve "
                            f"{expected_identity} per the router config, and this call was served "
                            f"by {served_by}. Log: {log_path}")
+    # Which agy build served this call, read from THIS call's log. After the
+    # identity check, so a wrong account is reported as that and not as this.
+    telemetry["agy_version"] = agy_version_from_log(log_path)
     if telemetry["thinking_tokens"] in (None, 0):
         # The "-high" suffix IS the reasoning setting for this model family, so
         # zero thinking tokens means the high-effort variant did not take effect.
@@ -2254,8 +2367,9 @@ def main() -> int:
                     help="Model for the Gemini arm, as the Antigravity CLI names it. "
                          "The effort level is part of the name (-high/-medium/-low); "
                          "there is no separate effort flag for this family.")
-    ap.add_argument("--agy-bin", default="agy",
-                    help="Binary that runs the Gemini judge. Must be the plain agy CLI.")
+    ap.add_argument("--agy-bin", default=AGY_JUDGE_BIN,
+                    help="Binary that runs the Gemini judge. Must be the plain agy CLI, at the one "
+                         "path the agy-as-user wrapper runs.")
     ap.add_argument("--gemini-profiles", default=os.environ.get("GEMINI_PROFILES", ""),
                     help="Comma-separated Antigravity profile HOMEs to pin the Gemini "
                          "rotation to, or their basenames under ~/.agy-homes. Default is "
@@ -2414,35 +2528,15 @@ def main() -> int:
     # prove it served (gemini_rotation_from_config). Extra HOMEs under one macOS
     # user are not consulted: they share its Keychain item and have no config
     # account to verify against.
-    gem_rotation = gemini_rotation_from_config() if "gemini" in judges else []
-    if gem_rotation and os.environ.get("GEMINI_EXTRA_HOMES", "") not in ("", "0"):
-        raise SystemExit("GEMINI_EXTRA_HOMES is set, but the Gemini rotation now comes from the router "
-                         "config and an extra HOME has no account there to verify its calls against. "
-                         "Unset it, or declare the account in ~/.config/quota-router/config.toml.")
-    if args.gemini_profiles:
-        wanted = [w.strip() for w in args.gemini_profiles.split(",") if w.strip()]
-        resolved = []
-        for w in wanted:
-            hits = [t for t in gem_rotation if w in (t[0], Path(t[0]).name, t[2])]
-            if not hits:
-                raise SystemExit(f"--gemini-profiles: no Antigravity profile matches {w!r}. "
-                                 f"Known: {[(t[0], t[2]) for t in gem_rotation]}")
-            resolved.append(hits[0])
-        gem_rotation = resolved
-    gem_profiles = [t[0] for t in gem_rotation]
-    gem_identities = {t[0]: t[1] for t in gem_rotation}
+    # gemini_rotation_preflight also runs the wrapper preflight (exit 77 stops,
+    # exit 75 benches) and prints each profile's account and agy version. Paths
+    # and versions only: the account each call reached is checked per call from
+    # that call's own log, never assumed here from stale files.
+    gem_profiles: list[str] = []
+    gem_identities: dict[str, str] = {}
     if "gemini" in judges:
-        if not gem_profiles:
-            raise SystemExit("no Antigravity profiles found: the Gemini arm needs at least "
-                             "the default HOME with ~/.gemini/antigravity-cli present")
-        # Paths only. The account each profile serves is recorded per grade
-        # from that call's own log; asserting it here, before any call has been
-        # made, would mean guessing from stale files.
-        benched = check_user_profiles(gem_profiles, args.agy_bin)
-        log(f"gemini profiles in rotation (round-robin, no headroom is measurable): "
-            + ", ".join(f"{p} -> {acct} ({gem_identities[p]})"
-                        + (" BENCHED: no login session" if p in benched else "")
-                        for p, _, acct in gem_rotation))
+        gem = gemini_rotation_preflight(args.agy_bin, select=args.gemini_profiles)
+        gem_profiles, gem_identities = gem.profiles, gem.identities
 
     if template is not None:
         # The contract hashes each judge's REQUESTED model from the profile. A

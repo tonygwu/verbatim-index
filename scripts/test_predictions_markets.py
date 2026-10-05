@@ -136,7 +136,7 @@ def matcher_returning(verdicts):
         prompts.append(prompt)
         pid = re.search(r"\(id ([0-9a-f]{16})\)", prompt).group(1)
         text = json.dumps({"schema_version": "1", "prediction_id": pid, "verdicts": verdicts})
-        return text, {}, {"harness": "gemini", "requested_model": "g", "served_model": "g", "served_model_verified": True, "account": "a@b"}
+        return text, {"agy_version": "1.2.0"}, {"harness": "gemini", "requested_model": "g", "served_model": "g", "served_model_verified": True, "account": "a@b"}
     matcher.prompts = prompts
     return matcher
 
@@ -227,6 +227,7 @@ def test_match_and_status(M, L) -> None:
           and all("market_probability" not in p for p in c["proxy_matches"]) and all(p["match_type"] == "proxy" for p in c["proxy_matches"]))
     check("MATCH: matcher provenance is recorded and the block validates",
           c["matcher"]["harness"] == "gemini" and c["matcher"]["contract_id"] == contract["contract_id"]
+          and c["matcher"].get("agy_version") == "1.2.0"
           and L.check_schema({**rec, "consensus": c}, L.load_record_schema()) == [], str(L.check_schema({**rec, "consensus": c}, L.load_record_schema()))[:300])
     # Proxy only -> unavailable/proxy_only, no probability.
     c2 = M.consensus_for_record(copy.deepcopy(rec), cache, matcher_returning([{**exact_v[1]}] + [

@@ -221,7 +221,8 @@
                 "harness": {"enum": ["fable", "astra", "gemini"]},
                 "requested_model": {"type": "string"}, "served_model": {"type": ["string", "null"]},
                 "served_model_verified": {"type": "boolean"}, "account": {"type": ["string", "null"]},
-                "contract_id": {"type": "string"}, "run_id": {"type": "string"}, "matched_at_utc": {"type": "string"}
+                "contract_id": {"type": "string"}, "run_id": {"type": "string"}, "matched_at_utc": {"type": "string"},
+                "agy_version": {"type": "string", "description": "Gemini matches only, since 2026-10-04: the agy build that served the call, read from that call's own log."}
               }
             }]},
             "searched_at_utc": {"type": ["string", "null"]},

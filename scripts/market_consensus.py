@@ -49,8 +49,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import predictions_lib as L  # noqa: E402
-from extract_predictions import Router, RouterUnavailable, call_harness, log  # noqa: E402
-from grade import agy_profiles  # noqa: E402
+from extract_predictions import Router, RouterUnavailable, call_harness, gemini_reachable, log  # noqa: E402
+from grade import AGY_JUDGE_BIN, gemini_rotation_preflight  # noqa: E402
 
 POLY_GAMMA = "https://gamma-api.polymarket.com"
 POLY_CLOB = "https://clob.polymarket.com"
@@ -522,8 +522,7 @@ def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_i
         # error_taxonomy files it as router_no_account or schema_validation_failed
         # rather than as a generic crash; the stage is named in `reason`.
         return {**base, "reason": E_MATCHER, "error": str(exc)[:600]}
-    base["matcher"] = {**{k: prov.get(k) for k in ("harness", "requested_model", "served_model", "served_model_verified", "account")},
-                       "contract_id": contract["contract_id"], "run_id": run_id, "matched_at_utc": L.utc_now()}
+    base["matcher"] = matcher_block(prov, telemetry, contract, run_id)
     try:
         for m in exacts + proxies:
             fn = observe_polymarket if m["platform"] == "polymarket" else observe_kalshi
@@ -541,6 +540,16 @@ def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_i
            "exact_match": strip_private(primary) if primary else None,
            "proxy_matches": [strip_private(m) for m in proxies],
            "market_probability": primary["observation"]["probability_for_claim"] if status == "matched" else None}
+    return out
+
+
+def matcher_block(prov: dict, telemetry: dict, contract: dict, run_id: str) -> dict:
+    """The consensus record's `matcher` block. A Gemini match also names the agy
+    build that served it, read from that call's own log by call_gemini."""
+    out = {**{k: prov.get(k) for k in ("harness", "requested_model", "served_model", "served_model_verified", "account")},
+           "contract_id": contract["contract_id"], "run_id": run_id, "matched_at_utc": L.utc_now()}
+    if prov.get("harness") == "gemini":
+        out["agy_version"] = telemetry["agy_version"]
     return out
 
 
@@ -609,7 +618,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--refresh-cache", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--fable-bin", default="claude")
-    ap.add_argument("--agy-bin", default="agy")
+    ap.add_argument("--agy-bin", default=AGY_JUDGE_BIN)
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--gemini-model", default="gemini-3.8-flash-high")
     ap.add_argument("--skill-dir", default=str(L.SKILL))
@@ -639,7 +648,9 @@ def main(argv: list[str] | None = None) -> int:
     matcher = None
     kalshi = None
     if not args.dry_run:
-        router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, agy_profiles())
+        router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, None)
+        if gemini_reachable(router.accounts, router.exclude_ids, [args.matcher]):
+            router.gemini = gemini_rotation_preflight(args.agy_bin)
         workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "predict-work"
         matcher = make_matcher(router, args, run_id, workroot)
         kalshi = kalshi_series(cache)

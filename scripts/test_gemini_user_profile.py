@@ -113,7 +113,9 @@ print("wiring")
 src = (REPO / "scripts" / "grade.py").read_text()
 check("call_gemini launches through gemini_launch", "cmd, env = gemini_launch(profile_home," in src)
 check("call_gemini jails through gemini_jail", "jail = gemini_jail(profile_home, workdir)" in src)
-check("main checks user profiles before queueing, with the configured binary", "check_user_profiles(gem_profiles, args.agy_bin)" in src)
+check("main checks user profiles before queueing, with the configured binary",
+      "gemini_rotation_preflight(args.agy_bin" in src.split("def main")[1]
+      and "check_user_profiles(profiles, binary, runner)" in src.split("def gemini_rotation_preflight")[1].split("\ndef ")[0])
 check("no bare HOME assignment survives in call_gemini",
       'env["HOME"] = profile_home' not in src.split("def call_gemini")[1].split("\ndef ")[0])
 check("GEMINI_USERS is read from the environment, no name is hardcoded",
