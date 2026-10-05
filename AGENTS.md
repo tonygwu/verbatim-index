@@ -1086,6 +1086,27 @@ verdicts, judged by the code at launch, give 2 of 3 for hs-2394 and agree on eve
 other case. Recordings, logs and the table (`logs/live-table.txt`) are in
 `predictions/_eval/cases-20261005-merge5/` in the data repository.
 
+**Does the verifier, or the new rules, cost a re-extraction its predictions?** (2026-10-05)
+The verifier, mostly. On 2026-10-03 the 137 re-dated recordings were re-extracted with Fable
+extracting and Gemini verifying, and 26 of them had been extracted by Astra and verified by
+Fable. Those 26 lost accepted records heavily (ledger VD-13). Re-run with their ORIGINAL pair,
+Astra extracting and Fable verifying, under the same release 2.3 and the same corrected dates:
+
+```
+accepted records    corpus extraction   after 2026-10-03   re-run, original pair
+all 26                     74                  39                   84
+andy-jassy                 37                  23                   47
+cathie-wood                11                   6                   11
+david-sacks                 7                   1                    6
+vinod-khosla                5                   1                    8
+```
+
+So the new rules and dates did not cost these recordings their predictions; the swapped
+verifier did. Since then a re-dated recording is re-extracted with the pair its production meta
+names (`redate-20261005n/make_lists.py`). Not yet done: the 107 recordings first extracted
+Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
+`predictions/_experiments/redate-vd13b-20261005/compare.txt`.
+
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
 grading loop writes continuously, so any before-and-after measured against
