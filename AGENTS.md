@@ -1801,7 +1801,9 @@ new grades incomparable with the corpus already graded.
   beside an event that a CITED page dates and ties by a two-word phrase, pins the day
   of speech, narrows the range and outranks a later release day
   (`palmer-luckey/hs-2394-palmer-luckey`: AUSA's 2025-10-13 address "yesterday" is
-  2025-10-14). Sponsor reads date nothing: words within 600 characters of a sponsor
+  2025-10-14). The sentence that carries the day word is read on its own when it is in
+  the transcript word for word, so it still pins when the rest of the dater's quote is
+  not. Sponsor reads date nothing: words within 600 characters of a sponsor
   cue never pin, ceil or tie a floor, and the prompt says so; it also says an upcoming
   day is a ceiling, never a floor. MEASURED by offline replay of every stored answer
   (`data/predictions/_eval/cases-20261005-merge5/logs`): on the operator's seven,
@@ -1813,7 +1815,7 @@ new grades incomparable with the corpus already graded.
   earliest day moves on 3); most lost pages do not name the speaker (event schedules,
   press releases, Wikipedia pages on a product), and several are about another
   occasion. 119 stored proposals in 79 transcripts use a day word; 3 pin a day, each
-  the day merge-4 had confirmed. Proof: `scripts/test_dating_merge5.py`, whose 53 tests
+  the day merge-4 had confirmed. Proof: `scripts/test_dating_merge5.py`, whose 54 tests
   all fail on the code before merge-5.
 - Tier R case evals: `scripts/eval_prediction_cases.py --gold
   data/predictions/_eval/cases-20260929` replays the operator's audited cases

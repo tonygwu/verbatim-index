@@ -1564,6 +1564,8 @@ _DAY_WORD = re.compile(r"\b(yesterday|last\s+night|this\s+morning|this\s+afterno
 DAY_OFFSETS = {"yesterday": 1, "last night": 1, "this morning": 0, "this afternoon": 0, "this evening": 0,
                "earlier today": 0, "today": 0, "tonight": 0, "tomorrow": -1}
 PIN_WORDS_NEAR = 15
+# Where a dater's quote may be cut into sentences: after . ? or ! and a space, and at a " | " joiner.
+_SENTENCE = re.compile(r"(?<=[.?!])\s+|\s+\|\s+")
 
 
 def _event_page_days(check: dict, rec: dict) -> tuple[list[date], str | None]:
@@ -1594,6 +1596,13 @@ def relative_day_pin(rec: dict, prop: dict, pages: list[dict], company: str,
     if not te:
         return None, None, "the proposal quotes no transcript words"
     frags = [te] + [p for p in _ELLIPSIS.split(te) if p.strip() and p.strip() != te.strip()]
+    # The sentence that carries the day word is read on its own, when it has three words or more: a dater may
+    # quote it and then the next speaker in words the captions write differently (FOUND in the merge-5 live run,
+    # JRE2394 r02). It must still be in the transcript word for word.
+    for s in _SENTENCE.split(te):
+        s = s.strip()
+        if _DAY_WORD.search(s) and len(L.normalise(s).split()) >= 3 and s not in (f.strip() for f in frags):
+            frags.append(s)
     e, lat = date.fromisoformat(prop["speech_date_earliest"]), date.fromisoformat(prop["speech_date_latest"])
     ub = upper_bound(rec)
     drop = speaker_parts(rec) | company_words(company)
@@ -2493,9 +2502,12 @@ def assess(rec: dict, doc: dict, checks: list[dict], version: str = MERGE_VERSIO
     out["supported"] = bool(good)
     extra_spans: list[tuple[date, date]] = []
     pinned = None
-    if v5 and out["eligible"]:
+    if v5:
         # merge-5 (operator, 2026-10-05): a day word in the talk beside an event a cited page dates pins the
         # day of speech, and the proposal's range narrows to it. Checked first: it outranks a release day.
+        # relative_day_pin reads only quote pieces found word for word, so a proposal whose whole quote was
+        # dropped may still be pinned by the sentence that carries the day word, as its own page may confirm it;
+        # it stays ineligible for an agreement and for rule R1.
         cited_pages = [c for c in pages if (c["url"], L.normalise(c["cited_excerpt"])) in cited]
         pin, event_page, pwhy = (relative_day_pin(rec, prop, cited_pages, company, version) if cited_pages else
                                  (None, None, "the proposal quotes no transcript words"))

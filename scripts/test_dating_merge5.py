@@ -792,6 +792,20 @@ class DayWord(unittest.TestCase):
                          ("relative_day", "2025-10-14", "2025-10-13", "army dan"))
         self.assertEqual(e["confirmation"]["source_checks"][1]["role"], "event")
 
+    def test_the_sentence_that_carries_the_day_word_is_read_on_its_own(self):
+        """FOUND in the merge-5 live run (JRE2394 r02, fable_web): the dater quoted the Driscoll sentence and then
+        the next speaker's words, which the captions write differently, so the whole quote was not in the transcript
+        and the day word was never read. The sentence that carries the day word is real transcript words."""
+        te = DRISCOLL + " Oh, man. It might be worth pulling it up."
+        out = merge(JRE, {"fable_web": jre_prop(te=te)}, JRE_PAGES, KP_COMPANY, V5)
+        self.assertEqual(outcome(out), ("override", "2025-10-14"))
+        self.assertEqual(out["entry"]["confirmation"]["source_checks"][0]["quote"], DRISCOLL)
+        # Control: a day-word sentence that is not in the transcript pins nothing.
+        made_up = "Did you see Dan Driscoll's AUSA talk yesterday? Oh, man. It might be worth pulling it up."
+        out = merge(JRE, {"fable_web": jre_prop(te=made_up)}, JRE_PAGES, KP_COMPANY, V5)
+        self.assertEqual(outcome(out), ("override", "2025-10-16"))       # the release page alone, unpinned
+        self.assertNotIn("narrowed_from", out["entry"]["confirmation"])
+
     def test_the_pinned_day_outranks_another_daters_release_day(self):
         release = jre_prop(e="2025-10-16", l="2025-10-16", te=None, sources=[APPLE_SRC])
         out = merge(JRE, {"astra": jre_prop(), "fable_web": release}, JRE_PAGES, KP_COMPANY, V5)
