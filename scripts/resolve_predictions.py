@@ -202,8 +202,15 @@ def scoring_runs_for(arg: "Path | None", predictions: list[Path]) -> "tuple[Path
     return path, runs
 
 
-def resolutions_across(runs: list[Path]) -> "tuple[dict[str, dict], dict[str, list[str]]]":
+def resolutions_across(runs: list[Path], date_overrides: "dict | None" = None
+                       ) -> "tuple[dict[str, dict], dict[str, list[str]]]":
     """(one resolution per prediction, predictions whose runs record different windows).
+
+    With `date_overrides`, a sidecar made under a date an override has since replaced is
+    not read, the rule the scorer applies (score_predictions.drop_stale_sidecars). Found
+    2026-10-05: three re-dated records kept their ids; the scorer dropped their old trend
+    resolutions and asked for a lead test, while this function froze the old windows and
+    the lead-test stage refused the ids. The two must read the same sidecars.
 
     A prediction resolved in several runs is kept once. When the runs record
     different deadlines it is also named in the second dict, each deadline with
@@ -218,6 +225,9 @@ def resolutions_across(runs: list[Path]) -> "tuple[dict[str, dict], dict[str, li
             continue
         seen.add(Path(run).resolve())
         for pid, obj in R.load_sidecars(Path(run), "resolve").items():
+            ov = (date_overrides or {}).get(obj.get("transcript_id"))
+            if ov is not None and obj.get("statement_date") != ov["statement_date"]:
+                continue
             first.setdefault(pid, obj)
             where[pid].append((str(obj.get("deadline")), str(run)))
     clash = {pid: [f"{d} in {run}" for d, run in ws] for pid, ws in where.items() if len({d for d, _ in ws}) > 1}
@@ -585,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     # Trend windows freeze from the resolutions in EVERY run the scores read, not
     # only --out, so --ids into a new run judges a resolved record's first window.
     cfg_path, freeze_runs = scoring_runs_for(args.scoring_config, args.predictions)
-    resolutions, clash = resolutions_across(freeze_runs + [out_root])
+    resolutions, clash = resolutions_across(freeze_runs + [out_root], date_overrides if ov_path else None)
     log(f"trend windows: read {len(resolutions)} resolved predictions from {len(freeze_runs)} run(s) of "
         f"{cfg_path or 'no scoring config'} and --out; {len(clash)} resolved over different windows in "
         f"different runs {sorted(clash)}, refused if a trend record")
