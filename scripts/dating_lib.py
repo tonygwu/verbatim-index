@@ -1254,7 +1254,10 @@ script opens every page and refuses an excerpt it cannot find there.""",
     # stages stay outcome-blind by design.
     "fable_web": """YOUR TOOLS. You can search the web (WebSearch) and open pages (WebFetch), and
 nothing else: no files, no shell. Search for the event, open each page you cite,
-and copy the excerpt from the page itself, not from a search-result summary.""",
+and copy the excerpt from the page itself, not from a search-result summary.
+BUDGET: at most 20 searches and 20 page opens in all. Stop as soon as an opened
+page names the date, and answer; if the budget runs out, answer with what you
+have, or cannot_date. A run that never answers is worth nothing.""",
 }
 
 

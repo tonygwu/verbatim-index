@@ -268,7 +268,12 @@ def codex_homes(args) -> list[str]:
 # working directory outside all three. The judge harness, and the outcome-blind Fable
 # prior and lead-test stages, are untouched.
 FABLE_WEB_TOOLS = ("WebSearch", "WebFetch")
-FABLE_WEB_MAX_TURNS = 40
+# A backstop, not the budget: the prompt asks for at most 20 searches and 20 page opens.
+# FOUND in the pilot of 2026-10-04 (michael-dell/citi-z30abb): with no budget in the prompt
+# and 40 turns, Fable made 53 searches and 55 fetches in 22 minutes and ran out of turns
+# without an answer.
+FABLE_WEB_MAX_TURNS = 80
+E_TURN_BUDGET = "turn_budget_exhausted"
 
 
 def fable_web_command(prompt: str, binary: str) -> list[str]:
@@ -353,7 +358,12 @@ def call_fable_web(prompt: str, config_dir: str, timeout: int, binary: str = "cl
     proc = run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(jail),
                stdin=subprocess.DEVNULL)
     if proc.returncode != 0:
-        _etype, detail = G.classify_cli_failure(proc.returncode, proc.stdout, proc.stderr)
+        etype, detail = G.classify_cli_failure(proc.returncode, proc.stdout, proc.stderr)
+        if etype == G.E_TOOL_ATTEMPT:
+            # grade's label means "a judge reached for a tool"; here the tools are allowed, so a
+            # stop on tool_use means the turn budget ran out mid-research, with no answer.
+            raise RuntimeError(f"{E_TURN_BUDGET}: the dating Fable was still searching when its "
+                               f"{FABLE_WEB_MAX_TURNS}-turn budget ended the run ({detail})")
         raise RuntimeError(detail)
     payload = json.loads(proc.stdout)
     if payload.get("is_error"):

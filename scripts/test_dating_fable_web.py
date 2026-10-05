@@ -136,6 +136,20 @@ class Audit(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, G.E_NO_TRANSCRIPT):
             self.call(Runner(payload()))
 
+    def test_a_run_the_turn_budget_ended_is_labelled_so_not_as_a_tool_violation(self):
+        """FOUND in the pilot (2026-10-04): 53 searches and 55 fetches, then the turn budget; grade called it
+        judge_attempted_tool_use, which here would read as a breach of the tool list."""
+        stop = json.dumps({"is_error": True, "result": "", "stop_reason": "tool_use", "num_turns": 81,
+                           "permission_denials": []})
+        with self.assertRaisesRegex(RuntimeError, f"^{DR.E_TURN_BUDGET}: .*turns=81 denials=0"):
+            self.call(Runner(stop, rc=1))
+
+    def test_the_prompt_gives_the_research_budget(self):
+        prompt, _ = DR.DL.build_dating_prompt({"leader_slug": "ada", "source_id": "x", "text": "w"}, [],
+                                              harness="fable_web")
+        self.assertIn("at most 20 searches and 20 page opens", prompt)
+        self.assertGreater(DR.FABLE_WEB_MAX_TURNS, 40)
+
     def test_a_response_with_no_fable_model_is_refused(self):
         transcript(self.config, [])
         with self.assertRaisesRegex(RuntimeError, G.E_MODEL_MISMATCH):
