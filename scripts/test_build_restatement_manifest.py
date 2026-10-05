@@ -110,6 +110,42 @@ def main() -> int:
         check("RESOLUTION: a fresh run with no sidecar for the specific member is refused",
               pm.returncode != 0 and "p4" in pm.stderr, pm.stderr[-400:])
 
+    # STALE: a sidecar made under a date an override has since replaced is dropped by the scorer
+    # (score_predictions.drop_stale_sidecars), so superseding it names a sidecar the scorer never
+    # reads, and the scorer refuses the manifest ("supersedes sidecars that do not exist").
+    # FOUND 2026-10-05: Gelsinger's Intel Innovation talk was re-dated 2023-09-21 -> 2023-09-19 and
+    # the rebuilt manifest still superseded its 09-21 sidecars.
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        tx = d / "transcripts_open" / "ada"
+        tx.mkdir(parents=True)
+        (tx / "talk.json").write_text(json.dumps({"leader_slug": "ada", "source_id": "talk", "yt_upload_date": "20190301"}))
+        (d / "predictions").mkdir()
+        (d / "predictions" / "statement_date_overrides.json").write_text(json.dumps({"schema_version": 1, "overrides": {
+            "ada/talk": {"statement_date": "2019-01-05", "basis": "b", "source_url": "https://e.example.org/x",
+                         "verbatim_evidence": "v", "confirmed_by": "operator", "confirmed_at_utc": "2026-10-05T00:00:00Z"}}}))
+        cj = d / "clusters.json"
+        cj.write_text(json.dumps(clusters_doc()))
+        run_a, run_f = d / "predictions" / "run-a", d / "predictions" / "run-fresh"
+        for run, pid, date in ((run_a, "p1", "2019-01-01"), (run_a, "p2", "2019-02-20"), (run_f, "p1", "2019-01-01")):
+            fp = R.sidecar_path(run, "resolve", "ada", pid)
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            tid = "ada/talk" if pid == "p2" else "ada/other"
+            fp.write_text(json.dumps({"prediction_id": pid, "outcome": "occurred", "transcript_id": tid,
+                                      "statement_date": date}))
+        p = subprocess.run([sys.executable, str(SCRIPT), "--clusters", str(cj), "--data-root", str(d),
+                            "--out", str(d / "s.json"), "--resolution",
+                            json.dumps({"cluster_id": "ada/one", "run": "predictions/run-fresh", "why": "w"}),
+                            "--run", "predictions/run-a", "--run", "predictions/run-fresh"],
+                           capture_output=True, text=True)
+        sm = json.loads((d / "s.json").read_text()) if p.returncode == 0 else {}
+        one = {c["cluster_id"]: c for c in sm.get("clusters", [])}.get("ada/one", {})
+        check("STALE: a sidecar made under a date an override replaced is not superseded",
+              p.returncode == 0 and (one.get("resolution") or {}).get("supersedes")
+              == [{"prediction_id": "p1", "run": "predictions/run-a"}], p.stderr[-400:] + str(one.get("resolution")))
+        check("STALE: the builder says which stale sidecar it left out", "p2" in p.stdout and "stale" in p.stdout,
+              p.stdout[-400:])
+
     print(f"\n{len(FAILED)} failed" if FAILED else "\nall passed")
     return 1 if FAILED else 0
 

@@ -19,7 +19,10 @@ earliest member specific enough on its own). Nothing here re-derives it.
 `--resolution` says a cluster's specific member was resolved afresh in `run`.
 The builder then lists, as superseded, every resolution sidecar of every member
 of that cluster found in the `--run` directories, except the fresh one, so no
-older verdict is left to compete with it. The scorer refuses a superseded sidecar
+older verdict is left to compete with it. A sidecar made under a date that the
+production override file has since replaced is left out and named: the scorer
+drops it unread (score_predictions.drop_stale_sidecars), so superseding it would
+name a sidecar the scorer never sees. The scorer refuses a superseded sidecar
 that is not on disk, so the manifest cannot outlive the inputs it describes.
 
 Paths in the manifest are relative to the data root, like scoring.json's.
@@ -33,7 +36,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import predictions_lib as L  # noqa: E402
 import resolution_lib as R  # noqa: E402
+import score_predictions as SP  # noqa: E402
 
 
 def group_ids(g: dict) -> list[str]:
@@ -42,7 +47,16 @@ def group_ids(g: dict) -> list[str]:
     return [m["prediction_id"] for m in g["members"]]
 
 
-def build(clusters_path: Path, data_root: Path, resolutions: list[dict], runs: list[str]) -> dict:
+def date_overrides(data_root: Path) -> dict:
+    """The production override file the scorer reads, or none when the data root has no such file."""
+    path = data_root / L.DATE_OVERRIDES_FILE
+    if not path.is_file():
+        return {}
+    return L.load_statement_date_overrides(path, [data_root / d for d in L.TRANSCRIPT_DIRS])
+
+
+def build(clusters_path: Path, data_root: Path, resolutions: list[dict], runs: list[str],
+          stale: list | None = None) -> dict:
     raw = clusters_path.read_bytes()
     src = json.loads(raw)
     by_id = {}
@@ -68,6 +82,7 @@ def build(clusters_path: Path, data_root: Path, resolutions: list[dict], runs: l
                 if ids <= set(c["members"]):
                     raise SystemExit(f"cluster {c['cluster_id']} merges {sorted(ids)}, which clusters.json "
                                      f"records as {kind}, a decision not to merge them")
+    overrides = date_overrides(data_root) if resolutions else {}
     for res in resolutions:
         if set(res) != {"cluster_id", "run", "why"}:
             raise SystemExit(f"--resolution takes exactly cluster_id, run and why; got {sorted(res)}")
@@ -80,6 +95,13 @@ def build(clusters_path: Path, data_root: Path, resolutions: list[dict], runs: l
         sup = []
         for run in runs:
             have = R.load_sidecars(data_root / run, "resolve")
+            # The scorer drops a sidecar made under a date an override has since replaced
+            # (score_predictions.drop_stale_sidecars), so it never reads it and refuses a manifest
+            # that supersedes it. Found 2026-10-05: a re-dated member's old sidecars. Same rule here.
+            dropped: list = []
+            have = SP.drop_stale_sidecars(have, overrides, set(), set(), run, "resolve", dropped)
+            if stale is not None:
+                stale.extend({**x, "cluster_id": c["cluster_id"]} for x in dropped if x["prediction_id"] in c["members"])
             for pid in c["members"]:
                 if pid in have and not (Path(run) == Path(res["run"]) and pid == spec):
                     sup.append({"prediction_id": pid, "run": run})
@@ -109,7 +131,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.resolution and not args.run:
         raise SystemExit("--resolution needs the scored runs (--run) to find what it supersedes")
-    doc = build(args.clusters, args.data_root, args.resolution, args.run)
+    stale: list = []
+    doc = build(args.clusters, args.data_root, args.resolution, args.run, stale)
     args.out.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     n = sum(len(c["members"]) for c in doc["clusters"])
     print(f"wrote {args.out}: {len(doc['clusters'])} clusters, {n} members, "
@@ -117,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     for c in doc["clusters"]:
         for s in (c.get("resolution") or {}).get("supersedes", []):
             print(f"  {c['cluster_id']}: supersedes {s['prediction_id']} in {s['run']}")
+    for x in stale:
+        print(f"  {x['cluster_id']}: left out stale sidecar {x['prediction_id']} in {x['run']} (made under "
+              f"{x['sidecar_statement_date']}; an override re-dated {x['transcript_id']}, so the scorer drops it)")
     return 0
 
 
