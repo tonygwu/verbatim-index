@@ -23,7 +23,7 @@ Pure checks: fake subprocesses, no sudo, no quota.
   .venv/bin/python scripts/test_gemini_rotation_everywhere.py
 """
 from __future__ import annotations
-import importlib.util, io, json, sys, tempfile, contextlib
+import importlib.util, io, json, re, sys, tempfile, contextlib
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -179,6 +179,22 @@ for name, mod in (("date_recordings", DR), ("extract_predictions", EP), ("market
     check(f"{name}: uses gemini_rotation_preflight", "gemini_rotation_preflight(" in src)
     check(f"{name}: --agy-bin defaults to the wrapper's binary",
           mod.build_parser().parse_args(["--run-dir", "x"] if name == "date_recordings" else []).agy_bin == WRAPPER_BIN)
+
+print("3b. every script that takes --agy-bin")
+# FOUND 2026-10-04: eval_prediction_cases.py was not one of the three above, but
+# its --live dating reaches date_recordings.call_agent with ITS OWN args, whose
+# --agy-bin still defaulted to "agy". The rotation's preflight then stopped every
+# live dating eval with wrapper exit 77. A list of known callers missed it, so
+# this scans every script that declares the flag.
+import eval_prediction_cases as EPC  # noqa: E402
+check("eval_prediction_cases: --agy-bin defaults to the wrapper's binary",
+      EPC.build_parser().parse_args(["--gold", "x"]).agy_bin == WRAPPER_BIN)
+_flag = re.compile(r'add_argument\(\s*"--agy-bin"\s*,\s*default\s*=\s*([^,)\n]+)')
+for path in sorted((REPO / "scripts").glob("*.py")):
+    for m in _flag.finditer(path.read_text()):
+        raw = m.group(1).strip()
+        ok = raw.endswith("AGY_JUDGE_BIN") or raw.strip("\"'") == WRAPPER_BIN
+        check(f"{path.name}: --agy-bin default {raw} is the wrapper's binary", ok)
 
 captured = {}
 def fake_call_gemini(prompt, home, timeout, **kw):

@@ -1013,7 +1013,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--report", type=Path, default=None)
     ap.add_argument("--workroot", default=str(Path(os.environ.get("TMPDIR", "/tmp")) / "case-eval-work"))
     ap.add_argument("--gemini-model", default="gemini-3.8-flash-high")
-    ap.add_argument("--agy-bin", default="agy")
+    # The agy-as-user wrapper runs only this path, and --live dating reaches the
+    # router-config rotation through date_recordings.call_agent with these args.
+    # "agy" here stopped every live dating eval at preflight with wrapper exit 77.
+    ap.add_argument("--agy-bin", default="/usr/local/bin/agy")
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--codex-home", default=None)
     ap.add_argument("--fable-bin", default="claude")
