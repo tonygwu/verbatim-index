@@ -169,6 +169,30 @@ class Occasion(unittest.TestCase):
         self.assertEqual(DL.occasion_names(KP, o, KP_COMPANY)[:3],
                          [("knowledge", "project"), ("farnam", "street"), ("shane", "parrish")])
 
+    def test_a_long_run_cut_to_one_word_and_a_platform_are_no_names(self):
+        """FOUND in the merge-5 live run (OP7 r01): 'Inside the Mind of Robinhood Co-Founder Vlad Tenev' left 'mind' and
+        'YouTube' stood alone, so Robinhood's own YES/NO page, which says 'mind' and 'YouTube', read as the podcast."""
+        o = kp_prop()
+        o.update(event="The Knowledge Project podcast with Shane Parrish (released on YouTube as 'Inside the Mind of "
+                       "Analytical Engines Co-Founder Ada Lovelace')", host_organization=None, interviewer=None)
+        names = DL.occasion_names(KP, o, KP_COMPANY)
+        self.assertNotIn(("mind",), names)
+        self.assertNotIn(("youtube",), names)
+        url = "https://analytical.example/newsroom/yes-no"
+        page = ("<html><head><title>Analytical Presents: YES/NO</title></head><body><p>Dec 1, 2025 Analytical "
+                "Presents: YES/NO. Keep in mind: Ada Lovelace unveils new engines, livestreamed on YouTube.</p>"
+                "</body></html>")
+        s = src(url, "Dec 1, 2025 Analytical Presents: YES/NO. Keep in mind")
+        o["sources"] = [s]
+        o["speech_date_latest"] = "2025-12-01"
+        c = DL.check_source(s, KP, fetched(page, url), o)
+        ok, why = DL.confirms(c, o, KP, V5, company=KP_COMPANY)
+        self.assertFalse(ok, why)
+        self.assertIn("named in full: none", why)
+        # One word still names an event when the run IS one word ("PandoMonthly", "DX").
+        self.assertIn(("pandomonthly",), DL.occasion_names(KP, {**kp_prop(), "event": "PandoMonthly fireside chat"},
+                                                            KP_COMPANY))
+
     def test_the_speakers_company_is_never_an_occasion_name(self):
         names = DL.occasion_names(KP, kp_prop(), KP_COMPANY)
         self.assertFalse([n for n in names if {"analytical", "engines"} & set(n)], names)

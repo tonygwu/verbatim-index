@@ -910,12 +910,13 @@ def occasion_names(rec: dict, prop: dict, company: str) -> list[tuple[str, ...]]
     names: list[tuple[str, ...]] = []
 
     def add(text: str, least: int) -> None:
+        """Add a name of at least `least` content words; a unit given whole (host, channel) passes least=1."""
         text = re.sub(r"\b([A-Z])/([A-Z])\b", r"\1·\2", text)
         words = tuple(w for tok in _RUN_TOKEN.findall(text) for w in _name_words(tok, drop))
         # Generic words ("Second-Quarter Earnings PRESENTATION", "BAFTA SPECIAL AWARD") are not required on the
-        # page; a name of nothing but generic words ("CEO") is no name. The run's length counts them.
-        content = tuple(w for w in words if w not in _GENERIC_V4)
-        if content and len(words) >= least and content not in names:
+        # page; a name of nothing but generic words ("CEO") is no name. A platform is never one.
+        content = tuple(w for w in words if w not in _GENERIC_V4 and w not in _PLATFORMS)
+        if content and len(content) >= least and content not in names:
             names.append(content)
     for u in units:
         add(u, 1)
@@ -928,14 +929,23 @@ def occasion_names(rec: dict, prop: dict, company: str) -> list[tuple[str, ...]]
     # less a topical abbreviation; the rest of the text is mostly topic, so its runs need two words.
     head, *tail = re.split(r"\s*:\s+|\s+(?:about|discussing|covering|regarding)\s+", event, maxsplit=1)
     for r in _capital_runs(head):
+        # One word counts only when the run IS one word ("Dreamforce", "PandoMonthly", "DX"); a longer run cut
+        # down to one word by the speaker's names, company and generic words is not a name (FOUND in the merge-5
+        # live run: "Inside the Mind of Robinhood Co-Founder Vlad Tenev" left "mind", and "YouTube" stood alone,
+        # so Robinhood's YES/NO page read as about the Knowledge Project podcast).
         toks = [t for t in _RUN_TOKEN.findall(r) if not t.isdigit()]
-        topical = len(toks) == 1 and toks[0].lower() in _TOPIC_ACRONYMS
-        add(r, 2 if topical else 1)
+        single = len(toks) == 1 and toks[0].lower() not in _TOPIC_ACRONYMS
+        add(r, 1 if single else 2)
     for r in _capital_runs(tail[0] if tail else ""):
         add(r, 2)
     for r in _capital_runs(rec.get("yt_title") or rec.get("declared_title") or ""):
         add(r, 2)
     return names
+
+
+# Where a recording is published, never what occasion it is.
+_PLATFORMS = {"youtube", "spotify", "apple", "podcasts", "itunes", "twitter", "linkedin", "facebook", "instagram",
+              "tiktok", "substack", "medium", "soundcloud", "vimeo", "twitch", "rumble", "iheart", "iheartradio", "x"}
 
 
 # Capitalised abbreviations that name a topic or a role, never an occasion.
