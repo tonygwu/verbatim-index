@@ -191,9 +191,13 @@ run, hit the limit, and land in the taxonomy as `auth_or_quota`, so the pass
 looks busy while producing nothing. Check `data/logs/grade_errors_blind.jsonl`
 for that label before assuming a slow pass is a healthy one.
 
-`GEMINI_USERS=tonyagents` adds a macOS user as a Gemini profile, which is the
-only way to get a second Antigravity account on one machine. See the
-Antigravity section for the three preconditions and why `sudo -u` alone fails.
+The Gemini rotation comes from the llm-quota-router config
+(`~/.config/quota-router/config.toml`), not from a variable. Every enabled
+Antigravity account in the Gemini pool is a profile, and one that declares
+`macos_user` becomes `user:<macos_user>`. `GEMINI_USERS` may restate the users
+but `grade.py` refuses when it disagrees with the config. `AGY_BIN` defaults to
+`/usr/local/bin/agy`, the one path `agy-as-user` runs. See the Antigravity
+section for the three preconditions and why `sudo -u` alone fails.
 
 `FABLE_ACCOUNTS` pins the Fable rotation to named accounts, for example
 `FABLE_ACCOUNTS=default`. Use it when only some accounts can serve Fable.
@@ -257,8 +261,25 @@ tonygwu@gmail.com at 08:25Z lasted until 08:56Z. A second HOME on one macOS
 user adds no quota. `grade.py` now prints `gemini_identities` at the end of
 every run and warns when every profile served one address. A real second
 account is a second macOS user, which has its own login Keychain, and
-`grade.py` supports that as a profile of the form `user:<name>` listed in
-`GEMINI_USERS`.
+`grade.py` supports that as a profile of the form `user:<name>`, declared in
+the router config.
+
+**Since 2026-10-04 there are two real accounts, and every call proves its
+own.** The default macOS user serves tonygwu@gmail.com and `tonyagents` serves
+gptwufamily@gmail.com. `gemini_rotation_from_config()` builds the rotation,
+taking only the Gemini pool, because each macOS user also has a Claude-pool
+account on the same Keychain item. After each call `grade.py` compares the
+account named in that call's log with the config's `identity_email`. A
+different address, or none, fails the call as `account_identity_mismatch`
+instead of writing a grade: a running Antigravity desktop app can write a
+stale login back into the Keychain item that agy reads. If the wrapper exits
+75, that user has no login session, so the profile is benched for the whole
+run with a WARNING. If it exits 77, the binary is wrong and the pass stops at
+preflight. VERIFIED 2026-10-04 on a 2-call smoke: one grade from each address,
+both `profile_identity_verified`. `date_recordings.py`, `extract_predictions.py`
+and `market_consensus.py` still use `agy_profiles()`, which reads only
+`GEMINI_USERS` and checks no identity. They have no preflight for exit 77.
+Guarded by `scripts/test_gemini_config_rotation.py`.
 
 **`sudo -u <user>` alone does NOT work, and fails in a way that looks like a
 login problem.** MEASURED 2026-09-11: with the sudoers rule correct and the

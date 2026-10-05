@@ -75,6 +75,12 @@ BLIND_JUDGES="${BLIND_JUDGES:-fable,astra,gemini}"
 OPEN_PER_LEADER="${OPEN_PER_LEADER:-2}"
 CYCLE_SLEEP="${CYCLE_SLEEP:-300}"
 FABLE_ACCOUNTS="${FABLE_ACCOUNTS:-}"  # pin Fable to named accounts, e.g. "default"
+# The Gemini judge binary. The rotation comes from the router config and
+# includes a second macOS user, whose calls go through agy-as-user, which runs
+# only /usr/local/bin/agy and exits 77 for any other path. A bare `agy` would
+# stop every blinded pass at preflight. Refresh that copy after an Antigravity
+# update: sudo cp ~/.local/bin/agy /usr/local/bin/agy
+AGY_BIN="${AGY_BIN:-/usr/local/bin/agy}"
 MIN_TO_START="${MIN_TO_START:-4}"      # do not spin up the expensive stage for 1 file
 IDLE_EXIT="${IDLE_EXIT:-3}"            # consecutive no-op cycles with fetch gone -> stop
 
@@ -199,7 +205,7 @@ while true; do
   $PY scripts/grade.py --transcripts $DATA/transcripts_blind --roster $DATA/roster/final.json \
       --out $DATA/grades --judges "$BLIND_JUDGES" --modes blinded --repeats 1 \
       --workers "$WORKERS" --errors $DATA/logs/grade_errors_blind.jsonl --timeout 2400 \
-      --fable-accounts "$FABLE_ACCOUNTS" \
+      --fable-accounts "$FABLE_ACCOUNTS" --agy-bin "$AGY_BIN" \
       >> $DATA/logs/grade_loop.out 2>>$DATA/logs/grade_loop.err
 
   # 4. Unblinded, on a bounded subset. Only needed to size the reputation halo,

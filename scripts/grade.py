@@ -32,6 +32,7 @@ import grp
 import hashlib
 import itertools
 import json
+import math
 import os
 import re
 import shutil
@@ -98,6 +99,11 @@ E_TOOL_ATTEMPT = "judge_attempted_tool_use"
 # arrives carrying a 429, and reading that as exhaustion benched a healthy
 # account and produced ~44 spurious failures.
 E_TRANSIENT = "transient_retryable"
+# The account that served a call is not the account the router config says that
+# profile holds, or the call's log named no account at all. Not a grade: a
+# running Antigravity desktop app can write a stale login back into the Keychain
+# item agy reads, and the rotation would then send both profiles to one account.
+E_IDENTITY = "account_identity_mismatch"
 
 # A judge can return valid JSON that is not a grade. GPT-6 Astra declined to
 # score a Palantir CEO transcript, saying it "cannot assign the requested
@@ -124,7 +130,7 @@ REFUSAL_TEXT_KEYS = ("reason", "status", "note", "error", "message", "explanatio
 #: first version enumerated a subset inline and silently relabelled the rest.
 ALL_ERROR_TYPES = (E_CLI, E_TIMEOUT, E_EMPTY, E_NOJSON, E_BADJSON, E_SCHEMA,
                    E_MODEL_MISMATCH, E_AUTH, E_REFUSED, E_TOOL_ATTEMPT, E_TRANSIENT,
-                   E_STALE_CACHE, E_NO_TRANSCRIPT)
+                   E_STALE_CACHE, E_NO_TRANSCRIPT, E_IDENTITY)
 
 
 def classify_exception_detail(detail: str) -> str:
@@ -1193,6 +1199,11 @@ GEMINI_SHARED_GROUP = os.environ.get("GEMINI_SHARED_GROUP", "staff")
 #: Keychain is unreachable, so the judge reports "You are not logged into
 #: Antigravity" and falls through to an interactive sign-in.
 GEMINI_USER_WRAPPER = os.environ.get("AGY_AS_USER_WRAPPER", "/usr/local/libexec/agy-as-user")
+#: The wrapper's exit codes that grade.py acts on, from scripts/agy_as_user.sh.
+#: 75: the target user has no login session, so its Keychain is locked.
+#: 77: the judge binary is not the one path the wrapper will run.
+WRAPPER_NO_SESSION = 75
+WRAPPER_WRONG_BINARY = 77
 
 
 def is_user_profile(profile: str) -> bool:
@@ -1276,13 +1287,37 @@ def check_user_profiles(profiles: list[str], binary: str = "agy", runner=subproc
     once rather than discovered 500 jobs in. The message names the two things
     that fix it: a root-owned, world-readable copy of the binary, and a
     sudoers line naming that path.
+
+    Two wrapper exits are told apart from the rest. 77 is a wrong binary: the
+    wrapper runs only its allowlisted path, so every call to that profile would
+    fail, and the pass stops here. 75 is a user with no login session, whose
+    Keychain is locked: that is a state of the machine, not of the code, so the
+    profile is benched for the whole run, loudly, and the other profiles carry
+    the pass. Returns the profiles benched that way. If that leaves no profile,
+    the pass stops, because every call would fail.
     """
+    benched: list[str] = []
     for p in profiles:
         if not is_user_profile(p):
             continue
         user = p[len(GEMINI_USER_PREFIX):]
         argv, env = gemini_launch(p, [binary, "--help"], dict(os.environ))
         proc = runner(argv, capture_output=True, text=True, env=env)
+        if proc.returncode == WRAPPER_NO_SESSION:
+            bench_gemini_profile(p, math.inf)
+            benched.append(p)
+            log(f"WARNING: Gemini profile {p!r} is BENCHED for this whole run: macOS user {user} has "
+                f"no login session, so its Keychain is locked (wrapper exit {WRAPPER_NO_SESSION}). "
+                f"Its account serves no calls this pass. Log {user} in with Fast User Switching "
+                f"and leave the session open.")
+            continue
+        if proc.returncode == WRAPPER_WRONG_BINARY:
+            raise SystemExit(
+                f"Gemini profile {p!r}: the wrapper refused the judge binary {binary!r} "
+                f"(exit {WRAPPER_WRONG_BINARY}): {(proc.stderr or proc.stdout or '').strip()[:200]}\n"
+                f"{GEMINI_USER_WRAPPER} runs only /usr/local/bin/agy. Run with "
+                f"--agy-bin /usr/local/bin/agy, and refresh that copy after an Antigravity update:\n"
+                f"  sudo cp {shutil.which('agy') or 'agy'} /usr/local/bin/agy && sudo chmod 755 /usr/local/bin/agy")
         if proc.returncode != 0:
             me = os.environ.get("USER", "you")
             raise SystemExit(
@@ -1298,6 +1333,14 @@ def check_user_profiles(profiles: list[str], binary: str = "agy", runner=subproc
                 f"     {me} ALL=(root) NOPASSWD: {GEMINI_USER_WRAPPER}\n"
                 f"  3. {user} is logged in, so its login Keychain is unlocked.\n"
                 f"Then run with --agy-bin /usr/local/bin/agy.")
+    now_s = time.time()
+    with _GEMINI_BENCH_LOCK:
+        live = [p for p in profiles if _GEMINI_BENCH.get(p, 0.0) <= now_s]
+    if profiles and not live:
+        raise SystemExit(f"every Gemini profile is benched before the pass starts ({benched}); "
+                         f"no call could succeed")
+    return benched
+
 
 def agy_profiles(root: Path | None = None, default_home: str | None = None,
                  users: str | None = None) -> list[str]:
@@ -1371,6 +1414,68 @@ def agy_profiles(root: Path | None = None, default_home: str | None = None,
     for name in [n.strip() for n in names.split(",") if n.strip()]:
         homes.append(GEMINI_USER_PREFIX + name)
     return homes
+
+
+def gemini_rotation_from_config(accounts=None, default_home: str | None = None,
+                                users_env: str | None = None) -> list[tuple[str, str, str]]:
+    """The Gemini judge's profiles, each with the account it must prove it served.
+
+    Returns (profile, identity_email, account_id) in config order, the default
+    HOME first. The source is the llm-quota-router config, the same file that
+    `quotapick launch-plan` reads, so this pass and the router cannot disagree
+    about which macOS user holds which account.
+
+    CHANGED 2026-10-04: the default macOS user moved to tonygwu@gmail.com and
+    the second macOS user kept gptwufamily@gmail.com, so the machine has two
+    real Antigravity accounts. Before this the rotation was the default HOME
+    plus GEMINI_USERS, and a pass that forgot the variable ran on one account
+    without saying so.
+
+    Only the GEMINI pool is a judge profile. Each macOS user also carries a
+    Claude-pool account, selected by `AGY_MODEL` containing "claude", and the
+    two share one Keychain item, so listing both would put every profile in
+    the rotation twice.
+
+    Fails loudly on: no Antigravity account at all, a Gemini-pool account with
+    no identity_email (nothing to verify a call against), two accounts on one
+    profile (one Keychain item cannot be two accounts), and a GEMINI_USERS that
+    names a different set of users than the config.
+    """
+    if accounts is None:
+        from quota_router.config import load_config
+        accounts = load_config().accounts
+    default = default_home or str(Path.home())
+    out: list[tuple[str, str, str]] = []
+    owner: dict[str, str] = {}
+    for acct_id, a in accounts.items():
+        if a.provider != "antigravity" or not a.enabled:
+            continue
+        if "claude" in str((a.env or {}).get("AGY_MODEL", "")).lower():
+            continue
+        if not a.identity_email:
+            raise SystemExit(f"router config: Antigravity account {acct_id!r} has no identity_email, "
+                             f"so no Gemini call it serves could be verified. Add it to "
+                             f"~/.config/quota-router/config.toml.")
+        profile = GEMINI_USER_PREFIX + a.macos_user if a.macos_user else default
+        if profile in owner:
+            raise SystemExit(f"router config: Antigravity accounts {owner[profile]!r} and {acct_id!r} "
+                             f"both resolve to Gemini profile {profile!r}. One macOS user holds one "
+                             f"Keychain item, so they cannot be two accounts.")
+        owner[profile] = acct_id
+        out.append((profile, a.identity_email, acct_id))
+    if not out:
+        raise SystemExit("router config declares no enabled Gemini-pool Antigravity account, so the "
+                         "Gemini arm has no profile to run on")
+    out.sort(key=lambda t: is_user_profile(t[0]))
+    names = os.environ.get("GEMINI_USERS") if users_env is None else users_env
+    if names and names.strip():
+        said = {n.strip() for n in names.split(",") if n.strip()}
+        have = {p[len(GEMINI_USER_PREFIX):] for p, _, _ in out if is_user_profile(p)}
+        if said != have:
+            raise SystemExit(f"GEMINI_USERS={names!r} disagrees with the router config, which declares "
+                             f"macOS users {sorted(have)}. The config is the source now; unset "
+                             f"GEMINI_USERS or make it match.")
+    return out
 
 
 def agy_identity_from_log(log_path: Path) -> str | None:
@@ -1667,7 +1772,8 @@ def count_gemini_tool_events(events: list[dict]) -> tuple[dict[str, int], list[s
 
 def call_gemini(prompt: str, profile_home: str, timeout: int,
                 workdir: str | None = None, model: str = GEMINI_MODEL,
-                binary: str = "agy", wrapper: list[str] | None = None) -> tuple[str, dict]:
+                binary: str = "agy", wrapper: list[str] | None = None,
+                expected_identity: str | None = None) -> tuple[str, dict]:
     """Run the Gemini 3.8 Flash judge via the Antigravity CLI. Returns (text, telemetry).
 
     The account is chosen here, per call, by setting HOME, because that is the
@@ -1676,6 +1782,10 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     token file in that directory, so the account this reaches is whatever the
     Keychain currently holds. agy_identity_from_log() reads it back out of
     this call's own log and the answer is recorded on the grade, not assumed.
+
+    With `expected_identity`, the account the router config declares for this
+    profile, the reading is also CHECKED: a log naming another address, or no
+    address, fails the call as E_IDENTITY instead of returning a grade.
     """
     env = dict(os.environ)
     # A stale value for either of these in the inherited shell would silently
@@ -1752,6 +1862,20 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
             f"({empty_retries} after an empty answer) "
             f"({profile_label(profile_home)})")
 
+    if is_user_profile(profile_home) and proc.returncode == WRAPPER_NO_SESSION:
+        # The session ended after preflight, for example a logout mid-pass.
+        # Every later call to this profile would fail the same way, so it is
+        # benched for the rest of the run rather than retried per job.
+        bench_gemini_profile(profile_home, math.inf)
+        log(f"    WARNING: gemini: {profile_label(profile_home)} BENCHED for the rest of the run: "
+            f"its macOS user has no login session, so its Keychain is locked "
+            f"(wrapper exit {WRAPPER_NO_SESSION})")
+        raise RuntimeError(f"{E_AUTH}: {profile_label(profile_home)} has no login session, so its "
+                           f"Keychain is locked (wrapper exit {WRAPPER_NO_SESSION}); benched for this run")
+    if is_user_profile(profile_home) and proc.returncode == WRAPPER_WRONG_BINARY:
+        raise RuntimeError(f"{E_CLI}: the wrapper refused judge binary {binary!r} (exit "
+                           f"{WRAPPER_WRONG_BINARY}); it runs only /usr/local/bin/agy")
+
     events, unparsed = parse_jsonl_events(proc.stdout)
 
     init = next((e.get("init") for e in events if e.get("event") == "init"), None)
@@ -1804,6 +1928,8 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         "profile_home": profile_home,
         # Which account actually served this call, read from THIS call's log.
         "profile_identity": agy_identity_from_log(log_path),
+        "profile_identity_expected": expected_identity,
+        "profile_identity_verified": expected_identity is not None,
         "duration_seconds": result.get("duration_seconds"),
         "num_turns": result.get("num_turns"),
         "input_tokens": usage.get("input_tokens"),
@@ -1818,6 +1944,15 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     }
     if unparsed:
         telemetry["unparsed_event_lines"] = unparsed
+    if expected_identity is not None and telemetry["profile_identity"] != expected_identity:
+        # FOUND 2026-10-04: a running Antigravity desktop app can write a stale
+        # login back into the Keychain item agy reads, so a profile can quietly
+        # serve the other account. A grade from the wrong account would make the
+        # rotation's per-account record false, so the call fails instead.
+        served_by = telemetry["profile_identity"] or "no account (the log named none)"
+        raise RuntimeError(f"{E_IDENTITY}: {profile_label(profile_home)} should serve "
+                           f"{expected_identity} per the router config, and this call was served "
+                           f"by {served_by}. Log: {log_path}")
     if telemetry["thinking_tokens"] in (None, 0):
         # The "-high" suffix IS the reasoning setting for this model family, so
         # zero thinking tokens means the high-effort variant did not take effect.
@@ -1963,7 +2098,8 @@ def grade_one(job: dict) -> dict:
             profile = pick_gemini_profile(job["gemini_profile"], job["gemini_profiles"])
             text, telemetry = call_gemini(prompt, profile, job["timeout"],
                                           job["workdir"], job["gemini_model"],
-                                          job["agy_bin"], **_v2_harness_kwargs(job, "gemini"))
+                                          job["agy_bin"], **_v2_harness_kwargs(job, "gemini"),
+                                          expected_identity=job["gemini_identities"][profile])
         else:
             # Astra refuses some politically-charged transcripts, and the refusal
             # is not deterministic: two of three re-run transcripts graded fine
@@ -2273,17 +2409,28 @@ def main() -> int:
     # router that invents numbers sends every call to an exhausted pool.
     # What IS available is failure-learned: a quota stop names its own reset
     # time, and classify_agy_failure files it as E_AUTH so the taxonomy shows it.
-    gem_profiles = agy_profiles()
+    #
+    # The profiles come from the router config, each with the account it must
+    # prove it served (gemini_rotation_from_config). Extra HOMEs under one macOS
+    # user are not consulted: they share its Keychain item and have no config
+    # account to verify against.
+    gem_rotation = gemini_rotation_from_config() if "gemini" in judges else []
+    if gem_rotation and os.environ.get("GEMINI_EXTRA_HOMES", "") not in ("", "0"):
+        raise SystemExit("GEMINI_EXTRA_HOMES is set, but the Gemini rotation now comes from the router "
+                         "config and an extra HOME has no account there to verify its calls against. "
+                         "Unset it, or declare the account in ~/.config/quota-router/config.toml.")
     if args.gemini_profiles:
         wanted = [w.strip() for w in args.gemini_profiles.split(",") if w.strip()]
         resolved = []
         for w in wanted:
-            hits = [h for h in gem_profiles if h == w or Path(h).name == w]
+            hits = [t for t in gem_rotation if w in (t[0], Path(t[0]).name, t[2])]
             if not hits:
                 raise SystemExit(f"--gemini-profiles: no Antigravity profile matches {w!r}. "
-                                 f"Known: {[Path(h).name or h for h in gem_profiles]}")
+                                 f"Known: {[(t[0], t[2]) for t in gem_rotation]}")
             resolved.append(hits[0])
-        gem_profiles = resolved
+        gem_rotation = resolved
+    gem_profiles = [t[0] for t in gem_rotation]
+    gem_identities = {t[0]: t[1] for t in gem_rotation}
     if "gemini" in judges:
         if not gem_profiles:
             raise SystemExit("no Antigravity profiles found: the Gemini arm needs at least "
@@ -2291,9 +2438,11 @@ def main() -> int:
         # Paths only. The account each profile serves is recorded per grade
         # from that call's own log; asserting it here, before any call has been
         # made, would mean guessing from stale files.
-        check_user_profiles(gem_profiles, args.agy_bin)
+        benched = check_user_profiles(gem_profiles, args.agy_bin)
         log(f"gemini profiles in rotation (round-robin, no headroom is measurable): "
-            f"{gem_profiles}")
+            + ", ".join(f"{p} -> {acct} ({gem_identities[p]})"
+                        + (" BENCHED: no login session" if p in benched else "")
+                        for p, _, acct in gem_rotation))
 
     if template is not None:
         # The contract hashes each judge's REQUESTED model from the profile. A
@@ -2370,6 +2519,7 @@ def main() -> int:
             "gemini_profile": assign_accounts("gemini", i, gem_profiles, judges)
                               if gem_profiles else None,
             "gemini_profiles": gem_profiles,
+            "gemini_identities": gem_identities,
             "workdir": str(wd),
             "dest": str(Path(args.out) / judge / rec["leader_slug"] / f"{stem}.json"),
             "raw_dest": str(Path(args.out) / "_raw" / judge / rec["leader_slug"] / f"{stem}.txt"),
