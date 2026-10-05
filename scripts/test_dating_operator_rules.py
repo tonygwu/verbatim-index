@@ -402,10 +402,22 @@ class Refine(unittest.TestCase):
         out = merged(BAFTA, {"gemini": bafta_month(), "fable": bafta_day()}, self.PAGES, V4)
         self.assertEqual((out["entry"]["statement_date"], out["entry"]["confirmation"]["lead"]), ("2019-06-12", "fable"))
 
-    def test_ranges_that_do_not_nest_still_disagree(self):
+    def test_a_day_outside_the_other_confirmed_range_still_disagrees(self):
         late = bafta_month(e="2019-06-13", l="2019-06-30")
         out = merged(BAFTA, {"gemini": bafta_day(), "fable": late}, self.PAGES, V4)
         self.assertEqual((out["outcome"], out["reason"]), ("queue", "dater_disagreement"))
+
+    def test_overlapping_ranges_that_both_allow_the_earlier_last_day_refine(self):
+        """FOUND in the live run (village-global): Oct 22..Nov 2 from a page and Nov 1..30 from the
+        description overlap without nesting; both allow November 2, the latest day all evidence allows."""
+        early = bafta_day()
+        early.update(speech_date_earliest="2019-05-20")              # 2019-05-20..2019-06-12
+        objs = {"gemini": early, "fable": bafta_month()}              # 2019-06-01..2019-06-30
+        self.assertEqual(merged(BAFTA, objs, self.PAGES, V3)["reason"], "dater_disagreement")
+        out = merged(BAFTA, objs, self.PAGES, V4)
+        self.assertEqual((out["outcome"], out["entry"]["statement_date"]), ("override", "2019-06-12"), out)
+        self.assertEqual(out["entry"]["confirmation"]["refines"], [{"dater": "fable",
+                                                                     "range": ["2019-06-01", "2019-06-30"]}])
 
     def test_r1_still_queues_an_awards_night_page_against_an_unconfirmed_keynote_day(self):
         """Decided: R1 is unchanged. Fable's page dates the awards night; Gemini named the keynote day."""

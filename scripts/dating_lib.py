@@ -1732,11 +1732,12 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
 
     `version` names the rules: the loader passes the version an entry names, so a
     merge-3 entry re-merges under merge-3 exactly. merge-4 changes step 2 (finding f
-    of the operator's audit, 2026-10-04): when every confirmed range NESTS inside the
-    others, the narrowest is a refinement, not a disagreement, and it leads. Case
+    of the operator's audit, 2026-10-04): when the EARLIEST confirmed last day lies
+    inside every other confirmed range, it is a refinement, not a disagreement, and its
+    proposal leads: the latest day all the confirmed evidence allows (design D1). Case
     tim-sweeney/bafta-guru-cjxc-u: Gemini's photo agency page dated the award on
     June 12, 2019, and Fable's Wikipedia line said "June 2019"; merge-3 queued the two
-    as disagreeing. Ranges that overlap without nesting, or do not meet, still queue.
+    as disagreeing. A day that lies outside another confirmed range still queues.
     Rule R1 is unchanged and still applies to every eligible dater that confirmed
     nothing: so when Fable's page confirms the awards night (February 13) and Gemini
     named the keynote day (February 12) without a confirming page, the recording is
@@ -1759,14 +1760,14 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
     confirmed = [a for a in found if a["confirmed"]]
     refined: list[dict] = []
     if merge_rank(version) >= 4 and len(confirmed) > 1:
-        nested = _nested_lead(confirmed)
-        if nested is not None:
-            # The narrowest leads; the others are recorded as what it refined.
+        inner = _refining_lead(confirmed)
+        if inner is not None:
+            # The earliest confirmed last day leads; the others are recorded as what it refined.
             refined = [{"dater": a["harness"], "range": [a["prop"]["speech_date_earliest"],
                                                          a["prop"]["speech_date_latest"]]}
-                       for a in confirmed if a is not nested
-                       and a["prop"]["speech_date_latest"] != nested["prop"]["speech_date_latest"]]
-            confirmed = [nested] + [a for a in confirmed if a is not nested]
+                       for a in confirmed if a is not inner
+                       and a["prop"]["speech_date_latest"] != inner["prop"]["speech_date_latest"]]
+            confirmed = [inner] + [a for a in confirmed if a is not inner]
     if not refined and len({a["prop"]["speech_date_latest"] for a in confirmed}) > 1:
         return {**_queue("dater_disagreement", "; ".join(
             f"{a['harness']} confirmed {a['prop']['speech_date_latest']} by "
@@ -1833,17 +1834,26 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
             "by_dater": by}
 
 
-def _nested_lead(confirmed: list[dict]) -> dict | None:
-    """The narrowest confirmed proposal when every other confirmed range contains it, else None (merge-4, f).
+def _refining_lead(confirmed: list[dict]) -> dict | None:
+    """The confirmed proposal with the earliest last day, when every other confirmed range contains that day.
 
-    Ties go to the first in the merge's order (DATERS), as merge-3's lead did.
+    merge-4, finding f. Each confirmed range is a sourced bound, so the latest day all of
+    them allow is the earliest last day, provided every other range reaches it. A tie
+    goes to the narrower range, then to the first in the merge's order (DATERS), as
+    merge-3's lead did. FOUND in the live run (bill-gates/village-global-w5g4sp): Fable
+    with web tools confirmed October 22 to November 2, 2018 from TechCrunch, and Gemini
+    November 1 to 30 from the description; the ranges overlap without nesting, and both
+    allow November 2.
     """
     def rng(a):
         return a["prop"]["speech_date_earliest"], a["prop"]["speech_date_latest"]
-    narrow = min(confirmed, key=lambda a: (date.fromisoformat(rng(a)[1]) - date.fromisoformat(rng(a)[0])).days)
-    lo, hi = rng(narrow)
-    if all(rng(a)[0] <= lo and hi <= rng(a)[1] for a in confirmed):
-        return narrow
+
+    def width(a):
+        return (date.fromisoformat(rng(a)[1]) - date.fromisoformat(rng(a)[0])).days
+    lead = min(confirmed, key=lambda a: (rng(a)[1], width(a)))
+    day = rng(lead)[1]
+    if all(rng(a)[0] <= day <= rng(a)[1] for a in confirmed):
+        return lead
     return None
 
 
