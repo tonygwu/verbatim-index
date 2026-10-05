@@ -224,7 +224,12 @@ class ReviewOwnPage(unittest.TestCase):
         self.assertRegex(why, "embeds|upload")
 
     def test_an_embed_far_from_the_excerpt_still_refuses_the_page(self):
-        """The window is 1,000 characters each side; the page-level flag sees an embed outside it."""
+        """The window is 1,000 characters each side; the page-level flag sees an embed outside it.
+
+        merge-3's rule, pinned here because production holds entries confirmed under it. merge-4
+        lets such a page confirm a day before the upload (finding a of 2026-10-04); that and its
+        upload-day control are in test_dating_operator_rules.py.
+        """
         page = ('<html><body><iframe src="https://www.youtube.com/embed/vid0000000A"></iframe>' + "<p>filler</p>" * 400
                 + "<p>Ada talked on May 30, 2012 at the DX conference</p></body></html>")
         src = {"url": "https://someblog.example/ada-dx", "publisher": "blog", "date_on_source": None,
@@ -232,7 +237,7 @@ class ReviewOwnPage(unittest.TestCase):
         c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": page.encode(), "via": "direct",
                                        "error": None})
         self.assertNotIn("vid0000000A", c["window"])
-        ok, why = DL.confirms(c, proposal(sources=[src]), D10)
+        ok, why = DL.confirms(c, proposal(sources=[src]), D10, "merge-3")
         self.assertFalse(ok)
         self.assertIn("embeds the recording's own video", why)
 

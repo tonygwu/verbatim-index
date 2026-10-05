@@ -25,7 +25,15 @@ STAGES
            the real page and description checks, the real two-proposal merge; a
            confirmed date outside the gold band is a WRONG AUTO-CONFIRMATION. A
            repeat is recorded as r<n>.<dater>.json and replays only with every
-           dater's answer; an infrastructure failure of either excludes the repeat
+           dater's answer; an infrastructure failure of either excludes the repeat.
+           With input.pairs (2026-10-04) each repeat calls every dater in the union
+           of the pairs once and judges each pair through its own merge; a failed
+           call is kept as failed/r<n>.<dater>.json and excludes the repeat only for
+           the pairs holding that dater (run_live_dating_pairs)
+  dating_stored
+           deterministic: proposals and page checks already on disk (pinned by
+           sha256) or written inline, through the real merge under input.merge_version;
+           the operator's audited recordings and the negative controls
   resolve  one resolver call, validated by resolution_lib; a case needing a field
            the resolver contract lacks (already_public) is BLOCKED before any call
   early    one early-call check (VD-5 c) before the deadline, validated as
@@ -77,7 +85,7 @@ import dating_lib as DL  # noqa: E402
 import predictions_lib as L  # noqa: E402
 
 MODEL_STAGES = ("extract", "dating", "resolve", "early")
-STAGES = ("header", "funnel") + MODEL_STAGES
+STAGES = ("header", "funnel", "dating_stored") + MODEL_STAGES
 DEFAULT_HARNESS = {"extract": "astra", "dating": "gemini", "resolve": "astra", "early": "astra"}
 # The only statuses that mean a dating case's answers were judged: the denominator of
 # "wrong auto-confirmations: k of n". A refused recording, too few valid repeats, or no
@@ -209,6 +217,11 @@ def preflight(cases: list[dict], ctx: Context) -> list[str]:
                 funnel_implied(c)
             elif c["stage"] == "dating":
                 case_harnesses(c)
+                case_pairs(c)
+                case_merge_version(c)
+            elif c["stage"] == "dating_stored":
+                stored_inputs(c, ctx)
+                case_merge_version(c)
         except SystemExit as exc:
             problems.append(str(exc))
     return problems
@@ -257,10 +270,18 @@ def _dates_ok(lo, hi, band):
     return band is not None and band[0] <= lo and hi <= band[1]
 
 
+def case_merge_version(case: dict) -> str:
+    """The merge rules a dating case is judged under: input.merge_version, else today's (DL.MERGE_VERSION)."""
+    v = case["input"].get("merge_version") or DL.MERGE_VERSION
+    DL.merge_rank(v)          # an unknown version raises here, before anything runs
+    return v
+
+
 def judge_dating(case: dict, ctx: Context, answers: dict) -> tuple[str, str]:
     """One repeat: every dater's answer and its page checks, {harness: (text, checks)}, through the real merge."""
     rec = json.loads(ctx.path(case["input"]["transcript"]).read_text())
     tid = f"{rec['leader_slug']}/{rec['source_id']}"
+    version = case_merge_version(case)
     docs, checks_by = [], {}
     for h, (text, checks) in answers.items():
         # An answer that is not valid JSON, or fails validation, is an invalid proposal, as
@@ -272,15 +293,41 @@ def judge_dating(case: dict, ctx: Context, answers: dict) -> tuple[str, str]:
         except (ValueError, json.JSONDecodeError):
             obj = {}
         docs.append({"proposal": obj, "harness": h, "daters": list(answers), "leads": case_leads(case, ctx)})
-        checks_by[h] = checks if not DL.validate_proposal(obj, tid) else []
-    out = DL.merge(rec, docs, checks_by)
-    ex = case["expect"]
+        checks_by[h] = checks if not DL.validate_proposal(obj, tid, version) else []
+    return judge_merge(case["expect"], DL.merge(rec, docs, checks_by, version=version))
+
+
+def judge_merge(ex: dict, out: dict) -> tuple[str, str]:
+    """The merge's outcome against a dating case's expectation: (pass | fail | hard_fail | queued, detail).
+
+    Two expectation shapes. The older one (cases-20260929) gives pass_within, and
+    optionally soft_within and hard_outside, bands for the confirmed range. The
+    operator-audit shape (cases-20261004-dating) gives "truth", the true range of the
+    statement date, and judges the LAST day, which is the statement date (design D1):
+      pass       the last day lies inside the truth, or, where the case names
+                 "accept_bound", a RANGE (never a single day) whose last day lies in
+                 that band and whose first day is not after the truth
+      fail       a correct but wider bound: the range meets the truth, ends after it
+      hard_fail  the range misses the truth: a wrong auto-confirmation
+    A queue is "queued", and for a negative case the safe answer, so a pass.
+    """
     if out["outcome"] == "queue":
         # A negative case is one the stage must NOT move; the queue is its safe answer (review item 6).
         return ("pass" if ex.get("negative") else "queued"), f"queued: {out['reason']}: {out['detail'][:160]}"
     e = out["entry"].get("statement_date_earliest") or out["entry"]["statement_date"]
     lat = out["entry"]["statement_date"]
     what = f"confirmed ({out['outcome']}) {e}..{lat}"
+    if "truth" in ex:
+        lo, hi = ex["truth"]
+        if lo <= lat <= hi:
+            return "pass", f"{what}; the statement date {lat} is inside the true range {ex['truth']}"
+        band = ex.get("accept_bound")
+        if band and e < lat and band[0] <= lat <= band[1] and e <= hi:
+            return "pass", (f"{what}; accepted as a bound: a range ending {lat}, inside {band}, never a day of "
+                            f"speech")
+        if e <= hi and lat >= lo:
+            return "fail", f"{what}: a correct bound that meets the true range {ex['truth']} but ends after it"
+        return "hard_fail", f"WRONG AUTO-CONFIRMATION: {what} misses the true range {ex['truth']}"
     if ex.get("negative"):
         # Only the statement date can be a wrong confirmation; an unsourced first day is an estimate.
         band = ex["pass_within"]
@@ -497,7 +544,8 @@ def judge(case, ctx, text, checks, telemetry=None):
 
 
 def requested_models(args) -> dict:
-    return {"gemini": args.gemini_model, "astra": args.astra_model, "fable": "claude-fable-5-1"}
+    return {"gemini": args.gemini_model, "astra": args.astra_model, "fable": "claude-fable-5-1",
+            "fable_web": "claude-fable-5-1"}
 
 
 def case_harness(case: dict) -> str:
@@ -513,6 +561,11 @@ def case_harnesses(case: dict) -> list[str]:
     """
     if case["stage"] != "dating":
         return [case_harness(case)]
+    if case["input"].get("pairs"):
+        hs = []
+        for pair in case_pairs(case):
+            hs += [h for h in pair if h not in hs]
+        return hs
     hs = list(case["input"].get("daters") or DL.DATERS)
     legacy = case["input"].get("harness")
     if legacy is not None and legacy not in hs:
@@ -521,7 +574,28 @@ def case_harnesses(case: dict) -> list[str]:
     return hs
 
 
-_REPEAT = re.compile(r"^r(\d+)(?:\.([a-z]+))?\.json$")
+def case_pairs(case: dict) -> list[tuple[str, ...]]:
+    """The dater sets a dating case is judged with, each through its own merge.
+
+    input.pairs lists them (the 2026-10-04 comparison: Gemini with Fable, Fable with web
+    tools, or Astra). One repeat calls every dater in their union ONCE, so the pairs share
+    the same Gemini answer and differ only in their second dater: a paired comparison.
+    Without input.pairs the case's daters are the one set.
+    """
+    raw = case["input"].get("pairs")
+    if not raw:
+        return [tuple(case_harnesses(case))]
+    out = []
+    for pair in raw:
+        bad = [h for h in pair if h not in DL.HARNESS_TOOLS]
+        if not pair or bad or len(set(pair)) != len(pair) or tuple(pair) in out:
+            raise SystemExit(f"REFUSING {case['id']}: input.pairs entry {pair!r} must name distinct daters from "
+                             f"{sorted(DL.HARNESS_TOOLS)}, once each")
+        out.append(tuple(pair))
+    return out
+
+
+_REPEAT = re.compile(r"^r(\d+)(?:\.([a-z_]+))?\.json$")
 
 
 def _next_repeat(d: Path) -> int:
@@ -591,20 +665,7 @@ def run_live_dating(case: dict, ctx: Context, args, caller, fetcher, record_dir:
                 # Another model answered: not this case's evidence, and not the model's fault either.
                 stop = ("model_identity_mismatch", f"{h} served {tel.get('served_model')!r}, requested {want[h]!r}")
                 break
-            checks = []
-            try:
-                for src in L.extract_json(text).get("sources") or []:
-                    why = DL.own_page_reason(src["url"], rec)
-                    checks.append(DL.refused_check(src, why) if why else DL.check_source(src, rec, fetcher.fetch(src["url"])))
-            except (ValueError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
-                checks = []
-            got[h] = {"case": case["id"], "repeat_of_run": i, "prompt_sha256": hashlib.sha256(prompts[h].encode()).hexdigest(),
-                      "harness": h, "requested_model": want[h], "response_text": text,
-                      "served_model": tel.get("served_model"), "served_model_verified": tel.get("served_model_verified"),
-                      "identity": identity, "telemetry": {k: v for k, v in tel.items() if k in (
-                          "web_search", "web_search_queries", "tool_use_counts", "attempts", "empty_retries",
-                          "requested_model")},
-                      "source_checks": checks, "recorded_at_utc": DL.utc_stamp()}
+            got[h] = _recording(case, i, h, prompts[h], want[h], text, tel, identity, _page_checks(text, rec, fetcher))
         where = out_dir / "partial" if stop else out_dir
         n = _next_repeat(where)
         where.mkdir(parents=True, exist_ok=True)
@@ -618,6 +679,202 @@ def run_live_dating(case: dict, ctx: Context, args, caller, fetcher, record_dir:
             infra[stop[0]] += 1
             outcomes.append(("infra", stop[1]))
     return aggregate(outcomes, infra)
+
+
+# Telemetry a dating recording keeps: enough to say which model and account served it and
+# whether, and how much, it searched (the 2026-10-04 comparison counts searches per dater).
+TELEMETRY_KEYS = ("web_search", "web_search_queries", "tool_use_counts", "attempts", "empty_retries",
+                  "requested_model", "telemetry_models", "judge_model", "web_searches", "web_fetches",
+                  "fetched_urls", "server_web_search_requests", "denied_or_failed", "num_turns", "cost_usd",
+                  "duration_ms", "config_dir", "profile_identity", "profile_home", "sandbox_denied_roots")
+
+
+def _page_checks(text: str, rec: dict, fetcher) -> list[dict]:
+    """Every page the answer cites, checked as production checks it (with the proposal, for a date-alone excerpt)."""
+    checks = []
+    try:
+        obj = L.extract_json(text)
+        for src in obj.get("sources") or []:
+            why = DL.own_page_reason(src["url"], rec)
+            checks.append(DL.refused_check(src, why) if why else
+                          DL.check_source(src, rec, fetcher.fetch(src["url"]), obj))
+    except (ValueError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        checks = []
+    return checks
+
+
+def _recording(case: dict, i: int, h: str, prompt: str, want: str, text: str, tel: dict, identity, checks) -> dict:
+    return {"case": case["id"], "repeat_of_run": i, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "harness": h, "requested_model": want, "response_text": text,
+            "served_model": tel.get("served_model"), "served_model_verified": tel.get("served_model_verified"),
+            "identity": identity, "telemetry": {k: v for k, v in tel.items() if k in TELEMETRY_KEYS},
+            "source_checks": checks, "recorded_at_utc": DL.utc_stamp()}
+
+
+def _call_dater(case: dict, i: int, h: str, prompt: str, args, caller, fetcher, rec: dict, want: str):
+    """One dater's call in repeat i: (recording, None), or (None, (label, detail)) with label an INFRA one or "fail"."""
+    try:
+        text, tel, identity = caller(h, prompt, args.timeout, Path(args.workroot) / f"{case['id']}-r{i}-{h}", args, i)
+    except Exception as exc:  # noqa: BLE001 -- labelled, and never read as the model's answer
+        label = L.classify_exception_detail(str(exc))
+        return None, (label if label in INFRA else "fail", f"{h}: {label}: {str(exc)[:300]}")
+    if tel.get("served_model") != want:
+        return None, ("model_identity_mismatch", f"{h} served {tel.get('served_model')!r}, requested {want!r}")
+    return _recording(case, i, h, prompt, want, text, tel, identity, _page_checks(text, rec, fetcher)), None
+
+
+def _repeat_numbers(d: Path) -> list[int]:
+    return sorted({int(m.group(1)) for sub in (d, d / "failed") if sub.exists() for p in sub.glob("r*.json")
+                   if (m := _REPEAT.match(p.name))})
+
+
+def run_live_dating_pairs(case: dict, ctx: Context, args, caller, fetcher,
+                          record_dir: Path) -> list[tuple[str, str, str]]:
+    """Each repeat calls every dater in the union of the case's pairs ONCE and judges every pair: [(pair, status, detail)].
+
+    An answer is recorded as r<n>.<dater>.json; a failed call as failed/r<n>.<dater>.json
+    with its label, so a replay knows which pairs that repeat can still judge. A failure
+    excludes the repeat only for the pairs holding that dater, as an infrastructure
+    failure (counted) or a plain fail. A dater every one of whose pairs has already lost
+    a dater in the repeat is not called, and recorded as skipped, to spend no quota on
+    an answer nothing could judge.
+    """
+    pairs, hs = case_pairs(case), case_harnesses(case)
+    prompts = {h: build_prompt(case, ctx, h) for h in hs}
+    want = requested_models(args)
+    rec = json.loads(ctx.path(case["input"]["transcript"]).read_text())
+    out_dir = record_dir / case["id"]
+    results = {pr: ([], Counter()) for pr in pairs}
+    for i in range(args.repeats):
+        ns = _repeat_numbers(out_dir)
+        n = ns[-1] + 1 if ns else 0
+        got, failed = {}, {}
+        for h in hs:
+            if all(any(x in failed for x in pr) for pr in pairs if h in pr):
+                failed[h] = ("skipped", f"{h}: not called; every pair holding it already lost a dater in this repeat")
+            else:
+                doc, fail = _call_dater(case, i, h, prompts[h], args, caller, fetcher, rec, want[h])
+                if fail is None:
+                    got[h] = doc
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    (out_dir / f"r{n:02d}.{h}.json").write_text(json.dumps(doc, indent=1, sort_keys=True,
+                                                                           default=str) + "\n")
+                    continue
+                failed[h] = fail
+            (out_dir / "failed").mkdir(parents=True, exist_ok=True)
+            (out_dir / "failed" / f"r{n:02d}.{h}.json").write_text(json.dumps(
+                {"case": case["id"], "repeat_of_run": i, "harness": h, "label": failed[h][0], "detail": failed[h][1],
+                 "requested_model": want[h], "prompt_sha256": hashlib.sha256(prompts[h].encode()).hexdigest(),
+                 "recorded_at_utc": DL.utc_stamp()}, indent=1, sort_keys=True) + "\n")
+        for pr in pairs:
+            outcomes, infra = results[pr]
+            outcomes.append(_pair_outcome(case, ctx, pr, {h: d["response_text"] for h, d in got.items()},
+                                          {h: d["source_checks"] for h, d in got.items()}, failed, infra))
+    return [("+".join(pr), *aggregate(*results[pr])) for pr in pairs]
+
+
+def _pair_outcome(case, ctx, pr, texts: dict, checks: dict, failed: dict, infra: Counter) -> tuple[str, str]:
+    """One repeat's outcome for one pair: judged when every dater of the pair answered, else its failure."""
+    lost = [failed[h] for h in pr if h in failed and failed[h][0] != "skipped"]
+    if not lost and all(h in texts for h in pr):
+        return judge_dating(case, ctx, {h: (texts[h], checks[h]) for h in pr})
+    if not lost:
+        raise ValueError(f"{case['id']} {pr}: a dater neither answered nor failed")
+    if any(lab == "fail" for lab, _ in lost):
+        return "fail", "; ".join(d for _, d in lost)
+    infra[lost[0][0]] += 1
+    return "infra", "; ".join(d for _, d in lost)
+
+
+def run_offline_dating_pairs(case: dict, ctx: Context, requested: dict) -> list[tuple[str, str, str]]:
+    """Replay a pairs case: every repeat, every pair, from r<n>.<dater>.json and failed/r<n>.<dater>.json."""
+    pairs, hs = case_pairs(case), case_harnesses(case)
+    shas = {h: hashlib.sha256(build_prompt(case, ctx, h).encode()).hexdigest() for h in hs}
+    d = ctx.gold / "recordings" / case["id"]
+    found: dict[int, dict] = {}
+    for sub_dir, kind in ((d, "ok"), (d / "failed", "failed")):
+        for path in sorted(sub_dir.glob("r*.json")) if sub_dir.exists() else []:
+            m = _REPEAT.match(path.name)
+            doc = json.loads(path.read_text())
+            if m is None or m.group(2) != doc.get("harness") or doc.get("harness") not in hs:
+                return [("+".join(pr), "RECORDING_REFUSED", f"{path.name} is not r<n>.<dater>.json for one of {hs}")
+                        for pr in pairs]
+            if kind == "ok" and doc.get("served_model") != requested[doc["harness"]]:
+                return [("+".join(pr), "RECORDING_REFUSED", f"{path.name}: {doc['harness']} served "
+                         f"{doc.get('served_model')!r}, not {requested[doc['harness']]!r}") for pr in pairs]
+            if doc.get("prompt_sha256") != shas[doc["harness"]] and doc.get("label") != "skipped":
+                return [("+".join(pr), "PROMPT_CHANGED", f"prompt changed; re-record live ({path.name})")
+                        for pr in pairs]
+            found.setdefault(int(m.group(1)), {})[doc["harness"]] = (kind, doc)
+    if not found:
+        return [("+".join(pr), "UNRECORDED", "no recorded answer; run --live to record one") for pr in pairs]
+    rows = []
+    for pr in pairs:
+        outcomes, infra = [], Counter()
+        for n, g in sorted(found.items()):
+            if any(h not in g for h in pr):
+                return [("+".join(x), "RECORDING_REFUSED", f"r{n:02d} has no recording or failure for "
+                         f"{sorted(set(pr) - set(g))}") for x in pairs]
+            texts = {h: g[h][1]["response_text"] for h in pr if g[h][0] == "ok"}
+            checks = {h: g[h][1].get("source_checks") or [] for h in pr if g[h][0] == "ok"}
+            failed = {h: (g[h][1]["label"], g[h][1]["detail"]) for h in pr if g[h][0] == "failed"}
+            outcomes.append(_pair_outcome(case, ctx, pr, texts, checks, failed, infra))
+        rows.append(("+".join(pr), *aggregate(outcomes, infra)))
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# dating_stored: a deterministic replay of proposals and checks already on disk
+# ---------------------------------------------------------------------------
+
+def _pinned(base: Path, rel: str, sha: str | None, where: str) -> bytes:
+    path = base / rel
+    if not path.is_file():
+        raise SystemExit(f"REFUSING {where}: {path} does not exist")
+    raw = path.read_bytes()
+    if sha is None or hashlib.sha256(raw).hexdigest() != sha:
+        raise SystemExit(f"REFUSING {where}: {path} does not match its pinned sha256 {sha!r}")
+    return raw
+
+
+def stored_inputs(case: dict, ctx: Context) -> tuple[dict, list[dict], dict]:
+    """(transcript, docs, checks by dater) for a dating_stored case, every file checked against its sha256.
+
+    input.proposals[dater] is {"path", "sha256"} under the data root (a stored
+    proposal file) or {"inline": proposal} (a synthetic control); input.checks[dater]
+    is {"path", "sha256"} under the data root, {"gold", "sha256"} under the gold
+    directory (a page re-checked for this gold set), {"inline": [checks]}, or null.
+    """
+    inp = case["input"]
+    rec = json.loads(ctx.path(inp["transcript"]).read_text())
+    daters = inp["daters"]
+    docs, checks_by = [], {}
+    for h in daters:
+        spec = inp["proposals"][h]
+        if "inline" in spec:
+            doc = {"proposal": spec["inline"], "harness": h, "daters": daters, "leads": []}
+        else:
+            doc = json.loads(_pinned(ctx.data, spec["path"], spec.get("sha256"), f"{case['id']} {h} proposal"))
+            if doc.get("harness") != h:
+                raise SystemExit(f"REFUSING {case['id']}: {spec['path']} was made by {doc.get('harness')!r}, not {h!r}")
+        docs.append(doc)
+        c = (inp.get("checks") or {}).get(h)
+        if c is None:
+            checks_by[h] = []
+        elif "inline" in c:
+            checks_by[h] = c["inline"]
+        else:
+            base, rel = (ctx.gold, c["gold"]) if "gold" in c else (ctx.data, c["path"])
+            checks_by[h] = json.loads(_pinned(base, rel, c.get("sha256"), f"{case['id']} {h} checks"))["checks"]
+    return rec, docs, checks_by
+
+
+def run_dating_stored(case: dict, ctx: Context) -> tuple[str, str]:
+    """The real merge, under the case's merge version, over stored or inline proposals and checks. No model."""
+    rec, docs, checks_by = stored_inputs(case, ctx)
+    version = case_merge_version(case)
+    status, detail = judge_merge(case["expect"], DL.merge(rec, docs, checks_by, version=version))
+    return status.upper(), f"{version}: {detail}"
 
 
 def run_offline(case: dict, ctx: Context, requested: dict) -> tuple[str, str]:
@@ -784,6 +1041,16 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         elif c["stage"] == "funnel":
             status, detail = run_funnel(c, ctx)
             status = status.upper()
+        elif c["stage"] == "dating_stored":
+            status, detail = run_dating_stored(c, ctx)
+        elif c["stage"] == "dating" and c["input"].get("pairs"):
+            per_pair = (run_live_dating_pairs(c, ctx, args, caller, fetcher, args.record_dir or args.gold / "recordings")
+                        if args.live else run_offline_dating_pairs(c, ctx, requested_models(args)))
+            for pair, status, detail in per_pair:
+                rows.append({"id": f"{c['id']}[{pair}]", "operator_case": c.get("operator_case"), "stage": c["stage"],
+                             "pair": pair, "status": status, "detail": detail})
+                print(f"[{status}] {c['id']}[{pair}]  {detail}")
+            continue
         elif args.live and c["stage"] == "dating":
             status, detail = run_live_dating(c, ctx, args, caller, fetcher, args.record_dir or args.gold / "recordings")
         elif args.live:
@@ -806,6 +1073,10 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     print(f"dating: wrong auto-confirmations: {wrong} of {len(judged)} judged dating cases "
           f"({len(dating) - len(judged)} of {len(dating)} not judged"
           + (f": {', '.join(f'{k} {v}' for k, v in sorted(unjudged.items()))})" if unjudged else ")"))
+    stored = [r for r in rows if r["stage"] == "dating_stored"]
+    if stored:
+        print(f"dating_stored (no model): {dict(sorted(Counter(r['status'] for r in stored).items()))}; wrong "
+              f"auto-confirmations {sum(1 for r in stored if r['status'] == 'HARD_FAIL')} of {len(stored)}")
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps({"gold": str(args.gold), "mode": "live" if args.live else "offline",
