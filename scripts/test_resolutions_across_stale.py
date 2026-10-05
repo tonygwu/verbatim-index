@@ -63,5 +63,30 @@ with tempfile.TemporaryDirectory() as td:
     check("without overrides every sidecar is read, as before", "stale1" in got0 and "redone" in clash0,
           f"{sorted(got0)} {clash0}")
 
+# The lead-test labels the stages read obey the same rule (score_predictions loads lead tests
+# through drop_stale_sidecars too). A label made under the replaced date would make the
+# resolver treat a record as labelled that the scorer reports unlabelled, and the lead-test
+# stage would then refuse to label it again.
+with tempfile.TemporaryDirectory() as td:
+    old, new = Path(td) / "old-run", Path(td) / "new-run"
+
+    def lead(run, pid, tid, date, label):
+        p = R.sidecar_path(run, "lead_test", tid.split("/")[0], pid)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"prediction_id": pid, "transcript_id": tid, "statement_date": date, "label": label}))
+    lead(old, "stale1", "ada/talk", "2022-10-20", "world_forecast")
+    lead(old, "fresh1", "ada/other", "2021-01-01", "own_plan_announcement")
+    lead(old, "relabel", "ada/talk", "2022-10-20", "world_forecast")
+    lead(new, "relabel", "ada/talk", "2022-09-06", "own_results_forecast")
+    overrides = {"ada/talk": {"statement_date": "2022-09-06"}}
+    try:
+        got = RP.lead_labels_across([old, new], overrides)
+        check("a lead-test label made under a replaced date is not read", "stale1" not in got, str(got))
+        check("a label of a transcript with no override is read", got.get("fresh1") == "own_plan_announcement", str(got))
+        check("the label made under the override's date wins, with no conflict refusal",
+              got.get("relabel") == "own_results_forecast", str(got))
+    except (TypeError, SystemExit) as exc:
+        check("lead_labels_across reads labels under the override's date", False, f"{type(exc).__name__}: {exc}")
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

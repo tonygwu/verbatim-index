@@ -234,9 +234,13 @@ def resolutions_across(runs: list[Path], date_overrides: "dict | None" = None
     return first, clash
 
 
-def lead_labels_across(runs: list[Path]) -> dict[str, str]:
+def lead_labels_across(runs: list[Path], date_overrides: "dict | None" = None) -> dict[str, str]:
     """Every lead-test label in the runs, by prediction. A prediction labelled
-    differently in two runs is refused: nothing here picks which label counts."""
+    differently in two runs is refused: nothing here picks which label counts.
+
+    With `date_overrides`, a label made under a date an override has since replaced is not
+    read, as in resolutions_across and score_predictions.drop_stale_sidecars: otherwise the
+    resolver treats as labelled a record the scorer reports unlabelled."""
     out: dict[str, str] = {}
     where: dict[str, str] = {}
     seen: set[Path] = set()
@@ -245,6 +249,9 @@ def lead_labels_across(runs: list[Path]) -> dict[str, str]:
             continue
         seen.add(Path(run).resolve())
         for pid, obj in R.load_sidecars(Path(run), "lead_test").items():
+            ov = (date_overrides or {}).get(obj.get("transcript_id"))
+            if ov is not None and obj.get("statement_date") != ov["statement_date"]:
+                continue
             if pid in out and out[pid] != obj["label"]:
                 raise SystemExit(f"prediction {pid} is labelled {out[pid]} in {where[pid]} and {obj['label']} in "
                                  f"{run}; remove one before selecting")
@@ -606,7 +613,8 @@ def main(argv: list[str] | None = None) -> int:
     implied = implied_scale(args)
     if args.lead_test and args.stage == "lead_test":
         raise SystemExit("--lead-test reads labels for the other stages; the lead_test stage writes them")
-    labels = lead_labels_across(freeze_runs + [out_root]) if args.lead_test else None
+    labels = (lead_labels_across(freeze_runs + [out_root], date_overrides if ov_path else None)
+              if args.lead_test else None)
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
                   resolutions=resolutions, window_conflicts=clash,
                   date_overrides=date_overrides if ov_path else None, implied=implied, due=due, lead_labels=labels)
