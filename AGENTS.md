@@ -997,6 +997,32 @@ of two Claude accounts. Raw runs, top-ups and scores are under
 `predictions/_experiments/speaker-audit-20260927/segmentation/` in the data
 repository.
 
+**Which second dater finds the date?** (2026-10-04) The operator's seven audited
+recordings, three repeats each, under the merge-4 prompt. One repeat called Gemini,
+Fable without tools, Fable with WebSearch and WebFetch (`fable_web`) and Astra once
+each, and each pair was judged on the same Gemini answer. That was 96 calls plus a
+4-call pilot. A case passes when 2 of 3 repeats confirm a statement date inside the
+operator's true range, as `cases-20261004-dating` defines it. Judged under the final
+merge-4:
+
+```
+pair               cases passed  repeats right / wider bound / queued / wrong
+gemini+fable       3 of 7        9 / 3 / 9 / 0      (production, VD-11)
+gemini+fable_web   6 of 7        17 / 0 / 4 / 0
+gemini+astra       7 of 7        19 / 0 / 2 / 0
+```
+
+Five of the right repeats are two-dater agreements, which name no source: one for
+gemini+fable, one for gemini+fable_web and three for gemini+astra. Alone, Fable
+without tools answered `cannot_date` in 9 of 21 repeats and was right in 2. The
+judged results include four merge rules that came from this run, so they are
+in-sample. Judged under merge-4 as it stood before those rules, the pairs pass 3, 5
+and 6 of 7. Every served model was the one requested; Astra's is an unverified echo,
+and `fable_web`'s responses also name `claude-haiku-4-5`, which WebFetch uses.
+Recordings, logs and the per-repeat table are in the data repository under
+`predictions/_eval/cases-20261004-dating/`. The production daters were not changed;
+VD-11 is the operator's decision.
+
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
 grading loop writes continuously, so any before-and-after measured against
@@ -1710,14 +1736,19 @@ new grades incomparable with the corpus already graded.
   a ceiling. (c, e) An excerpt under four words counts only when it is a date alone
   and the page names the speaker with the host, interviewer, event or channel within
   400 characters. A date the page writes another way ("12 February 2020" for
-  "February 12, 2020") still matches. (f) A confirmed range nested inside another
-  dater's confirmed range refines it, so a day inside a month is not a disagreement.
-  Rule R1 is unchanged. Also, a proposal's optional `bounds` (floors and ceilings)
-  must hold its range. The prompt asks the daters to search for the host, the
-  interviewer and the guest together, and to state each bound. MEASURED over all 482
-  stored transcripts of `dating-run-20261001` and `dating-astra-20261003`: merge-3
-  equals the old merge on 482 of 482, and merge-4 changes no confirmed date and
-  confirms 6 queued ones. `--harness fable_web` is Fable with exactly WebSearch and
+  "February 12, 2020") still matches. (f) When the earliest confirmed last day lies
+  inside every other confirmed range, it refines them, so a day inside a month is not
+  a disagreement. Rule R1 is unchanged. Also, a proposal's optional `bounds` (floors
+  and ceilings) must hold its range. The live run added three rules. A UTC
+  publication stamp may show the last day of a range of days. Transcript words that
+  are not in the transcript are dropped, and the proposal's own page can still
+  confirm it, but it takes no part in an agreement or in R1. Words joined with "..."
+  are found fragment by fragment. The prompt asks the daters to search for the host,
+  the interviewer and the guest together, and to state each bound. MEASURED over all
+  482 stored transcripts of `dating-run-20261001` and `dating-astra-20261003`:
+  merge-3 equals the old merge on 482 of 482, and merge-4 changes no confirmed date
+  and confirms 11 queued ones. Five of the 11 are not among the operator's seven and
+  are not audited. `--harness fable_web` is Fable with exactly WebSearch and
   WebFetch under `sandbox-exec`, through `date_recordings.call_fable_web`. It is for
   dating only and is not a production default. The judge harness and the
   outcome-blind prior and lead-test stages keep their tools off. Proof:
