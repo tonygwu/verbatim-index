@@ -1593,7 +1593,14 @@ def stage_models(scores_doc: dict, scores_path: str) -> dict:
     # Sidecars a statement-date override made stale (priced or resolved under the
     # old date) were dropped by the scorer, and are dropped here the same way.
     stale = (scores_doc.get("date_overrides") or {}).get("stale_sidecars_dropped", [])
-    stale_drop = {st: {(_run_path(x["run"], scores_path), x["prediction_id"]) for x in stale if x["stage"] == st}
+    # The scorer also lists stale sidecars it dropped from the implied_sensitivity runs, which
+    # the page does not read, and load_across refuses a drop in a run it is not reading (found
+    # 2026-10-05; test_site_stale_sensitivity.py). Exactly those runs, named by scores.json's own
+    # settings, are set aside; a drop in any other unread run still refuses.
+    sens = {Path(_run_path(r, scores_path)).resolve()
+            for runs in ((scores_doc.get("settings") or {}).get("implied_sensitivity") or {}).values() for r in runs}
+    stale_drop = {st: {(p, x["prediction_id"]) for x in stale if x["stage"] == st
+                       for p in [_run_path(x["run"], scores_path)] if Path(p).resolve() not in sens}
                   for st in ("prior", "resolve")}
     # Sidecars a replacement manifest replaced were left out by the scorer, which
     # read the replacement instead; the page reads the same one. load_across checks
