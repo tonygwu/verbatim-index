@@ -1295,7 +1295,10 @@ def main(argv: list[str] | None = None) -> int:
         doc["lead_test_labels"] = {pid: lead_tests[pid]["label"] for pid in sorted(lead_tests)}
     if args.early_calls:
         doc["rule"]["early_calls"] = True
-        doc["corpus"]["stale_sidecars"] = window_stale
+        # Both checks, not the window list alone: until 2026-10-05 this line dropped the
+        # prior-prompt list, so with early calls on a row left out as
+        # stale_sidecar:prior_prompt_changed reached no deploy blocker.
+        doc["corpus"]["stale_sidecars"] = window_stale + paired_stale
         doc["corpus"]["early_calls"] = {
             "scored_before_deadline": sum(1 for r in joined if r.get("not_due") and r["scored"]),
             "scored_past_deadline_awaiting_fresh_check": sum(1 for r in joined if r.get("fresh_check_due") and r["scored"]),
