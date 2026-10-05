@@ -302,6 +302,14 @@ class Yearless(unittest.TestCase):
         self.assertTrue(DL.confirms(self.check(page, o21), o21, GL, V5, company="Uber Technologies")[0])
         self.assertFalse(DL.confirms(self.check(page, o), o, GL, V5, company="Uber Technologies")[0])
 
+    def test_a_numeric_date_counts_only_with_one_reading(self):
+        """AUSA prints 'Mon, 10/13/2025' (only October 13); the D.I.C.E. schedule '2/12/2020' (February 12 or
+        2 December), which is read as no date rather than as the one a claim needs."""
+        self.assertEqual([(d["text"], d["lo"]) for d in DL.dates_v5("Mon, 10/13/2025 - 14:00 and 4-18-2024")],
+                         [("10/13/2025", date(2025, 10, 13)), ("4-18-2024", date(2024, 4, 18))])
+        self.assertEqual(DL.dates_v5("2/12/2020 8:00 AM and 03.02.21"), [])
+        self.assertEqual(DL.dates_in_text("Mon, 10/13/2025"), [])          # merge-3 and merge-4 read none
+
     def test_a_period_ending_on_the_last_day_shows_it_and_a_day_inside_it_is_not_shown(self):
         o = gl_prop(e="2021-02-12", l="2021-02-12")
         ok, why = DL.confirms(self.check(gl_page(), o), o, GL, V5, company="Uber Technologies")

@@ -1040,6 +1040,26 @@ def yearless_in_text(text: str) -> list[dict]:
     return sorted(out, key=lambda d: d["at"])
 
 
+def dates_v5(text: str) -> list[dict]:
+    """merge-5's dates in text: _dates_located's, and a numeric date with a four-digit year that has ONE reading.
+
+    FOUND 2026-10-05: AUSA dates Driscoll's address "Mon, 10/13/2025" and the D.I.C.E. schedule
+    "2/12/2020"; the script read neither. 10/13/2025 can only be October 13; 2/12/2020 is
+    February 12 or 2 December, so it is read as no date at all, never as the one a claim needs.
+    """
+    out = [dict(d) for d in _dates_located(text)]
+    taken = [(d["at"], d["end"]) for d in out]
+    for m in _NUMERIC.finditer(text):
+        if len(m.group(4)) != 4 or any(m.start() < b and a < m.end() for a, b in taken):
+            continue
+        readings = _numeric_readings(m)
+        if len(readings) == 1:
+            d = readings[0]
+            out.append({"at": m.start(), "end": m.end(), "lo": d, "hi": d, "text": m.group(0), "utc_lo": d,
+                        "utc_hi": d, "utc_stamp": False, "numeric": True})
+    return sorted(out, key=lambda d: d["at"])
+
+
 def _numeric_readings(m: re.Match) -> list[date]:
     a, b, y = int(m.group(1)), int(m.group(3)), int(m.group(4))
     y = y + 2000 if y < 100 else y
@@ -1175,7 +1195,7 @@ def _hit_confirms_v5(window: str, hit: tuple[int, int], check: dict, prop: dict,
                      date_only: bool, embeds: list[str], upload_days: set, own: date | None,
                      company: str) -> tuple[bool, str | None, list[tuple[date, date, bool]]]:
     span = window[hit[0]:hit[1]]
-    found = [dict(d) for d in _dates_located(span)]
+    found = dates_v5(span)
     yearless = yearless_in_text(span)
     yl_why = None
     if yearless:
@@ -1412,7 +1432,7 @@ def floor_page(check: dict, prop: dict, rec: dict, company: str, bound: dict) ->
     if not hits:
         return False, "the excerpt is not on the page", None
     day = date.fromisoformat(bound["date"])
-    shows = any(r is not None and r[0] == day for s, t in hits for d in dates_in_text(window[s:t])
+    shows = any(r is not None and r[0] == day for s, t in hits for d in dates_v5(window[s:t])
                 for r in [date_for_verdict(d, "dated")])
     if not shows:
         return False, f"the excerpt does not show the floor's day {day}", None
@@ -1525,7 +1545,7 @@ def _event_page_days(check: dict, rec: dict) -> tuple[list[date], str | None]:
     hits = [exact] if exact else _find_all_canonical(window, check["cited_excerpt"])
     if not hits:
         return [], "the excerpt is not on the page"
-    days = sorted({d["lo"] for s, t in hits for d in dates_in_text(window[s:t])
+    days = sorted({d["lo"] for s, t in hits for d in dates_v5(window[s:t])
                    if d["lo"] == d["hi"] and not d.get("utc_stamp")})
     return (days, None) if days else ([], "the excerpt shows no single day with its year")
 
