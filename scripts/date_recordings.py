@@ -279,7 +279,7 @@ class FableRouter:
     or exhausted pick means, so a refusal here reads exactly as it does in extraction.
     """
 
-    def __init__(self, allow_degraded: bool, select=None, accounts=None):
+    def __init__(self, allow_degraded: bool, select=None, accounts=None, exclude=()):
         if select is None:
             from quota_router import select_account as select  # noqa: PLC0415 -- only a real run needs it
         if accounts is None:
@@ -287,9 +287,13 @@ class FableRouter:
             accounts = [(a.id, a.provider, a.config_dir, a.is_default_config_dir)
                         for a in load_config().enabled_accounts()]
         self._select, self.accounts, self.allow_degraded = select, list(accounts), allow_degraded
-        self.claude_ids = [a[0] for a in self.accounts if a[1] == "claude"]
+        # --router-exclude: accounts the router may never pick, such as the one the coordinating
+        # session runs on (found 2026-10-05: half of a run's Fable calls landed on it).
+        self.excluded = [x for x in exclude if x]
+        self.claude_ids = [a[0] for a in self.accounts if a[1] == "claude" and a[0] not in self.excluded]
         if not self.claude_ids:
-            raise RuntimeError(f"{L.E_ROUTER}: the router config enables no Claude account, so Fable cannot be routed")
+            raise RuntimeError(f"{L.E_ROUTER}: the router config enables no Claude account outside "
+                               f"--router-exclude {self.excluded}, so Fable cannot be routed")
 
     def pick(self) -> tuple[str, dict]:
         """(config dir, route record). Raises RouterUnavailable, labelled router_no_account, when it must refuse."""
@@ -305,7 +309,7 @@ class FableRouter:
         return route["config_dir"], {"account_id": route["account_id"], "config_dir": route["config_dir"],
                                      "reason": decision.get("reason"), "fits": decision.get("fits"),
                                      "degraded": route["degraded"], "degraded_reason": route["degraded_reason"],
-                                     "pinned": False}
+                                     "pinned": False, "excluded": list(self.excluded)}
 
 
 _router_lock = threading.Lock()
@@ -325,7 +329,9 @@ def fable_account(args, idx: int) -> tuple[str, dict]:
                      "pinned": True}
     with _router_lock:
         if getattr(args, "fable_router", None) is None:
-            args.fable_router = FableRouter(bool(getattr(args, "allow_degraded", False)))
+            args.fable_router = FableRouter(bool(getattr(args, "allow_degraded", False)),
+                                            exclude=[x.strip() for x in
+                                                     (getattr(args, "router_exclude", "") or "").split(",")])
         router = args.fable_router
     return router.pick()
 
@@ -823,6 +829,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--fable-config-dir", default=None,
                     help="comma-separated Claude config dirs: a PIN. Fable calls rotate over them in order and the "
                          "quota router is not asked. With none, the router picks the account for each call")
+    ap.add_argument("--router-exclude", default="",
+                    help="comma-separated Claude account ids the Fable router may never pick, such as the account "
+                         "the coordinating session runs on")
     ap.add_argument("--allow-degraded", action="store_true",
                     help="spend a Fable call on a pick the router does not call a fit (a degraded reading, or "
                          "windows it measured as spent); without it such a pick is refused as router_no_account")

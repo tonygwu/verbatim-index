@@ -665,6 +665,32 @@ class Router(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "^router_no_account"):
             DR.FableRouter(True, select=FakeSelect(payload("codex", provider="codex")), accounts=ACCOUNTS).pick()
 
+    def test_router_exclude_keeps_named_accounts_out_of_every_pick(self):
+        """FOUND 2026-10-05 in dating-merge5-20261005a: the router sent half the Fable calls to
+        claude_b, the account the coordinating session runs on, and its 5-hour window fell 16
+        points in 25 minutes. --router-exclude keeps such an account out of `only`, the way
+        extract_predictions' --router-exclude does; excluding every Claude account is refused."""
+        sel = FakeSelect(payload("claude_d"))
+        DR.FableRouter(False, select=sel, accounts=ACCOUNTS, exclude=["claude"]).pick()
+        self.assertEqual(sel.calls[0]["only"], ["claude_d"])
+        with self.assertRaisesRegex(RuntimeError, "^router_no_account"):
+            DR.FableRouter(False, select=FakeSelect(), accounts=ACCOUNTS, exclude=["claude", "claude_d"])
+        a = args(router_exclude="claude_d")
+        real = DR.FableRouter
+        made = []
+
+        class Spy(real):
+            def __init__(self, allow_degraded, select=None, accounts=None, exclude=()):
+                made.append(list(exclude))
+                super().__init__(allow_degraded, select=FakeSelect(payload("claude")), accounts=ACCOUNTS,
+                                 exclude=exclude)
+        DR.FableRouter = Spy
+        try:
+            cfg, route = DR.fable_account(a, 0)
+        finally:
+            DR.FableRouter = real
+        self.assertEqual((made, cfg, route["excluded"]), ([["claude_d"]], "__DEFAULT__", ["claude_d"]))
+
     def test_no_claude_account_in_the_config_is_refused(self):
         with self.assertRaisesRegex(RuntimeError, "^router_no_account"):
             DR.FableRouter(False, select=FakeSelect(), accounts=[ACCOUNTS[2]])
