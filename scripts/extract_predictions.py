@@ -578,6 +578,10 @@ def verify_one(job: dict) -> dict:
         if args.dry_run:
             (workdir / f"prompt_{bi}.txt").write_text(prompt)
             continue
+        # Bound before the pick: a router refusal (RouterUnavailable) is raised by pick itself, and
+        # the except branches below pass `route` on. Found 2026-10-05: an unbound route turned every
+        # router_no_account into "UnboundLocalError ... 'route'", filed as cli_nonzero_exit.
+        route = None
         try:
             route = job["router"].pick(None if args.verifier == "auto" else args.verifier, ext_harness)
             if route["harness"] == ext_harness:
