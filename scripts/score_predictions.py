@@ -1189,6 +1189,13 @@ def main(argv: list[str] | None = None) -> int:
                                                        "early": {p: decided[p] for p in early_used}},
                                    also=set(early_used))
                     if implied is not None or args.early_calls else [])
+    # A restated member is never scored on its own (join gives it restated:<specific member>
+    # whatever its sidecars say), so a stale sidecar of one drops no row and must not block
+    # publication. FOUND 2026-10-05: the deploy refused on a restated member's stale prior.
+    # Reported apart, under corpus.restated_stale_sidecars, so it is not hidden.
+    restated_stale = [s for s in window_stale + paired_stale if s["prediction_id"] in restated]
+    window_stale = [s for s in window_stale if s["prediction_id"] not in restated]
+    paired_stale = [s for s in paired_stale if s["prediction_id"] not in restated]
     effective = dict(resolutions)
     effective.update({pid: decided[pid] for pid in early_used})
     everything = sorted(rows + early_rows, key=lambda r: (r["leader_slug"], r["prediction_id"])) if early_rows else rows
@@ -1259,6 +1266,8 @@ def main(argv: list[str] | None = None) -> int:
         doc["policy_releases"] = {"allowed": list(args.policy_releases), "counts": releases}
     if paired_stale or "stale_sidecars" in doc["corpus"]:
         doc["corpus"]["stale_sidecars"] = doc["corpus"].get("stale_sidecars", []) + paired_stale
+    if restated_stale:
+        doc["corpus"]["restated_stale_sidecars"] = restated_stale
     review = sorted(r["prediction_id"] for r in joined if r.get("already_public_review"))
     if review:
         # Scored, and reported by the deploy until someone dates the recording.
