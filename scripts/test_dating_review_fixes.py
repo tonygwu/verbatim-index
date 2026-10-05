@@ -50,7 +50,7 @@ def doc(obj, h, rec, daters, leads=()):
     return {"schema_version": 1, "transcript_id": TID, "harness": h, "daters": list(daters), "leads": list(leads),
             "requested_model": MODELS[h], "served_model": MODELS[h], "served_model_verified": True,
             "identity": "a@example.com", "own_date": own, "own_basis": basis, "prompt_sha256": "p" * 64,
-            "proposal": obj}
+            "speaker_company": "Fixture Holdings", "proposal": obj}
 
 
 def merge(rec, objs, pages=PAGES, leads=()):
@@ -309,14 +309,15 @@ class InvalidAnswers(unittest.TestCase):
             agent = FakeAgent({("gemini", "ada/re-upload-abc123"): proposal(),
                                ("fable", "ada/re-upload-abc123"): proposal(sources=[], description_evidence=None)})
             web = FakeWeb({LIVE_URL: LIVEBLOG})
-            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            # The daters this fix was found with (VD-11); the production pair changed on 2026-10-05.
+            rc, out = run(fx.argv("--run", "--ids", str(ids), "--harness", "gemini,fable"), agent, web)
             self.assertEqual(rc, 1, out)                       # the invalid answer is a failure, and named
             fable = json.loads((fx.run / "proposals" / "ada" / "re-upload-abc123.fable.json").read_text())
             self.assertTrue(any("cites no source" in e for e in fable["answer_errors"]), fable)
             ov = L.load_statement_date_overrides(fx.run / "overrides.json", [fx.data / "transcripts_open"])
             self.assertEqual(ov["ada/re-upload-abc123"]["confirmation"]["lead"], "gemini")
             n = len(agent.calls)
-            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, web)
+            rc, out = run(fx.argv("--run", "--ids", str(ids), "--harness", "gemini,fable"), agent, web)
             self.assertEqual(len(agent.calls), n, "a stored invalid answer is final; it is not re-asked")
             self.assertEqual(rc, 0, out)
 
@@ -332,8 +333,8 @@ class InvalidAnswers(unittest.TestCase):
             fx = Fixture(Path(td))
             ids = Path(td) / "ids.txt"
             ids.write_text("ada/re-upload-abc123\n")
-            rc, out = run(fx.argv("--run", "--ids", str(ids)), Garbled({"ada/re-upload-abc123": proposal()}),
-                          FakeWeb({LIVE_URL: LIVEBLOG}))
+            rc, out = run(fx.argv("--run", "--ids", str(ids), "--harness", "gemini,fable"),
+                          Garbled({"ada/re-upload-abc123": proposal()}), FakeWeb({LIVE_URL: LIVEBLOG}))
             ov = json.loads((fx.run / "overrides.json").read_text())["overrides"]
             self.assertIn("ada/re-upload-abc123", ov, out)
 
@@ -356,7 +357,9 @@ class RuleR1(unittest.TestCase):
     REC = {**BASE, "yt_upload_date": "20250915"}
 
     def run_with(self, gemini):
-        return merge(self.REC, {"gemini": gemini, "fable": P("2025-09-12", "2025-09-12", sources=[self.SRC])},
+        # The event names the summit, so the recap page names this occasion under merge-5 as well.
+        return merge(self.REC, {"gemini": gemini, "fable": P("2025-09-12", "2025-09-12", sources=[self.SRC],
+                                                             event="Ada at the Compute Summit")},
                      pages={**PAGES, self.SRC["url"]: self.SUMMIT})
 
     def test_a_usable_other_range_that_misses_the_day_queues(self):
@@ -395,11 +398,17 @@ class DaterSetMismatch(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             n = len(agent.calls)
             with self.assertRaises(SystemExit) as cm:
-                run(fx.argv("--run"), agent, web)
+                run(fx.argv("--run", "--harness", "gemini,fable"), agent, web)
             self.assertEqual(len(agent.calls), n, "no call may be spent before the refusal")
             self.assertIn("daters", str(cm.exception))
             self.assertIn("--redo", str(cm.exception))
-            rc, out = run(fx.argv("--run", "--redo"), agent, web)
+            # 2026-10-05: the default daters (astra,fable_web) do not even use the gemini files; --redo cannot
+            # replace another dater's file, so the directory is refused outright: a new run uses a new --run-dir.
+            with self.assertRaises(SystemExit) as cm:
+                run(fx.argv("--run", "--redo"), agent, web)
+            self.assertEqual(len(agent.calls), n, "no call may be spent before the refusal")
+            self.assertIn("new --run-dir", str(cm.exception))
+            rc, out = run(fx.argv("--run", "--redo", "--harness", "gemini,fable"), agent, web)
             self.assertEqual(rc, 0, out)
             self.assertEqual(len(agent.calls), n + 6)
 

@@ -62,6 +62,10 @@ def make_data(root: Path) -> Path:
     (data / "transcripts_open" / "ada" / "re-upload-abc123.json").write_text(json.dumps(D10))
     (data / "predictions" / "ada").mkdir(parents=True)
     (data / "predictions" / "ada" / "re-upload-abc123.jsonl").write_text(json.dumps(record()) + "\n")
+    # merge-5 reads the speaker's company from the roster; no fixture page names it.
+    (data / "roster").mkdir()
+    (data / "roster" / "final.json").write_text(json.dumps({"roster": [
+        {"slug": "ada", "name": "Ada", "company": "Fixture Holdings"}]}))
     return data
 
 

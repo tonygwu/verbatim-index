@@ -38,15 +38,27 @@ Three stages, run in order by default:
             <run-dir>/runs/<run_id>.json. One transcript's error is queued as
             merge_error and never stops the others.
 
-THE DATERS (--harness, comma-separated). Production uses both, gemini,fable, the
-default (VD-11). Gemini has live web search; Fable in this harness has
-NO working web tools, so its proposal comes from memory, and the page check applies to it
-exactly as to any other. Astra (web search) on request, rotating over --codex-home.
-fable_web (2026-10-04, on request, not a production default) is Fable with exactly
-WebSearch and WebFetch, under sandbox-exec, through call_fable_web: never the judge
-harness. A single-dater run, such as --harness gemini, is the one-agent rule of
-VD-8 (c): its entries load and re-verify like any other, but production dating uses
-both daters. A new run's entries name merge-4 (dating_lib.MERGE_VERSION).
+THE DATERS (--harness, comma-separated). Production uses astra,fable_web, the default
+(operator decision of 2026-10-05; it was gemini,fable under VD-11). Astra has live web
+search and rotates over --codex-home. fable_web is Fable with exactly WebSearch and
+WebFetch, under sandbox-exec, through call_fable_web: never the judge harness. gemini
+(web search) and fable (NO working web tools, the judge's harness) on request. A run
+directory made with other daters is refused before any call, so a new production run
+uses a new --run-dir. A single-dater run, such as --harness astra, is the one-agent rule
+of VD-8 (c): its entries load and re-verify like any other, but production dating uses
+both daters. A new run's entries name merge-5 (dating_lib.MERGE_VERSION). Every proposal
+file records the roster's company for the speaker (speaker_company), which merge-5 reads.
+
+FABLE'S ACCOUNT (operator decision of 2026-10-05). Each fable or fable_web call takes the
+Claude account the llm-quota-router library picks for it:
+quota_router.select_account(model="fable", only=<the enabled Claude accounts>, record=True,
+no_sticky=True), mapped to that account's config dir, the way extract_predictions.Router
+picks one. Never the cl launcher: the router only picks, and this harness still passes its
+own tools and flags. A degraded pick the router does not call a fit, a pick from measured
+exhausted windows, or no pick at all is refused as router_no_account unless
+--allow-degraded is given. The picked account and the router's reason are recorded in the
+proposal's telemetry. --fable-config-dir pins the accounts instead (rotation over the
+listed dirs, no router).
 
 Dry run by default: prints the scope and what a run would spend, writes nothing.
 --run spends quota and says so first.
@@ -242,15 +254,80 @@ def call_agent(harness: str, prompt: str, timeout: int, workdir: Path, args, idx
                                  config_dir=None if home == "__DEFAULT__" else home)
         return text, {**tel, "served_model_verified": False}, G.account_label(home)
     if harness in ("fable", "fable_web"):
-        dirs = fable_dirs(args)
-        cfg = dirs[idx % len(dirs)]
+        cfg, route = fable_account(args, idx)
         call = G.call_fable if harness == "fable" else call_fable_web
         text, tel = call(prompt, cfg, timeout, binary=args.fable_bin, workdir=str(workdir))
-        return text, {**tel, "served_model": tel.get("judge_model"), "served_model_verified": True}, G.account_label(cfg)
+        return text, {**tel, "served_model": tel.get("judge_model"), "served_model_verified": True,
+                      "router": route}, G.account_label(cfg)
     raise RuntimeError(f"cli_nonzero_exit: unknown harness {harness}")
 
 
 HARNESSES = ("gemini", "astra", "fable", "fable_web")
+
+
+# ---------------------------------------------------------------------------
+# Fable's account, picked by the quota router per call (operator decision, 2026-10-05)
+# ---------------------------------------------------------------------------
+
+class FableRouter:
+    """One quota-router pick per Fable call, over the enabled Claude accounts only.
+
+    `select` and `accounts` are injectable so a test runs with no network: select is
+    quota_router.select_account, accounts are (id, provider, config_dir, is_default)
+    rows of quota_router.config.load_config().enabled_accounts(). The pick goes through
+    extract_predictions.route_from_selection, the one place that decides what a degraded
+    or exhausted pick means, so a refusal here reads exactly as it does in extraction.
+    """
+
+    def __init__(self, allow_degraded: bool, select=None, accounts=None):
+        if select is None:
+            from quota_router import select_account as select  # noqa: PLC0415 -- only a real run needs it
+        if accounts is None:
+            from quota_router.config import load_config  # noqa: PLC0415
+            accounts = [(a.id, a.provider, a.config_dir, a.is_default_config_dir)
+                        for a in load_config().enabled_accounts()]
+        self._select, self.accounts, self.allow_degraded = select, list(accounts), allow_degraded
+        self.claude_ids = [a[0] for a in self.accounts if a[1] == "claude"]
+        if not self.claude_ids:
+            raise RuntimeError(f"{L.E_ROUTER}: the router config enables no Claude account, so Fable cannot be routed")
+
+    def pick(self) -> tuple[str, dict]:
+        """(config dir, route record). Raises RouterUnavailable, labelled router_no_account, when it must refuse."""
+        import extract_predictions as EP  # noqa: PLC0415 -- heavy, and only a real run needs it
+        sel = self._select(model="fable", only=list(self.claude_ids), record=True, no_sticky=True)
+        payload = sel.to_dict() if hasattr(sel, "to_dict") else dict(sel)
+        route = EP.route_from_selection(payload, self.accounts, self.allow_degraded)
+        if route["harness"] != "fable" or route["account_id"] not in self.claude_ids:
+            raise EP.RouterUnavailable(f"{L.E_ROUTER}: the router picked {route['account_id']} "
+                                       f"({route['provider']}), which is not one of the Claude accounts it was "
+                                       f"offered {self.claude_ids}")
+        decision = payload.get("decision") or {}
+        return route["config_dir"], {"account_id": route["account_id"], "config_dir": route["config_dir"],
+                                     "reason": decision.get("reason"), "fits": decision.get("fits"),
+                                     "degraded": route["degraded"], "degraded_reason": route["degraded_reason"],
+                                     "pinned": False}
+
+
+_router_lock = threading.Lock()
+
+
+def fable_account(args, idx: int) -> tuple[str, dict]:
+    """The Claude config dir for one Fable call, and how it was chosen.
+
+    --fable-config-dir pins the accounts: calls rotate over the listed dirs and the
+    router is not asked. Without it the router picks per call (FableRouter), made once
+    per run and kept on args.
+    """
+    if args.fable_config_dir:
+        dirs = fable_dirs(args)
+        cfg = dirs[idx % len(dirs)]
+        return cfg, {"account_id": None, "config_dir": cfg, "reason": "pinned by --fable-config-dir",
+                     "pinned": True}
+    with _router_lock:
+        if getattr(args, "fable_router", None) is None:
+            args.fable_router = FableRouter(bool(getattr(args, "allow_degraded", False)))
+        router = args.fable_router
+    return router.pick()
 
 
 def codex_homes(args) -> list[str]:
@@ -419,12 +496,36 @@ def previous_stamps(run_dir: Path) -> dict:
     return out
 
 
+def speaker_companies(roster_path: Path) -> dict[str, str]:
+    """{slug: company} from the roster, every company a non-empty string, or exit."""
+    if not Path(roster_path).is_file():
+        raise SystemExit(f"REFUSING: no roster at {roster_path}; merge-5 reads each speaker's company from it")
+    rows = json.loads(Path(roster_path).read_text())["roster"]
+    bad = [r.get("slug") for r in rows if not isinstance(r.get("company"), str) or not r["company"].strip()]
+    if bad:
+        raise SystemExit(f"REFUSING: roster {roster_path} names no company for {bad[:5]}")
+    return {r["slug"]: r["company"] for r in rows}
+
+
+def attach_speaker_companies(jobs: list[dict], roster_path: Path) -> None:
+    """Each job's speaker_company, from the roster, before any call; a speaker the roster lacks stops the run."""
+    if not jobs:
+        return
+    companies = speaker_companies(roster_path)
+    lacking = sorted({j["tid"].split("/", 1)[0] for j in jobs} - set(companies))
+    if lacking:
+        raise SystemExit(f"REFUSING before any call: the roster {roster_path} has no entry for {lacking[:5]}")
+    for j in jobs:
+        j["speaker_company"] = companies[j["tid"].split("/", 1)[0]]
+
+
 def fable_dirs(args) -> list[str]:
-    """The Claude config dirs Fable calls rotate over, in order; the default account when none is named.
+    """The Claude config dirs a --fable-config-dir pin rotates Fable calls over, in order.
 
     FOUND 2026-10-03: one account took every Fable dating call and ran out of its
     Fable allowance after about 380 calls, failing 144 proposals as auth_or_quota
-    while four other accounts had Fable left. Name several to spread the load.
+    while four other accounts had Fable left. Since 2026-10-05 the quota router picks
+    the account per call (fable_account); a pin is the explicit exception.
     """
     if not args.fable_config_dir:
         return ["__DEFAULT__"]
@@ -437,8 +538,9 @@ def fable_dirs(args) -> list[str]:
 def daters(args) -> list[str]:
     """The harnesses that propose a date for each transcript, in the order the merge reads them.
 
-    Default DL.DATERS, Gemini then Fable (operator decision VD-11, 2026-10-01). A
-    single name runs one dater, whose merge is the one-agent rule of VD-8 (c).
+    Default DL.DATERS, Astra then Fable with its web tools (operator decision of
+    2026-10-05; gemini,fable under VD-11 before it). A single name runs one dater, whose
+    merge is the one-agent rule of VD-8 (c).
     """
     names = [x.strip() for x in (args.harness or "").split(",")]
     bad = [x for x in names if x not in HARNESSES]
@@ -497,6 +599,8 @@ def propose_one(job: dict, harness: str, args, run_dir: Path, run_id: str, calle
     own_date, own_basis = L.own_statement_date(rec)
     # daters: every harness this run asked, so a merge or entry that leaves one out is refused.
     doc = {"schema_version": 1, "transcript_id": tid, "run_id": run_id, "harness": harness, "daters": daters(args),
+           # merge-5 reads the speaker's own company, so a page about the company alone confirms nothing.
+           "speaker_company": job["speaker_company"],
            "requested_model": tel.get("requested_model") or requested_model(args, harness),
            "served_model": tel.get("served_model"), "served_model_verified": bool(tel.get("served_model_verified")),
            "identity": identity, "profile_home": tel.get("profile_home"),
@@ -506,7 +610,8 @@ def propose_one(job: dict, harness: str, args, run_dir: Path, run_id: str, calle
                                                  "input_tokens", "output_tokens", "thinking_tokens",
                                                  "reasoning_output_tokens", "attempts", "empty_retries",
                                                  "agy_version", "profile_identity_expected",
-                                                 "profile_identity_verified")},
+                                                 "profile_identity_verified",
+                                                 "web_searches", "web_fetches", "telemetry_models", "router")},
            "elapsed_sec": round(time.time() - t0, 1), "proposed_at_utc": DL.utc_stamp(),
            **({"answer_errors": failure[1], "answer_error_type": failure[0]} if failure else {})}
     write(dest, json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
@@ -620,6 +725,15 @@ def refuse_other_dater_sets(jobs: list[dict], hs: list[str], run_dir: Path, args
                 named = json.loads(pp.read_text()).get("daters")
                 if not isinstance(named, list) or sorted(named) != sorted(hs):
                     stale.append(f"{pp.relative_to(run_dir)} (daters {named})")
+    # A proposal of a dater this run does not use (2026-10-05: the production daters changed from
+    # gemini,fable to astra,fable_web, so the default no longer even looks at the old files): --redo
+    # cannot replace it, so the run directory belongs to another set of daters.
+    foreign = sorted(str(p.relative_to(run_dir)) for p in (run_dir / "proposals").glob("*/*.json")
+                     if p.name.rsplit(".", 2)[-2] not in hs) if (run_dir / "proposals").is_dir() else []
+    if foreign:
+        raise SystemExit(f"REFUSING before any call: {run_dir} holds {len(foreign)} proposal file(s) of daters this "
+                         f"run does not use ({hs}): {foreign[:5]}. A run directory belongs to one set of daters; use "
+                         f"a new --run-dir.")
     if stale and not (args.redo and args.stage in ("propose", "all")):
         raise SystemExit(f"REFUSING before any call: {len(stale)} proposal file(s) under {run_dir} were made by a run "
                          f"whose daters are not this run's {hs}: {stale[:5]}. Re-propose them with --redo (spends "
@@ -680,11 +794,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--stage", choices=["propose", "check", "merge", "all"], default="all")
     ap.add_argument("--harness", default=",".join(DL.DATERS),
                     help="the daters, comma-separated: each proposes a date for every transcript, and the merge "
-                         "reads them all. Default gemini,fable (operator decision VD-11, 2026-10-01): gemini has web "
-                         "search; fable has NO working web tools in this harness, so its proposal comes from memory, "
-                         "and every excerpt it cites must still pass the same page check as any other. astra (web "
-                         "search) and fable_web (Fable with WebSearch and WebFetch only, sandboxed) on request. One "
-                         "name runs one dater")
+                         "reads them all. Default astra,fable_web (operator decision of 2026-10-05): astra has web "
+                         "search; fable_web is Fable with WebSearch and WebFetch only, sandboxed, on the Claude "
+                         "account the quota router picks per call. gemini (web search) and fable (no web tools, "
+                         "answers from memory) on request. A run directory made with other daters is refused, so a "
+                         "new production run uses a new --run-dir. One name runs one dater")
     ap.add_argument("--data-root", type=Path, default=None,
                     help="the data checkout the run belongs to; default this clone's data link. The run directory "
                          "must be <data-root>/predictions/_experiments/dating-<name>")
@@ -707,9 +821,19 @@ def build_parser() -> argparse.ArgumentParser:
                          "caller's CODEX_HOME")
     ap.add_argument("--fable-bin", default="claude")
     ap.add_argument("--fable-config-dir", default=None,
-                    help="comma-separated Claude config dirs; Fable calls rotate over them in order. "
-                         "With none, every call goes to the default account, which one full run can exhaust")
+                    help="comma-separated Claude config dirs: a PIN. Fable calls rotate over them in order and the "
+                         "quota router is not asked. With none, the router picks the account for each call")
+    ap.add_argument("--allow-degraded", action="store_true",
+                    help="spend a Fable call on a pick the router does not call a fit (a degraded reading, or "
+                         "windows it measured as spent); without it such a pick is refused as router_no_account")
+    ap.add_argument("--roster", type=Path, default=None,
+                    help="the roster that gives each speaker's company (speaker_company); default "
+                         "<data-root>/roster/final.json")
     ap.add_argument("--workroot", default=str(Path(os.environ.get("TMPDIR", "/tmp")) / "dating-work"))
+    ap.add_argument("--merge-version", choices=list(DL.MERGE_VERSIONS), default=DL.MERGE_VERSION,
+                    help=f"the merge rules the merge stage writes entries under; default {DL.MERGE_VERSION}. merge-5 "
+                         f"needs speaker_company in every proposal file, which runs made before 2026-10-05 lack: "
+                         f"re-merge such a run with --merge-version merge-4")
     return ap
 
 
@@ -725,6 +849,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
     production = load_production_overrides(args.production_overrides or data / L.DATE_OVERRIDES_FILE,
                                            explicit=args.production_overrides is not None)
     jobs, excluded, missing = select_scope(pred_dirs, troots, args.ids, production, args.limit)
+    attach_speaker_companies(jobs, args.roster or data / "roster" / "final.json")
     by_tid = {j["tid"]: j for j in jobs}
 
     refuse_other_dater_sets(jobs, hs, run_dir, args)
@@ -821,7 +946,8 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                 missing_checks[tid] = unchecked
                 continue
             try:
-                out = DL.merge(json.loads(job["path"].read_text()), docs, checks_by, refs, run_rel=rel)
+                out = DL.merge(json.loads(job["path"].read_text()), docs, checks_by, refs, run_rel=rel,
+                               version=args.merge_version)
             except Exception as exc:  # noqa: BLE001 -- one transcript's defect never stops the others (review fix 4)
                 out = {"outcome": "queue", "reason": "merge_error", "detail": f"{type(exc).__name__}: {exc}"[:500],
                        "checks": []}
@@ -841,7 +967,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         ov_path = run_dir / "overrides.json"
         how = (f"daters {', '.join(hs)}: a cited page or description check of either, or both naming the same day "
                f"(VD-11)" if len(hs) > 1 else f"one {hs[0]} agent plus a page or description check (VD-8 (c))")
-        body = json.dumps({"schema_version": 1, "notes": f"Dating run {run_dir.name}, merge {DL.MERGE_VERSION}, "
+        body = json.dumps({"schema_version": 1, "notes": f"Dating run {run_dir.name}, merge {args.merge_version}, "
                            f"{how}. Not production: pass this file with --date-overrides.", "overrides": overrides},
                           indent=1, sort_keys=True, ensure_ascii=False) + "\n"
         staged = run_dir / "overrides.json.candidate"
@@ -851,7 +977,7 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
         L.load_statement_date_overrides(staged, troots)
         write(ov_path, body)
         staged.unlink()
-        ck_body = json.dumps({"schema_version": 1, "notes": f"Dating run {run_dir.name}, merge {DL.MERGE_VERSION}: "
+        ck_body = json.dumps({"schema_version": 1, "notes": f"Dating run {run_dir.name}, merge {args.merge_version}: "
                               f"checks that CONFIRM a transcript's own date. Pass with --date-checks.",
                               "checks": checks_out}, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
         staged = run_dir / "checks.json.candidate"

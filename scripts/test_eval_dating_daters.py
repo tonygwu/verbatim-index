@@ -70,7 +70,9 @@ class Estimate(Base):
         rc, out = run(["--gold", str(g), "--data", str(self.data), "--estimate"])
         self.assertEqual(rc, 0, out)
         self.assertIn("live run: 2 model cases x 3 repeats: 9 calls (astra 3, fable 3, gemini 3)", out)
-        self.assertIn("a dating repeat calls each of its daters once (gemini, fable)", out)
+        # The DATING fixture names the legacy single harness, so it runs the daters of its era (gemini, fable);
+        # the estimate also names production's pair, which a case without one runs.
+        self.assertIn("a dating repeat calls each of its daters once (production: astra, fable_web)", out)
 
 
 class Live(Base):

@@ -47,7 +47,7 @@ import extract_predictions as D  # noqa: E402
 import phase2_resolvability as P2  # noqa: E402
 import predictions_lib as L  # noqa: E402
 import resolution_lib as R  # noqa: E402
-from test_dating import D10, LIVEBLOG, PODCAST, POD_PAGE, checks_for, doc_for, proposal, write_run  # noqa: E402
+from test_dating import COMPANY, D10, LIVEBLOG, PODCAST, POD_PAGE, checks_for, doc_for, proposal, write_run  # noqa: E402
 from test_predictions_driver import REC, ROSTER, cand  # noqa: E402
 from test_predictions_release23 import UPLOAD, agent_check, operator_entry, record, with_check  # noqa: E402
 
@@ -79,9 +79,9 @@ class RedirectIsRechecked(unittest.TestCase):
         src = proposal()["sources"][0]
         c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": LIVEBLOG.encode(),
                                        "via": "direct", "error": None})
-        self.assertTrue(DL.confirms(c, proposal(), D10)[0])
+        self.assertTrue(DL.confirms(c, proposal(), D10, company=COMPANY)[0])
         c = {**c, "final_url": "https://www.youtube.com/watch?v=someOtherVid"}
-        ok, why = DL.confirms(c, proposal(), D10)
+        ok, why = DL.confirms(c, proposal(), D10, company=COMPANY)
         self.assertFalse(ok)
         self.assertIn("youtube.com/watch", why)
 
@@ -118,9 +118,13 @@ class GenericEventWords(unittest.TestCase):
         page = ("<html><body><p>Posted June 1, 2012 at 4:00 pm PT. The keynote session opened the conference."
                 "</p></body></html>")
         obj = proposal(e="2012-06-01", l="2012-06-01", sources=[src], event="The Conference Keynote Session")
-        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: page}))
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: page}), version="merge-4")
         self.assertEqual(out["outcome"], "queue", out)
         self.assertIn("name neither the speaker nor the event", out["detail"])
+        # merge-5 refuses it too: the page names neither the speaker nor a name of this occasion.
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: page}))
+        self.assertEqual(out["outcome"], "queue", out)
+        self.assertIn("do not name the speaker together with this occasion", out["detail"])
 
 
 class SchemeLessWayback(unittest.TestCase):
