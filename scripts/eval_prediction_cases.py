@@ -21,7 +21,9 @@ STAGES
            null for off; required)
   extract  one extraction call (release 2.3), then the real parser and grounding;
            the operator's quote must still be extracted (critique 2 point 5)
-  dating   one call per dater per repeat (dating_lib.DATERS, Gemini then Fable, VD-11),
+  dating   one call per dater per repeat (dating_lib.DATERS, Astra then Fable with web tools since
+           2026-10-05; a case whose legacy input.harness names one dater runs the daters of
+           its era, DATERS_BEFORE_20261005, Gemini then Fable),
            the real page and description checks, the real two-proposal merge; a
            confirmed date outside the gold band is a WRONG AUTO-CONFIRMATION. A
            repeat is recorded as r<n>.<dater>.json and replays only with every
@@ -270,6 +272,23 @@ def _dates_ok(lo, hi, band):
     return band is not None and band[0] <= lo and hi <= band[1]
 
 
+DATERS_BEFORE_20261005 = ("gemini", "fable")
+
+
+def case_speaker_company(case: dict, ctx: Context, slug: str) -> str:
+    """The speaker's company merge-5 reads: the case's input.speaker_company, else the data root's roster. Never guessed."""
+    if case["input"].get("speaker_company") is not None:
+        return case["input"]["speaker_company"]
+    roster = ctx.data / "roster" / "final.json"
+    if not roster.is_file():
+        raise SystemExit(f"REFUSING {case['id']}: no input.speaker_company and no roster at {roster}; merge-5 reads "
+                         f"the speaker's company")
+    hit = [r.get("company") for r in json.loads(roster.read_text())["roster"] if r.get("slug") == slug]
+    if len(hit) != 1 or not isinstance(hit[0], str) or not hit[0].strip():
+        raise SystemExit(f"REFUSING {case['id']}: the roster at {roster} gives {len(hit)} company entries for {slug}")
+    return hit[0]
+
+
 def case_merge_version(case: dict) -> str:
     """The merge rules a dating case is judged under: input.merge_version, else today's (DL.MERGE_VERSION)."""
     v = case["input"].get("merge_version") or DL.MERGE_VERSION
@@ -292,7 +311,8 @@ def judge_dating(case: dict, ctx: Context, answers: dict) -> tuple[str, str]:
             obj = obj if isinstance(obj, dict) else {}
         except (ValueError, json.JSONDecodeError):
             obj = {}
-        docs.append({"proposal": obj, "harness": h, "daters": list(answers), "leads": case_leads(case, ctx)})
+        docs.append({"proposal": obj, "harness": h, "daters": list(answers), "leads": case_leads(case, ctx),
+                     "speaker_company": case_speaker_company(case, ctx, rec["leader_slug"])})
         checks_by[h] = checks if not DL.validate_proposal(obj, tid, version) else []
     return judge_merge(case["expect"], DL.merge(rec, docs, checks_by, version=version))
 
@@ -317,6 +337,13 @@ def judge_merge(ex: dict, out: dict) -> tuple[str, str]:
     e = out["entry"].get("statement_date_earliest") or out["entry"]["statement_date"]
     lat = out["entry"]["statement_date"]
     what = f"confirmed ({out['outcome']}) {e}..{lat}"
+    # forbid_sources (2026-10-05): pages the operator checked and found to be about another occasion. An
+    # entry that cites one is a wrong auto-confirmation whatever day it names, since the day came from it.
+    used = {u for c in (out["entry"].get("confirmation") or {}).get("source_checks") or []
+            for u in (c.get("url"), c.get("final_url")) if u} | {out["entry"].get("source_url")}
+    bad = sorted(used & set(ex.get("forbid_sources") or []))
+    if bad:
+        return "hard_fail", f"WRONG AUTO-CONFIRMATION: {what} from {bad}, a page about another occasion"
     if "truth" in ex:
         lo, hi = ex["truth"]
         if lo <= lat <= hi:
@@ -566,8 +593,11 @@ def case_harnesses(case: dict) -> list[str]:
         for pair in case_pairs(case):
             hs += [h for h in pair if h not in hs]
         return hs
-    hs = list(case["input"].get("daters") or DL.DATERS)
     legacy = case["input"].get("harness")
+    # A gold case written when dating had one agent names it in input.harness. Such a case was
+    # recorded for the daters of its era, Gemini and Fable (VD-11), and replays with them; the
+    # production daters changed on 2026-10-05 and do not reach back into old gold.
+    hs = list(case["input"].get("daters") or (DATERS_BEFORE_20261005 if legacy is not None else DL.DATERS))
     if legacy is not None and legacy not in hs:
         raise SystemExit(f"REFUSING {case['id']}: input.harness {legacy!r} is not one of the case's daters {hs}; "
                          f"a dating case runs every dater (VD-11)")
@@ -686,7 +716,7 @@ def run_live_dating(case: dict, ctx: Context, args, caller, fetcher, record_dir:
 TELEMETRY_KEYS = ("web_search", "web_search_queries", "tool_use_counts", "attempts", "empty_retries",
                   "requested_model", "telemetry_models", "judge_model", "web_searches", "web_fetches",
                   "fetched_urls", "server_web_search_requests", "denied_or_failed", "num_turns", "cost_usd",
-                  "duration_ms", "config_dir", "profile_identity", "profile_home", "sandbox_denied_roots")
+                  "duration_ms", "config_dir", "profile_identity", "profile_home", "sandbox_denied_roots", "router")
 
 
 def _page_checks(text: str, rec: dict, fetcher) -> list[dict]:
@@ -853,8 +883,16 @@ def stored_inputs(case: dict, ctx: Context) -> tuple[dict, list[dict], dict]:
         spec = inp["proposals"][h]
         if "inline" in spec:
             doc = {"proposal": spec["inline"], "harness": h, "daters": daters, "leads": []}
+            if inp.get("speaker_company") is not None:
+                doc["speaker_company"] = inp["speaker_company"]
         else:
             doc = json.loads(_pinned(ctx.data, spec["path"], spec.get("sha256"), f"{case['id']} {h} proposal"))
+            if inp.get("speaker_company") is not None:
+                if doc.get("speaker_company") not in (None, inp["speaker_company"]):
+                    raise SystemExit(f"REFUSING {case['id']}: {spec['path']} records speaker_company "
+                                     f"{doc['speaker_company']!r}, the gold says {inp['speaker_company']!r}")
+                # A file written before merge-5 records no company; the gold names the roster's, in the open.
+                doc["speaker_company"] = inp["speaker_company"]
             if doc.get("harness") != h:
                 raise SystemExit(f"REFUSING {case['id']}: {spec['path']} was made by {doc.get('harness')!r}, not {h!r}")
         docs.append(doc)
@@ -954,7 +992,8 @@ def estimate(cases: list[dict], repeats: int) -> str:
             by[h] += repeats
     return (f"live run: {len(model)} model cases x {repeats} repeats: {sum(by.values())} calls "
             f"({', '.join(f'{h} {n}' for h, n in sorted(by.items()))}); a dating repeat calls each of its daters "
-            f"once ({', '.join(DL.DATERS)}); {len(blocked)} blocked case(s) spend nothing; dating cases also fetch "
+            f"once (production: {', '.join(DL.DATERS)}); {len(blocked)} blocked case(s) spend nothing; dating cases "
+            f"also fetch "
             f"every cited page, direct then Wayback")
 
 
@@ -978,7 +1017,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--codex-home", default=None)
     ap.add_argument("--fable-bin", default="claude")
-    ap.add_argument("--fable-config-dir", default=None)
+    ap.add_argument("--fable-config-dir", default=None,
+                    help="a pin: Fable calls rotate over these Claude config dirs; with none the quota router "
+                         "picks the account for each call (date_recordings.fable_account)")
+    ap.add_argument("--allow-degraded", action="store_true",
+                    help="spend a Fable call on a router pick it does not call a fit; refused without it")
     return ap
 
 

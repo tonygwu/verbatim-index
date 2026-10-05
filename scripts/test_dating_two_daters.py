@@ -49,7 +49,12 @@ PAGES = {LIVE: LIVEBLOG, OTHER: OTHER_PAGE, GONE["url"]: "<html><body>moved</bod
 CANNOT = dict(verdict="cannot_date", e=None, l=None, sources=[], event=None, event_kind=None)
 
 
-def dd(obj, harness, rec=D10, daters=DL.DATERS):
+# The two daters these mechanics were written for (VD-11). Production dates with astra,fable_web since
+# 2026-10-05 (DL.DATERS); the merge treats any two daters alike, so the names here do not matter.
+VD11 = ("gemini", "fable")
+
+
+def dd(obj, harness, rec=D10, daters=VD11):
     return {**doc_for(obj, rec), "harness": harness, "daters": list(daters), "leads": [], "requested_model": MODELS[harness],
             "served_model": MODELS[harness]}
 
@@ -62,8 +67,9 @@ def merge(objs: dict, rec=D10):
 
 
 class Either(unittest.TestCase):
-    def test_the_daters_are_gemini_then_fable(self):
-        self.assertEqual(DL.DATERS, ("gemini", "fable"))
+    def test_the_production_daters_are_astra_then_fable_web(self):
+        """Operator decision of 2026-10-05 (it was gemini,fable under VD-11)."""
+        self.assertEqual(DL.DATERS, ("astra", "fable_web"))
 
     def test_gemini_confirms_and_fable_cannot_date(self):
         out = merge({"gemini": proposal(), "fable": proposal(**CANNOT)})

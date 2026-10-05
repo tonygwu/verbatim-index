@@ -54,7 +54,8 @@ PODCAST = {"leader_slug": "ada", "source_id": "pod-ep-xyz789", "video_id": "vid0
 LIVEBLOG = ("<html><head><title>Ada live at DX</title><script>var x = 1;</script></head><body>"
             "<p>Posted May 30, 2012 at 4:26 pm PT by a reporter</p><p>Ada takes the stage at the resort.</p>"
             "</body></html>")
-SCHEDULE = ("<html><body><h1>Summit 2025</h1><p>The summit runs September 7-9, 2025 in Los Angeles.</p>"
+SCHEDULE = ("<html><body><h1>Compute Summit 2025</h1><p>The summit runs September 7-9, 2025 in Los Angeles. Ada speaks on "
+            "the main stage.</p>"
             "</body></html>")
 POD_PAGE = "<html><body><h1>Ada on the pod</h1><p>Episode released September 12, 2025 in full</p></body></html>"
 
@@ -72,12 +73,17 @@ def proposal(verdict="dated", e="2012-05-30", l="2012-05-30", sources=None, tid=
     return obj
 
 
+# The speaker's company every fixture proposal file records (merge-5 reads it). No fixture page names it,
+# so a fixture's context is judged as merge-4 judged it unless a test names a real company.
+COMPANY = "Fixture Holdings"
+
+
 def doc_for(obj, rec=D10):
     own, basis = L.own_statement_date(rec)
     return {"schema_version": 1, "transcript_id": obj["transcript_id"], "harness": "gemini", "daters": ["gemini"],
             "requested_model": "gemini-3.8-flash-high", "served_model": "gemini-3.8-flash-high",
             "served_model_verified": True, "identity": "a@example.com", "own_date": own, "own_basis": basis,
-            "prompt_sha256": "p" * 64, "proposal": obj}
+            "prompt_sha256": "p" * 64, "speaker_company": COMPANY, "proposal": obj}
 
 
 def page_check(src, html, rec=D10, verdict="dated", via="direct"):
@@ -151,18 +157,18 @@ class Check(unittest.TestCase):
         self.assertEqual(c["page_sha256"], hashlib.sha256(LIVEBLOG.encode()).hexdigest())
         self.assertIn("Posted May 30, 2012 at 4:26 pm PT", c["window"])
         self.assertLess(len(c["window"]), 2 * DL.WINDOW_CHARS + 200)
-        self.assertTrue(DL.confirms(c, proposal(), D10)[0])
+        self.assertTrue(DL.confirms(c, proposal(), D10, company=COMPANY)[0])
 
     def test_excerpt_not_on_the_page_is_refused(self):
         c = page_check({**self.SRC, "verbatim_excerpt": "Posted May 31, 2012 at 4:26 pm PT"}, LIVEBLOG)
         self.assertFalse(c["excerpt_found"])
-        ok, why = DL.confirms(c, proposal(), D10)
+        ok, why = DL.confirms(c, proposal(), D10, company=COMPANY)
         self.assertFalse(ok)
         self.assertIn("not on the page", why)
 
     def test_excerpt_date_outside_the_range_is_refused(self):
         c = page_check(self.SRC, LIVEBLOG)
-        ok, why = DL.confirms(c, proposal(e="2012-06-01", l="2012-06-02"), D10)
+        ok, why = DL.confirms(c, proposal(e="2012-06-01", l="2012-06-02"), D10, company=COMPANY)
         self.assertFalse(ok)
         self.assertIn("outside", why)
 
@@ -170,20 +176,25 @@ class Check(unittest.TestCase):
         """The time zone rule bites: the agent must date a speech where it happened."""
         blog = LIVEBLOG.replace("4:26 pm PT", "9:30 pm PT")
         c = page_check({**self.SRC, "verbatim_excerpt": "Posted May 30, 2012 at 9:30 pm PT"}, blog)
-        self.assertFalse(DL.confirms(c, proposal(e="2012-05-31", l="2012-05-31"), D10)[0])
-        self.assertTrue(DL.confirms(c, proposal(e="2012-05-30", l="2012-05-30"), D10)[0])
+        self.assertFalse(DL.confirms(c, proposal(e="2012-05-31", l="2012-05-31"), D10, company=COMPANY)[0])
+        self.assertTrue(DL.confirms(c, proposal(e="2012-05-30", l="2012-05-30"), D10, company=COMPANY)[0])
 
     def test_an_excerpt_must_be_at_least_four_words(self):
+        """merge-3: four words, always. Since merge-4 a shorter excerpt counts only when it is a date alone."""
         c = page_check({**self.SRC, "verbatim_excerpt": "May 30, 2012"}, LIVEBLOG)
-        ok, why = DL.confirms(c, proposal(), D10)
+        ok, why = DL.confirms(c, proposal(), D10, "merge-3")
         self.assertFalse(ok)
         self.assertIn("words", why)
+        c = page_check({**self.SRC, "verbatim_excerpt": "Ada takes the"}, LIVEBLOG)
+        ok, why = DL.confirms(c, proposal(), D10, company=COMPANY)
+        self.assertFalse(ok)
+        self.assertIn("fewer than 4 words and is not a date alone", why)
 
     def test_a_failed_fetch_never_confirms(self):
         c = DL.check_source(self.SRC, D10, {"status": 403, "final_url": self.SRC["url"], "body": b"", "via": "direct",
                                             "error": "HTTP 403"})
         self.assertFalse(c["fetched"])
-        self.assertFalse(DL.confirms(c, proposal(), D10)[0])
+        self.assertFalse(DL.confirms(c, proposal(), D10, company=COMPANY)[0])
 
 
 class ReviewOwnPage(unittest.TestCase):
@@ -208,7 +219,7 @@ class ReviewOwnPage(unittest.TestCase):
                                        "body": page.encode(), "via": "direct", "error": None})
         self.assertIsNotNone(c["refused"])
         self.assertFalse(DL.confirms(c, proposal(verdict="publication_only", e="2019-02-27", l="2019-02-27",
-                                                 sources=[src]), D10)[0])
+                                                 sources=[src]), D10, company=COMPANY)[0])
 
     def test_a_page_embedding_the_recording_is_refused(self):
         """Probe P5: a blog embeds the video; its VideoObject carries the upload date."""
@@ -219,7 +230,8 @@ class ReviewOwnPage(unittest.TestCase):
                "verbatim_excerpt": '"name":"Ada interview","uploadDate":"2019-02-27T08:00:00-08:00"', "kind": "secondary"}
         c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": blog.encode(), "via": "direct",
                                        "error": None})
-        ok, why = DL.confirms(c, proposal(verdict="publication_only", e="2019-02-27", l="2019-02-27", sources=[src]), D10)
+        ok, why = DL.confirms(c, proposal(verdict="publication_only", e="2019-02-27", l="2019-02-27", sources=[src]),
+                               D10, company=COMPANY)
         self.assertFalse(ok)
         self.assertRegex(why, "embeds|upload")
 
@@ -250,7 +262,7 @@ class ReviewOwnPage(unittest.TestCase):
         c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": page.encode(), "via": "direct",
                                        "error": None})
         self.assertFalse(c["page_names_video_id"])
-        ok, why = DL.confirms(c, proposal(sources=[src]), D10)
+        ok, why = DL.confirms(c, proposal(sources=[src]), D10, company=COMPANY)
         self.assertFalse(ok)
         self.assertIn("uploadDate", why)
 
@@ -262,7 +274,7 @@ class ReviewOwnPage(unittest.TestCase):
                             {"status": 200, "final_url": "https://liveblog.example.com/2012/05/30/ada-live",
                              "body": LIVEBLOG.encode(), "via": "direct", "error": None})
         c = {**c, "url": src["url"], "final_url": src["url"]}
-        ok, why = DL.confirms(c, proposal(sources=[src]), D10)
+        ok, why = DL.confirms(c, proposal(sources=[src]), D10, company=COMPANY)
         self.assertFalse(ok)
         self.assertIn("YouTube", why)
 
@@ -276,9 +288,12 @@ class ReviewMerge(unittest.TestCase):
                "verbatim_excerpt": "Posted June 1, 2010 at 4:00 pm PT", "kind": "secondary"}
         page = "<html><body><p>Posted June 1, 2010 at 4:00 pm PT. Someone Else took the stage at D8.</p></body></html>"
         obj = proposal(e="2010-06-01", l="2010-06-01", sources=[src], event="An interview")
-        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: page}))
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: page}), version="merge-4")
         self.assertEqual(out["outcome"], "queue")
         self.assertIn("name neither the speaker nor the event", out["detail"])
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, {src["url"]: page}))
+        self.assertEqual(out["outcome"], "queue")
+        self.assertIn("do not name the speaker together with this occasion", out["detail"])
 
     def test_the_statement_date_itself_must_be_sourced(self):
         """Probe P2 / review item 2: a source for the first day does not date the last."""
@@ -368,7 +383,8 @@ class Merge(unittest.TestCase):
     def test_a_range_takes_the_latest_day_and_records_the_first(self):
         src = {"url": "https://summit.example.com/2025", "publisher": "Summit", "date_on_source": None,
                "verbatim_excerpt": "The summit runs September 7-9, 2025 in Los Angeles", "kind": "primary"}
-        obj = proposal(e="2025-09-07", l="2025-09-09", sources=[src], tid="ada/pod-ep-xyz789", event="Summit 2025, Ada talk")
+        obj = proposal(e="2025-09-07", l="2025-09-09", sources=[src], tid="ada/pod-ep-xyz789",
+                       event="Compute Summit 2025, Ada talk")
         out = DL.merge_one(PODCAST, doc_for(obj, PODCAST), checks_for(obj, {src["url"]: SCHEDULE}, PODCAST))
         self.assertEqual(out["outcome"], "override", out)
         e = out["entry"]
@@ -583,7 +599,8 @@ class Prompt(unittest.TestCase):
         self.assertEqual(meta["passages_shown"], DL.MAX_PASSAGES)
         self.assertGreater(meta["passages_cut"], 0)
         self.assertIn(f"{meta['passages_cut']} more cut by the cap of {DL.MAX_PASSAGES}", prompt)
-        self.assertLess(len(prompt.split()), 800 + 300 + DL.MAX_PASSAGES * 70 + 1500)
+        # The fixed text is about 1,600 words since merge-5 added the day-word and sponsor-read rules.
+        self.assertLess(len(prompt.split()), 800 + 300 + DL.MAX_PASSAGES * 70 + 1700)
         self.assertNotIn("w1500 ", prompt)       # the middle of the transcript is not sent
 
     def test_undated_source_says_so(self):

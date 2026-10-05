@@ -77,6 +77,9 @@ class Fixture:
         (self.data / "predictions" / "statement_date_overrides.json").write_text(json.dumps({"schema_version": 1, "overrides": {
             "ada/operator-done": {"statement_date": "2025-09-01", "basis": "b", "source_url": "https://e.example.com/x",
                                   "verbatim_evidence": "v", "confirmed_by": "operator", "confirmed_at_utc": "2026-09-28T00:00:00Z"}}}))
+        (self.data / "roster").mkdir()
+        (self.data / "roster" / "final.json").write_text(json.dumps({"roster": [
+            {"slug": "ada", "name": "Ada", "company": "Fixture Holdings"}]}))
         self.run = self.data / "predictions" / "_experiments" / "dating-test"
 
     def argv(self, *extra):
@@ -85,7 +88,8 @@ class Fixture:
                 "--production-overrides", str(self.data / "predictions" / "statement_date_overrides.json"), *extra]
 
 
-MODELS = {"gemini": "gemini-3.8-flash-high", "fable": "claude-fable-5-1", "astra": "gpt-6-astra"}
+MODELS = {"gemini": "gemini-3.8-flash-high", "fable": "claude-fable-5-1", "astra": "gpt-6-astra",
+          "fable_web": "claude-fable-5-1"}
 
 
 class FakeAgent:
@@ -160,8 +164,8 @@ class DryRun(unittest.TestCase):
             self.assertIn("in scope: 3 transcripts", out)
             self.assertIn("stated_in_page (not dated by this stage): 1", out)
             self.assertIn("operator override already present: 1", out)
-            self.assertIn("a real run would spend 6 calls: gemini 3 (gemini-3.8-flash-high), "
-                          "fable 3 (claude-fable-5-1)", out)
+            self.assertIn("a real run would spend 6 calls: astra 3 (gpt-6-astra), "
+                          "fable_web 3 (claude-fable-5-1)", out)
 
 
 class Run(unittest.TestCase):
@@ -246,12 +250,15 @@ class Run(unittest.TestCase):
 
 
 class Harness(unittest.TestCase):
-    def test_default_is_gemini_and_fable_help_says_it_has_no_web(self):
+    def test_default_is_astra_and_fable_web_help_says_which_has_web(self):
+        """Operator decision of 2026-10-05: production dates with Astra and Fable with its web tools."""
         ap = DR.build_parser()
-        self.assertEqual(DR.daters(ap.parse_args(["--run-dir", "x"])), ["gemini", "fable"])
-        for h in ("gemini", "astra", "fable"):
+        self.assertEqual(DR.daters(ap.parse_args(["--run-dir", "x"])), ["astra", "fable_web"])
+        for h in ("gemini", "astra", "fable", "fable_web"):
             self.assertEqual(DR.daters(ap.parse_args(["--run-dir", "x", "--harness", h])), [h])
-        self.assertIn("NO working web tools", ap.format_help())
+        help_text = " ".join(ap.format_help().split())
+        self.assertIn("Default astra,fable_web", help_text)
+        self.assertIn("fable (no web tools, answers from memory)", help_text)
 
     def test_the_harness_reaches_the_caller_and_the_file_name(self):
         with tempfile.TemporaryDirectory() as td:
@@ -306,7 +313,8 @@ class TwoDaters(unittest.TestCase):
                                ("fable", "ada/re-upload-abc123"): proposal(**CANNOT),
                                "ada/pod-ep-xyz789": pod_unread,
                                "ada/held-ep": held_upload})
-            rc, out = run(fx.argv("--run"), agent, FakeWeb({LIVE_URL: LIVEBLOG}))
+            # The daters of VD-11, named: the two-dater mechanics do not depend on which two they are.
+            rc, out = run(fx.argv("--run", "--harness", "gemini,fable"), agent, FakeWeb({LIVE_URL: LIVEBLOG}))
             self.assertEqual(rc, 0, out)
             self.assertTrue(out.lstrip().startswith("SPENDS QUOTA: up to 6 calls (gemini 3 gemini-3.8-flash-high, "
                                                     "fable 3 claude-fable-5-1)"), out[:200])
@@ -337,7 +345,8 @@ class TwoDaters(unittest.TestCase):
             ids.write_text("ada/re-upload-abc123\n")
             agent = FakeAgent({("gemini", "ada/re-upload-abc123"): proposal(),
                                ("fable", "ada/re-upload-abc123"): RuntimeError("cli_timeout: no answer")})
-            rc, out = run(fx.argv("--run", "--ids", str(ids)), agent, FakeWeb({LIVE_URL: LIVEBLOG}))
+            rc, out = run(fx.argv("--run", "--ids", str(ids), "--harness", "gemini,fable"), agent,
+                          FakeWeb({LIVE_URL: LIVEBLOG}))
             self.assertEqual(rc, 1, out)
             ov = json.loads((fx.run / "overrides.json").read_text())["overrides"]
             self.assertEqual(ov, {})
