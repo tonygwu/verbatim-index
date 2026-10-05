@@ -1681,8 +1681,9 @@ new grades incomparable with the corpus already graded.
   show the range's LAST day, the statement date. The recording's own page never
   counts, checked on the cited and the final (redirected) address: its video id,
   any YouTube page or front end, archive.today copies, google.com/url redirects,
-  the transcript's url whatever its query string, and a page that embeds the
-  recording or carries an uploadDate beside the excerpt. The window must name the
+  the transcript's url whatever its query string, and, under merge-3, a page that
+  embeds the recording or carries an uploadDate beside the excerpt (merge-4 below
+  relaxes that one). The window must name the
   speaker or the event, a UTC timestamp cannot date a speech, a re-upload's
   publication date is queued, and an undated source is bounded by its
   `fetched_at_utc`. A date earlier than the transcript's own is written to the
@@ -1696,6 +1697,32 @@ new grades incomparable with the corpus already graded.
   `scripts/test_date_recordings.py`. Header lines `override_agreed_day` and
   `override_agreed_range` are pinned with the rest of the header in release
   `predictions-2.3`'s `contracts.header`.
+  **merge-4 (2026-10-04) is `MERGE_VERSION`.** The operator audited seven recordings
+  the stage failed to date, and every date was findable. A new run writes merge-4
+  entries; merge-3 stays re-runnable, because the loader re-merges each entry under
+  the version it names, and production holds 205 merge-3 entries. merge-4 changes
+  five rules. (a) A page that embeds the recording may confirm a day strictly before
+  the upload, if no uploadDate in its window names that day. Such a page is an
+  organiser's archive that dates the session, as with the Khosla CEO Summit and Citi
+  Legends Live. A page that shows only the upload day is still refused. (b) A
+  relative date in the description, such as "last November", is read against the
+  upload date as a range. "Originally released ..." stays cued, because a release is
+  a ceiling. (c, e) An excerpt under four words counts only when it is a date alone
+  and the page names the speaker with the host, interviewer, event or channel within
+  400 characters. A date the page writes another way ("12 February 2020" for
+  "February 12, 2020") still matches. (f) A confirmed range nested inside another
+  dater's confirmed range refines it, so a day inside a month is not a disagreement.
+  Rule R1 is unchanged. Also, a proposal's optional `bounds` (floors and ceilings)
+  must hold its range. The prompt asks the daters to search for the host, the
+  interviewer and the guest together, and to state each bound. MEASURED over all 482
+  stored transcripts of `dating-run-20261001` and `dating-astra-20261003`: merge-3
+  equals the old merge on 482 of 482, and merge-4 changes no confirmed date and
+  confirms 6 queued ones. `--harness fable_web` is Fable with exactly WebSearch and
+  WebFetch under `sandbox-exec`, through `date_recordings.call_fable_web`. It is for
+  dating only and is not a production default. The judge harness and the
+  outcome-blind prior and lead-test stages keep their tools off. Proof:
+  `scripts/test_dating_operator_rules.py`, `scripts/test_dating_fable_web.py`,
+  `scripts/test_dating_operator_cases.py`, which reads the data link.
 - Tier R case evals: `scripts/eval_prediction_cases.py --gold
   data/predictions/_eval/cases-20260929` replays the operator's audited cases
   offline; `--smoke` runs the Buddy Media `already_public` case first;
@@ -1704,4 +1731,10 @@ new grades incomparable with the corpus already graded.
   requested model. A dating repeat calls each dater once and replays only with
   every dater's answer, so a dating case costs two calls per repeat. The gold file
   is private data. Proof: `scripts/test_eval_prediction_cases.py`,
-  `scripts/test_eval_dating_daters.py`.
+  `scripts/test_eval_dating_daters.py`. The dating audit of 2026-10-04 is its own gold
+  set, `data/predictions/_eval/cases-20261004-dating`. A case there with
+  `input.pairs` calls each dater in the union once per repeat and judges every pair:
+  gemini+fable, gemini+fable_web and gemini+astra, so the pairs share Gemini's
+  answer. Stage `dating_stored` replays stored proposals and checks, pinned by
+  sha256, through the real merge with no model. The `truth` expectation judges the
+  last day. Proof: `scripts/test_eval_dating_pairs.py`.
