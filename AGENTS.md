@@ -1754,7 +1754,15 @@ new grades incomparable with the corpus already graded.
   the `cl` launcher. A degraded, exhausted or empty pick is refused as
   `router_no_account` unless `--allow-degraded` is given, and the picked account and
   the router's reason are in each proposal's `telemetry.router`. `--fable-config-dir`
-  pins the accounts instead. Every proposal file records the roster's company for the
+  pins the accounts instead. `--router-exclude` keeps named Claude accounts out of
+  every pick: the coordinating session's own account, which the router otherwise
+  drains (FOUND 2026-10-05: half of a run's fable_web calls went to it). Each dater's
+  account rotation counts transcripts, so Astra alternates over `--codex-home`
+  (`71e2884`; before it every Astra call took the first home).
+  `scripts/promote_dating_run.py --hold-file <json>` holds named entries for a
+  person's review ({transcript_id: reason}): reported HELD, never promoted, the way an
+  R1 hold is; the overnight run of 2026-10-05 held every two-dater agreement this way
+  because only source-checked dates were to go. Every proposal file records the roster's company for the
   speaker, `speaker_company`, which merge-5 reads; a speaker the roster lacks stops the
   run before any call. Each dater writes its own proposal, `<sid>.<dater>.json`,
   naming the event and its date range with sources. A
