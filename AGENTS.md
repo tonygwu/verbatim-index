@@ -1773,7 +1773,10 @@ new grades incomparable with the corpus already graded.
   every word of it: the host organization, an interviewer, the channel, the event's
   name (the dater's text before a colon or "about"), or a run of two or more
   capitalised title words. Generic words are optional, the speaker's company (the
-  roster's) never counts, and a page on the host's own domain names the host. FOUND:
+  roster's) never counts, and a page on the host's own domain names the host. A run
+  that those rules cut down to one word is a name only when the word is a name as
+  written ("PandoMonthly", "I/O", "SXSW", "D11", never "Mind"), and a platform, month or
+  weekday is never a name. FOUND:
   a casino.org article on Robinhood "dated" the Tenev podcast (OP7 r01), and a Big
   Technology post that never names Mensch dated `arthur-mensch/alex-kantrowitz-xxutdy`.
   (b) A yearless month or month-day counts when the same page shows its publication
@@ -1806,11 +1809,12 @@ new grades incomparable with the corpus already graded.
   without the casino.org confirmation and with OP3 and OP7 confirmed by the script
   rather than by agreement; gemini+fable_web goes from 7 to 8 of 8. Pilot A9 stays
   queued. Over the 487 transcripts of the three stored production runs, merge-5 loses
-  37 merge-4 confirmations, gains 1 and changes no confirmed date; most lost pages do
-  not name the speaker (event schedules, press releases, Wikipedia pages on a product),
-  and several are about another occasion. 119 stored proposals in 79 transcripts use a
-  day word; 3 pin a day, each the day merge-4 had confirmed. Proof:
-  `scripts/test_dating_merge5.py`, which fails 50 of 50 on the code before merge-5.
+  45 merge-4 confirmations, gains 1 and changes no confirmed statement date (the
+  earliest day moves on 3); most lost pages do not name the speaker (event schedules,
+  press releases, Wikipedia pages on a product), and several are about another
+  occasion. 119 stored proposals in 79 transcripts use a day word; 3 pin a day, each
+  the day merge-4 had confirmed. Proof: `scripts/test_dating_merge5.py`, whose 53 tests
+  all fail on the code before merge-5.
 - Tier R case evals: `scripts/eval_prediction_cases.py --gold
   data/predictions/_eval/cases-20260929` replays the operator's audited cases
   offline; `--smoke` runs the Buddy Media `already_public` case first;

@@ -914,8 +914,8 @@ def occasion_names(rec: dict, prop: dict, company: str) -> list[tuple[str, ...]]
         text = re.sub(r"\b([A-Z])/([A-Z])\b", r"\1·\2", text)
         words = tuple(w for tok in _RUN_TOKEN.findall(text) for w in _name_words(tok, drop))
         # Generic words ("Second-Quarter Earnings PRESENTATION", "BAFTA SPECIAL AWARD") are not required on the
-        # page; a name of nothing but generic words ("CEO") is no name. A platform is never one.
-        content = tuple(w for w in words if w not in _GENERIC_V4 and w not in _PLATFORMS)
+        # page; a name of nothing but generic words ("CEO") is no name. A platform, month or weekday is never one.
+        content = tuple(w for w in words if _name_content(w))
         if content and len(content) >= least and content not in names:
             names.append(content)
     for u in units:
@@ -933,14 +933,40 @@ def occasion_names(rec: dict, prop: dict, company: str) -> list[tuple[str, ...]]
         # down to one word by the speaker's names, company and generic words is not a name (FOUND in the merge-5
         # live run: "Inside the Mind of Robinhood Co-Founder Vlad Tenev" left "mind", and "YouTube" stood alone,
         # so Robinhood's YES/NO page read as about the Knowledge Project podcast).
+        # A run cut down to one word still names the event when that word is a name AS WRITTEN (FOUND replaying
+        # the pilot set: "PandoMonthly Fireside Chat With Elon Musk" left "pandomonthly", which Wikipedia's
+        # Hyperloop citation names with the day).
         toks = [t for t in _RUN_TOKEN.findall(r) if not t.isdigit()]
         single = len(toks) == 1 and toks[0].lower() not in _TOPIC_ACRONYMS
-        add(r, 1 if single else 2)
+        kept = [t for t in toks if [w for w in _name_words(t, drop) if _name_content(w)]]
+        add(r, 1 if single or (len(kept) == 1 and _written_as_name(kept[0])) else 2)
     for r in _capital_runs(tail[0] if tail else ""):
         add(r, 2)
     for r in _capital_runs(rec.get("yt_title") or rec.get("declared_title") or ""):
         add(r, 2)
     return names
+
+
+def _name_content(w: str) -> bool:
+    """A word a page must show: not generic, not a platform, not a month or weekday (a date, never a name)."""
+    return w not in _GENERIC_V4 and w not in _PLATFORMS and w not in _CALENDAR
+
+
+_CALENDAR = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+             "november", "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov",
+             "dec", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mon", "tue",
+             "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun"}
+
+
+def _written_as_name(tok: str) -> bool:
+    """A word that is a name as written: inner capitals ("PandoMonthly"), an acronym written with a slash
+    ("I/O"), an acronym of three letters or more that is no topic ("SXSW", never "CEO"), or letters with digits
+    ("D11"). "Mind" is an ordinary word."""
+    letters = re.sub(r"[^A-Za-z]", "", tok)
+    if not letters:
+        return False
+    return "·" in tok or bool(re.search(r"[a-z][A-Z]", tok)) or any(ch.isdigit() for ch in tok) or (
+        letters.isupper() and len(letters) >= 3 and letters.lower() not in _TOPIC_ACRONYMS)
 
 
 # Where a recording is published, never what occasion it is.

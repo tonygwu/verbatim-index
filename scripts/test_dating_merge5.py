@@ -193,6 +193,38 @@ class Occasion(unittest.TestCase):
         self.assertIn(("pandomonthly",), DL.occasion_names(KP, {**kp_prop(), "event": "PandoMonthly fireside chat"},
                                                             KP_COMPANY))
 
+    def test_a_long_run_cut_to_one_word_that_is_a_name_as_written_still_names_the_event(self):
+        """FOUND replaying the pilot set after the fix above: 'PandoMonthly Fireside Chat With Elon Musk' is cut to
+        'pandomonthly', and Wikipedia's Hyperloop citation 'PandoMonthly Presents: A Fireside Chat with Elon Musk
+        (12 July 2012)' is a right confirmation. A word written as a name (PandoMonthly, SXSW, D11) is one; 'Mind' is not."""
+        o = kp_prop()
+        o.update(event="PandoMonthly Fireside Chat With Ada Lovelace", host_organization=None, interviewer=None)
+        self.assertIn(("pandomonthly",), DL.occasion_names(KP, o, KP_COMPANY))
+        # "Google I/O 2016" for Sundar Pichai is cut to "I/O" by his company (pilot set, SAMEYEAR-dating).
+        for event, name in (("SXSW Keynote With Ada Lovelace", ("sxsw",)), ("D11 Conference Interview", ("d11",)),
+                            ("Analytical I/O 2016 opening keynote by Ada Lovelace", ("i o",))):
+            self.assertIn(name, DL.occasion_names(KP, {**o, "event": event}, KP_COMPANY))
+        # A month or a weekday is a date, never a name (FOUND in the pilot set: Fable's event "VivaTech 2021 (Viva
+        # Technology, Paris and online, 16-19 June 2021)" gave the name ('june',)).
+        names = DL.occasion_names(KP, {**o, "event": "Fireside Chat at VivaTech 2021 (Viva Technology, Paris and online, "
+                                                     "16-19 June 2021), Wednesday"}, KP_COMPANY)
+        self.assertIn(("vivatech",), names)
+        self.assertNotIn(("june",), names)
+        self.assertNotIn(("wednesday",), names)
+        for event in ("Inside The Mind Of Analytical Engines Co-Founder Ada Lovelace", "AI Keynote With Ada Lovelace"):
+            names = DL.occasion_names(KP, {**o, "event": event}, KP_COMPANY)
+            self.assertFalse([n for n in names if len(n) == 1], (event, names))
+        url = "https://en.wikipedia.org/wiki/Difference_engine"
+        page = ("<html><head><title>Difference engine - Wikipedia</title></head><body><p>References. Lovelace, Ada "
+                "(1 December 2025). PandoMonthly Presents: A Fireside Chat with Ada Lovelace. PandoDaily/YouTube.com. "
+                "Event occurs at 43:13.</p></body></html>")
+        s = src(url, "Lovelace, Ada (1 December 2025). PandoMonthly Presents: A Fireside Chat with Ada Lovelace")
+        o["sources"] = [s]
+        o["speech_date_earliest"] = o["speech_date_latest"] = "2025-12-01"
+        c = DL.check_source(s, KP, fetched(page, url), o)
+        ok, why = DL.confirms(c, o, KP, V5, company=KP_COMPANY)
+        self.assertTrue(ok, why)
+
     def test_the_speakers_company_is_never_an_occasion_name(self):
         names = DL.occasion_names(KP, kp_prop(), KP_COMPANY)
         self.assertFalse([n for n in names if {"analytical", "engines"} & set(n)], names)
