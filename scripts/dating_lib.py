@@ -909,17 +909,25 @@ def occasion_names(rec: dict, prop: dict, company: str) -> list[tuple[str, ...]]
     units.append(rec.get("yt_channel") or rec.get("declared_venue") or "")
     names: list[tuple[str, ...]] = []
 
-    def add(text: str, least: int) -> None:
+    def add(text: str, least: int, whole: bool = False) -> None:
         """Add a name of at least `least` content words; a unit given whole (host, channel) passes least=1."""
         text = re.sub(r"\b([A-Z])/([A-Z])\b", r"\1·\2", text)
-        words = tuple(w for tok in _RUN_TOKEN.findall(text) for w in _name_words(tok, drop))
+        toks = _RUN_TOKEN.findall(text)
+        words = tuple(w for tok in toks for w in _name_words(tok, drop))
         # Generic words ("Second-Quarter Earnings PRESENTATION", "BAFTA SPECIAL AWARD") are not required on the
         # page; a name of nothing but generic words ("CEO") is no name. A platform, month or weekday is never one.
         content = tuple(w for w in words if _name_content(w))
+        if whole and len(content) == 1 and len(words) > 1:
+            # A unit cut down to one ordinary word keeps its generic words: "Big Technology Podcast" needs "big"
+            # and "technology", or every page that says "technology" names the show (FOUND reading the merge-5
+            # live run, MENSCH). A word that is a name as written ("BAFTA") still stands alone.
+            kept = [t for t in toks if [w for w in _name_words(t, drop) if _name_content(w)]]
+            if not (len(kept) == 1 and _written_as_name(kept[0])):
+                content = tuple(w for w in words if w not in _PLATFORMS and w not in _CALENDAR)
         if content and len(content) >= least and content not in names:
             names.append(content)
     for u in units:
-        add(u, 1)
+        add(u, 1, whole=True)
     # The dater's event text and the title also carry TOPICS ("about Llama 3, AI infrastructure"), so a
     # run of them is a name only with two words or more (FOUND in dating-vp34-20261005: an Ars Technica
     # story on the Llama 3 release passed as about Dwarkesh Patel's interview through "Llama").

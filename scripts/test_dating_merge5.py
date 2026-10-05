@@ -193,6 +193,26 @@ class Occasion(unittest.TestCase):
         self.assertIn(("pandomonthly",), DL.occasion_names(KP, {**kp_prop(), "event": "PandoMonthly fireside chat"},
                                                             KP_COMPANY))
 
+    def test_a_channel_cut_to_one_ordinary_word_keeps_its_generic_words(self):
+        """FOUND reading the merge-5 live run (MENSCH): the channel "Big Technology Podcast" gave the name
+        ('technology',), because "big" is a generic word, so any dated page naming Mensch and the word "technology"
+        would have passed as about this show. A unit cut to one ordinary word keeps its generic words."""
+        rec = {**KP, "yt_channel": "Big Technology Podcast"}
+        o = {**kp_prop(), "host_organization": None, "interviewer": None, "event": None}
+        names = DL.occasion_names(rec, o, KP_COMPANY)
+        self.assertIn(("big", "technology"), names)
+        self.assertNotIn(("technology",), names)
+        # A unit whose one remaining word is a name as written still stands alone ("BAFTA Special Award").
+        self.assertIn(("bafta",), DL.occasion_names({**rec, "yt_channel": "BAFTA Special Award"}, o, KP_COMPANY))
+        url = "https://news.example/2025/12/01/engines"
+        page = ("<html><head><title>Ada Lovelace on technology</title></head><body><p>December 1, 2025. Ada Lovelace "
+                "spoke about technology and engines at a trade fair.</p></body></html>")
+        s = src(url, "December 1, 2025. Ada Lovelace spoke about technology")
+        o.update(sources=[s], speech_date_earliest="2025-12-01", speech_date_latest="2025-12-01")
+        c = DL.check_source(s, rec, fetched(page, url), o)
+        ok, why = DL.confirms(c, o, rec, V5, company=KP_COMPANY)
+        self.assertFalse(ok, why)
+
     def test_a_long_run_cut_to_one_word_that_is_a_name_as_written_still_names_the_event(self):
         """FOUND replaying the pilot set after the fix above: 'PandoMonthly Fireside Chat With Elon Musk' is cut to
         'pandomonthly', and Wikipedia's Hyperloop citation 'PandoMonthly Presents: A Fireside Chat with Elon Musk

@@ -1020,8 +1020,28 @@ in-sample. Judged under merge-4 as it stood before those rules, the pairs pass 3
 and 6 of 7. Every served model was the one requested; Astra's is an unverified echo,
 and `fable_web`'s responses also name `claude-haiku-4-5`, which WebFetch uses.
 Recordings, logs and the per-repeat table are in the data repository under
-`predictions/_eval/cases-20261004-dating/`. The production daters were not changed;
-VD-11 is the operator's decision.
+`predictions/_eval/cases-20261004-dating/`. The production daters were not changed by
+this run. On 2026-10-05 the operator changed them to astra and fable_web.
+
+**Does merge-5 date the operator's cases live, with the production daters?**
+(2026-10-05) Mostly, and it confirmed no wrong date. Ten cases, three repeats each,
+astra and fable_web, with Fable's account picked per call by the quota router (no
+pin): the seven, Mensch, hs-2394 and control (ii). The cap was 60 calls and the run
+made 60: astra 30 ok, fable_web 30 ok, no failure. Every Fable call served
+`claude-fable-5-1`, verified from its telemetry, and every one also names
+`claude-haiku-4-5`, which WebFetch uses. Astra's `gpt-6-astra` is an unverified echo.
+The router picked `claude_d` for all 30 Fable calls. Astra searched 7.9 times per call
+(2 to 26) and Fable 13.6 times (4 to 20), with 15.9 page fetches. Judged by the code
+at `90a1c6b` plus the channel rule above, 9 of 10 cases pass: 22 repeats right, 5
+queued, the control held 3 of 3, none wrong and none a wider bound. OP7 queued all
+three. Astra answered 2025-12-04 each time from "two days ago" of a 2025-12-02 event,
+which is not a day word, from a page that does not name Tenev, with a quote that
+leaves out an "uh". Fable's floor page shows 2 December where its floor said 1
+December. hs-2394 passed 3 of 3 by the day word. That counts the sentence rule, which
+came from this run's third repeat, so that one repeat is in-sample. The workers' own
+verdicts, judged by the code at launch, give 2 of 3 for hs-2394 and agree on every
+other case. Recordings, logs and the table (`logs/live-table.txt`) are in
+`predictions/_eval/cases-20261005-merge5/` in the data repository.
 
 **Method notes worth inheriting.** Two of these nearly produced wrong answers,
 and both times the cause was the same: comparing against a moving target. The
@@ -1776,7 +1796,8 @@ new grades incomparable with the corpus already graded.
   roster's) never counts, and a page on the host's own domain names the host. A run
   that those rules cut down to one word is a name only when the word is a name as
   written ("PandoMonthly", "I/O", "SXSW", "D11", never "Mind"), and a platform, month or
-  weekday is never a name. FOUND:
+  weekday is never a name. A host or channel cut to one ordinary word keeps its generic
+  words: "Big Technology Podcast" needs "big" and "technology". FOUND:
   a casino.org article on Robinhood "dated" the Tenev podcast (OP7 r01), and a Big
   Technology post that never names Mensch dated `arthur-mensch/alex-kantrowitz-xxutdy`.
   (b) A yearless month or month-day counts when the same page shows its publication
@@ -1815,7 +1836,7 @@ new grades incomparable with the corpus already graded.
   earliest day moves on 3); most lost pages do not name the speaker (event schedules,
   press releases, Wikipedia pages on a product), and several are about another
   occasion. 119 stored proposals in 79 transcripts use a day word; 3 pin a day, each
-  the day merge-4 had confirmed. Proof: `scripts/test_dating_merge5.py`, whose 54 tests
+  the day merge-4 had confirmed. Proof: `scripts/test_dating_merge5.py`, whose 55 tests
   all fail on the code before merge-5.
 - Tier R case evals: `scripts/eval_prediction_cases.py --gold
   data/predictions/_eval/cases-20260929` replays the operator's audited cases
