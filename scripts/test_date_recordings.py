@@ -354,6 +354,30 @@ class TwoDaters(unittest.TestCase):
             self.assertEqual(report["merge"]["missing_proposals"], {"ada/re-upload-abc123": ["fable"]})
             self.assertIn("waiting for fable: 1", out)
 
+    def test_each_dater_rotates_its_own_accounts_across_transcripts(self):
+        """FOUND 2026-10-05 in dating-merge5-20261005a: every Astra call went to the first Codex home.
+
+        The call index was i * len(daters) + k, so with two daters Astra (k=0) only ever got even
+        numbers, and homes[idx % 2] never reached the second home; the same parity pinned a
+        --fable-config-dir rotation. Each dater's calls must count transcripts, so its own
+        rotation alternates."""
+        with tempfile.TemporaryDirectory() as td:
+            fx = Fixture(Path(td))
+            seen = []
+
+            class Recording(FakeAgent):
+                def __call__(self, harness, prompt, timeout, workdir, args, idx):
+                    seen.append((harness, idx))
+                    return super().__call__(harness, prompt, timeout, workdir, args, idx)
+            agent = Recording({"ada/re-upload-abc123": proposal(**CANNOT), "ada/pod-ep-xyz789": proposal(**CANNOT),
+                               "ada/held-ep": proposal(**CANNOT)})
+            rc, out = run(fx.argv("--run", "--harness", "astra,fable_web", "--workers", "1"), agent, FakeWeb({}))
+            for h in ("astra", "fable_web"):
+                idxs = sorted(i for hh, i in seen if hh == h)
+                self.assertEqual(len(idxs), 3, (h, seen))
+                self.assertEqual({i % 2 for i in idxs}, {0, 1},
+                                 f"{h}'s calls never reach a second account: indexes {idxs}")
+
     def test_an_unknown_or_repeated_dater_is_refused(self):
         with tempfile.TemporaryDirectory() as td:
             fx = Fixture(Path(td))

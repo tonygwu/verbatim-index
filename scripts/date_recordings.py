@@ -886,8 +886,12 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
 
     if "propose" in stages:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futs = [ex.submit(propose_one, j, h, args, run_dir, run_id, caller, i * len(hs) + k)
-                    for i, j in enumerate(jobs) for k, h in enumerate(hs)]
+            # The index is the transcript's, so each dater's own account rotation (Codex homes,
+            # pinned Fable dirs, Gemini profiles) alternates across transcripts. It was
+            # i * len(hs) + k, which with two daters gave Astra only even numbers and sent every
+            # Astra call to the first Codex home (found 2026-10-05, dating-merge5-20261005a).
+            futs = [ex.submit(propose_one, j, h, args, run_dir, run_id, caller, i)
+                    for i, j in enumerate(jobs) for h in hs]
             for f in cf.as_completed(futs):
                 r = f.result()
                 results.append(r)
