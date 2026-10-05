@@ -41,9 +41,12 @@ Three stages, run in order by default:
 THE DATERS (--harness, comma-separated). Production uses both, gemini,fable, the
 default (VD-11). Gemini has live web search; Fable in this harness has
 NO working web tools, so its proposal comes from memory, and the page check applies to it
-exactly as to any other. Astra (web search) on request. A single-dater run, such
-as --harness gemini, is the one-agent rule of VD-8 (c): its entries load and
-re-verify like any other, but production dating uses both daters.
+exactly as to any other. Astra (web search) on request, rotating over --codex-home.
+fable_web (2026-10-04, on request, not a production default) is Fable with exactly
+WebSearch and WebFetch, under sandbox-exec, through call_fable_web: never the judge
+harness. A single-dater run, such as --harness gemini, is the one-agent rule of
+VD-8 (c): its entries load and re-verify like any other, but production dating uses
+both daters. A new run's entries name merge-4 (dating_lib.MERGE_VERSION).
 
 Dry run by default: prints the scope and what a run would spend, writes nothing.
 --run spends quota and says so first.
@@ -60,7 +63,9 @@ import hashlib
 import json
 import os
 import random
+import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -221,18 +226,171 @@ def call_agent(harness: str, prompt: str, timeout: int, workdir: Path, args, idx
                                   binary=args.agy_bin)
         return text, tel, tel.get("profile_identity")
     if harness == "astra":
+        homes = codex_homes(args)
+        home = homes[idx % len(homes)]
         text, tel = G.call_astra(prompt, timeout, workdir, model=args.astra_model,
-                                 config_dir=args.codex_home or None)
-        return text, {**tel, "served_model_verified": False}, G.account_label(args.codex_home or "__DEFAULT__")
-    if harness == "fable":
+                                 config_dir=None if home == "__DEFAULT__" else home)
+        return text, {**tel, "served_model_verified": False}, G.account_label(home)
+    if harness in ("fable", "fable_web"):
         dirs = fable_dirs(args)
         cfg = dirs[idx % len(dirs)]
-        text, tel = G.call_fable(prompt, cfg, timeout, binary=args.fable_bin, workdir=str(workdir))
+        call = G.call_fable if harness == "fable" else call_fable_web
+        text, tel = call(prompt, cfg, timeout, binary=args.fable_bin, workdir=str(workdir))
         return text, {**tel, "served_model": tel.get("judge_model"), "served_model_verified": True}, G.account_label(cfg)
     raise RuntimeError(f"cli_nonzero_exit: unknown harness {harness}")
 
 
-HARNESSES = ("gemini", "astra", "fable")
+HARNESSES = ("gemini", "astra", "fable", "fable_web")
+
+
+def codex_homes(args) -> list[str]:
+    """The Codex homes Astra calls rotate over, in order; the caller's environment when none is named."""
+    if not args.codex_home:
+        return ["__DEFAULT__"]
+    homes = [d.strip() for d in args.codex_home.split(",")]
+    if any(not d for d in homes):
+        raise SystemExit(f"--codex-home {args.codex_home!r} has an empty entry")
+    return homes
+
+
+# ---------------------------------------------------------------------------
+# Fable with web search, for DATING only (coordinator, 2026-10-04)
+# ---------------------------------------------------------------------------
+#
+# The operator wants every dating model to have web search. The Fable dater has run
+# through grade.call_fable, the JUDGE harness, where every tool is denied, so it
+# answered from memory. This is a separate, dating-only harness: raw `claude -p`
+# (never `cl`, never --dangerously-skip-permissions, which would hand the model this
+# repository), with exactly two built-in tools, WebSearch and WebFetch, both named in
+# --tools (what exists) and --allowedTools (what runs unasked), and --permission-prompts
+# none for anything else. It runs under sandbox-exec, which denies every read and write
+# under the verbatim-index container, the data checkout and this checkout, in a
+# working directory outside all three. The judge harness, and the outcome-blind Fable
+# prior and lead-test stages, are untouched.
+FABLE_WEB_TOOLS = ("WebSearch", "WebFetch")
+# A backstop, not the budget: the prompt asks for at most 20 searches and 20 page opens.
+# FOUND in the pilot of 2026-10-04 (michael-dell/citi-z30abb): with no budget in the prompt
+# and 40 turns, Fable made 53 searches and 55 fetches in 22 minutes and ran out of turns
+# without an answer.
+FABLE_WEB_MAX_TURNS = 80
+E_TURN_BUDGET = "turn_budget_exhausted"
+
+
+def fable_web_command(prompt: str, binary: str) -> list[str]:
+    """The dating Fable-with-web invocation, in one place so the test checks the real argv."""
+    if Path(binary).name == "cl":
+        raise RuntimeError("cli_nonzero_exit: REFUSING the cl launcher: it injects --dangerously-skip-permissions")
+    tools = ",".join(FABLE_WEB_TOOLS)
+    return [binary, "-p", prompt, "--model", "claude-fable-5-1", "--effort", "max", "--output-format", "json",
+            "--tools", tools, "--allowedTools", tools, "--permission-prompts", "none",
+            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "",
+            "--max-turns", str(FABLE_WEB_MAX_TURNS)]
+
+
+def sandbox_roots(repo: Path | None = None, data: Path | None = None) -> list[Path]:
+    """The directories the dating Fable-with-web call may neither read nor write.
+
+    This checkout, its data checkout, and the verbatim-index container above them
+    (found by name, so a clone, a .data-clones checkout and a worktree under
+    .claude/worktrees all resolve to it). A root inside another is dropped.
+    """
+    repo = (repo or L.REPO).resolve()
+    data = (data or L.data_root()).resolve()
+    roots = {repo, data}
+    for anc in [repo, *repo.parents]:
+        if anc.name == "verbatim-index":
+            roots.add(anc)
+            break
+    return sorted(r for r in roots if not any(o != r and o in r.parents for o in roots))
+
+
+def sandbox_profile(roots: list[Path]) -> str:
+    rules = "".join(f'(deny file-read* (subpath "{r}"))(deny file-write* (subpath "{r}"))' for r in roots)
+    return f"(version 1)(allow default){rules}"
+
+
+_INPUT_FIELD = {"WebSearch": re.compile(r'"query":\s*"((?:[^"\\]|\\.)*)'),
+                "WebFetch": re.compile(r'"url":\s*"((?:[^"\\]|\\.)*)')}
+
+
+def web_tool_audit(calls: list[dict]) -> dict:
+    """Counts of the web calls one session made, and every call to anything else, which must be none.
+
+    grade.fable_transcript_tool_calls keeps each call's input as JSON cut at 200
+    characters, so the query or URL is read with a pattern, never json.loads.
+    """
+    names = [c.get("tool") for c in calls]
+
+    def field(tool):
+        return [(m.group(1) if (m := _INPUT_FIELD[tool].search(c.get("input") or "")) else c.get("input"))
+                for c in calls if c.get("tool") == tool]
+    return {"web_searches": names.count("WebSearch"), "web_fetches": names.count("WebFetch"),
+            "web_search_queries": field("WebSearch"), "fetched_urls": field("WebFetch"),
+            "denied_or_failed": sum(1 for c in calls if c.get("is_error")),
+            "other_tools": sorted({n for n in names if n not in FABLE_WEB_TOOLS})}
+
+
+def call_fable_web(prompt: str, config_dir: str, timeout: int, binary: str = "claude",
+                   workdir: str | None = None, runner=None) -> tuple[str, dict]:
+    """One dating call to Fable with WebSearch and WebFetch only. Returns (text, telemetry), or raises with a label.
+
+    The served model is read from the response's modelUsage, which must name a Fable
+    model; every model it names is kept in telemetry_models, because WebFetch may hand
+    a page to a smaller model to read. The session transcript is the evidence of tool
+    use (the JSON result is not; see grade.fable_transcript_tool_calls): a call to any
+    tool but the two fails as judge_attempted_tool_use, and a missing transcript as
+    tool_audit_unavailable, never as a clean answer.
+    """
+    import grade as G  # noqa: PLC0415 -- the harness module is heavy and only a real run needs it
+    env = dict(os.environ)
+    if config_dir == "__DEFAULT__":
+        env.pop("CLAUDE_CONFIG_DIR", None)
+    else:
+        env["CLAUDE_CONFIG_DIR"] = config_dir
+    jail = Path(workdir) if workdir else Path(os.environ.get("TMPDIR", "/tmp")) / "dating-fable-web"
+    roots = sandbox_roots()
+    # Checked before anything is created: a refused directory is never made inside a denied root.
+    if any(r == jail.resolve() or r in jail.resolve().parents for r in roots):
+        raise RuntimeError(f"{G.E_CLI}: the working directory {jail} is inside a denied root {roots}")
+    jail.mkdir(parents=True, exist_ok=True)
+    cmd = ["sandbox-exec", "-p", sandbox_profile(roots), *fable_web_command(prompt, binary)]
+    run = runner or subprocess.run
+    proc = run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(jail),
+               stdin=subprocess.DEVNULL)
+    if proc.returncode != 0:
+        etype, detail = G.classify_cli_failure(proc.returncode, proc.stdout, proc.stderr)
+        if etype == G.E_TOOL_ATTEMPT:
+            # grade's label means "a judge reached for a tool"; here the tools are allowed, so a
+            # stop on tool_use means the turn budget ran out mid-research, with no answer.
+            raise RuntimeError(f"{E_TURN_BUDGET}: the dating Fable was still searching when its "
+                               f"{FABLE_WEB_MAX_TURNS}-turn budget ended the run ({detail})")
+        raise RuntimeError(detail)
+    payload = json.loads(proc.stdout)
+    if payload.get("is_error"):
+        raise RuntimeError(f"{G.E_CLI}: {str(payload.get('result'))[:400]}")
+    used = payload.get("modelUsage") or {}
+    fable = [m for m in used if "fable" in m.lower()]
+    if not fable:
+        raise RuntimeError(f"{G.E_MODEL_MISMATCH}: telemetry names {list(used)} with no Fable model")
+    calls = G.fable_transcript_tool_calls(config_dir, payload.get("session_id"))
+    if calls is None:
+        raise RuntimeError(f"{G.E_NO_TRANSCRIPT}: no session transcript for {payload.get('session_id')!r} under "
+                           f"{config_dir}, so the web calls cannot be counted")
+    audit = web_tool_audit(calls)
+    if audit["other_tools"]:
+        raise RuntimeError(f"{G.E_TOOL_ATTEMPT}: the dating Fable called {audit['other_tools']} with only "
+                           f"{list(FABLE_WEB_TOOLS)} allowed")
+    tel = {"harness": f"{binary} -p (dating, web)", "requested_model": "claude-fable-5-1",
+           "telemetry_models": list(used), "judge_model": fable[0],
+           "canonical_model": used[fable[0]].get("canonicalModel"), "effort": "max", "config_dir": config_dir,
+           "cost_usd": payload.get("total_cost_usd"), "duration_ms": payload.get("duration_ms"),
+           "num_turns": payload.get("num_turns"), "session_id": payload.get("session_id"),
+           "input_tokens": used[fable[0]].get("inputTokens"), "output_tokens": used[fable[0]].get("outputTokens"),
+           "server_web_search_requests": ((payload.get("usage") or {}).get("server_tool_use") or {})
+           .get("web_search_requests"),
+           "tool_use_counts": {"WebSearch": audit["web_searches"], "WebFetch": audit["web_fetches"]},
+           **audit, "sandbox_denied_roots": [str(r) for r in roots]}
+    return payload.get("result") or "", tel
 
 
 def previous_stamps(run_dir: Path) -> dict:
@@ -281,7 +439,8 @@ def daters(args) -> list[str]:
 
 
 def requested_model(args, harness: str) -> str:
-    return {"gemini": args.gemini_model, "astra": args.astra_model, "fable": "claude-fable-5-1"}[harness]
+    return {"gemini": args.gemini_model, "astra": args.astra_model, "fable": "claude-fable-5-1",
+            "fable_web": "claude-fable-5-1"}[harness]
 
 
 def proposal_path(run_dir: Path, tid: str, harness: str) -> Path:
@@ -480,7 +639,7 @@ def check_one(tid: str, harness: str, rec: dict, doc_path: Path, run_dir: Path, 
     checks = []
     for src in prop["sources"]:
         why = DL.own_page_reason(src["url"], rec)
-        checks.append(DL.refused_check(src, why) if why else DL.check_source(src, rec, fetcher.fetch(src["url"])))
+        checks.append(DL.refused_check(src, why) if why else DL.check_source(src, rec, fetcher.fetch(src["url"]), prop))
     write(dest, json.dumps({"schema_version": 1, "transcript_id": tid, "proposal_sha256": sha, "checks": checks,
                             "checked_at_utc": DL.utc_stamp()}, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
     return {**base, "status": "ok", "fetched": sum(c["fetched"] for c in checks),
@@ -512,7 +671,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "reads them all. Default gemini,fable (operator decision VD-11, 2026-10-01): gemini has web "
                          "search; fable has NO working web tools in this harness, so its proposal comes from memory, "
                          "and every excerpt it cites must still pass the same page check as any other. astra (web "
-                         "search) on request. One name runs one dater")
+                         "search) and fable_web (Fable with WebSearch and WebFetch only, sandboxed) on request. One "
+                         "name runs one dater")
     ap.add_argument("--data-root", type=Path, default=None,
                     help="the data checkout the run belongs to; default this clone's data link. The run directory "
                          "must be <data-root>/predictions/_experiments/dating-<name>")
@@ -529,7 +689,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--gemini-model", default=GEMINI_MODEL)
     ap.add_argument("--agy-bin", default="agy")
     ap.add_argument("--astra-model", default="gpt-6-astra")
-    ap.add_argument("--codex-home", default=None)
+    ap.add_argument("--codex-home", default=None,
+                    help="comma-separated Codex homes; Astra calls rotate over them in order. With none, the "
+                         "caller's CODEX_HOME")
     ap.add_argument("--fable-bin", default="claude")
     ap.add_argument("--fable-config-dir", default=None,
                     help="comma-separated Claude config dirs; Fable calls rotate over them in order. "

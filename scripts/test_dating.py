@@ -224,7 +224,12 @@ class ReviewOwnPage(unittest.TestCase):
         self.assertRegex(why, "embeds|upload")
 
     def test_an_embed_far_from_the_excerpt_still_refuses_the_page(self):
-        """The window is 1,000 characters each side; the page-level flag sees an embed outside it."""
+        """The window is 1,000 characters each side; the page-level flag sees an embed outside it.
+
+        merge-3's rule, pinned here because production holds entries confirmed under it. merge-4
+        lets such a page confirm a day before the upload (finding a of 2026-10-04); that and its
+        upload-day control are in test_dating_operator_rules.py.
+        """
         page = ('<html><body><iframe src="https://www.youtube.com/embed/vid0000000A"></iframe>' + "<p>filler</p>" * 400
                 + "<p>Ada talked on May 30, 2012 at the DX conference</p></body></html>")
         src = {"url": "https://someblog.example/ada-dx", "publisher": "blog", "date_on_source": None,
@@ -232,7 +237,7 @@ class ReviewOwnPage(unittest.TestCase):
         c = DL.check_source(src, D10, {"status": 200, "final_url": src["url"], "body": page.encode(), "via": "direct",
                                        "error": None})
         self.assertNotIn("vid0000000A", c["window"])
-        ok, why = DL.confirms(c, proposal(sources=[src]), D10)
+        ok, why = DL.confirms(c, proposal(sources=[src]), D10, "merge-3")
         self.assertFalse(ok)
         self.assertIn("embeds the recording's own video", why)
 
@@ -411,11 +416,16 @@ class Merge(unittest.TestCase):
         self.assertIn("no source confirms it", line)
 
     def test_transcript_evidence_must_be_in_the_transcript(self):
+        """merge-3 queues a proposal whose transcript words are not in the transcript. merge-4 drops the words and
+        lets the page confirm, never citing them (test_dating_operator_rules.TranscriptWords)."""
         obj = proposal(transcript_evidence="welcome to the tenth DX conference here")
         self.assertEqual(DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES))["outcome"], "override")
         obj = proposal(transcript_evidence="welcome to the eleventh DX conference here")
-        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES))
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES), version="merge-3")
         self.assertEqual((out["outcome"], out["reason"]), ("queue", "transcript_evidence_not_found"))
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES), version="merge-4")
+        self.assertEqual(out["outcome"], "override")
+        self.assertNotIn("internal_evidence", out["entry"])
 
     def test_an_invalid_proposal_is_queued_with_its_errors(self):
         obj = proposal(e="2012-06-01", l="2012-05-30")

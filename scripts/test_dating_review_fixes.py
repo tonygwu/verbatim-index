@@ -77,10 +77,11 @@ class TierZeroNeverCrashes(unittest.TestCase):
         from test_dating import LIVEBLOG  # noqa: PLC0415
         real = DL.merge
 
-        def flaky(rec, docs, checks_by, refs=None, run_rel=None):
+        def flaky(rec, docs, checks_by, refs=None, run_rel=None, **kw):
+            # **kw: the loader passes the version an entry names (merge-4, 2026-10-04).
             if rec["source_id"] == "pod-ep-xyz789":
                 raise IndexError("list index out of range")
-            return real(rec, docs, checks_by, refs, run_rel)
+            return real(rec, docs, checks_by, refs, run_rel, **kw)
         with tempfile.TemporaryDirectory() as td:
             fx = Fixture(Path(td))
             agent = FakeAgent({"ada/re-upload-abc123": proposal(), "ada/pod-ep-xyz789": proposal(tid="ada/pod-ep-xyz789"),
