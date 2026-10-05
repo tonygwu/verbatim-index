@@ -416,11 +416,16 @@ class Merge(unittest.TestCase):
         self.assertIn("no source confirms it", line)
 
     def test_transcript_evidence_must_be_in_the_transcript(self):
+        """merge-3 queues a proposal whose transcript words are not in the transcript. merge-4 drops the words and
+        lets the page confirm, never citing them (test_dating_operator_rules.TranscriptWords)."""
         obj = proposal(transcript_evidence="welcome to the tenth DX conference here")
         self.assertEqual(DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES))["outcome"], "override")
         obj = proposal(transcript_evidence="welcome to the eleventh DX conference here")
-        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES))
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES), version="merge-3")
         self.assertEqual((out["outcome"], out["reason"]), ("queue", "transcript_evidence_not_found"))
+        out = DL.merge_one(D10, doc_for(obj), checks_for(obj, self.PAGES), version="merge-4")
+        self.assertEqual(out["outcome"], "override")
+        self.assertNotIn("internal_evidence", out["entry"])
 
     def test_an_invalid_proposal_is_queued_with_its_errors(self):
         obj = proposal(e="2012-06-01", l="2012-05-30")

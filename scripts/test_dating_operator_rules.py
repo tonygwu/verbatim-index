@@ -422,6 +422,72 @@ class Refine(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# From the live run of 2026-10-04: transcript words, and a UTC ceiling
+# ---------------------------------------------------------------------------
+
+class TranscriptWords(unittest.TestCase):
+    """Gemini dated michael-dell/citi-z30abb to Citi's own page and misspelled a name in its transcript
+    quote; Fable with web tools joined three exact passages of bill-gates/khosla-ventures-8bosqk with '...'.
+    merge-3 discarded both right dates."""
+
+    def test_a_misquoted_transcript_line_no_longer_discards_a_page_confirmed_date(self):
+        obj = khosla_prop()
+        obj["transcript_evidence"] = "when I first heard about this from Brad Gersonner"
+        page = SUMMIT.replace('<iframe src="https://www.youtube.com/embed/vidKHOSLA01"></iframe>', "")
+        out3 = merged(KHOSLA, {"gemini": obj}, {SUMMIT_URL: page}, V3)
+        self.assertEqual((out3["outcome"], out3["reason"]), ("queue", "transcript_evidence_not_found"))
+        out4 = merged(KHOSLA, {"gemini": obj}, {SUMMIT_URL: page}, V4)
+        self.assertEqual((out4["outcome"], out4["entry"]["statement_date"]), ("override", "2012-05-21"), out4)
+        self.assertNotIn("internal_evidence", out4["entry"])          # the misquote is never cited
+
+    def test_a_misquoted_proposal_takes_no_part_in_an_agreement_or_in_r1(self):
+        bad = proposal(sources=[src("https://gone.example/x", "Ada at DX on May 30, 2012 in full")],
+                       transcript_evidence="words that are nowhere in it at all")
+        good = proposal(sources=[src("https://gone.example/x", "Ada at DX on May 30, 2012 in full")])
+        out = merged(D10, {"gemini": good, "fable": bad}, {"https://gone.example/x": "<html>moved</html>"}, V4)
+        self.assertEqual(out["outcome"], "queue", out)
+        self.assertEqual(out["by_dater"], {"gemini": "no_confirming_source", "fable": "transcript_evidence_not_found"})
+        a = DL.assess(D10, doc(bad, D10), [], V4)
+        self.assertFalse(a["eligible"])
+
+    def test_words_joined_with_an_ellipsis_are_found_fragment_by_fragment(self):
+        rec = {**D10, "text": "[00:00:01] when that changed in 2008 basically four years ago I got some extra time "
+                              "and one of our speakers tomorrow is Dan Gardner who wrote a book"}
+        te = "when that changed in 2008, basically four years ago ... one of our speakers tomorrow is Dan Gardner"
+        self.assertFalse(DL.transcript_evidence_found(rec, te, V3))
+        self.assertTrue(DL.transcript_evidence_found(rec, te, V4))
+        self.assertFalse(DL.transcript_evidence_found(rec, te.replace("Dan Gardner", "Ann Gardner"), V4))
+        self.assertFalse(DL.transcript_evidence_found(rec, "nowhere ... at all", V4))
+
+
+class UtcCeiling(unittest.TestCase):
+    """A publication timestamp may ceil a 'dated' range of days; it still never dates a speech day."""
+
+    def grey_dated(self, e="2021-02-02"):
+        obj = grey_prop()
+        obj.update(verdict="dated", speech_date_earliest=e)
+        return obj
+
+    def test_a_utc_publication_stamp_shows_the_last_day_of_a_dated_range(self):
+        obj = self.grey_dated()
+        c = DL.check_source(obj["sources"][0], GREYLOCK, fetched(GREY_PAGE, GREY_URL), obj)
+        ok3, why3 = DL.confirms(c, obj, GREYLOCK, V3)
+        self.assertFalse(ok3)
+        ok4, why4 = DL.confirms(c, obj, GREYLOCK, V4)
+        self.assertTrue(ok4, why4)
+        out = merged(GREYLOCK, {"gemini": obj}, {GREY_URL: GREY_PAGE}, V4)
+        self.assertEqual((out["outcome"], out["entry"]["statement_date_earliest"], out["entry"]["statement_date"]),
+                         ("override", "2021-02-02", "2021-03-02"), out)
+
+    def test_it_never_dates_a_single_day_of_speech(self):
+        obj = self.grey_dated(e="2021-03-02")
+        c = DL.check_source(obj["sources"][0], GREYLOCK, fetched(GREY_PAGE, GREY_URL), obj)
+        ok, why = DL.confirms(c, obj, GREYLOCK, V4)
+        self.assertFalse(ok)
+        self.assertIn("UTC timestamps", why)
+
+
+# ---------------------------------------------------------------------------
 # (d) bounds
 # ---------------------------------------------------------------------------
 

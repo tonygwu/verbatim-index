@@ -73,6 +73,9 @@ import predictions_lib as L  # noqa: E402
 #   (f) a day confirmed inside another dater's wider confirmed range refines it; it is not a
 #       disagreement;
 #       and a proposal's own floors and ceilings ("bounds") must hold its range.
+#   From the live run of the same day: a UTC publication stamp may show the LAST day of a
+#   range of days (a ceiling); transcript words the agent did not copy exactly are dropped
+#   rather than discarding a page-confirmed proposal, and "A ... B" is read as fragments.
 # merge-3 stays re-runnable: production holds entries that name it, and the loader re-merges each
 # entry with the version it names (verify_agent_entry). A new run writes MERGE_VERSION.
 MERGE_VERSION = "merge-4"
@@ -117,7 +120,9 @@ RULE_V4 = ("statement_date is the latest day of the agent's range; the range is 
            "(cited, a relative date read against the upload date, or its one full day: Tier 0); a page that embeds "
            "the recording counts only for a date before the upload; a date-only excerpt counts only beside the "
            "speaker and the host, interviewer or event; a confirming source must show the latest day; a day "
-           "confirmed inside another dater's wider confirmed range refines it")
+           "confirmed inside another dater's wider confirmed range refines it; a UTC publication stamp may "
+           "show the last day of a range of days; transcript words not in the transcript are dropped, and that "
+           "proposal takes no part in an agreement or in rule R1")
 RULES = {"merge-3": RULE_V3, "merge-4": RULE_V4}
 RULE = RULES[MERGE_VERSION]
 
@@ -666,7 +671,19 @@ def _hit_confirms(window: str, hit: tuple[int, int], check: dict, prop: dict, re
     found = dates_in_text(span)
     if not found:
         return False, f"the excerpt carries no date with a year: {span[:80]!r}", []
-    usable = [r for r in (date_for_verdict(d, prop["verdict"]) for d in found) if r is not None]
+    usable = []
+    for d in found:
+        r = date_for_verdict(d, prop["verdict"])
+        # A UTC timestamp cannot give a speech's local day, but it can CEIL a range: a page
+        # published at that instant was written after the words. So for a "dated" range of
+        # more than one day it may show the LAST day, read in UTC, as a publication is
+        # (FOUND 2026-10-04: Gemini dated dara-khosrowshahi/greylock-fhxo7v as February 2 to
+        # March 2, 2021, with Greylock's datePublished 2021-03-02T18:02:42+00:00 as the ceiling).
+        if r is None and d.get("utc_stamp") and prop["verdict"] == "dated" and e < lat \
+                and d["utc_lo"] == d["utc_hi"] == lat:
+            r = (d["utc_lo"], d["utc_hi"])
+        if r is not None:
+            usable.append(r)
     if not usable:
         return False, (f"the excerpt's only dates are UTC timestamps, which cannot give the venue's day for a "
                        f"speech: {[d['text'] for d in found]} ({ZONE_RULE})"), []
@@ -1468,6 +1485,29 @@ def leads_from_records(records: list[dict], meta: dict | None) -> tuple[list[str
 # The merge of one proposal (MERGE_VERSION)
 # ---------------------------------------------------------------------------
 
+_ELLIPSIS = re.compile(r"\s*(?:\.\.\.|…)\s*")
+
+
+def transcript_evidence_found(rec: dict, te: str, version: str = MERGE_VERSION) -> bool:
+    """Are the agent's transcript words in the transcript? merge-3: as one quote. merge-4 also: as fragments.
+
+    merge-4 reads words an agent joined with an ellipsis ("A ... B ... C") as separate
+    quotes, each of at least three words, and finds every one (FOUND 2026-10-04: Fable with
+    web tools joined three exact passages of bill-gates/khosla-ventures-8bosqk with "...").
+    """
+    text = rec.get("text") or ""
+
+    def found(q: str) -> bool:
+        r = L.locate_quote(text, q)
+        return not ("error" in r and r["error"] in ("not_found", "empty_quote"))
+    if found(te):
+        return True
+    if merge_rank(version) < 4:
+        return False
+    parts = [p for p in _ELLIPSIS.split(te) if len(L.normalise(p).split()) >= 3]
+    return len(parts) > 1 and all(found(p) for p in parts)
+
+
 def strong_years(rec: dict) -> set[int]:
     """Years a title or a source id names, no later than the upload: statement_date_evidence's STRONG signals."""
     import statement_date_evidence as SDE  # noqa: PLC0415
@@ -1526,10 +1566,17 @@ def assess(rec: dict, doc: dict, checks: list[dict], version: str = MERGE_VERSIO
         return queued("after_upper_bound", f"the range ends {lat}, after {what}, {bound}; the words cannot have "
                                            f"been spoken after that")
     te = prop.get("transcript_evidence")
-    if te and "error" in L.locate_quote(rec.get("text") or "", te) and \
-            L.locate_quote(rec.get("text") or "", te)["error"] in ("not_found", "empty_quote"):
-        return queued("transcript_evidence_not_found", f"{te[:200]!r} is not in the transcript")
-    out["eligible"] = True
+    if te and not transcript_evidence_found(rec, te, version):
+        if merge_rank(version) < 4:
+            return queued("transcript_evidence_not_found", f"{te[:200]!r} is not in the transcript")
+        # merge-4: the words are dropped and never cited. The proposal may still be confirmed by
+        # its own page or description, but it is not eligible: it takes no part in an
+        # agreement, and it contradicts nothing under rule R1. FOUND in the live run of
+        # 2026-10-04: Gemini dated michael-dell/citi-z30abb to Citi's own page and misspelled one
+        # name in its transcript quote, and merge-3 discarded the right date for it.
+        out["te_dropped"] = te
+    else:
+        out["eligible"] = True
     # A check counts only for a url AND excerpt the proposal itself cited (review item 10), so
     # neither a stray check nor one swapped in later can confirm, at merge or at load.
     # Description checks are DERIVED here from the transcript, never taken as input: a
@@ -1556,6 +1603,11 @@ def assess(rec: dict, doc: dict, checks: list[dict], version: str = MERGE_VERSIO
         else:
             reasons.append(f"description, Tier 0: {why if day is None else f'its one day {day} is outside the range {e}..{lat}'}")
     if not good:
+        if out.get("te_dropped"):
+            # Nothing confirmed, so the queue says what merge-3 said first, then every check's reason.
+            return queued("transcript_evidence_not_found", f"{te[:200]!r} is not in the transcript; "
+                          + ("; ".join(reasons) or "no source was checked"),
+                          [dict(c) for c in pages] + ([desc] if desc else []))
         return queued("no_confirming_source", "; ".join(reasons) or "no source was checked",
                       [dict(c) for c in pages] + ([desc] if desc else []))
     # The statement date is the LAST day of the range, so a source must show that day
@@ -1747,7 +1799,8 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
             # A description lives on the recording's own page, so that page is its address.
             {"source_url": rec["url"] if desc else first["url"],
              "verbatim_evidence": first["span"] if desc else first["page_span"]}, L.AGENT_CONFIRMATION,
-            any(a == date.fromisoformat(e) for a, _ in lead["spans"]), prop.get("transcript_evidence"),
+            any(a == date.fromisoformat(e) for a, _ in lead["spans"]),
+            None if lead.get("te_dropped") else prop.get("transcript_evidence"),
             {"method": METHOD, "rule": rule, "run": run_rel, "lead": lead["harness"], "proposals": proposals,
              "source_checks": [_check_record(c, a["harness"]) for a in confirmed for c in a["good"]],
              **({"refines": refined} if refined else {})}, version=version))
