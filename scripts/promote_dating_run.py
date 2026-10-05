@@ -22,6 +22,9 @@ proposal in another run passed every rule before the source checks
 is the merge's own R1, applied across runs. A held entry stays in its run's file
 for a person; it is never promoted and never silently dropped.
 
+--hold-file holds named entries for a person's review the same way: reported HELD, never
+promoted, left in the run's file.
+
 Both merged files are loaded back through the production loaders, which re-verify
 every agent entry from its run's stored proposals, before either file is replaced.
 Dry run by default; --apply writes.
@@ -86,13 +89,17 @@ def r1_against(tid: str, day: str, rec: dict, others: list[Path]) -> list[str]:
     return out
 
 
-def plan(run_dir: Path, data: Path, against: list[Path] | None = None) -> dict:
+def plan(run_dir: Path, data: Path, against: list[Path] | None = None, hold: dict | None = None) -> dict:
     """What a promotion would do, or SystemExit naming every conflict. Writes nothing."""
     roots = [data / d for d in L.TRANSCRIPT_DIRS]
     run = {"overrides": L.load_statement_date_overrides(run_dir / "overrides.json", roots),
            "checks": L.load_statement_date_checks(run_dir / "checks.json", roots)}
     paths = {"overrides": data / L.DATE_OVERRIDES_FILE, "checks": data / L.DATE_CHECKS_FILE}
     prod = {k: _read(p, k) for k, p in paths.items()}
+    hold = hold or {}
+    unknown = sorted(set(hold) - set(run["overrides"]) - set(run["checks"]))
+    if unknown:
+        raise SystemExit(f"--hold-file names {unknown}, which this run does not date; nothing written")
     both = set(run["overrides"]) & set(run["checks"])
     if both:
         raise SystemExit(f"the run dates {sorted(both)} in both its overrides and its checks; one date source per "
@@ -101,6 +108,9 @@ def plan(run_dir: Path, data: Path, against: list[Path] | None = None) -> dict:
     held = {}
     for kind, other in (("overrides", "checks"), ("checks", "overrides")):
         for tid, e in run[kind].items():
+            if tid in hold:
+                held[tid] = f"{kind[:-1]} {e['statement_date']}: held for review: {hold[tid]}"
+                continue
             why = r1_against(tid, e["statement_date"], _transcript(tid, roots), against or [])
             if why:
                 held[tid] = f"{kind[:-1]} {e['statement_date']}: " + "; ".join(why)
@@ -162,6 +172,9 @@ def main(argv=None) -> int:
     ap.add_argument("--data-root", type=Path, default=None, help="default: this clone's data/")
     ap.add_argument("--against", type=Path, action="append", default=[],
                     help="another dating run whose eligible proposals an entry must not contradict (rule R1)")
+    ap.add_argument("--hold-file", type=Path, default=None,
+                    help="a JSON object {transcript_id: reason}: entries a person holds for review, reported HELD and "
+                         "never promoted (for example two-dater agreements when only source-checked dates may go)")
     ap.add_argument("--apply", action="store_true", help="write the production files; without it, report only")
     args = ap.parse_args(argv)
     data = (args.data_root or L.data_root()).resolve()
@@ -172,12 +185,15 @@ def main(argv=None) -> int:
     for o in args.against:
         if not (o / "proposals").is_dir():
             raise SystemExit(f"--against {o}: no proposals/ directory, so it is not a dating run")
-    p = plan(run_dir, data, [o.resolve() for o in args.against])
+    hold = json.loads(args.hold_file.read_text()) if args.hold_file else {}
+    if not isinstance(hold, dict) or not all(isinstance(v, str) and v for v in hold.values()):
+        raise SystemExit(f"--hold-file {args.hold_file}: want a JSON object of transcript id -> non-empty reason")
+    p = plan(run_dir, data, [o.resolve() for o in args.against], hold)
     for kind in ("overrides", "checks"):
         print(f"{kind}: production {p['before'][kind]} -> {len(p['merged'][kind][kind])}; added "
               f"{len(p['added'][kind])}, unchanged {len(p['unchanged'][kind])}, production-only kept "
               f"{len(p['kept'][kind])}{' ' + str(p['kept'][kind]) if p['kept'][kind] else ''}")
-    print(f"held back by rule R1 against {[str(o) for o in args.against]}: {len(p['held'])}")
+    print(f"held back by rule R1 against {[str(o) for o in args.against]} or by --hold-file: {len(p['held'])}")
     for tid, why in sorted(p["held"].items()):
         print(f"  HELD {tid}: {why}")
     if not args.apply:

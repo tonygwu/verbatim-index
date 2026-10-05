@@ -152,5 +152,25 @@ with tempfile.TemporaryDirectory() as td:
     check("--against a directory that is not a dating run is refused",
           r.returncode != 0 and "not a dating run" in r.stderr, r.stdout + r.stderr)
 
+# 6. --hold-file: entries a person holds for review are reported HELD and never promoted (2026-10-05:
+# the operator asked that only script-confirmed dates be promoted, so two-dater agreements wait).
+with tempfile.TemporaryDirectory() as td:
+    data, rd = setup(Path(td), {"a/one": entry("2019-06-01"), "a/two": entry("2020-03-03")},
+                     {"b/three": entry("2022-01-05")}, None, None)
+    hold = Path(td) / "hold.json"
+    hold.write_text(json.dumps({"a/one": "two-dater agreement, no source check", "b/three": "review"}))
+    r = run(data, rd, "--hold-file", str(hold), "--apply")
+    ov, ck = files(data)
+    check("--hold-file exits 0 and names each held entry with its reason",
+          r.returncode == 0 and "HELD a/one: override 2019-06-01: held for review: two-dater agreement, no source "
+          "check" in r.stdout and "HELD b/three: check 2022-01-05: held for review: review" in r.stdout,
+          r.stdout + r.stderr)
+    check("a held entry is not promoted; the others are",
+          ov and set(ov["overrides"]) == {"a/two"} and (ck is None or not ck["checks"]), f"{ov} {ck}")
+    hold.write_text(json.dumps({"a/nine": "typo"}))
+    r = run(data, rd, "--hold-file", str(hold))
+    check("a hold naming a transcript the run does not date is refused",
+          r.returncode != 0 and "a/nine" in r.stderr, r.stdout + r.stderr)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
