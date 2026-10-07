@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""The numbers AGENTS.md states about the CURRENT state must match the data.
+"""The numbers the agreement states about the CURRENT state must match the data.
+
+The agreement is AGENTS.md plus the shards under docs/agents/ that it indexes;
+since 2026-10-06 the claims checked here live in the shards.
 
 WHY THIS EXISTS. Four documents went stale inside one day on 2026-09-18, and one
 of them was the working agreement itself: it said "The roster is 50 people" for
@@ -60,7 +63,11 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
 def main() -> int:
     import membership as MB
 
-    agents = (REPO / "AGENTS.md").read_text()
+    # The agreement is AGENTS.md plus the shards it indexes under docs/agents/,
+    # and a claim may sit in any of them. Read every file, not a typed list, so a
+    # shard added later is checked without anyone editing this test.
+    agents = "\n".join(p.read_text() for p in
+                       [REPO / "AGENTS.md"] + sorted((REPO / "docs" / "agents").glob("*.md")))
     roster = json.loads((REPO / "data" / "roster" / "final.json").read_text())["roster"]
     board = MB.load()
 
