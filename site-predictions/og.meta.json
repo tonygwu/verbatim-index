@@ -1,9 +1,9 @@
 {
  "site": "predictions",
  "counts": {
-  "predictions": 1112,
+  "predictions": 1115,
   "transcripts_scanned": 1108,
-  "pct_dated": 98
+  "pct_dated": 99
  },
  "drawn_by": "scripts/build_og_card.py",
  "note": "The site builder warns when these counts drift from the corpus."
