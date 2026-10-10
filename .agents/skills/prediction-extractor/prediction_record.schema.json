@@ -63,6 +63,7 @@
                 "basis": {"type": "string", "minLength": 1},
                 "agents_named": {"type": "array", "description": "What each dating agent named, in its own words and UNCONFIRMED: no source confirms this date."},
                 "confirmed_by": {"const": "two_agent_agreement"},
+                "near_agreement_other_day": {"type": "string", "minLength": 10, "maxLength": 10, "description": "Optional, merge-6 (ledger VD-16): the agents named different last days at most 7 days apart; this is the earlier of them, and statement_date is the later. Absent when both named the same day."},
                 "confirmed_at_utc": {"type": "string", "minLength": 1},
                 "replaced_date": {"type": ["string", "null"]},
                 "replaced_basis": {"enum": ["youtube_upload_date", "publication_date", "unknown"]},

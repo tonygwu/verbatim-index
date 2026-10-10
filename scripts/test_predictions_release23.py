@@ -231,9 +231,12 @@ class HeaderLabels(unittest.TestCase):
 
 
 class ReleasePin(unittest.TestCase):
-    def test_release_is_2_3_with_three_pins(self):
+    def test_release_is_2_4_with_three_pins(self):
+        """2.4 (2026-10-09, ledger VD-16) is 2.3 plus one header line for a near agreement (merge-6): the
+        extraction and verification contracts are 2.3's, so no 2.3 record changes meaning."""
         rel = L.load_policy_release()
-        self.assertEqual(rel["release"], "predictions-2.3")
+        self.assertEqual(rel["release"], "predictions-2.4")
+        self.assertEqual((rel["contracts"]["extract"], rel["contracts"]["verify"]), ("3f2bdd8bec82", "8bfb9da94720"))
         self.assertEqual(sorted(rel["contracts"]), ["extract", "header", "verify"])
         self.assertEqual(rel["contracts"]["header"], L.header_contract()["contract_id"])
 

@@ -1215,7 +1215,11 @@ def said_label(src: dict, where: str) -> dict:
             raise SystemExit(f"REFUSING: {where}'s override replaced a {was!r} date, which the Said line cannot name")
         if blk.get("confirmed_by") == L.AGREEMENT_CONFIRMATION:
             # Two dating agents named this day and no source confirms it (dating review fix 1).
-            agreed = "two dating agents named this day; no source confirms it"
+            agreed = ("two dating agents named this day; no source confirms it"
+                      if not blk.get("near_agreement_other_day") else
+                      # merge-6 (VD-16): the agents named different last days a week or less apart.
+                      f"two dating agents named last days within 7 days of each other, "
+                      f"{blk['near_agreement_other_day']} and {d}, and this is the later; no source confirms either")
             return {"card": (f"{d} ({agreed}; the {REPLACED_DATE[was]} is {old})" if old else f"{d} ({agreed})"),
                     "also": f"on {d} ({agreed})"}
         if blk.get("verdict") == "publication_only":

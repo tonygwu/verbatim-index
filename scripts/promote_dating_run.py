@@ -20,7 +20,10 @@ merge could not apply R1. With --against, an entry is HELD BACK, and named, when
 proposal in another run passed every rule before the source checks
 (dating_lib.assess, eligible) and its range does not contain the entry's date. That
 is the merge's own R1, applied across runs. A held entry stays in its run's file
-for a person; it is never promoted and never silently dropped.
+for a person; it is never promoted and never silently dropped. A proposal from a dater
+that had no web tools (dating_lib.NO_WEB_DATERS: Fable before 2026-10-05, which answered
+from memory) holds nothing back (operator, 2026-10-09, ledger VD-17 option B), and each one
+skipped is reported, so the skip is never silent.
 
 --hold-file holds named entries for a person's review the same way: reported HELD, never
 promoted, left in the run's file.
@@ -71,14 +74,21 @@ def _transcript(tid: str, roots: list[Path]) -> dict:
     raise SystemExit(f"{tid}: no transcript under {[str(r) for r in roots]}")
 
 
-def r1_against(tid: str, day: str, rec: dict, others: list[Path]) -> list[str]:
-    """Every eligible proposal in another run whose range does not contain `day` (rule R1 across runs)."""
+def r1_against(tid: str, day: str, rec: dict, others: list[Path], skipped: list[str] | None = None) -> list[str]:
+    """Every eligible proposal in another run whose range does not contain `day` (rule R1 across runs).
+
+    A proposal from a dater with no web tools is not read; it is appended to `skipped` instead.
+    """
     slug, sid = tid.split("/", 1)
     out = []
     for run in others:
         for h in HARNESSES:
             f = run / "proposals" / slug / f"{sid}.{h}.json"
             if not f.is_file():
+                continue
+            if h in DL.NO_WEB_DATERS:
+                if skipped is not None:
+                    skipped.append(f"{run.name} {h} {tid}")
                 continue
             a = DL.assess(rec, json.loads(f.read_text()), [])
             if not a["eligible"]:
@@ -105,13 +115,13 @@ def plan(run_dir: Path, data: Path, against: list[Path] | None = None, hold: dic
         raise SystemExit(f"the run dates {sorted(both)} in both its overrides and its checks; one date source per "
                          f"transcript")
     conflicts, added, unchanged = [], {"overrides": [], "checks": []}, {"overrides": [], "checks": []}
-    held = {}
+    held, skipped = {}, []
     for kind, other in (("overrides", "checks"), ("checks", "overrides")):
         for tid, e in run[kind].items():
             if tid in hold:
                 held[tid] = f"{kind[:-1]} {e['statement_date']}: held for review: {hold[tid]}"
                 continue
-            why = r1_against(tid, e["statement_date"], _transcript(tid, roots), against or [])
+            why = r1_against(tid, e["statement_date"], _transcript(tid, roots), against or [], skipped)
             if why:
                 held[tid] = f"{kind[:-1]} {e['statement_date']}: " + "; ".join(why)
                 continue
@@ -140,7 +150,7 @@ def plan(run_dir: Path, data: Path, against: list[Path] | None = None, hold: dic
         merged[kind] = {"schema_version": 1, "notes": PRODUCTION_NOTES[kind].format(runs=runs), kind: entries}
     kept = {k: sorted(set(prod[k][k]) - set(run[k])) for k in prod}
     return {"paths": paths, "merged": merged, "added": added, "unchanged": unchanged, "kept": kept,
-            "held": held, "before": {k: len(prod[k][k]) for k in prod}}
+            "held": held, "skipped": skipped, "before": {k: len(prod[k][k]) for k in prod}}
 
 
 def apply(p: dict, data: Path, guard_root: Path | None) -> None:
@@ -196,6 +206,10 @@ def main(argv=None) -> int:
     print(f"held back by rule R1 against {[str(o) for o in args.against]} or by --hold-file: {len(p['held'])}")
     for tid, why in sorted(p["held"].items()):
         print(f"  HELD {tid}: {why}")
+    print(f"proposals rule R1 did not read, from daters with no web tools {list(DL.NO_WEB_DATERS)}: "
+          f"{len(p['skipped'])}")
+    for s in p["skipped"]:
+        print(f"  not read (no web tools): {s}")
     if not args.apply:
         print("dry run: nothing written (pass --apply)")
         return 0

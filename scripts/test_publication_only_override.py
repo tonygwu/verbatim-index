@@ -79,7 +79,7 @@ class Header(unittest.TestCase):
             self.assertIn("Statement date: 2012-05-30 (the day the words were spoken", line)
 
     def test_the_template_is_pinned_by_the_release(self):
-        self.assertEqual(L.load_policy_release()["release"], "predictions-2.3")
+        self.assertEqual(L.load_policy_release()["release"], "predictions-2.4")   # 2.3 + the near-agreement line
 
 
 class Page(unittest.TestCase):

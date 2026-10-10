@@ -1,8 +1,8 @@
 {
-  "release": "predictions-2.3",
+  "release": "predictions-2.4",
   "contracts": {
     "extract": "3f2bdd8bec82",
     "verify": "8bfb9da94720",
-    "header": "09765bfc916f"
+    "header": "d3678eb62973"
   }
 }

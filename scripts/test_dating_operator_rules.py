@@ -537,12 +537,13 @@ class Bounds(unittest.TestCase):
 
 class Versions(unittest.TestCase):
     def test_the_versions(self):
-        """merge-5 (2026-10-05) is today's; merge-3 and merge-4 stay runnable (test_dating_merge5 pins merge-5)."""
-        self.assertEqual(DL.MERGE_VERSION, "merge-5")
-        self.assertEqual(DL.MERGE_VERSIONS, ("merge-3", "merge-4", "merge-5"))
+        """merge-6 (2026-10-09) is today's; merge-3 to merge-5 stay runnable (test_dating_merge6 pins merge-6).
+        merge-6 changed only the agreement, so its source rule is merge-5's."""
+        self.assertEqual(DL.MERGE_VERSION, "merge-6")
+        self.assertEqual(DL.MERGE_VERSIONS, ("merge-3", "merge-4", "merge-5", "merge-6"))
         self.assertEqual(DL.RULE, DL.RULES["merge-5"])
         with self.assertRaises(ValueError):
-            DL.merge_rank("merge-6")
+            DL.merge_rank("merge-7")
 
     def write(self, root: Path, version: str) -> tuple[Path, dict]:
         rec = KHOSLA

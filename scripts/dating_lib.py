@@ -96,8 +96,19 @@ import predictions_lib as L  # noqa: E402
 #   when a podcast platform or the show's site shows the upload day (_release_page); a day word in the
 #   talk beside an event a cited page dates pins the day of speech (relative_day_pin); a sponsor read
 #   dates nothing (in_ad_read).
-MERGE_VERSION = "merge-5"
-MERGE_VERSIONS = ("merge-3", "merge-4", "merge-5")
+#   merge-6 (operator, 2026-10-09, ledger VD-16): when nothing is confirmed, two daters whose last days are at
+#   most NEAR_AGREEMENT_DAYS apart agree on the LATER day, which they did not under merge-5 (exactly the same
+#   day only). The later day errs late, never early, so a forecast's lead is never overstated. Everything a
+#   page or description confirms is merged exactly as under merge-5.
+MERGE_VERSION = "merge-6"
+MERGE_VERSIONS = ("merge-3", "merge-4", "merge-5", "merge-6")
+# MEASURED 2026-10-09 on the 69 recordings of dating-merge5-20261005a/b a source confirmed: the 62 exact
+# agreements all equal the source's day; the 4 further pairs within 7 days give a later day 1 to 6 days after
+# it, never before; at 14 days one pair is 11 days late. X was the operator's to set and Claude's to pick.
+NEAR_AGREEMENT_DAYS = 7
+# Daters that ran with no web search or page fetch, so answered from memory (Fable before 2026-10-05, VD-11).
+# Across runs, rule R1 does not read their ranges (operator, 2026-10-09, ledger VD-17 option B).
+NO_WEB_DATERS = ("fable",)
 # How an entry was confirmed. A cited page or the description of ONE dater's proposal
 # (METHOD), or two daters naming the same last day with nothing confirmed (VD-11).
 METHOD = "agent_plus_source_check"
@@ -127,6 +138,12 @@ NEAR_CHARS = 400
 AGREEMENT_RULE = ("statement_date is the last day that every dater named independently, exactly that day; "
                   "each proposal passed every rule before the source checks, so none ends after the upper "
                   "bound; no cited page or description confirmed it")
+AGREEMENT_RULE_V6 = ("statement_date is the later of the last days the daters named independently, when those "
+                     f"days are at most {NEAR_AGREEMENT_DAYS} days apart (the same day included); each proposal "
+                     "passed every rule before the source checks, so none ends after the upper bound; no cited "
+                     "page or description confirmed it; a day both prompts showed does not count")
+AGREEMENT_RULES = {"merge-3": AGREEMENT_RULE, "merge-4": AGREEMENT_RULE, "merge-5": AGREEMENT_RULE,
+                   "merge-6": AGREEMENT_RULE_V6}
 ZONE_RULE = ("a speech, session or interview is dated in the local time of the place where it happened; "
              "a publication (verdict publication_only) is dated in UTC")
 RULE_V3 = ("statement_date is the latest day of the agent's range; the range is confirmed only when a fetched "
@@ -153,7 +170,8 @@ RULE_V5 = ("statement_date is the latest day of the agent's range; the range is 
            "the latest day; a day confirmed inside another dater's wider confirmed range refines it; another "
            "dater whose range misses the confirmed day blocks it only when a check of its own passed or the day "
            "is a publication date")
-RULES = {"merge-3": RULE_V3, "merge-4": RULE_V4, "merge-5": RULE_V5}
+# merge-6 changes only the agreement (AGREEMENT_RULES); a source confirms exactly as under merge-5.
+RULES = {"merge-3": RULE_V3, "merge-4": RULE_V4, "merge-5": RULE_V5, "merge-6": RULE_V5}
 RULE = RULES[MERGE_VERSION]
 
 
@@ -2842,8 +2860,15 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
              **({"narrowed_from": lead["narrowed_from"]} if lead.get("narrowed_from") else {})},
             basis_note=note, version=version))
     lats = {a["prop"].get("speech_date_latest") for a in found}
-    if len(found) >= 2 and all(a["eligible"] for a in found) and len(lats) == 1:
-        lat = lats.pop()
+    near = None
+    if (merge_rank(version) >= 6 and len(found) >= 2 and len(lats) > 1 and all(a["eligible"] for a in found)
+            and (date.fromisoformat(max(lats)) - date.fromisoformat(min(lats))).days <= NEAR_AGREEMENT_DAYS):
+        # merge-6 (VD-16): last days at most NEAR_AGREEMENT_DAYS apart agree on the later one.
+        near = {"days_apart": (date.fromisoformat(max(lats)) - date.fromisoformat(min(lats))).days,
+                "earlier_last_day": min(lats),
+                "last_days": {a["harness"]: a["prop"]["speech_date_latest"] for a in found}}
+    if len(found) >= 2 and all(a["eligible"] for a in found) and (len(lats) == 1 or near):
+        lat = max(lats)
         shared = _shared_input(rec, docs, lat)
         if shared:
             return _queue("agreement_on_shared_input", shared)
@@ -2853,13 +2878,17 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
             return conflict
         verdict = "dated" if all(a["prop"]["verdict"] == "dated" for a in found) else "publication_only"
         te = next((a["prop"]["transcript_evidence"] for a in found if a["prop"].get("transcript_evidence")), None)
+        # The event is the first dater's in DATERS order; in a near agreement, the first that named the later day.
+        named = next(a for a in found if a["prop"]["speech_date_latest"] == lat)
         # No source confirmed this day, so the entry names none (review fix 1): it records what
         # the agents named, labelled as their words, and says so wherever the date is shown.
         return _confirmed(_entry(
-            rec, found[0]["prop"], verdict, e, lat, {"agents_named": _agents_named(found)},
+            rec, named["prop"], verdict, e, lat, {"agents_named": _agents_named(found)},
             L.AGREEMENT_CONFIRMATION, False, te,
-            {"method": AGREEMENT_METHOD, "rule": AGREEMENT_RULE, "run": run_rel, "lead": None,
-             "proposals": proposals, "source_checks": []}, basis_note="; two daters agree", version=version))
+            {"method": AGREEMENT_METHOD, "rule": AGREEMENT_RULES[version], "run": run_rel, "lead": None,
+             "proposals": proposals, "source_checks": [], **({"near_agreement": near} if near else {})},
+            basis_note=(f"; two daters named last days {near['days_apart']} day(s) apart, and the later is used"
+                        if near else "; two daters agree"), version=version))
     if len(found) == 1:
         return found[0]["queue"]
     by = {a["harness"]: a["queue"]["reason"] for a in found}

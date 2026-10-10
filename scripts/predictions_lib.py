@@ -57,7 +57,7 @@ POLICY_MARKER = "{{ELIGIBILITY_POLICY}}"
 HEADER_TEMPLATE_FILE = "STATEMENT_DATE_HEADER.json"
 HEADER_DATE_LINES = ("stated_in_page", "publication_date", "youtube_upload_date", "unknown", "override_day",
                      "override_published", "override_range", "override_range_unsourced", "override_agreed_day",
-                     "override_agreed_range", "own_later", "own_none",
+                     "override_agreed_range", "override_agreed_near", "own_later", "own_none",
                      "check_day", "check_published", "check_sourced", "check_unsourced")
 # What a stage may say about the date line (release 2.3). Only the first of the
 # two doubts holds a record; cannot_tell is recorded and does not.
@@ -778,7 +778,10 @@ def override_block(rec: dict) -> dict | None:
     # byte-identical. The scorer reads the verdict: a publication date is not the day
     # of speech (score_predictions.exact_statement_date, final review item 2).
     verdict = (ov.get("confirmation") or {}).get("verdict")
+    # merge-6 (VD-16): a near agreement says which earlier day the other agent named, so the card can say so.
+    near = (ov.get("confirmation") or {}).get("near_agreement")
     return {"basis": ov["basis"], **_evidence_fields(ov),
+            **({"near_agreement_other_day": near["earlier_last_day"]} if near else {}),
             "confirmed_by": ov["confirmed_by"], "confirmed_at_utc": ov["confirmed_at_utc"],
             "replaced_date": own_date, "replaced_basis": own_basis,
             **({"verdict": verdict} if verdict else {}),
@@ -1021,7 +1024,13 @@ def statement_date_line(rec: dict, template: dict) -> str:
     fields = {"date": date, "earliest": earliest, "basis": ov["basis"]}
     own_sentence = (lines["own_none"] if own_date is None else
                     lines["own_later"].format(own_label=template["own_basis_labels"][own_basis], own_date=own_date))
-    if ov.get("confirmed_by") == AGREEMENT_CONFIRMATION:
+    near = (ov.get("confirmation") or {}).get("near_agreement")
+    if ov.get("confirmed_by") == AGREEMENT_CONFIRMATION and near:
+        # merge-6 (VD-16): the two agents named different last days, at most a week apart, and the
+        # later is the date. "Two dating agents named this day" would be false of it (release 2.4).
+        key = "override_agreed_near"
+        fields["other_day"] = near["earlier_last_day"]
+    elif ov.get("confirmed_by") == AGREEMENT_CONFIRMATION:
         # Two agents named this day and no source confirms it (review fix 1): never "the
         # day the words were spoken" and never "from a sourced correction".
         key = "override_agreed_day" if earliest == date else "override_agreed_range"

@@ -80,7 +80,11 @@ other case. Recordings, logs and the table (`logs/live-table.txt`) are in
   `scripts/promote_dating_run.py --hold-file <json>` holds named entries for a
   person's review ({transcript_id: reason}): reported HELD, never promoted, the way an
   R1 hold is; the overnight run of 2026-10-05 held every two-dater agreement this way
-  because only source-checked dates were to go. Every proposal file records the roster's company for the
+  because only source-checked dates were to go. Since 2026-10-09 agreements are promoted like
+  any other entry (operator, ledger VD-16), so no hold file is needed for them. Across runs,
+  rule R1 does not read a proposal from a dater with no web tools (`dating_lib.NO_WEB_DATERS`,
+  Fable before 2026-10-05, which answered from memory): operator, ledger VD-17 option B. Each
+  such proposal skipped is printed as `not read (no web tools)`. Every proposal file records the roster's company for the
   speaker, `speaker_company`, which merge-5 reads; a speaker the roster lacks stops the
   run before any call. Each dater writes its own proposal, `<sid>.<dater>.json`,
   naming the event and its date range with sources. A
@@ -154,7 +158,7 @@ other case. Recordings, logs and the table (`logs/live-table.txt`) are in
   harness and the outcome-blind prior and lead-test stages keep their tools off. Proof:
   `scripts/test_dating_operator_rules.py`, `scripts/test_dating_fable_web.py`,
   `scripts/test_dating_operator_cases.py`, which reads the data link.
-  **merge-5 (2026-10-05) is `MERGE_VERSION`.** A new run writes merge-5 entries;
+  **merge-5 (2026-10-05) was `MERGE_VERSION` until merge-6.** A run then wrote merge-5 entries;
   merge-3 and merge-4 stay re-runnable, and `date_recordings.py --merge-version
   merge-4` re-merges a run whose proposal files lack `speaker_company`. merge-5 closes
   the operator's three gaps and adds the rules drawn from `dating-vp34-20261005`.
@@ -207,3 +211,24 @@ other case. Recordings, logs and the table (`logs/live-table.txt`) are in
   occasion. 119 stored proposals in 79 transcripts use a day word; 3 pin a day, each
   the day merge-4 had confirmed. Proof: `scripts/test_dating_merge5.py`, whose 55 tests
   all fail on the code before merge-5.
+  **merge-6 (2026-10-09) is `MERGE_VERSION`** (operator, ledger VD-16). It changes only the
+  agreement: when no page or description confirms anything, two daters whose last days are at
+  most `NEAR_AGREEMENT_DAYS` (7) apart agree on the LATER day, with the range from the earliest
+  first day; under merge-5 they had to name exactly the same day. The later day errs late, never
+  early, so a forecast's lead is never overstated. What a source confirms merges exactly as under
+  merge-5 (`RULES["merge-6"]` is merge-5's rule). Kept: a day both prompts showed (the upper
+  bound, a lead, a page date) is not independent, and a range after the upper bound is never
+  eligible, which is the operator's "no date after the upload". X = 7 was MEASURED: on the 69
+  recordings of `dating-merge5-20261005a/b` a source confirmed, the 62 exact agreements all equal
+  the source's day, and the 4 further pairs within 7 days give a later day 1 to 6 days after it,
+  never before; at 14 days one pair is 11 days late. Replayed over halves A and B from their
+  stored files: 95 entries kept byte for byte, 0 changed, 3 newly confirmed (1 or 2 days apart).
+  A near agreement's entry carries `confirmation.near_agreement` (both last days), its record
+  carries `near_agreement_other_day`, and its header is `override_agreed_near` in release
+  `predictions-2.4`, because "two dating agents named this day" would be false of it. 2.4 is 2.3
+  plus that one line; the extraction and verification contracts are unchanged. A run re-merged
+  under a newer version keeps every entry an earlier version confirmed, when that version still
+  gives the same entry (`date_recordings.merge_keeping`): otherwise resuming a merge-5 run would
+  relabel entries production already holds and promotion would refuse them as conflicts. The
+  gold set `cases-20261005-merge5` replays identically under merge-5 and merge-6 code. Proof:
+  `scripts/test_dating_merge6.py`, 20 tests, 13 of which fail on the code before merge-6.

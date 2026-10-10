@@ -559,7 +559,8 @@ class Loader(unittest.TestCase):
         pp.write_text(json.dumps(doc(o, "astra", ["astra"], KP_COMPANY)))
         ref = {"astra": {"path": str(pp.relative_to(run)), "sha256": hashlib.sha256(pp.read_bytes()).hexdigest()}}
         checks = {"astra": [DL.check_source(CODE_SRC, KP, fetched(CODE_RED, CODE_URL), o)]}
-        out = DL.merge(KP, [json.loads(pp.read_text())], checks, ref, run_rel="predictions/_experiments/dating-m5")
+        out = DL.merge(KP, [json.loads(pp.read_text())], checks, ref, run_rel="predictions/_experiments/dating-m5",
+                       version=V5)
         self.assertEqual(outcome(out), ("override", "2025-12-15"))
         entry = {**out["entry"], "confirmed_at_utc": "2026-10-05T00:00:00Z"}
         path = run / "overrides.json"
@@ -712,7 +713,9 @@ class Router(unittest.TestCase):
 class Driver(unittest.TestCase):
     def test_the_production_daters_and_merge_version(self):
         self.assertEqual(DL.DATERS, ("astra", "fable_web"))
-        self.assertEqual(DL.MERGE_VERSION, V5)
+        # merge-6 (2026-10-09) followed; it confirms by source exactly as merge-5 (test_dating_merge6).
+        self.assertEqual(DL.MERGE_VERSION, "merge-6")
+        self.assertIn(V5, DL.MERGE_VERSIONS)
         self.assertEqual(DR.build_parser().parse_args(["--run-dir", "x"]).harness, "astra,fable_web")
 
     def test_a_proposal_file_records_the_rosters_company(self):

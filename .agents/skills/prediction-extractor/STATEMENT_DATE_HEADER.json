@@ -17,6 +17,7 @@
   "override_range_unsourced": "Statement date: {date} (the latest day the words could have been spoken, from a sourced correction: {basis}. The first possible day, {earliest}, is the dating agent's estimate, and no source confirms it. {own_sentence})",
   "override_agreed_day": "Statement date: {date} (two dating agents named this day; no source confirms it. The event they named: {basis}. {own_sentence})",
   "override_agreed_range": "Statement date: {date} (the latest day the words could have been spoken; two dating agents named this day; no source confirms it. The event they named: {basis}. The first possible day, {earliest}, is also the agents' estimate. {own_sentence})",
+  "override_agreed_near": "Statement date: {date} (the latest day the words could have been spoken; two dating agents named different last days within 7 days of each other, {other_day} and {date}, and this is the later; no source confirms either. The event they named: {basis}. The first possible day, {earliest}, is the agents' estimate. {own_sentence})",
   "own_later": "The {own_label}, {own_date}, is later and is NOT when the words were said.",
   "own_none": "The source carries no date of its own.",
   "check_day": "Statement date: {date} ({own_label}. A dating check found the words were spoken on this date: {basis}.)",

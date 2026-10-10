@@ -46,7 +46,8 @@ WebFetch, under sandbox-exec, through call_fable_web: never the judge harness. g
 directory made with other daters is refused before any call, so a new production run
 uses a new --run-dir. A single-dater run, such as --harness astra, is the one-agent rule
 of VD-8 (c): its entries load and re-verify like any other, but production dating uses
-both daters. A new run's entries name merge-5 (dating_lib.MERGE_VERSION). Every proposal
+both daters. A new run's entries name merge-6 (dating_lib.MERGE_VERSION); a run re-merged under a
+newer version keeps every entry an earlier version confirmed (merge_keeping). Every proposal
 file records the roster's company for the speaker (speaker_company), which merge-5 reads.
 
 FABLE'S ACCOUNT (operator decision of 2026-10-05). Each fable or fable_web call takes the
@@ -500,6 +501,29 @@ def previous_stamps(run_dir: Path) -> dict:
             for tid, e in json.loads(f.read_text())[key].items():
                 out[(kind, tid)] = ({k: v for k, v in e.items() if k != "confirmed_at_utc"}, e["confirmed_at_utc"])
     return out
+
+
+def merge_keeping(prior: dict, tid: str, rec: dict, docs: list[dict], checks_by: dict, refs: dict,
+                  run_rel: str | None, version: str) -> dict:
+    """DL.merge under `version`, except that an entry an EARLIER version confirmed in this run is kept.
+
+    FOUND 2026-10-09: the merge stage re-merges every transcript of a run under one version and
+    rewrites the run's files, so resuming a merge-5 run under merge-6 would relabel each of its
+    confirmed entries merge-6. Production already holds the merge-5 copies, so promote_dating_run.py
+    would then refuse every one of them as a conflicting entry. A newer version only ADDS
+    confirmations (merge-6 adds the near agreement), so the entry is kept when its own version, run
+    again on today's proposal files and checks, still gives exactly that entry; otherwise, as when a
+    proposal file was replaced, the transcript is merged afresh under `version`. `prior` is
+    previous_stamps(): {(kind, transcript id): (entry without its stamp, stamp)}.
+    """
+    for kind in ("override", "check"):
+        was = prior.get((kind, tid))
+        old = ((was[0].get("confirmation") or {}).get("merge_version")) if was else None
+        if old in DL.MERGE_VERSIONS and DL.merge_rank(old) < DL.merge_rank(version):
+            again = DL.merge(rec, docs, checks_by, refs, run_rel=run_rel, version=old)
+            if again.get("outcome") == kind and again["entry"] == was[0]:
+                return again
+    return DL.merge(rec, docs, checks_by, refs, run_rel=run_rel, version=version)
 
 
 def speaker_companies(roster_path: Path) -> dict[str, str]:
@@ -959,8 +983,8 @@ def main(argv: list[str] | None = None, caller=None, opener=None, sleep=time.sle
                 missing_checks[tid] = unchecked
                 continue
             try:
-                out = DL.merge(json.loads(job["path"].read_text()), docs, checks_by, refs, run_rel=rel,
-                               version=args.merge_version)
+                out = merge_keeping(prior, tid, json.loads(job["path"].read_text()), docs, checks_by, refs, rel,
+                                    args.merge_version)
             except Exception as exc:  # noqa: BLE001 -- one transcript's defect never stops the others (review fix 4)
                 out = {"outcome": "queue", "reason": "merge_error", "detail": f"{type(exc).__name__}: {exc}"[:500],
                        "checks": []}

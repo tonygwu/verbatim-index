@@ -11,7 +11,10 @@ so the taxonomy hid a quota stop behind a code error.
 Drives the real script: --stage verify --verifier fable --force with every Claude
 account in --router-exclude, so Router.pick refuses before any network call. The input
 is a copy, in a temporary --out, of one production record that Astra extracted under the
-current policy release (found at run time; the data link must be present). No quota.
+current EXTRACTION CONTRACT (found at run time; the data link must be present). No quota.
+Release predictions-2.4 (2026-10-09) changed only a header line that no existing record uses,
+so the copy's release label is set to today's release; the verify stage then reaches the
+router, which is what this test is about. The production record is never written.
 """
 from __future__ import annotations
 
@@ -40,12 +43,13 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 
 
 data = L.data_root()
-release = L.load_policy_release(REPO / ".claude" / "skills" / "prediction-extractor")["release"]
+rel = L.load_policy_release(REPO / ".claude" / "skills" / "prediction-extractor")
+release, contract = rel["release"], rel["contracts"]["extract"]
 pick = None
 for meta_path in sorted((data / "predictions").glob("*/*.meta.json")):
     m = json.loads(meta_path.read_text())
     ex = m.get("extract") or {}
-    if ex.get("harness") != "astra" or ex.get("status") != "ok" or (ex.get("audit") or {}).get("policy_release") != release:
+    if ex.get("harness") != "astra" or ex.get("status") != "ok" or ex.get("contract_id") != contract:
         continue
     jl = meta_path.with_name(meta_path.name[:-len(".meta.json")] + ".jsonl")
     if not any(json.loads(x)["extraction"]["qualifies"] for x in jl.read_text().split("\n") if x.strip()):
@@ -56,7 +60,7 @@ for meta_path in sorted((data / "predictions").glob("*/*.meta.json")):
         pick = (slug, sid, meta_path, jl, src[0])
         break
 if pick is None:
-    print(f"  FAIL  no production record extracted by Astra under release {release} was found under {data}")
+    print(f"  FAIL  no production record extracted by Astra under extraction contract {contract} was found under {data}")
     sys.exit(1)
 
 slug, sid, meta_path, jl, transcript = pick
@@ -66,8 +70,13 @@ claude_ids = [a.id for a in load_config().enabled_accounts() if a.provider == "c
 with tempfile.TemporaryDirectory() as td:
     out = Path(td) / "out"
     (out / slug).mkdir(parents=True)
-    shutil.copy(meta_path, out / slug / meta_path.name)
-    shutil.copy(jl, out / slug / jl.name)
+    m = json.loads(meta_path.read_text())
+    m["extract"]["audit"]["policy_release"] = release
+    (out / slug / meta_path.name).write_text(json.dumps(m))
+    recs = [json.loads(x) for x in jl.read_text().split("\n") if x.strip()]
+    for r in recs:
+        r["extraction"]["telemetry"]["prediction_audit"]["policy_release"] = release
+    (out / slug / jl.name).write_text("".join(json.dumps(r) + "\n" for r in recs))
     lst = Path(td) / "list.txt"
     lst.write_text(f"{transcript}\n")
     errors = Path(td) / "errors.jsonl"

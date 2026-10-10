@@ -172,5 +172,23 @@ with tempfile.TemporaryDirectory() as td:
     check("a hold naming a transcript the run does not date is refused",
           r.returncode != 0 and "a/nine" in r.stderr, r.stdout + r.stderr)
 
+# 7. Option B (operator 2026-10-09, ledger VD-17): across runs, a proposal from Fable WITHOUT web tools
+# holds nothing back. That dater was denied web search and page fetch and answered from memory
+# (michael-saylor/hs-btc005: "nothing was opened"; its remembered release day, 2020-12-16, held a date the
+# show's own page confirmed, 2020-12-22). A dater that could open pages still holds a date its range misses.
+with tempfile.TemporaryDirectory() as td:
+    data, rd = setup(Path(td), {"a/one": entry("2019-06-01"), "a/two": entry("2020-03-03")}, {}, None, None)
+    o = other_run(Path(td), {("a/one", "fable"): proposal("a/one", "2018-01-01", "2018-01-02"),
+                             ("a/two", "fable_web"): proposal("a/two", "2019-01-01", "2019-01-02")})
+    r = run(data, rd, "--against", str(o), "--apply")
+    ov, _ = files(data)
+    check("a tools-off Fable proposal whose range misses the date holds nothing back",
+          r.returncode == 0 and ov is not None and "a/one" in ov["overrides"], r.stdout + r.stderr)
+    check("a Fable proposal WITH web tools still holds a date its range misses",
+          "HELD a/two: override 2020-03-03: dating-other fable_web named 2019-01-01..2019-01-02" in r.stdout
+          and "a/two" not in (ov or {}).get("overrides", {}), r.stdout + r.stderr)
+    check("the report names the tools-off proposal it did not read, so the skip is visible",
+          "not read (no web tools): dating-other fable a/one" in r.stdout, r.stdout)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

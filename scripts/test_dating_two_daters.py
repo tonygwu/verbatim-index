@@ -106,9 +106,11 @@ class Agree(unittest.TestCase):
         self.assertEqual(e["confirmed_by"], L.AGREEMENT_CONFIRMATION)
         self.assertNotIn("source_url", e)
 
-    def test_one_day_apart_is_not_agreement(self):
-        out = merge({"gemini": proposal(sources=[GONE]),
-                     "fable": proposal(e="2012-05-31", l="2012-05-31", sources=[GONE])})
+    def test_one_day_apart_is_not_agreement_under_merge5(self):
+        """merge-5's rule: exactly the same day. merge-6 agrees on last days up to 7 apart (test_dating_merge6)."""
+        objs = {"gemini": proposal(sources=[GONE]), "fable": proposal(e="2012-05-31", l="2012-05-31", sources=[GONE])}
+        docs = [dd(o, h, D10, daters=list(objs)) for h, o in objs.items()]
+        out = DL.merge(D10, docs, {h: [] for h in objs}, version="merge-5")
         self.assertEqual(out["outcome"], "queue", out)
         self.assertEqual(out.get("by_dater"), {"gemini": "no_confirming_source", "fable": "no_confirming_source"})
 
