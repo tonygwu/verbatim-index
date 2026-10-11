@@ -561,6 +561,19 @@ they were filed (50aeaac).
 
 ## Site rendering
 
+- **RESOLVED 2026-10-11: the derived-number proof runs on a fixture, and the
+  live render is its own named data check.** The bring-back condition was met:
+  the same data-caused red was recorded again in 9aad5a6 (2026-09-17), e7f056e
+  (2026-09-19) and f6ea3f8 (2026-09-20, another session), each time filed as a
+  code failure. `test_the_method_section_counts_the_roster` now aggregates the
+  file's own synthetic corpus and renders it against two roster sizes, reading
+  nothing under `data/`. Mutation check: with `roster_n = 4` typed into
+  `build_site.py`, "a roster of 11 renders as 11" and "the two renders
+  disagree" both fail, `22/25 passed`. The live render is
+  `test_this_clones_data_renders`, every check prefixed `LIVE DATA:` and its
+  message saying to pull before blaming code; it also asserts the page's count
+  equals the roster people on the leaders board in `membership.json`, 50 today.
+
 - **`test_the_method_section_counts_the_roster` renders against whichever data
   checkout the clone is linked to, so the suite's verdict is clone-dependent.**
   Filed 2026-09-17. The check in `scripts/test_render_integrity.py` reads

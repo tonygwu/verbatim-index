@@ -38,6 +38,11 @@ WHAT IS ASSERTED HERE.
             not say which file to look at.
   LOUD-2    grade_loop.sh names a render failure, counts consecutive failures,
             and refuses to report COMPLETE over a board it could not rebuild.
+  METHOD    the page's roster size is derived, not typed: the same results
+            rendered against two roster sizes give two numbers. On a fixture.
+  LIVE DATA this clone's own data link renders, and its roster count matches
+            membership. A DATA check, named apart so a stale clone never reads
+            as a code failure.
 
 Run: .venv/bin/python scripts/test_render_integrity.py
 """
@@ -346,6 +351,45 @@ def test_render_failure_is_loud() -> None:
           "a silent exit 0 is what let this run for 13 hours")
 
 
+def method_fixture(root: Path) -> dict[str, Path]:
+    """A complete render input with no data link: the corpus above, aggregated."""
+    grades, roster = build_corpus(root, None)
+    # The page prints each person's role; the aggregate fixture never needed one.
+    data = json.loads(roster.read_text())
+    for person in data["roster"]:
+        person["role"] = "CEO"
+    roster.write_text(json.dumps(data))
+    results = root / "results.json"
+    r = run_aggregate(REPO / "scripts" / "aggregate.py", grades, roster, results)
+    if r.returncode != 0 or not results.exists():
+        sys.exit(f"REFUSING: method fixture aggregate failed: {r.stderr[-600:]}")
+    # build_site counts words from transcripts_blind beside results.json, and
+    # decides membership from each record's leader_slug, never the path.
+    for leader in LEADERS:
+        d = root / "transcripts_blind" / leader
+        d.mkdir(parents=True, exist_ok=True)
+        for t in range(6):
+            (d / f"src{t}.json").write_text(json.dumps({"leader_slug": leader, "word_count": 1000}))
+    (root / "calibration.json").write_text(json.dumps({"headline": {}}))
+    (root / "sources.json").write_text(json.dumps({}))
+    return {"results": results, "audit": results.with_name("results_audit.json"),
+            "calibration": root / "calibration.json", "sources": root / "sources.json",
+            "roster": roster}
+
+
+def render_method(paths: dict[str, Path], roster: Path, out: Path,
+                  membership: Path | None) -> subprocess.CompletedProcess:
+    argv = [PY, str(REPO / "scripts" / "build_site.py"),
+            "--results", str(paths["results"]), "--audit", str(paths["audit"]),
+            "--roster", str(roster), "--calibration", str(paths["calibration"]),
+            "--out", str(out)]
+    if "sources" in paths:
+        argv += ["--sources", str(paths["sources"])]
+    if membership is not None:
+        argv += ["--membership", str(membership)]
+    return subprocess.run(argv, capture_output=True, text=True)
+
+
 def test_the_method_section_counts_the_roster(tmp: Path) -> None:
     """The page must not state a roster size that the roster does not hold.
 
@@ -354,42 +398,38 @@ def test_the_method_section_counts_the_roster(tmp: Path) -> None:
     left the page asserting 40 with no test failing. Rendering the SAME results
     against two rosters of different sizes is what separates a derived number
     from a literal: a literal gives the same answer twice.
+
+    This runs on a FIXTURE. Until 2026-10-11 it rendered each clone's own private
+    data link, so a clone whose data was stale failed this check for a data
+    reason while the code was correct, and three commits (9aad5a6, e7f056e,
+    f6ea3f8) recorded that one stale roster as a code failure. The live render is
+    now its own check, below, under its own name.
     """
-    print("\nmethod section counts the roster")
+    print("\nmethod section counts the roster (fixture)")
     src = (REPO / "scripts" / "build_site.py").read_text()
     check("no bare roster size is written into the method section",
           "A roster of 40" not in src,
           "a literal here cannot follow the roster")
 
-    results = REPO / "data" / "results.json"
-    audit = REPO / "data" / "results_audit.json"
-    calib = REPO / "data" / "logs" / "calibration.json"
-    real = REPO / "data" / "roster" / "final.json"
-    if not all(p.exists() for p in (results, audit, calib, real)):
-        check("live data present to render against", False, "skipped: data/ not readable")
-        return
-
-    roster = json.loads(real.read_text())
+    paths = method_fixture(tmp / "method")
+    roster = json.loads(paths["roster"].read_text())
     sizes = {}
     for n in (len(roster["roster"]), len(roster["roster"]) + 7):
-        trimmed = dict(roster)
+        padded = dict(roster)
         # Grow by duplicating entries under fresh slugs; the method section only
         # counts them, and aggregate is not re-run here.
         extra = [dict(roster["roster"][0], slug=f"pad-{i}") for i in range(n - len(roster["roster"]))]
-        trimmed["roster"] = roster["roster"] + extra
-        rpath = tmp / f"roster-{n}.json"
-        rpath.write_text(json.dumps(trimmed))
-        out = tmp / f"site-{n}.html"
-        # The page now counts who is ON THE BOARD rather than the raw roster
-        # length, because from P3 the roster carries people who publish only on
-        # the predictions board. Putting every padded slug on the leaders board
-        # keeps this test asking its original question: is the number derived,
-        # or is it a literal? A literal gives the same answer for both sizes.
-        r = subprocess.run([PY, str(REPO / "scripts" / "build_site.py"),
-                            "--results", str(results), "--audit", str(audit),
-                            "--roster", str(rpath), "--calibration", str(calib),
-                            "--membership", str(membership_for(rpath)),
-                            "--out", str(out)], capture_output=True, text=True)
+        padded["roster"] = roster["roster"] + extra
+        rpath = tmp / "method" / f"roster-{n}" / "roster.json"
+        rpath.parent.mkdir(parents=True)
+        rpath.write_text(json.dumps(padded))
+        out = tmp / "method" / f"site-{n}.html"
+        # The page counts who is ON THE BOARD rather than the raw roster length,
+        # because from P3 the roster carries people who publish only on the
+        # predictions board. Putting every padded slug on the leaders board keeps
+        # this test asking its original question: is the number derived, or is it
+        # a literal? A literal gives the same answer for both sizes.
+        r = render_method(paths, rpath, out, membership_for(rpath))
         if r.returncode != 0:
             check(f"build_site renders a {n}-name roster", False, r.stderr[-300:])
             return
@@ -403,6 +443,44 @@ def test_the_method_section_counts_the_roster(tmp: Path) -> None:
           "identical output from different rosters means the size is hardcoded")
 
 
+def test_this_clones_data_renders(tmp: Path) -> None:
+    """A DATA check, not a code check: render this clone's own private data link.
+
+    A failure here means the clone's data is stale or contradicts itself, as on
+    2026-09-16 when repo-1's roster still seated Amjad Masad while also listing
+    him as excluded. Run `.venv/bin/python scripts/data_sync.py pull` and re-run
+    before reading it as a code defect. It is named apart from the fixture check
+    above so the two failures never share one line again.
+    """
+    print("\nLIVE DATA: this clone's own data link renders")
+    results = REPO / "data" / "results.json"
+    audit = REPO / "data" / "results_audit.json"
+    calib = REPO / "data" / "logs" / "calibration.json"
+    real = REPO / "data" / "roster" / "final.json"
+    missing = [str(p.relative_to(REPO)) for p in (results, audit, calib, real) if not p.exists()]
+    if missing:
+        check("LIVE DATA: the data link holds the render inputs", False,
+              f"missing {missing}; this clone has no readable data link")
+        return
+    out = tmp / "live-site.html"
+    paths = {"results": results, "audit": audit, "calibration": calib}
+    r = render_method(paths, real, out, None)
+    check("LIVE DATA: build_site renders this clone's data (a failure is stale or "
+          "contradictory private data; pull and re-run before blaming code)",
+          r.returncode == 0, r.stderr[-300:])
+    if r.returncode != 0:
+        return
+    sys.path.insert(0, str(REPO / "scripts"))
+    import membership
+    board = membership.for_study("leaders")
+    want = sum(1 for p in json.loads(real.read_text())["roster"]
+               if membership.on_board(board, p["slug"], "leaders"))
+    m = re.search(r"A roster of (\d+)", out.read_text())
+    said = int(m.group(1)) if m else None
+    check(f"LIVE DATA: the page's roster count is the {want} roster people on the leaders board",
+          said == want, f"page said {said}")
+
+
 def main() -> int:
     print("render-integrity guards")
     with tempfile.TemporaryDirectory() as td:
@@ -412,6 +490,7 @@ def main() -> int:
         test_the_reorder_moves_no_published_number(tmp)
         test_an_unmarked_non_grade_is_loud(tmp)
         test_the_method_section_counts_the_roster(tmp)
+        test_this_clones_data_renders(tmp)
     test_render_failure_is_loud()
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
