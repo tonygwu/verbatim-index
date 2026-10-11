@@ -720,9 +720,11 @@ they were filed (50aeaac).
   counting also has to decide what a partial panel means per dimension: here
   d1 has one supported cell out of four, while d2 and d3 have all four. The
   condition that brings it back: the pundits full grade, or a second recording
-  with an unsupported dimension. At minimum, `drop_partial_panels` should name
-  cells removed for an unsupported dimension, so the report states the true
-  cause.
+  with an unsupported dimension. The reporting half is DONE the same night:
+  `drop_partial_panels` now names a cell removed earlier and why, so the
+  report reads "missing gemini/open (removed: unsupported_dimension)".
+  Re-aggregating a scratch clone of data-pundits with the old and new code
+  gives results identical apart from that text.
 
 - **FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings (8 blinded
   grades).** `blind_study()` now leaves a surname, or a caption corruption of

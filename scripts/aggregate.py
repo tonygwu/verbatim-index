@@ -110,7 +110,8 @@ MIN_SUBJECT_SHARE = 10
 
 
 def drop_partial_panels(grades: list[dict], panel: set[str],
-                        modes: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+                        modes: set[str] | None = None,
+                        removed: dict | None = None) -> tuple[list[dict], list[dict]]:
     """Split grades into (kept, dropped): a recording needs every panel judge in every mode run.
 
     Plan P5: "A transcript missing any required cell after the retry cap is
@@ -132,6 +133,12 @@ def drop_partial_panels(grades: list[dict], panel: set[str],
     never scheduled. That is not hypothetical: leaders runs the blinded pass
     alone under OPEN_PER_LEADER=0. Both modes are required only once the corpus
     actually holds both, which is the pairing the halo needs.
+
+    `removed` maps (leader_slug, source_id) to {(judge, mode): reason} for
+    grades taken out before this point, so the report says a cell was REMOVED
+    and why rather than "missing", which reads as never collected. Found
+    2026-10-11: asmongold/asmongold-tv-ks77-g lost three cells to an
+    unsupported dimension and was reported as an incomplete panel.
     """
     # Only run 0 fills a cell. A repeat is a measurement of the judge, so it
     # must not complete an otherwise partial panel.
@@ -148,9 +155,11 @@ def drop_partial_panels(grades: list[dict], panel: set[str],
         have = cells[(g["leader_slug"], g["source_id"])]
         missing = required - have
         if missing:
+            why = (removed or {}).get((g["leader_slug"], g["source_id"]), {})
             g = dict(g)
             g["_dropped_reason"] = ("incomplete panel: missing "
-                                    + ", ".join(f"{j}/{m}" for j, m in sorted(missing)))
+                                    + ", ".join(f"{j}/{m}" + (f" (removed: {why[(j, m)]})" if (j, m) in why else "")
+                                                for j, m in sorted(missing)))
             dropped.append(g)
         else:
             kept.append(g)
@@ -939,7 +948,11 @@ def main() -> int:
     partial_report: list[dict] = []
     if is_v2:
         panel = {g["judge"] for g in grades}
-        grades, partial = drop_partial_panels(grades, panel)
+        removed: dict = {}
+        for g in excluded:
+            if (g.get("run") or 0) == 0:
+                removed.setdefault((g["leader_slug"], g["source_id"]), {})[(g["judge"], g["mode"])] = g["_excluded"]
+        grades, partial = drop_partial_panels(grades, panel, removed=removed)
         partial_report = [{"leader_slug": g["leader_slug"], "source_id": g["source_id"],
                            "judge": g["judge"], "mode": g["mode"], "reason": g["_dropped_reason"]}
                           for g in partial]

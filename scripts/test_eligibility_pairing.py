@@ -119,6 +119,19 @@ def main() -> int:
               bool(dropped) and any("gemini" in str(d.get("_dropped_reason", "")) for d in dropped),
               str([d.get("_dropped_reason") for d in dropped][:1]))
 
+        # A cell can be missing because its grade was REMOVED earlier, not
+        # because it was never graded. asmongold/asmongold-tv-ks77-g lost three
+        # cells to an unsupported dimension and the report said only "missing",
+        # which reads as a grade that was never collected (found 2026-10-11).
+        removed = {("p", "partial"): {("gemini", "open"): "unsupported_dimension"}}
+        try:
+            _, dropped_r = A.drop_partial_panels(corpus, {"fable", "gemini"}, removed=removed)
+            reasons = [d.get("_dropped_reason", "") for d in dropped_r]
+        except TypeError as exc:
+            reasons = [f"TypeError: {exc}"]
+        check("a cell removed earlier is named with the reason it was removed",
+              bool(reasons) and all("gemini/open (removed: unsupported_dimension)" in r for r in reasons), str(reasons[:1]))
+
         # The MODES are derived from the corpus too, exactly as the panel is.
         # A first version typed ("blinded", "open") into the required set, so a
         # blinded-only corpus lost every grade: each recording was reported as
