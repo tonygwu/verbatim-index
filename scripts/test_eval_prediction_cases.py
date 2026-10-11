@@ -301,6 +301,27 @@ class Resolve(unittest.TestCase):
         self.assertIn("[HARD_FAIL] R-control", out)
 
 
+    def test_an_early_call_case_judges_already_public_too(self):
+        """VP-32 (2026-10-11): judge_early ignored already_public, so an early-call gold case that expects no
+        report passed whatever the answer said. 7 of the 11 precursor exclusions on the board were early calls."""
+        early = {"id": "E-precursor", "operator_case": "VP-32", "stage": "early",
+                 "input": {**copy.deepcopy(RESOLVE["input"]), "today": "2013-06-01"},
+                 "expect": {"already_public": "null", "outcome_in": ["occurred", "not_occurred", "still_open"]}}
+        def answer(public):
+            return {"prediction_id": REC_ID, "outcome": "still_open", "not_occurred_basis": None, "confidence": "high",
+                    "sources": [{"what_it_shows": "s", "where": "https://e.example.com", "date": "2013-05-01"}],
+                    "searched": ["q one", "q two", "q three"], "reasoning": "r",
+                    "already_public": {"date": "2012-05-29", "where": "https://news.example.com/proto",
+                                       "what_it_shows": "a prototype"} if public else None}
+        for public, want in ((True, "[FAIL] E-precursor"), (False, "[PASS] E-precursor")):
+            arm = self.root / f"arm-{public}"
+            arm.mkdir()
+            g = gold(arm, [early])
+            rc, out = run(["--gold", str(g), "--data", str(self.data), "--live", "--repeats", "2"],
+                          {"PREDICT_LIVE": "1"}, caller=lambda *a, public=public: (json.dumps(answer(public)), SEARCHED,
+                                                                                   "codex"))
+            self.assertIn(want, out, out)
+
     # MERGE WITH THE RESOLVER POLICY (review of the combined branch, 2026-09-30). The
     # harness must judge what production would: the deadline production derives, the
     # record with the case's own dates, and production's effort check on the harness's

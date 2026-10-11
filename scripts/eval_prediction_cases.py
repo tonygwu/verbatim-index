@@ -409,6 +409,30 @@ def judge_extract(case: dict, ctx: Context, text: str) -> tuple[str, str]:
     return "pass", f"target_date {p['target_date']!r}; criterion {p['resolution_criteria'][:120]!r}"
 
 
+def judge_already_public(ex: dict, ap, bad: list) -> "str | None":
+    """The case's already_public expectation against an answer's already_public field.
+
+    Appends what is wrong to `bad`; returns a hard-failure message, or None. One function for the
+    resolve and the early stages: judge_early used to skip this, so an early-call case that expected
+    no report passed whatever the answer said (VP-32, 2026-10-11)."""
+    if ex.get("already_public") == "null" and ap is not None:
+        if ex.get("hard_if_present_on_or_before") and str(ap.get("date") or "") <= ex["hard_if_present_on_or_before"]:
+            return f"already_public {ap} for a claim that was not yet public"
+        bad.append(f"already_public should be null, got {ap}")
+    if ex.get("already_public") == "present":
+        if not isinstance(ap, dict):
+            bad.append("already_public is null; the words repeated the previous day's news")
+        else:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(ap.get("date") or "")) or \
+                    ap["date"] > ex["already_public_on_or_before"]:
+                bad.append(f"already_public.date {ap.get('date')!r} is not on or before {ex['already_public_on_or_before']}")
+            blob = f"{ap.get('where', '')} {ap.get('what_it_shows', '')}".lower()
+            for group in ex.get("already_public_mentions_all", []):
+                if not any(w.lower() in blob for w in group):
+                    bad.append(f"already_public names none of {group}")
+    return None
+
+
 def judge_resolve(case: dict, ctx: Context, text: str, telemetry: "dict | None") -> tuple[str, str]:
     import resolution_lib as R  # noqa: PLC0415
     # The record with the case's own dates, as the prompt showed it: already_public is
@@ -431,21 +455,9 @@ def judge_resolve(case: dict, ctx: Context, text: str, telemetry: "dict | None")
     if ex.get("outcome_in") and obj["outcome"] not in ex["outcome_in"]:
         bad.append(f"outcome {obj['outcome']} not in {ex['outcome_in']}")
     ap = obj.get("already_public")
-    if ex.get("already_public") == "null" and ap is not None:
-        if ex.get("hard_if_present_on_or_before") and str(ap.get("date") or "") <= ex["hard_if_present_on_or_before"]:
-            return "hard_fail", f"already_public {ap} for a claim that was not yet public"
-        bad.append(f"already_public should be null, got {ap}")
-    if ex.get("already_public") == "present":
-        if not isinstance(ap, dict):
-            bad.append("already_public is null; the words repeated the previous day's news")
-        else:
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(ap.get("date") or "")) or \
-                    ap["date"] > ex["already_public_on_or_before"]:
-                bad.append(f"already_public.date {ap.get('date')!r} is not on or before {ex['already_public_on_or_before']}")
-            blob = f"{ap.get('where', '')} {ap.get('what_it_shows', '')}".lower()
-            for group in ex.get("already_public_mentions_all", []):
-                if not any(w.lower() in blob for w in group):
-                    bad.append(f"already_public names none of {group}")
+    hard = judge_already_public(ex, ap, bad)
+    if hard:
+        return "hard_fail", hard
     for group in ex.get("sources_mention_all", []):
         blob = " ".join(f"{s.get('where', '')} {s.get('what_it_shows', '')} {s.get('date', '')}" for s in obj["sources"]).lower()
         if not any(w.lower() in blob for w in group):
@@ -475,6 +487,9 @@ def judge_early(case: dict, ctx: Context, text: str, telemetry: "dict | None") -
         return "hard_fail", f"outcome {obj['outcome']} is a hard failure for this case"
     if ex.get("outcome_in") and obj["outcome"] not in ex["outcome_in"]:
         bad.append(f"outcome {obj['outcome']} not in {ex['outcome_in']}")
+    hard = judge_already_public(ex, obj.get("already_public"), bad)
+    if hard:
+        return "hard_fail", hard
     for group in ex.get("sources_mention_all", []):
         blob = " ".join(f"{s.get('where', '')} {s.get('what_it_shows', '')} {s.get('date', '')}"
                         for s in obj.get("sources") or []).lower()
@@ -482,7 +497,7 @@ def judge_early(case: dict, ctx: Context, text: str, telemetry: "dict | None") -
             bad.append(f"no source names any of {group}")
     if bad:
         return "fail", "; ".join(bad)
-    return "pass", f"outcome {obj['outcome']}"
+    return "pass", f"outcome {obj['outcome']}; already_public {obj.get('already_public')}"
 
 
 def resolve_blocked(case: dict) -> str | None:
