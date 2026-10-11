@@ -117,11 +117,14 @@ stops on its own rather than overspending.
   two pids and only one was the loop, the other a `/bin/zsh -c` wrapper. A false
   positive there makes the grader wait for ever for a source that is not
   running, which is this house's own six-spinning-poll-loops failure arriving
-  again. `fetcher_running()` reads `ps -Ao comm=,args=` and drops any shell whose
-  third field is `-c`. Guarded by `scripts/test_fetcher_detection.py` and
-  `scripts/test_fetcher_false_positive.py`, which start real processes rather
-  than inspecting source, because source inspection cannot tell a working
-  pattern from one that never matches.
+  again. A `ps -Ao comm=,args=` parse replaced it for one day; since b6cbb8d
+  (2026-09-12) `fetcher_running()` asks `run_marker_alive` for each name in
+  `FETCHERS` and reads no process text at all, per the run-marker rule. The two
+  tests that guarded the `ps` parse, `test_fetcher_detection.py` and
+  `test_fetcher_false_positive.py`, were removed in that commit.
+  `scripts/test_run_marker.py` guards the markers, and it too starts real
+  processes rather than inspecting source, because source inspection cannot
+  tell a working pattern from one that never matches.
 
 - **The duplicate sweep runs in `grade_loop.sh`, before normalize.** Most
   duplicates are one talk re-uploaded to several YouTube channels, and those

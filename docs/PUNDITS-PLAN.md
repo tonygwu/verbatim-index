@@ -74,7 +74,7 @@ Revision 2 answers a read-only review of `tonygwu/verbatim-index` at
   (fetch_happyscribe.py:363-366), dedupe (dedupe_transcripts.py:145-159), normalize and pruning, QA,
   the wrong-person screen, `grade.py --out/--errors`, aggregate, `build_site.py:1055`,
   `coverage_table.py`, `status.sh`, run markers (run_marker.sh:31), logs, and the three loops.
-- The shell loops take `STUDY` and read their paths through `scripts/profile_env.py`.
+- The shell loops take `STUDY` and read their paths through `scripts/profile_env.py`. (As built: `scripts/study_env.sh`, sourced by every loop; no `profile_env.py` exists. Noted 2026-10-11.)
 - Judge scratch space moves under study-named subdirectories: `$TMPDIR/grade-work/<study>` and
   `/Users/Shared/verbatim-index-judge/<study>`.
 - Pundits checkout path: `repo-N/.data-clones/pundits`, reached through a `data-pundits` symlink.
@@ -189,7 +189,7 @@ repositories, a leaders one and a pundits one, with markers, and run the real sc
   `--production-data` and `--data-revision` required. Also add a `pundits` value to
   `data_clone_workflow.py` `--site` (:378) and a branch in `fingerprint()` (:276). The predictions
   `inputs_sha256` check in deploy_predictions.sh:39-47 stays as it is.
-- **Leaders byte-identity test**, `scripts/test_profile_leaders_identity.py`.
+- **Leaders byte-identity test**, `scripts/test_profile_leaders_identity.py`. (As built: `scripts/leaders_identity_compare.py` over two `scripts/leaders_baseline.py` runs; the test file named here was never created. Noted 2026-10-11.)
   - It runs commit `529baee` in a temporary worktree and the new code, both on the P0 frozen data,
     with pinned dependencies and `PYTHONHASHSEED=0`.
   - It compares sha256 of:
@@ -588,7 +588,7 @@ Stated choices in the manifest:
     only;
   - `test_equivalence_gate.py`: a wide interval containing 0 returns INCONCLUSIVE, an interval inside
     the bounds returns PASS, and one outside returns FAIL.
-- **Leaders:** `test_profile_leaders_identity.py` reports 0 differences, the existing predictions
+- **Leaders:** `test_profile_leaders_identity.py` (as built: `leaders_identity_compare.py`) reports 0 differences, the existing predictions
   `inputs_sha256` deploy check still refuses a stale index, and `test_predictions_site.py` passes.
 - **Pundits deploy:** only after P11 approval. Fetch the live page and confirm that its rendered data
   revision equals `--data-revision`.

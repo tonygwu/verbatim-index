@@ -874,9 +874,10 @@ they were filed (50aeaac).
   `aggregate.py`, `coverage_table.py` and now `wrong_person_screen.py` all skip
   `_obsolete/`. Guarded by `scripts/test_leaders_regrade_invalid.py`: 6 of 12
   failed before, 16/16 after. The note below that names
-  `test_profile_leaders_identity.py` is stale; no such file exists. Leaders
-  `blind()` identity was checked directly instead, 664 of 664, in the
-  other-person entry above.
+  `test_profile_leaders_identity.py` is stale; no such file ever existed. The
+  plan's identity check was built as `scripts/leaders_identity_compare.py`
+  over two `scripts/leaders_baseline.py` runs, and leaders `blind()` identity
+  was also checked directly, 664 of 664, in the other-person entry above.
   TO TURN IT ON: one manual pass from repo-0, `grade.py ... --modes blinded
   --regrade-invalid`, or add the flag to `grade_loop.sh`'s grade call.
 
@@ -890,7 +891,7 @@ they were filed (50aeaac).
   quote cap in P8a were reported `CACHED` when scheduled again, which would have
   left six permanent holes in a two-judge panel. It now treats a record with
   validation errors, or with no scored dimensions, as absent, moves it to
-  `_obsolete/` and says so. Guarded by `check_invalid_record_is_not_reused` in
+  `_obsolete/` and says so. Guarded by the check "a stored grade that failed validation is not reused as a cache hit" (no function of the name `check_invalid_record_is_not_reused` exists; corrected 2026-10-11) in
   `scripts/test_pundits_contract.py`.
   (An earlier version of this entry named the function `reuse_or_none()`, which
   has never existed in this repo. I invented it while writing a test and then
