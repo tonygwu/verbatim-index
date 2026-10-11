@@ -54,6 +54,11 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 5001
 SECTIONS = ("labels", "attribution", "spans", "corrections")
 MAX_BODY = 256 * 1024
+# How much of a refused body is read and thrown away before the refusal is sent.
+# Answering with unread bytes in the socket makes the kernel send a reset, and the
+# client then sees ECONNRESET instead of the 400 (3 of 60 test runs, 2026-10-11).
+# Past this bound the connection is simply closed; nothing on this page sends that.
+DRAIN_LIMIT = 16 * MAX_BODY
 DATA_LINE = re.compile(r"^const D = (\{.*\});$", re.M)
 
 
@@ -111,6 +116,16 @@ def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, ans
         def _json(self, code, obj):
             self._send(code, json.dumps(obj).encode(), "application/json; charset=utf-8")
 
+        def _drain(self, length: int) -> None:
+            """Read and discard up to `length` body bytes, never more than DRAIN_LIMIT."""
+            left = min(max(length, 0), DRAIN_LIMIT)
+            while left > 0:
+                chunk = self.rfile.read(min(left, 64 * 1024))
+                if not chunk:
+                    break
+                left -= len(chunk)
+            self.close_connection = True
+
         def do_GET(self):
             path = self.path.split("?", 1)[0]
             if path in ("/", "/index.html"):
@@ -137,6 +152,7 @@ def make_handler(page_bytes: bytes, ids: dict[str, set[str]], answers: dict, ans
             except ValueError:
                 return self._json(400, {"error": "unreadable Content-Length"})
             if length <= 0 or length > MAX_BODY:
+                self._drain(length)
                 return self._json(400, {"error": f"body must be 1..{MAX_BODY} bytes, got {length}"})
             try:
                 msg = json.loads(self.rfile.read(length))

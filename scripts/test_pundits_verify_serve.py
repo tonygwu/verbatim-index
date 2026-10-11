@@ -35,10 +35,10 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 PASS, FAIL = [], []
 # A request returns as soon as the server answers, so this bound costs nothing on a
-# healthy run. It was 5s, and this file failed once in a concurrent suite run on
-# 2026-09-27 (d9f2321) and passed alone; that output was not kept, so the cause is
-# UNPROVEN. A 5s bound is what failed under a load average near 470 in
-# test_run_marker.py the day before, so the bound is widened the same way.
+# healthy run; it only decides how slow a loaded machine may be. This file's
+# intermittent failure (d9f2321, 2026-09-27) was NOT a timeout: reproduced on
+# 2026-10-11 as a connection reset at the oversized-body check, 3 runs in 60, and
+# fixed in the server (pundits_verify_serve.DRAIN_LIMIT).
 HTTP_TIMEOUT_S = 30
 
 
@@ -166,6 +166,18 @@ def main() -> int:
         check("a body that is not JSON is refused", code == 400 and "not JSON" in res.get("error", ""), str(res))
         code, res = post(base, None, raw=b"x" * (S.MAX_BODY + 1))
         check("an oversized body is refused", code == 400 and "bytes" in res.get("error", ""), str(res))
+        # The server used to answer before reading the body, so the socket closed
+        # with unread bytes and the kernel sent a reset: the client saw ECONNRESET
+        # instead of the refusal. MEASURED 2026-10-11: 3 of 60 runs failed this way
+        # at MAX_BODY + 1, and a 1 MiB body was reset 30 times in 30.
+        outcomes = []
+        for _ in range(5):
+            try:
+                outcomes.append(post(base, None, raw=b"x" * (4 * S.MAX_BODY))[0])
+            except urllib.error.URLError as exc:
+                outcomes.append(f"reset: {exc.reason}")
+        check("a body four times the cap gets the 400, not a connection reset",
+              outcomes == [400] * 5, str(outcomes))
         check("and after every refusal the good answers are still there",
               json.loads(answers.read_text())["labels"]["p/a"]["venue"] == "reaction")
 

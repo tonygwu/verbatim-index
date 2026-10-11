@@ -77,9 +77,15 @@ plan was right when it was written and the tree has moved since.
   exiting by itself can never satisfy a check meant for a signal, and the
   CLAIM case holds its loop on a release file instead of racing a 1.5-second
   sleep. Mutation check: with the EXIT trap removed from `run_marker.sh`, EXIT,
-  TERM and STALLED all fail. `test_pundits_verify_serve.py`'s two 5-second HTTP
-  timeouts are widened to 30 the same way, but its cause stays UNPROVEN because
-  the failing output is gone. If either file goes red again, keep the whole
+  TERM and STALLED all fail. `test_pundits_verify_serve.py` was first given
+  wider HTTP timeouts on a guess; the same night its failure was REPRODUCED and
+  it was not a timeout. Looping the file 60 times failed 3, every one a
+  connection reset at the oversized-body check: the server refused before
+  reading the body, so the socket closed with unread bytes and the kernel sent
+  a reset. A 1 MiB body was reset 30 times in 30. The server now reads and
+  discards a refused body up to `DRAIN_LIMIT` before answering; a new check
+  sends 4x the cap five times and wants five 400s, and it failed first. After
+  the fix, 60 runs, 0 failed. If either file goes red again, keep the whole
   output.
 
 - **`bash scripts/run_tests.sh` returned `failed: 1` once and has not
