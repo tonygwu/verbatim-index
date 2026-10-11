@@ -243,6 +243,10 @@ def load_grades(root: Path) -> list[dict]:
 # with, so its scores pass through unchanged rather than being mapped by
 # statistics estimated from a handful of points.
 MIN_CALIBRATION_N = 25
+# Below this spread a judge is too flat to rescale: stretching it would amplify
+# noise. calibrate() and shadow_report() must use the same floor, which is why
+# it is named once here; it was the literal 3.0 in three places until 2026-10-11.
+MIN_CALIBRATION_SD = 3.0
 
 # What model a judge served before grades recorded it. Only used for records
 # written before served_model existed; new ones carry their own.
@@ -331,7 +335,7 @@ def calibrate(grades: list[dict], shared: bool = False) -> dict:
             # Both conditions matter. A flat judge must not be rescaled because
             # that amplifies noise, and a model with only a few grades must not
             # be rescaled because its mean and spread are not yet estimated.
-            "rescaled": jsd >= 3.0 and len(vals) >= MIN_CALIBRATION_N,
+            "rescaled": jsd >= MIN_CALIBRATION_SD and len(vals) >= MIN_CALIBRATION_N,
         }
     return params
 
@@ -724,7 +728,7 @@ def shadow_report(shadow: list[dict], published: list[dict], corpus_n: int | Non
        fix, so an arm may only be promoted once it has graded the same corpus
        the published judges did. `blinded_coverage` is that fraction.
     2. CAN IT BE CALIBRATED? calibrate() rescales a judge only when its spread
-       reaches 3.0 and it has at least MIN_CALIBRATION_N grades. Below either,
+       reaches MIN_CALIBRATION_SD (3.0) and it has at least MIN_CALIBRATION_N grades. Below either,
        the arm would enter the pool unrescaled and sit systematically off. Both
        thresholds are reported per dimension, with the verdict.
     3. DOES IT AGREE? `vs_<judge>` gives the mean absolute difference on the
@@ -768,8 +772,8 @@ def shadow_report(shadow: list[dict], published: list[dict], corpus_n: int | Non
             # means grade more, too flat means this judge cannot be rescaled
             # at all and pooling it would be a choice, not a calculation.
             "enough_grades": len(vals) >= MIN_CALIBRATION_N,
-            "spread_sufficient": sd >= 3.0,
-            "would_be_rescaled": sd >= 3.0 and len(vals) >= MIN_CALIBRATION_N,
+            "spread_sufficient": sd >= MIN_CALIBRATION_SD,
+            "would_be_rescaled": sd >= MIN_CALIBRATION_SD and len(vals) >= MIN_CALIBRATION_N,
         }
     out["calibration_readiness"] = spread
 
