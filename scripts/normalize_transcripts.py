@@ -546,9 +546,12 @@ def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
         the subject, because naming the person is the stronger leak;
       - a single-word form that is an ordinary English word is redacted only
         where it is capitalised, the same signal fuzzy_targets() uses, so
-        "Destiny" and "Twitch" go while "destiny" and "twitch" survive. This
-        study has no corpus-frozen wordlist yet, so the system dictionary
-        decides what counts as ordinary;
+        "Twitch" goes while "twitch" survives. This study has no corpus-frozen
+        wordlist yet, so the system dictionary decides what counts as ordinary.
+        A HANDLE is the exception and goes in any case: MEASURED 2026-10-11, in
+        Steven Bonnell's own recordings 16 of 16 lowercase "destiny" are the
+        person ("promo code destiny", lowercase auto-captions), so sparing the
+        lowercase form protected no ordinary word and leaked the subject;
       - speech-recognition corruptions of the name, and of single-word
         affiliations, are caught as blind() catches them;
       - a surname, or a corruption of any part of the name, that follows a
@@ -569,8 +572,9 @@ def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
     affiliations = [a.strip() for a in affiliations if a and a.strip()]
     affiliation_words = {w.lower() for a in affiliations for w in re.split(r"[\s/&-]+", a) if len(w) >= 4}
 
+    handles = {h for h in (person.get("handles") or []) if h}
     targets: dict[str, tuple[str, str]] = {}
-    for variant in name_variants(name) + [h for h in (person.get("handles") or []) if h]:
+    for variant in name_variants(name) + sorted(handles):
         targets.setdefault(variant, (subject_token, "name"))
     for a in affiliations:
         for variant in company_variants(a) + acronyms(a):
@@ -604,7 +608,8 @@ def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
 
     for variant in sorted(targets, key=len, reverse=True):
         token, label = targets[variant]
-        ordinary = " " not in variant and in_dictionary(variant, dictionary) is not None
+        ordinary = (" " not in variant and variant not in handles
+                    and in_dictionary(variant, dictionary) is not None)
         if ordinary:
             cap = variant[:1].upper() + variant[1:]
             pattern = re.compile(r"\b" + re.escape(cap) + r"(?:'s|s')?\b")

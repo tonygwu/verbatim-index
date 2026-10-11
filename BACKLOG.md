@@ -752,6 +752,21 @@ they were filed (50aeaac).
   hazard.** Its fix is the same shape but it is not the same code path, and any
   change there must keep `test_profile_leaders_identity.py` at 0 differences.
 
+- **RESOLVED 2026-10-11, by a different rule than the one proposed below.**
+  `blind_study()` now redacts a HANDLE in any case in the subject's own
+  recordings; affiliations ("Twitch") keep the capitalised-only rule. The
+  corpus-spread signal was measured and answers the wrong question: lowercase
+  "destiny" has spread 0.65 over the pundits corpus, but about 13 of the 30
+  uses outside Steven Bonnell's recordings are other pundits naming him, and
+  17 are "manifest destiny" or "the destiny of America". Blinding acts only on
+  the owner's recordings, and there 16 of 16 lowercase uses are the person
+  ("promo code destiny", lowercase auto-captions). Destiny is the only
+  single-word handle on the roster that is a dictionary word. Re-blinding all
+  367 pundits files changes exactly one, `steven-bonnell/destiny-bklnf_`, 16
+  substitutions, 0 grades, so nothing goes stale. `test_pundits_blinding.py`
+  asserted the old behaviour; that check now asserts the new one and failed
+  first.
+
 - **Blind lowercase uses of handles that are ordinary words.** Filed 2026-09-15.
   `blind_study()` redacts a handle that is an ordinary English word only where it is
   capitalised, so "Destiny" goes and "destiny" stays. Captions write names in

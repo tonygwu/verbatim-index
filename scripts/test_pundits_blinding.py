@@ -10,7 +10,8 @@ show name containing the handle is replaced whole, and redacts a single-word
 form that is an ordinary English word only where it is capitalised.
 
   NAME         the full name, the surname and its possessive become [SUBJECT]
-  HANDLE       the capitalised handle becomes [SUBJECT]; lowercase "destiny" survives
+  HANDLE       the handle becomes [SUBJECT] in any case: a lowercase "destiny" in the
+               subject's own recording is the person (16 of 16 measured)
   AFFILIATION  the whole show name becomes [AFFILIATION], not "The [SUBJECT] Show";
                the capitalised outlet goes, lowercase "twitch" survives
   ASR          a speech-recognition corruption of the surname becomes [SUBJECT]
@@ -80,7 +81,12 @@ def main() -> int:
 
     print("\n[HANDLE]")
     check("the capitalised handle is removed", "Destiny thinks" not in out and f"{subj} thinks" in out, out)
-    check("the ordinary word 'destiny' survives", "not destiny," in out, out)
+    # Until 2026-10-11 lowercase "destiny" survived here by design. MEASURED over
+    # the pundits corpus: in Steven Bonnell's own recordings 16 of 16 lowercase
+    # uses are the person ("promo code destiny", lowercase auto-captions), so
+    # the exception protected no ordinary word and leaked the subject 16 times.
+    check("a lowercase handle in the subject's own recording is redacted", "not destiny," not in out
+          and f"not {subj}," in out, out)
 
     print("\n[AFFILIATION]")
     check("the whole show name becomes the affiliation token",
