@@ -1007,7 +1007,9 @@ def check_exclusions(roster: dict) -> None:
                  + ". Remove them from dropped_for_no_transcripts in the roster.")
 
 
-SHOW_PREDICTIONS_LINK = False
+# VP-20: back ON by operator decision of 2026-10-11. It was off from 2026-09-16, when 25 of 40
+# predictions rows had no score; on the board deployed 2026-10-10 only 4 of 49 do.
+SHOW_PREDICTIONS_LINK = True
 PREDICTIONS_LINK = (' &middot; <a href="https://verbatim-predictions.tonygwu.com">'
                     'Verbatim Predictions &rarr;</a>')
 

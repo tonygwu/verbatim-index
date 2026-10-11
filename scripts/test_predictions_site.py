@@ -1673,9 +1673,11 @@ def main() -> int:
     import build_site as BS
     check("XLINK: the masthead carries no hard-coded predictions anchor, only the token",
           "__XLINK__" in mast and "verbatim-predictions.tonygwu.com" not in mast, mast[-200:])
-    check("XLINK: the switch is OFF, so a rendered masthead carries no link out",
-          BS.SHOW_PREDICTIONS_LINK is False
-          and "verbatim-predictions.tonygwu.com" not in mast.replace(
+    # VP-20, operator 2026-10-11: the link is back ON. It was switched off on 2026-09-16 because 25 of
+    # 40 predictions rows had no score; on the board deployed 2026-10-10 only 4 of 49 do.
+    check("XLINK: the switch is ON, so a rendered masthead links to the predictions board",
+          BS.SHOW_PREDICTIONS_LINK is True
+          and 'href="https://verbatim-predictions.tonygwu.com"' in mast.replace(
               "__XLINK__", BS.PREDICTIONS_LINK if BS.SHOW_PREDICTIONS_LINK else ""),
           f"SHOW_PREDICTIONS_LINK={BS.SHOW_PREDICTIONS_LINK}")
     check("XLINK: flipping the switch back restores a real anchor, not an empty string",
