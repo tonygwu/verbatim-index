@@ -300,6 +300,12 @@ def segment_one(data: Path, key: str, person: dict, router, work_root: Path, cal
     return {"key": key, "outcome": "ok", "attempts": record["attempts"], "subject_share_pct": share}
 
 
+# The router segment() builds when none is passed. Astra only (hard-pinned, no fallback model), so no Gemini
+# rotation. FOUND 2026-10-11: the call still passed `gemini_profiles`, which extract_predictions.Router lost in
+# 9963750, and grade_loop's stage 6 crashed on the first transcripts past SEGMENT_SINCE_UTC (Nate Silver's).
+DEFAULT_ROUTER_KWARGS = {"exclude_ids": [], "allow_degraded": False, "gemini": None}
+
+
 def segment(args, router=None, call=None) -> int:
     assert_prompt_pinned()
     data = Path(args.data)
@@ -322,7 +328,7 @@ def segment(args, router=None, call=None) -> int:
     roster = {p["slug"]: p for p in json.loads((data / "roster" / "final.json").read_text())["roster"]}
     if router is None:
         from extract_predictions import Router
-        router = Router(exclude_ids=[], allow_degraded=False, gemini_profiles=[])
+        router = Router(**DEFAULT_ROUTER_KWARGS)
     lock = threading.Lock()
 
     def one(key):

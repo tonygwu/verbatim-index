@@ -89,6 +89,20 @@ def run_one(root, responses, router=None):
 
 
 def main() -> int:
+    print("[ROUTER]")
+    # FOUND 2026-10-11: the first transcripts past SEGMENT_SINCE_UTC (Nate Silver's) crashed grade_loop's stage 6
+    # with "Router.__init__() got an unexpected keyword argument 'gemini_profiles'". Every other test injects a fake
+    # router, so the default construction never ran after extract_predictions.Router changed (9963750).
+    import inspect
+    import extract_predictions as E
+    try:
+        inspect.signature(E.Router).bind(**T.DEFAULT_ROUTER_KWARGS)
+        ok = True
+    except (TypeError, AttributeError) as exc:
+        print(f"        {type(exc).__name__}: {exc}")
+        ok = False
+    check("the default router's arguments fit extract_predictions.Router as it is today", ok)
+    check("the segment step stays Astra-only: no Gemini rotation", getattr(T, "DEFAULT_ROUTER_KWARGS", {}).get("gemini", 0) is None)
     print("[PIN]")
     check("the prompt is the one measured on 2026-09-28", T.sha(T.PROMPT) == T.PROMPT_TEMPLATE_SHA256)
     saved = T.PROMPT
