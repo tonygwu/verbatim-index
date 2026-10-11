@@ -262,7 +262,8 @@ def find_chrome() -> str:
 
 
 def leaderboard_counts(args) -> tuple[dict, list[tuple[str, str]]]:
-    from build_site import published_judges
+    from build_site import published_judges, words_graded
+    import membership as MB
     results = json.loads(Path(args.results).read_text())
     d = results["diagnostics"]
     counts = {
@@ -270,15 +271,12 @@ def leaderboard_counts(args) -> tuple[dict, list[tuple[str, str]]]:
         "transcripts": d.get("transcripts_with_blinded_consensus", 0),
         "judges": len(published_judges(results)),
     }
-    # Summed the same way build_site.py sums it, so the card and the page
-    # cannot disagree about the one number that appears on both.
-    words = 0
+    # Counted by the page's own function, so the card and the page cannot
+    # disagree about the one number that appears on both. Until 2026-10-11 the
+    # card summed every file here itself, ignoring board membership.
     tdir = Path(args.transcripts)
-    for f in tdir.rglob("*.json"):
-        try:
-            words += json.loads(f.read_text()).get("word_count", 0)
-        except Exception:
-            pass
+    board = MB.for_study("leaders", getattr(args, "membership", None))
+    words, _ = words_graded(tdir, lambda slug: MB.on_board(board, slug, "leaders"))
     if not words:
         sys.exit(f"REFUSING: no word counts under {tdir}")
     counts["words_graded"] = words
@@ -345,7 +343,9 @@ def main() -> int:
     ap.add_argument("--site", choices=sorted(SITES), default="leaderboard")
     ap.add_argument("--results")
     ap.add_argument("--transcripts",
-                    help="blinded transcripts dir; word count is summed exactly as build_site.py sums it")
+                    help="blinded transcripts dir; words are counted by build_site.words_graded()")
+    ap.add_argument("--membership", default=None,
+                    help="membership.json for the leaders card's word count; defaults to the repo's copy")
     ap.add_argument("--index", help="predictions index.json")
     ap.add_argument("--out")
     args = ap.parse_args()

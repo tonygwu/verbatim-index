@@ -1025,6 +1025,37 @@ JUDGE_SHORT = {"fable": "Fable", "astra": "Astra", "gemini": "Gemini"}
 NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
 
 
+def words_graded(tdir: Path, on_leaders_board) -> tuple[int, int]:
+    """(words on the board, words set aside as off-board) under a blinded corpus.
+
+    The ONE place the published "words graded" is counted. build_og_card.py
+    calls it too, so the social card and the page cannot disagree; until
+    2026-10-11 the card summed every file on its own and swallowed any error.
+    `on_leaders_board` None means a study without board membership.
+    """
+    words = 0
+    words_off_board = 0
+    for p in tdir.rglob("*.json"):
+        try:
+            rec = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if on_leaders_board is not None:
+            slug = rec.get("leader_slug")
+            if not slug:
+                sys.exit(f"REFUSING: {p} carries no leader_slug, so membership cannot "
+                         f"be decided for it. A record with no slug is a defect in "
+                         f"whatever wrote it, not a transcript to count silently.")
+            # Raises on a slug nobody declared. Deliberately NOT a set membership
+            # test: `slug not in board` would read an undeclared slug as merely
+            # off-board and drop its words without a word.
+            if not on_leaders_board(slug):
+                words_off_board += rec.get("word_count", 0)
+                continue
+        words += rec.get("word_count", 0)
+    return words, words_off_board
+
+
 def published_judges(results: dict) -> list[str]:
     """Judge arms whose grades reach the published score.
 
@@ -1368,26 +1399,7 @@ def main() -> int:
     # opposite of what a gate is for. It is now narrowed to the two failures it
     # was actually written for: a file that is not JSON, and a file that cannot
     # be read.
-    words = 0
-    words_off_board = 0
-    for p in tdir.rglob("*.json"):
-        try:
-            rec = json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if on_leaders_board is not None:
-            slug = rec.get("leader_slug")
-            if not slug:
-                sys.exit(f"REFUSING: {p} carries no leader_slug, so membership cannot "
-                         f"be decided for it. A record with no slug is a defect in "
-                         f"whatever wrote it, not a transcript to count silently.")
-            # Raises on a slug nobody declared. Deliberately NOT a set membership
-            # test: `slug not in board` would read an undeclared slug as merely
-            # off-board and drop its words without a word.
-            if not on_leaders_board(slug):
-                words_off_board += rec.get("word_count", 0)
-                continue
-        words += rec.get("word_count", 0)
+    words, words_off_board = words_graded(tdir, on_leaders_board)
     if not words:
         sys.exit(f"REFUSING: {tdir} carries no word_count; cannot report words graded")
 
