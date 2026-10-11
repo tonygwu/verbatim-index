@@ -640,6 +640,22 @@ they were filed (50aeaac).
 
 ## Site rendering
 
+- **`test_log_bloat.py` reads repo-0's LIVE production checkout, so it goes red
+  while repo-0 is mid-rebuild.** Filed 2026-10-11. Its market-cache section
+  takes `production_path(REPO)`, the shared `verbatim-index/data` the daemons
+  write, not this clone's `data` link. At 04:00 PDT the suite at `c323fb8`
+  reported `FAILED scripts/test_log_bloat.py`: "9 of 1124 accepted records
+  lack consensus status, cutoff or searched_at_utc". All 9 are in the shared
+  checkout, jack-dorsey 8 and bill-gurley 1, all `not_searched`, beside
+  repo-0's uncommitted `_experiments/rebuild-20261011/`. This clone's data
+  checkout has none, and the check passed here earlier the same night, 13/13.
+  It is the same class as the render check above: a suite verdict that
+  depends on data another agent is writing. NOT changed, because a
+  provenance check on production data is the point of that section. The
+  condition that brings it back: a second red from it that is not a rebuild
+  in progress. Then split it into a fixture proof and a named LIVE DATA check,
+  as `test_render_integrity.py` was.
+
 - **RESOLVED 2026-10-11: the derived-number proof runs on a fixture, and the
   live render is its own named data check.** The bring-back condition was met:
   the same data-caused red was recorded again in 9aad5a6 (2026-09-17), e7f056e
