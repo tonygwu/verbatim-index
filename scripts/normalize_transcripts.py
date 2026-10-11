@@ -477,6 +477,57 @@ def blind(text: str, name: str, company: str, dictionary: set[str],
     return text, counts
 
 
+# The other-person rule in blind_study() leaves a surname alone only after a
+# word on this list. A first version accepted any capitalised word, and over the
+# pundits corpus it kept the subject's own name behind "Love", "Fridays", "Uh"
+# and "Democrat", and behind caption corruptions of the subject's own given name
+# such as "Camille" for Kmele. A known given name is the narrower signal.
+GIVEN_NAMES_PATH = Path(__file__).resolve().parent / "given_names.txt"
+# Entries on that list that are ordinary words or titles, so "Will Shapiro win?",
+# "No Shapiro", "Sir Shapiro" and "The Megan Kelly Show" (a caption spelling of
+# the subject's show) still read as the subject. "The" really is on the list.
+NOT_GIVEN_NAMES = frozenset("""will may mark grant frank guy jack art rich rob don pat ray max earl dean
+miles june the no sir lord grace king duke""".split())
+_GIVEN_NAMES: frozenset[str] | None = None
+
+
+def given_names() -> frozenset[str]:
+    global _GIVEN_NAMES
+    if _GIVEN_NAMES is None:
+        if not GIVEN_NAMES_PATH.is_file():
+            raise SystemExit(f"no given-names list at {GIVEN_NAMES_PATH}; the pundits blinder needs it "
+                             f"to tell another person's surname from the subject's")
+        _GIVEN_NAMES = frozenset(l.strip().lower() for l in GIVEN_NAMES_PATH.read_text().splitlines()
+                                 if l.strip() and not l.startswith("#"))
+    return _GIVEN_NAMES
+
+
+def _own_given(token: str, first: str) -> bool:
+    """Is `token` a form of the subject's own given name: Matt/Matthew, Steven/Stephen, Camille/Kmele?"""
+    t, f = token.lower(), first.lower()
+    common = len(os.path.commonprefix([t, f]))
+    return (common >= 3 or SequenceMatcher(None, t, f).ratio() >= 0.75
+            or consonant_skeleton(t) == consonant_skeleton(f))
+
+
+def _other_given_name_before(text: str, start: int, first: str, own_parts: set[str]) -> str | None:
+    """The given name of a DIFFERENT person written just before `start`, or None.
+
+    "Tim Walz" in a Matt Walsh recording and "Josh Shapiro" in a Ben Shapiro one
+    are other people. Without this the surname pass turned them into
+    "Tim [SUBJECT]" and "Josh [SUBJECT]", and the judge read the subject's name
+    where somebody else was being described.
+    """
+    m = re.search(r"\b([A-Z][a-z]+)[ \t]+$", text[max(0, start - 40):start])
+    if not m:
+        return None
+    word = m.group(1)
+    low = word.lower()
+    if low not in given_names() or low in NOT_GIVEN_NAMES or low in own_parts or _own_given(word, first):
+        return None
+    return word
+
+
 def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
                 aliases: list[str] | None = None) -> tuple[str, dict]:
     """Redact a contract v2 study's subject: name, handles, and every affiliation field.
@@ -499,7 +550,15 @@ def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
         study has no corpus-frozen wordlist yet, so the system dictionary
         decides what counts as ordinary;
       - speech-recognition corruptions of the name, and of single-word
-        affiliations, are caught as blind() catches them.
+        affiliations, are caught as blind() catches them;
+      - a surname, or a corruption of any part of the name, that follows a
+        different person's given name is that person and is left alone:
+        "Tim Walz" in a Matt Walsh recording, "Josh Shapiro" in a Ben Shapiro
+        one. The given name must be on the frozen `given_names.txt`, and the
+        subject's own given name in any form ("Matthew", "Stephen", "Camille"
+        for Kmele) and a bare title ("Governor") do not count, so those are
+        still redacted. Each name left alone is counted under
+        `kept:other-person`.
     """
     subject_token, affiliation_token = blinding["subject_token"], blinding["affiliation_token"]
     name = person["name"]
@@ -523,6 +582,26 @@ def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
                                else (subject_token, "name"))
 
     counts: dict[str, int] = {}
+    name_parts = [p for p in re.split(r"\s+", name.strip()) if p]
+    first = name_parts[0] if name_parts else ""
+    own_parts = {p.lower() for p in name_parts}
+    surnames = {p.lower() for p in name_parts[1:]}
+
+    def sub_unless_other_person(pattern: re.Pattern, token: str, text: str) -> tuple[str, int]:
+        """pattern.subn, except a match after another person's given name is kept."""
+        replaced = 0
+
+        def one(m: re.Match) -> str:
+            nonlocal replaced
+            other = _other_given_name_before(m.string, m.start(), first, own_parts)
+            if other is None:
+                replaced += 1
+                return token
+            key = f"kept:other-person:{other} {m.group(0)}"
+            counts[key] = counts.get(key, 0) + 1
+            return m.group(0)
+        return pattern.sub(one, text), replaced
+
     for variant in sorted(targets, key=len, reverse=True):
         token, label = targets[variant]
         ordinary = " " not in variant and in_dictionary(variant, dictionary) is not None
@@ -531,20 +610,25 @@ def blind_study(text: str, person: dict, blinding: dict, dictionary: set[str],
             pattern = re.compile(r"\b" + re.escape(cap) + r"(?:'s|s')?\b")
         else:
             pattern = re.compile(r"\b" + re.escape(variant) + r"(?:'s|s')?\b", re.IGNORECASE)
-        text, n = pattern.subn(token, text)
+        if label == "name" and variant.lower() in surnames:
+            text, n = sub_unless_other_person(pattern, token, text)
+        else:
+            text, n = pattern.subn(token, text)
         if n:
             counts[f"{label}{':cap' if ordinary else ''}:{variant}"] = n
 
-    parts = [p for p in re.split(r"\s+", name.strip()) if len(p) >= 4]
+    parts = [p for p in name_parts if len(p) >= 4]
     for found, anchor in fuzzy_targets(text, parts, dictionary).items():
         pattern = re.compile(r"\b" + re.escape(found) + r"(?:'s|s')?\b", re.IGNORECASE)
-        text, n = pattern.subn(subject_token, text)
+        text, n = sub_unless_other_person(pattern, subject_token, text)
         if n:
             counts[f"name~asr:{found}->{anchor}"] = n
     affiliation_anchors = [v for a in affiliations for v in company_variants(a) if " " not in v]
     for found, anchor in fuzzy_targets(text, affiliation_anchors, dictionary).items():
         pattern = re.compile(r"\b" + re.escape(found) + r"(?:'s|s')?\b", re.IGNORECASE)
-        text, n = pattern.subn(affiliation_token, text)
+        # A show is often named after its host, so a corruption of "The Rubin
+        # Report" can be "Marco Rubio": the same other-person rule applies.
+        text, n = sub_unless_other_person(pattern, affiliation_token, text)
         if n:
             counts[f"affiliation~asr:{found}->{anchor}"] = n
 

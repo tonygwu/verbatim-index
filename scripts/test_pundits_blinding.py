@@ -14,6 +14,12 @@ form that is an ordinary English word only where it is capitalised.
   AFFILIATION  the whole show name becomes [AFFILIATION], not "The [SUBJECT] Show";
                the capitalised outlet goes, lowercase "twitch" survives
   ASR          a speech-recognition corruption of the surname becomes [SUBJECT]
+  OTHER-PERSON a different person who shares or resembles the subject's surname
+               keeps their name: "Tim Walz" in a Matt Walsh recording, "Josh
+               Shapiro" in a Ben Shapiro one. Found 2026-09-19: the judge read
+               "Tim [SUBJECT] is a total creep" as the subject on himself. The
+               subject's own variants ("Stephen Bonel", "Benjamin Shapiro") and a
+               bare title ("Governor Walsh") are still redacted.
   TOKENS       no leaders [COMPANY] token appears, and every substitution is counted
   REAL-RUN     normalize_transcripts.py --study pundits blinds a pundits checkout
 
@@ -84,6 +90,42 @@ def main() -> int:
 
     print("\n[ASR]")
     check("a corrupted surname is removed", "Bonel" not in out, out)
+
+    print("\n[OTHER-PERSON]")
+    cases = [
+        ({"slug": "matt-walsh", "name": "Matt Walsh", "handles": [], "show": "The Matt Walsh Show",
+          "outlet": "The Daily Wire"},
+         "Tim Walz is a bad guy. Walsh's point stands. Matthew Walsh agrees. Governor Walsh spoke.",
+         ["Tim Walz is a bad guy"], ["Walsh's", "Matthew Walsh", "Governor Walsh"]),
+        ({"slug": "ben-shapiro", "name": "Ben Shapiro", "handles": [], "show": "The Ben Shapiro Show",
+          "outlet": "The Daily Wire"},
+         "Josh Shapiro won Pennsylvania. Then Shapiro said no. Benjamin Shapiro disagreed.",
+         ["Josh Shapiro won"], ["Then Shapiro", "Benjamin Shapiro"]),
+        ({"slug": "kmele-foster", "name": "Kmele Foster", "handles": [], "show": "The Fifth Column",
+          "outlet": "Substack"},
+         "Jimmy Kimmel joked about it. Kmele laughed.",
+         ["Jimmy Kimmel joked"], ["Kmele laughed"]),
+        ({"slug": "dave-rubin", "name": "Dave Rubin", "handles": [], "show": "The Rubin Report",
+          "outlet": "Locals"},
+         "Victor Davis Hanson and Marco Rubio came on. Rubin asked first. Fridays Ruben hosts.",
+         ["Victor Davis Hanson", "Marco Rubio came"], ["Rubin asked", "Ruben"]),
+        # The first version of the rule accepted any capitalised word as a given
+        # name. Over the pundits corpus that kept the subject behind ordinary
+        # words ("Fridays Ruben" above), behind a caption corruption of the
+        # subject's own given name, and behind "The" in a misspelt show name.
+        ({"slug": "kmele-foster", "name": "Kmele Foster", "handles": [], "show": "The Fifth Column",
+          "outlet": "Substack"},
+         "Camille Foster here. Love Foster's take.", [], ["Foster"]),
+        ({"slug": "megyn-kelly", "name": "Megyn Kelly", "handles": [], "show": "The Megyn Kelly Show",
+          "outlet": "SiriusXM"},
+         "Welcome back to The Megan Kelly Show.", [], ["Megan"]),
+    ]
+    for person, text, kept, gone in cases:
+        o, _ = N.blind_study(text, person, blinding, dictionary, aliases=[])
+        for k in kept:
+            check(f"{person['slug']}: another person's name survives: {k!r}", k in o, o)
+        for g in gone:
+            check(f"{person['slug']}: the subject is still redacted in {g!r}", g not in o, o)
 
     print("\n[TOKENS]")
     check("no leaders [COMPANY] token appears", "[COMPANY]" not in out)

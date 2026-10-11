@@ -633,6 +633,34 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
+- **FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings (8 blinded
+  grades).** `blind_study()` now leaves a surname, or a caption corruption of
+  any part of the name, alone when a DIFFERENT person's given name stands right
+  before it. The given name must be on `scripts/given_names.txt`, a frozen copy
+  of `/usr/share/dict/propernames` (sha256 recorded in the file), and must not
+  be the subject's own given name in any form, by prefix, spelling or consonant
+  skeleton, nor a word-like entry such as "Will", "The" or "Sir". A bare title
+  ("Governor Walsh") is still redacted. Leaders `blind()` is untouched:
+  664 of 664 leaders files blind identically under the old and new module.
+  MEASURED over the whole pundits corpus by re-blinding all 367 files with
+  both versions (the old one reproduces every file on disk, 367 of 367): 14
+  files change, keeping Tim Walz 16 times, Marco Rubio 4, Josh Shapiro 2,
+  Jimmy Kimmel 2, Jim Mattis 2, Jeff Walz 2, Alan Cullison 2, and Harvey
+  Weinstein, Victor Davis Hanson, James Comey, Narendra Modi and one unknown
+  "Tony Tima". The first version accepted any capitalised word and leaked the
+  subject 40 times ("Love Megan", "Camille Foster" for Kmele, "Uh Asmond");
+  `test_pundits_blinding.py` now holds those as cases, and a mutation back to
+  that rule fails 4 of 28. ONE KNOWN RESIDUAL: Mehdi Hasan introduces himself
+  as "I'm Mary Hassen" in the captions of
+  `mehdi-hasan/al-jazeera-english-bwb6x8`, and "Mary" is a real given name, so
+  that one surname is now left in. It is ungraded.
+  For repo-3 after pulling: the next pundits normalize rewrites those 14
+  blinded files. Four are graded, `ben-shapiro/ben-shapiro-ahi_t9`,
+  `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and
+  `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each, and `grade.py`
+  will report those 8 as `stale_cache` and exit 1 until they are re-graded
+  with `--force`.
+
 - **The blinder turned two OTHER people's names into [SUBJECT].** Filed 2026-09-19,
   found while building the quote check. Tim Walz became "Tim [SUBJECT]" 8 times in
   `matt-walsh/matt-walsh-9bcva6` (Walz fuzzy-matches Walsh), and Josh Shapiro became
