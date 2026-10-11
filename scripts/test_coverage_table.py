@@ -17,6 +17,8 @@ What is asserted here:
               while every grade file counts as a CALL.
   PARITY      the one-sided line names the transcripts that one judge has
               graded and another has not, which is the real backlog.
+  SKIPPED     a grade file that is not JSON, or carries no leader_slug, is
+              counted and named on a summary line instead of skipped silently.
   PCT         FET% is FETCH/IDENT, 1J% is ANY/FETCH and NJ% is graded-by-every-
               judge over FETCH, each computed per leader and again on the
               fleet totals from summed counts rather than averaged ratios.
@@ -121,6 +123,11 @@ def build(root: Path) -> None:
             "transcript_id": f"{slug}/{src}", "leader_slug": slug, "source_id": src,
             "judge": judge, "mode": mode, "validation_errors": errs,
         }))
+    # A file that is not JSON, and a record with no leader_slug, cannot be
+    # counted; they must be REPORTED as skipped, never dropped without a word.
+    (root / "data/grades/fable/ada/broken__fable__blinded__r0.json").write_text("{not json")
+    (root / "data/grades/fable/ada/noslug__fable__blinded__r0.json").write_text(json.dumps({
+        "transcript_id": "?/x", "source_id": "x", "judge": "fable", "mode": "blinded", "validation_errors": []}))
     # A raw dump beside the grades must never be counted.
     raw = root / "data/grades/_raw"
     raw.mkdir(parents=True, exist_ok=True)
@@ -395,6 +402,10 @@ def main() -> int:
     def check(label: str, cond: bool, detail: str) -> None:
         if not cond:
             fails.append(f"{label}: {detail}")
+
+    skipped = next((l for l in lines if "grade files skipped" in l), "")
+    check("SKIPPED", "1 unreadable" in skipped and "1 without leader_slug" in skipped and "broken__fable" in skipped,
+          f"an unreadable grade file and a slugless one must be reported, got {skipped!r}")
 
     header = next((l for l in lines if l.lstrip().startswith("#")), "")
     check("SPLIT", header.count("FABLE") == 2 and header.count("ASTRA") == 2,

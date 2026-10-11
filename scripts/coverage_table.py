@@ -168,6 +168,9 @@ def main() -> int:
     calls: Counter = Counter()
     calls_by_judge: Counter = Counter()
     seen_judges: set[str] = set()
+    # Grade files that cannot be counted are reported, never dropped silently.
+    unreadable: list[str] = []
+    no_slug: list[str] = []
     gdir = D / "grades"
     if gdir.exists():
         for d in gdir.iterdir():
@@ -178,10 +181,12 @@ def main() -> int:
                 continue
             try:
                 g = json.loads(p.read_text())
-            except Exception:
+            except (OSError, ValueError):
+                unreadable.append(str(p.relative_to(D)))
                 continue
             slug = g.get("leader_slug")
             if not slug:
+                no_slug.append(str(p.relative_to(D)))
                 continue
             judge = g.get("judge") or "?"
             seen_judges.add(judge)
@@ -365,6 +370,10 @@ def main() -> int:
     print(f"  leaders with any transcript : {started}/{len(rows)}")
     print(f"  leaders at target ({TARGET})       : {sum(1 for r in rows if r['fetched'] >= TARGET)}/{len(rows)}")
     print(f"  leaders with any grade      : {sum(1 for r in rows if r['graded'] > 0)}/{len(rows)}")
+    if unreadable or no_slug:
+        first = (unreadable + no_slug)[0]
+        print(f"  grade files skipped         : {len(unreadable)} unreadable, {len(no_slug)} without "
+              f"leader_slug, counted nowhere above (first: {first})")
     if off_board:
         # Named, not hidden. "Deliberately not here" and "missing" are different
         # facts, and this line exists because they were the same number before.
