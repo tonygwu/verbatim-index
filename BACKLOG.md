@@ -672,6 +672,23 @@ they were filed (50aeaac).
   board, at which point the whole company-string question reopens and is already
   recorded against each person in `data/roster/final.json`.
 
+## Grader validation
+
+- **`validate_grader.py` says it "mirrors aggregate.py's own gates" and no
+  longer does.** Filed 2026-10-11. It was last changed on 2026-09-06, and
+  `load()` has drifted from `aggregate.py` in four ways since then. (1) It
+  drops a GRADE whose own subject share is under `MIN_SUBJECT_SHARE`, while
+  `aggregate.filter_unscorable` drops a whole RECORDING when the judges' mean
+  share is under the cutoff or any judge says 0, the rule `docs/agents/SCORING.md`
+  records with its measured cost. (2) It skips `_raw/` and not `_obsolete/`.
+  (3) It applies no board membership. (4) It swallows any unreadable grade or
+  transcript file (`except Exception: continue` and `pass`) and reports
+  nothing. No test covers it and no loop runs it, so nothing published reads
+  it today, but its V1-V5 figures are quoted as grader validation. The
+  condition that brings it back: the next time its numbers are quoted or
+  re-run. Then make `load()` call aggregate's own loaders and filters rather
+  than restating them, which is the drift this entry records.
+
 ## Site rendering
 
 - **`test_log_bloat.py` reads repo-0's LIVE production checkout, so it goes red
