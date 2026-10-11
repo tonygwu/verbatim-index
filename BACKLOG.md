@@ -677,6 +677,34 @@ they were filed (50aeaac).
   defects of this kind as not moving scores; do it before the full grade, with a
   failing-then-passing case for a first name followed by the subject's surname.
 
+- **RE-MEASURED AND PARTLY FIXED 2026-10-11; one decision left for the
+  operator.** Three matcher misses are fixed in `pundits_verify_page.py`, each
+  test-first in `test_pundits_verify_page.py`. First, `[AFFILIATION]` is now a
+  placeholder, standing for up to five words. Second, `_norm()` strips quote
+  marks at word edges and treats curly apostrophes as straight, so a judge's
+  'Oh, you love war.' matches the captions' "Oh, you love war.". Third, an
+  empty quote is counted as `empty`, not as a quote the matcher missed.
+  Re-run of `suspect_quotes()` over the 312 live grades:
+
+  ```
+  against transcripts/       located 3159  not_located 128  empty 3   (was 3153 / 137)
+  against transcripts_open/  located 3198  not_located  89  empty 3   (was 3192 /  98)
+  ```
+
+  The 137 depended on the folder: the judges read the normalized text, where
+  loops are collapsed. Of the 89 left against `transcripts_open`, 84 share at
+  least 80% of their three-word sequences with the transcript, and 5 share 73
+  to 77%. All 5 were read in context, and every one is a judge tidying the
+  captions, never a paraphrase. Two dropped a filler ("uh", "yeah"), one
+  joined a caption-split number ("71,9 54" to "71,954") across both modes, and
+  one corrected a caption typo ("healthare"). 86 of the 89 are Gemini. A
+  matcher that also skipped fillers and immediate repeats would place 29 of
+  the 89. That is not done, because it makes "located" fuzzier and the
+  remaining 60 differ in more varied ways. THE DECISION LEFT: does a quote with
+  fillers removed or a caption error corrected count as verbatim under the
+  rubric? If it does, these are matcher misses. If not, they are rubric
+  violations by the judge, and so mostly Gemini's.
+
 - **137 judge quotes credited to the subject do not appear in the transcript.** Filed
   2026-09-19. Of 3,290 subject quotes, `pundits_verify_page.locate` found 3,153; 137 (4%)
   it could not place even allowing for [SUBJECT] tokens and "..." elisions. Some are

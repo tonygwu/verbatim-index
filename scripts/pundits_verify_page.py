@@ -159,7 +159,11 @@ def excerpts(text: str) -> list[dict]:
 
 CONTEXT_WORDS = 35
 QUOTE_CAP_PER_RECORDING = 4
-WILDCARD = {"[subject]", "[company]"}
+# A blinding token in a quote taken from blinded text, and the most raw words it
+# can stand for. [AFFILIATION] is the pundits token for a show or outlet, which
+# runs longer than a name ("The Matt Walsh Show").
+WILDCARD_SPAN = {"[subject]": 3, "[company]": 3, "[affiliation]": 5}
+WILDCARD = set(WILDCARD_SPAN)
 SIGNAL_RANK = {"spans_turn": 3, "question_in_conversation": 2, "names_subject": 1}
 
 
@@ -167,7 +171,10 @@ def _norm(tok: str) -> str:
     t = tok.lower()
     if t in WILDCARD or t == ">>":
         return t
-    return re.sub(r"[^\w']", "", t)
+    # One apostrophe, and none at the edges: a judge quoting a quotation writes
+    # 'Oh, no.' where the captions have "Oh, no.", and either side may be curly.
+    t = re.sub(r"[^\w']", "", t.replace("\u2019", "'").replace("\u2018", "'"))
+    return t.strip("'")
 
 
 def locate(quote: str, raw: str):
@@ -175,7 +182,7 @@ def locate(quote: str, raw: str):
 
     Matching is on normalized words. `[SUBJECT]` and `[COMPANY]` in a quote taken from
     blinded text stand for the one to three raw words of the name they replaced, at any
-    position. An elided quote ("...") is matched on its longest piece. Caption turn marks
+    position, and `[AFFILIATION]` for one to five words of a show or outlet. An elided quote ("...") is matched on its longest piece. Caption turn marks
     `>>` and timestamp marks are skipped. A quote shorter than four words is not located,
     because a match that short says nothing about where it came from.
     """
@@ -192,7 +199,7 @@ def locate(quote: str, raw: str):
         if qi == len(q):
             return wi
         if q[qi] in WILDCARD:
-            for n in (1, 2, 3):
+            for n in range(1, WILDCARD_SPAN[q[qi]] + 1):
                 if wi + n <= len(words):
                     end = match(qi + 1, wi + n)
                     if end is not None:
@@ -207,7 +214,7 @@ def locate(quote: str, raw: str):
     for s0, (_, w0) in enumerate(words):
         if w0 != anchor:
             continue
-        for back in range(lead, 3 * lead + 1):
+        for back in range(lead, max(WILDCARD_SPAN.values()) * lead + 1):
             st = s0 - back
             if st < 0:
                 break
@@ -229,7 +236,7 @@ def suspect_quotes(grades_dir: Path, transcripts_dir: Path, roster: dict) -> tup
     judge's own label never reaches the page rows.
     """
     by_rec: dict = {}
-    report = {"subject_quotes": 0, "located": 0, "not_located": 0, "flagged": 0}
+    report = {"subject_quotes": 0, "located": 0, "not_located": 0, "empty": 0, "flagged": 0}
     raw_cache: dict = {}
     for gp in sorted(Path(grades_dir).glob("*/*/*__r0.json")):
         if "_obsolete" in gp.parts or "_raw" in gp.parts:
@@ -257,6 +264,10 @@ def suspect_quotes(grades_dir: Path, transcripts_dir: Path, roster: dict) -> tup
                     continue
                 report["subject_quotes"] += 1
                 q = e.get("quote") or ""
+                if not q.strip():
+                    # A judge that cites nothing is not a quote the matcher missed.
+                    report["empty"] += 1
+                    continue
                 span = locate(q, raw)
                 if span is None:
                     report["not_located"] += 1

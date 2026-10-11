@@ -91,6 +91,19 @@ def main() -> int:
           V.locate("a b ... the long part of the quote here", "x the long part of the quote here y") is not None)
     check("a quote not in the transcript is not located", V.locate("words that are not there at all", "nothing to see here") is None)
     check("a quote under four words is not located", V.locate("so it goes", "and so it goes on") is None)
+    # The pundits blinder writes [AFFILIATION] for a show or outlet, often several
+    # words long. Until 2026-10-11 the matcher knew only [SUBJECT] and [COMPANY],
+    # so a blinded quote naming the show could never be placed.
+    # Judges often write a quotation inside a quote with single marks where the
+    # captions have double ones, and either side may use a curly apostrophe.
+    check("single quotation marks in a quote match double ones in the transcript",
+          V.locate("people were like, 'Oh, you love war.' They loved it",
+                   'people were like, "Oh, you love war." They loved it') is not None)
+    check("a curly apostrophe matches a straight one",
+          V.locate("it’s what we always said it would be", "it's what we always said it would be") is not None)
+    check("an [AFFILIATION] in a blinded quote matches the show it replaced",
+          V.locate("we said it on [AFFILIATION] last night again",
+                   "[00:00:01] we said it on The Matt Walsh Show last night again") is not None)
 
     print("\n[SIGNALS]")
     with tempfile.TemporaryDirectory() as td:
@@ -108,6 +121,7 @@ def main() -> int:
             {"quote": "people ask me whether Jane Roe changed her mind", "speaker": "subject"},
             {"quote": "policy matters more than slogans in every single case", "speaker": "subject"},
             {"quote": "welcome to the show and so on here", "speaker": "interlocutor"},
+            {"quote": "", "speaker": "subject"},
         ]
         (td / "g" / "fable" / "p" / "s1__fable__blinded__r0.json").write_text(json.dumps({
             "leader_slug": "p", "source_id": "s1", "judge": "fable", "mode": "blinded", "run": 0,
@@ -120,7 +134,10 @@ def main() -> int:
         check("a quote naming the subject is flagged", any("names_subject" in x for x in sigs), str(sigs))
         check("an ordinary answer is not flagged", not any("policy matters" in t for t in texts), str(texts))
         check("a quote the judge gave to someone else is not in the queue", not any("welcome" in t for t in texts))
-        check("the scan counts every subject quote it read", rep["subject_quotes"] == 4, str(rep))
+        check("the scan counts every subject quote it read", rep["subject_quotes"] == 5, str(rep))
+        check("an empty quote is counted as empty, not as one the matcher missed",
+              rep.get("empty") == 1 and rep["located"] + rep["not_located"] + rep["empty"] == rep["subject_quotes"],
+              str(rep))
 
         print("\n[HIDDEN]")
         page_json = json.dumps(rows)
