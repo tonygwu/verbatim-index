@@ -690,6 +690,18 @@ they were filed (50aeaac).
   in progress. Then split it into a fixture proof and a named LIVE DATA check,
   as `test_render_integrity.py` was.
 
+  **Update 2026-10-11, repo-0: this red was a TRUE POSITIVE.** The 9 records
+  are the VP-5 remainder that repo-0 integrated in data `a8212d25`, and the
+  integration skipped `market_consensus.py`, which the 2026-10-10 rebuild had
+  run. They were committed and deployed without market provenance, so the red
+  would have stayed after the rebuild finished. Fixed by running
+  `market_consensus.py --leaders jack-dorsey,bill-gurley --router-exclude
+  claude,claude_e`: 9 attempted, 9 `no_match`, 0 errors, 5 Fable matcher calls.
+  The test then printed `13 passed, 0 failed`. The check did its job. The
+  integration step (`integrate.py` in an experiment folder) is where the gap
+  is: anything that adds accepted records must run market consensus before
+  commit.
+
 - **RESOLVED 2026-10-11: the derived-number proof runs on a fixture, and the
   live render is its own named data check.** The bring-back condition was met:
   the same data-caused red was recorded again in 9aad5a6 (2026-09-17), e7f056e
