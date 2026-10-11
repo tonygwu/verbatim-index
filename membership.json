@@ -56,5 +56,6 @@
   "bill-gurley": ["predictions"],
   "vinod-khosla": ["predictions"],
   "tom-lee": ["predictions"],
+  "nate-silver": ["leaders", "predictions"],
   "cc-wei": []
 }

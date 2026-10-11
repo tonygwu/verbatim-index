@@ -49,24 +49,26 @@ repository.
 
 - Per-leader pipeline coverage: `.venv/bin/python scripts/coverage_table.py`
 
-- The roster, 57 people: `data/roster/final.json`, with the expansion reasoning
+- The roster, 58 people: `data/roster/final.json`, with the expansion reasoning
   and the two meanings of `longform_availability` in
-  `docs/ROSTER-EXPANSION-2026-09-10.md`. 50 of the 57 are on the leaders board;
+  `docs/ROSTER-EXPANSION-2026-09-10.md`. 51 of the 58 are on the leaders board;
   the seven appended on 2026-09-18 carry `boards: ["predictions"]` and are
-  deliberately absent from it. Read `membership.json`, never the roster length,
+  deliberately absent from it. Nate Silver, appended at rank 58 on 2026-10-11 on
+  operator instruction, is on both boards; the record of how he was added is
+  `docs/ROSTER-ADD-NATE-SILVER-2026-10-11.md`. Read `membership.json`, never the roster length,
   to answer "how many are on the board".
 
 - Board membership: `membership.json` at the public repo root, slug to boards
   only so no person metadata leaves the private repo, read through
-  `scripts/membership.py` and nothing else. 58 entries: the 48 on the roster
-  with both boards, `arthur-mensch` and `yann-lecun` with `leaders` alone (taken
+  `scripts/membership.py` and nothing else. 59 entries: the 49 on the roster
+  with both boards (Nate Silver the 49th, since 2026-10-11), `arthur-mensch` and `yann-lecun` with `leaders` alone (taken
   off the predictions board on 2026-09-29: too few of their predictions can be
   checked yet to score fairly; rescue round 4, ledger VP-24), the seven investors
   with `predictions` alone, and `cc-wei` with none. Since 2026-09-29
   `build_predictions_site.py` reads the predictions board too, lists only people
   on it, and names the rest in its "Not listed" note; the predictions deploy
-  fingerprints `membership.json` for that reason. Since P3 the seven are on the roster as well, so the roster holds 57
-  and the leaders board holds 50; `cc-wei` is on neither. **THREE READERS READ IT, all study-scoped through
+  fingerprints `membership.json` for that reason. Since P3 the seven are on the roster as well, and since 2026-10-11 Nate
+  Silver is too, so the roster holds 58 and the leaders board holds 51; `cc-wei` is on neither. **THREE READERS READ IT, all study-scoped through
   `membership.for_study`:** `grade.py` drops an off-board transcript before a
   judge is chosen and reports `membership_dropped_by_slug`; `aggregate.py`
   filters `usable` and declares the remainder in an `off_board` bucket that the

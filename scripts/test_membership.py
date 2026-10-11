@@ -33,8 +33,11 @@ could land first. Equality between the two sets would have been red across P1 an
 P2, which is how an operator learns to ignore a red suite. It is STILL one-way
 today, because `cc-wei` is in membership and not on the roster.
 
-P3 LANDED ON 2026-09-18, so the roster now holds 57 and the leaders board holds
-50. The board assertion was written to survive that and did. Section [6] used to
+P3 LANDED ON 2026-09-18, so the roster held 57 and the leaders board held 50.
+The board assertion was written to survive that and did. On 2026-10-11 Nate
+Silver joined BOTH boards at roster rank 58, so the roster holds 58, the leaders
+board 51 and this file 59 entries. He is not one of SEVEN, so every assertion
+below already treats him as an ordinary leaders-board member. Section [6] used to
 SIMULATE the change by appending the seven; it appended nothing once they were
 really there, which made it a silent duplicate of section [5]. It now guards the
 change that has not happened yet instead, which is a roster entry arriving with
@@ -171,7 +174,7 @@ def main() -> int:
         print("\n[5] the shipped membership.json")
         shipped = M.load()
         check("it loads with no argument", isinstance(shipped, dict))
-        check("it holds 58 entries", len(shipped) == 58, f"got {len(shipped)}")
+        check("it holds 59 entries", len(shipped) == 59, f"got {len(shipped)}")
         check("DEFAULT_PATH is the repo root file",
               M.DEFAULT_PATH == ROOT / "membership.json", f"got {M.DEFAULT_PATH}")
 
@@ -240,7 +243,7 @@ def main() -> int:
                          "PATH": "/usr/bin:/bin"},
             capture_output=True, text=True)
         check("load() from an unrelated working directory finds the real file",
-              proc.returncode == 0 and proc.stdout.strip() == "58",
+              proc.returncode == 0 and proc.stdout.strip() == "59",
               f"rc={proc.returncode} out={proc.stdout.strip()!r} err={proc.stderr.strip()[-300:]!r}")
 
     print(f"\n{passed} passed, {failed} failed")
