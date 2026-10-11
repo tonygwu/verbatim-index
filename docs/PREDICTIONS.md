@@ -120,6 +120,14 @@ stored as context and shown as links without a number. `no_match` is the
 normal result. Every HTTP response is cached under `_markets/` so a rerun is
 free and reproducible.
 
+The stage SPENDS model quota: one matcher call per accepted record that finds
+at least one candidate market. Counted from the records on 2026-10-11, 489 of
+1115 accepted records carry a `matcher` block, 405 served by Astra and 84 by
+Fable, and 610 ended at `no_candidates` with no call. Every run summary in
+`_runs/` now records `matcher_calls` (attempted, by harness). To price a run
+before spending, `--matcher none` searches the markets, reports
+`would_call_matcher`, makes no model call and writes no record.
+
 ## 3. The record
 
 One JSON object per line in `data/predictions/<slug>/<sid>.jsonl`, sorted by
@@ -164,6 +172,7 @@ for t in scripts/test_*.py; do .venv/bin/python "$t" || exit 1; done
 # the corpus, detached, one stage at a time so a quota stop is attributable
 nohup .venv/bin/python scripts/extract_predictions.py --stage extract --workers 6 > data/predictions/_runs/extract.log 2>&1 &
 nohup .venv/bin/python scripts/extract_predictions.py --stage verify  --workers 6 > data/predictions/_runs/verify.log 2>&1 &
+.venv/bin/python scripts/market_consensus.py --matcher none   # price it: would_call_matcher, no model call
 .venv/bin/python scripts/market_consensus.py
 
 # check, count, render, deploy

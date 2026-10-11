@@ -65,6 +65,12 @@ commands are in `docs/MEMBERSHIP-P2-AUDIT.md`.
    Treat the stage as spending until somebody measures it with the matcher
    pinned off. Anyone planning P4 under a no-spend constraint will otherwise
    read this plan and get it wrong.
+   MEASURED 2026-10-11, from the records rather than a new run: 489 of 1115
+   accepted records carry a `matcher` block, so at least 489 model calls, 405
+   Astra and 84 Fable. The line numbers above have moved: the import is now
+   `AGY_JUDGE_BIN, gemini_rotation_preflight`, and `--matcher` now also takes
+   `none`, which prices a run with no model call. Run summaries record
+   `matcher_calls`. See `docs/PREDICTIONS.md`, stage 3.
 
 2. **The proposed `deploy.sh` floor, `len(leaders) + len(unranked) +
    len(unscored)`, refuses publication for ever from P3.** That sum is the
@@ -165,7 +171,9 @@ predictions board switched off (`SHOW_PREDICTIONS_LINK = False`,
 should be coordinated with, not separate from, the P4 deploy.
 
 **`market_consensus` has never run on any web-sourced record.** It is a
-prerequisite for a clean corpus and it is public-API only, no model calls.
+prerequisite for a clean corpus. It is NOT public-API only: its matcher is a
+model call per record with candidate markets (claim 1 below), and
+`--matcher none` prices a run before it spends.
 
 ## Citations verified at `b8a8a73`
 

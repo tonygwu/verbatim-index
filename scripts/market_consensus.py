@@ -485,15 +485,22 @@ def strip_private(m: dict) -> dict:
 # One record
 # ---------------------------------------------------------------------------
 
-def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_id: str,
-                         kalshi_catalogue: list[dict] | None = None) -> dict:
-    """matcher(prompt) -> (text, telemetry, provenance) or None when there is nothing to judge."""
+def gather_candidates(rec: dict, cache: Cache, kalshi_catalogue: list[dict] | None = None
+                      ) -> tuple[dict, list[dict], dict | None]:
+    """The half of a consensus search that makes no model call: public market APIs only.
+
+    -> (base, candidates, finished). `finished` is a complete consensus dict when
+    the record ends before the matcher (no statement date, a market API error, no
+    candidates); otherwise it is None and the matcher must judge `candidates`.
+    `--matcher none` runs only this half, which is how a run is priced before it
+    spends anything: each record left with finished=None is one model call.
+    """
     cutoff = L.publication_cutoff(rec)
     base = {"status": "failed", "reason": None, "cutoff": cutoff, "market_probability": None, "exact_match": None,
             "proxy_matches": [], "candidates_considered": 0, "candidates_dropped": [], "matcher": None,
             "searched_at_utc": L.utc_now(), "error": None}
     if cutoff["requested_cutoff_utc"] is None:
-        return {**base, "status": "unavailable", "reason": "no_statement_date"}
+        return base, [], {**base, "status": "unavailable", "reason": "no_statement_date"}
     cut = cutoff["requested_cutoff_utc"]
     p, s = rec["prediction"], rec["source"]
     try:
@@ -501,11 +508,23 @@ def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_i
         pc, pd = polymarket_candidates(cache, queries, cut)
         kc, kd = kalshi_candidates(cache, content_tokens(p["normalized_claim"]), cut, kalshi_catalogue)
     except RuntimeError as exc:
-        return {**base, "error": str(exc)[:600]}
+        return base, [], {**base, "error": str(exc)[:600]}
     candidates, dropped = pc + kc, pd + kd
     base.update({"candidates_considered": len(candidates), "candidates_dropped": dropped})
     if not candidates:
-        return {**base, "status": "no_match", "reason": "no_candidates"}
+        return base, [], {**base, "status": "no_match", "reason": "no_candidates"}
+    return base, candidates, None
+
+
+def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_id: str,
+                         kalshi_catalogue: list[dict] | None = None) -> dict:
+    """matcher(prompt) -> (text, telemetry, provenance) or None when there is nothing to judge."""
+    base, candidates, finished = gather_candidates(rec, cache, kalshi_catalogue)
+    if finished is not None:
+        return finished
+    cutoff = base["cutoff"]
+    cut = cutoff["requested_cutoff_utc"]
+    p = rec["prediction"]
     try:
         text, telemetry, prov = matcher(build_matching_prompt(rec, candidates, contract["spec"], contract["schema_text"]))
         obj = L.extract_json(text)
@@ -559,6 +578,11 @@ def matcher_block(prov: dict, telemetry: dict, contract: dict, run_id: str) -> d
 
 def make_matcher(router: Router, args, run_id: str, workroot: Path):
     counter = {"n": 0}
+    # What the run spent on models, for its summary. A call counts as attempted
+    # once the router has picked an account, whether or not it then succeeds;
+    # a pick the router refuses made no call. Until 2026-10-11 no run recorded
+    # this, and the stage was described in a plan as making no model calls.
+    calls = {"attempted": 0, "by_harness": {}}
     lock = threading.Lock()
 
     def matcher(prompt: str):
@@ -566,11 +590,15 @@ def make_matcher(router: Router, args, run_id: str, workroot: Path):
             counter["n"] += 1
             n = counter["n"]
         route = router.pick(None if args.matcher == "auto" else args.matcher, None)
+        with lock:
+            calls["attempted"] += 1
+            calls["by_harness"][route["harness"]] = calls["by_harness"].get(route["harness"], 0) + 1
         wd = workroot / f"match__{run_id}__{n}"
         wd.mkdir(parents=True, exist_ok=True)
         text, telemetry, account = call_harness(route, prompt, args.timeout, wd, args)
         prov = L.normalise_provenance(route["harness"], telemetry, account, route["account_id"])
         return text, telemetry, prov
+    matcher.calls = calls
     return matcher
 
 
@@ -585,6 +613,22 @@ def process_file(job: dict) -> dict:
         return {**res, "status": "nothing_to_do"}
     if args.dry_run:
         return {**res, "status": "dry_run"}
+    if args.matcher == "none":
+        # Price the run without spending: search the markets, count the records
+        # that would reach the model, and leave every record exactly as it was.
+        off: dict[str, int] = {}
+        for r in todo:
+            _, _, finished = gather_candidates(r, job["cache"], job["kalshi"])
+            if finished is None:
+                key = "would_call_matcher"
+            else:
+                key = f"{finished['status']}/{finished['reason'] or ('market_error' if finished.get('error') else 'none')}"
+                if finished.get("error"):
+                    res["errors"].append({"prediction_id": r["prediction_id"],
+                                          "error_type": L.classify_exception_detail(finished["error"]),
+                                          "detail": finished["error"]})
+            off[key] = off.get(key, 0) + 1
+        return {**res, "status": "matcher_off", "matcher_off": off}
     changed = False
     for r in todo:
         try:
@@ -611,7 +655,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--limit", type=int, default=None, help="at most N prediction files")
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--timeout", type=int, default=900)
-    ap.add_argument("--matcher", choices=["auto", "fable", "astra", "gemini"], default="auto")
+    ap.add_argument("--matcher", choices=["auto", "fable", "astra", "gemini", "none"], default="auto",
+                    help="none: search the markets and count the records that would reach the model, "
+                         "make no model call, and write no record")
     ap.add_argument("--router-exclude", default="antigravity_claude")
     ap.add_argument("--allow-degraded", action="store_true")
     ap.add_argument("--force", action="store_true")
@@ -648,11 +694,12 @@ def main(argv: list[str] | None = None) -> int:
     matcher = None
     kalshi = None
     if not args.dry_run:
-        router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, None)
-        if gemini_reachable(router.accounts, router.exclude_ids, [args.matcher]):
-            router.gemini = gemini_rotation_preflight(args.agy_bin)
-        workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "predict-work"
-        matcher = make_matcher(router, args, run_id, workroot)
+        if args.matcher != "none":
+            router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, None)
+            if gemini_reachable(router.accounts, router.exclude_ids, [args.matcher]):
+                router.gemini = gemini_rotation_preflight(args.agy_bin)
+            workroot = Path(os.environ.get("TMPDIR", "/tmp")) / "predict-work"
+            matcher = make_matcher(router, args, run_id, workroot)
         kalshi = kalshi_series(cache)
         log(f"[run {run_id}] kalshi series catalogue: {len(kalshi)} entries")
     results = []
@@ -678,7 +725,15 @@ def main(argv: list[str] | None = None) -> int:
             tax[e["error_type"]] = tax.get(e["error_type"], 0) + 1
     summary = {"run_id": run_id, "files": len(files), "attempted_records": sum(r.get("todo", 0) for r in results),
                "by_status": by, "error_taxonomy": tax, "http_calls": cache.calls, "cache_hits": cache.hits,
+               "matcher_calls": dict(matcher.calls) if matcher is not None else {"attempted": 0, "by_harness": {}},
                "file_failures": sum(1 for r in results if r["status"] == "failed")}
+    if args.matcher == "none":
+        off: dict[str, int] = {}
+        for r in results:
+            for k, v in (r.get("matcher_off") or {}).items():
+                off[k] = off.get(k, 0) + v
+        summary["matcher_off"] = off
+        summary["would_call_matcher"] = off.get("would_call_matcher", 0)
     if not args.dry_run:
         L.write_prediction_file(root / "_runs" / f"{run_id}.json",
                                 json.dumps({"summary": summary, "matching_contract": c, "args": vars(args), "results": results,

@@ -471,6 +471,20 @@ they were filed (50aeaac).
   checkout, or decide whether a zero-record person should be a row at all.
   Full context in `docs/MEMBERSHIP-P4-STATUS.md`.
 
+- **RESOLVED 2026-10-11: measured from the records, recorded on every run, and
+  a run can now be priced before it spends.** Counted over
+  `data/predictions/*/*.jsonl` at data `bc03047c`: 1115 accepted records, 489
+  with a `matcher` block (Astra 405, Fable 84), 610 ended at `no_candidates`
+  with no call. So the first P4 run did spend, and nothing recorded how much.
+  Every run summary now carries `matcher_calls` (attempted, by harness; a pick
+  the router refuses is not counted), and `--matcher none` searches the
+  markets, reports `would_call_matcher`, makes no model call and writes no
+  record. The default is unchanged. Guarded by
+  `scripts/test_market_consensus_cost.py`, 13 checks; against the parent it
+  fails 4 and then crashes on the argument. The plan's two claims and its stale
+  line numbers are corrected, and `docs/PREDICTIONS.md` stage 3 says the stage
+  spends.
+
 - **`market_consensus.py` is not quota-free, and the plan says it is.** Filed
   2026-09-18. `docs/plans/board-membership-2026-09-16.md` states it is
   "public-API only, no model calls". `scripts/market_consensus.py:53` imports
