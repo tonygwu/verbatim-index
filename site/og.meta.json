@@ -1,10 +1,10 @@
 {
  "site": "leaderboard",
  "counts": {
-  "leaders": 50,
-  "transcripts": 653,
+  "leaders": 51,
+  "transcripts": 666,
   "judges": 3,
-  "words_graded": 8839787,
+  "words_graded": 9020532,
   "top": [
    {
     "rank": 1,
@@ -18,8 +18,8 @@
    },
    {
     "rank": 3,
-    "slug": "tim-sweeney",
-    "overall": 71.7
+    "slug": "demis-hassabis",
+    "overall": 71.6
    }
   ]
  },
