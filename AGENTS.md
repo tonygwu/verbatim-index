@@ -169,9 +169,16 @@ already paid for twice, in the hand-written judge list in `aggregate.py` and in
 the single fetcher name in `grade_loop.sh`: a name written in one place goes
 stale the day something is added beside it. The earlier version of this block
 reached 21 of the files, 13 by hand and 8 through a typed predictions loop, and
-had fallen 18 behind. RUN 2026-09-11: the glob finds 39 test files, all 39 pass,
-and none of them spends judge quota, so the whole suite is safe in a fresh clone
-before any account is wired up.
+had fallen 18 behind. No test spends judge quota, so the whole suite is safe in
+a fresh clone before any account is wired up. RUN 2026-10-11, following this
+block literally in a scratch clone of GitHub `main` at `a69114f`, without the
+optional data link: setup works, the glob finds 206 test files, 199 pass, and 7
+fail, every one because `data/` is absent: `test_agents_md_current_state`,
+`test_criteria_agreement`, `test_dating_operator_cases`, `test_membership`,
+`test_predictions_shared`, `test_render_integrity` (its `LIVE DATA` check only)
+and `test_verify_router_refusal`. With a data link at data `main`, all pass
+except `test_log_bloat`, which reads repo-0's live checkout and fails while
+repo-0 is mid-rebuild (BACKLOG, Site rendering).
 
 For experiments, follow `docs/DATA-CLONE-WORKFLOW.md` after setup.
 `data_clone_workflow.py new-run` creates a unique run with provenance.
