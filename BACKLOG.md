@@ -96,8 +96,10 @@ plan was right when it was written and the tree has moved since.
   a reset. A 1 MiB body was reset 30 times in 30. The server now reads and
   discards a refused body up to `DRAIN_LIMIT` before answering; a new check
   sends 4x the cap five times and wants five 400s, and it failed first. After
-  the fix, 60 runs, 0 failed. If either file goes red again, keep the whole
-  output.
+  the fix, 60 runs, 0 failed. Then every test file that sleeps, times out,
+  opens a socket or starts a process, 19 files, ran 20 times each: 380 runs, 0
+  failed. A full suite ran beside the loop, adding load. If any of them goes
+  red again, keep the whole output.
 
 - **`bash scripts/run_tests.sh` returned `failed: 1` once and has not
   reproduced in five attempts. The failing file's name was lost.** Filed
