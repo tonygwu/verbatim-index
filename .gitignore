@@ -32,3 +32,6 @@ site-pundits/index.html
 # uploaded by wrangler. Data, so never committed here.
 site/audit/
 site-predictions/predictions/
+
+# macOS Finder metadata. Every clone on this Mac grows one at its root.
+.DS_Store
