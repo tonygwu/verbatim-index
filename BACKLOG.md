@@ -55,6 +55,33 @@ P1 itself is sound and nothing reads `membership.json` yet, so none of this move
 a published number today. Every entry below is P2's, and each one is a place the
 plan was right when it was written and the tree has moved since.
 
+- **RESOLVED 2026-10-11: the second and third observations came, both named,
+  and the proven one is fixed.** Two later commits recorded red suite runs that
+  nobody filed here:
+
+  ```
+  b80ef3b 2026-09-26  test_run_marker.py "a plain kill removes the marker",
+                      load average about 470, the check allowed 5 seconds
+  d9f2321 2026-09-27  test_pundits_verify_serve.py failed once in a concurrent
+                      run and passed 24/24 alone; its output was not kept
+  ```
+
+  The entry below was wrong that `test_normalize_qa_race.py` is the suite's only
+  wall-clock assertion: `test_run_marker.py` predates it with a 5-second
+  `wait_for`, and it is a plausible cause of the original unnamed failure too.
+  FIXED there, test-first. A new STALLED case SIGSTOPs a loop, kills it, and
+  continues it 6 seconds later; with the old 5-second bound it failed, `38
+  passed, 2 failed`, and with the bound at 20 seconds it passes, `40 passed, 0
+  failed`. A wait returns the moment its condition holds, so a healthy run pays
+  nothing. The loop body now runs 120 seconds, far past any wait, so a loop
+  exiting by itself can never satisfy a check meant for a signal, and the
+  CLAIM case holds its loop on a release file instead of racing a 1.5-second
+  sleep. Mutation check: with the EXIT trap removed from `run_marker.sh`, EXIT,
+  TERM and STALLED all fail. `test_pundits_verify_serve.py`'s two 5-second HTTP
+  timeouts are widened to 30 the same way, but its cause stays UNPROVEN because
+  the failing output is gone. If either file goes red again, keep the whole
+  output.
+
 - **`bash scripts/run_tests.sh` returned `failed: 1` once and has not
   reproduced in five attempts. The failing file's name was lost.** Filed
   2026-09-17. One red run between two green ones, with nothing changed in

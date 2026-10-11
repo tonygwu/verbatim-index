@@ -34,6 +34,12 @@ from types import SimpleNamespace
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 PASS, FAIL = [], []
+# A request returns as soon as the server answers, so this bound costs nothing on a
+# healthy run. It was 5s, and this file failed once in a concurrent suite run on
+# 2026-09-27 (d9f2321) and passed alone; that output was not kept, so the cause is
+# UNPROVEN. A 5s bound is what failed under a load average near 470 in
+# test_run_marker.py the day before, so the bound is widened the same way.
+HTTP_TIMEOUT_S = 30
 
 
 def check(name, ok, detail=""):
@@ -46,14 +52,14 @@ def post(base, obj, raw=None):
     req = urllib.request.Request(base + "/api/answer", data=body, method="POST",
                                  headers={"content-type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read())
 
 
 def get(base, path):
-    with urllib.request.urlopen(base + path, timeout=5) as r:
+    with urllib.request.urlopen(base + path, timeout=HTTP_TIMEOUT_S) as r:
         return r.status, r.read()
 
 

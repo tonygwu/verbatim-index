@@ -25,6 +25,8 @@ What is asserted here, against real processes:
   CLAIM      a claiming loop is seen as running while it runs.
   EXIT       a normal exit removes the marker.
   TERM       a plain `kill` removes the marker.
+  STALLED    a loop that is not scheduled for longer than the old 5s wait when
+             it is killed still removes its marker once it runs again.
   KILL9      after `kill -9` the marker stays, is NOT counted, and the reader
              says so on stderr instead of staying quiet.
   REUSED     a marker whose pid now belongs to a different process is NOT
@@ -50,6 +52,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -58,6 +61,17 @@ HELPER = REPO / "scripts" / "run_marker.sh"
 NAME = "zz_fake_loop.sh"
 PASS, FAIL = [], []
 STARTED: list[subprocess.Popen] = []
+# How long a check waits for a loop to claim or release its marker. A wait
+# returns the moment its condition holds, so a passing run costs nothing extra;
+# the bound only decides how slow a loaded machine may be before the check
+# fails. It was 5s, and on 2026-09-26 (b80ef3b) "a plain kill removes the
+# marker" failed with the load average near 470 while the helper was fine.
+# STALLED below reproduces that: a loop not scheduled for longer than the old
+# bound. A loop's own body runs for LOOP_S, far longer than WAIT_S, so a loop
+# exiting by itself can never satisfy a wait that a signal was meant to.
+WAIT_S = 20.0
+STALL_S = 6.0
+LOOP_S = 120
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -79,7 +93,7 @@ def marker(tmp: Path) -> Path:
     return tmp / "running" / f"{NAME}.marker"
 
 
-def start_loop(tmp: Path, body: str = "sleep 30") -> subprocess.Popen:
+def start_loop(tmp: Path, body: str = f"sleep {LOOP_S}") -> subprocess.Popen:
     script = tmp / f"loop_{len(STARTED)}.sh"
     script.write_text(f'. "{HELPER}"\nclaim_run_marker "{NAME}" || exit 3\n{body}\n')
     p = subprocess.Popen(["bash", str(script)], env=env(tmp), start_new_session=True,
@@ -88,7 +102,7 @@ def start_loop(tmp: Path, body: str = "sleep 30") -> subprocess.Popen:
     return p
 
 
-def wait_for(cond, timeout: float = 5.0) -> bool:
+def wait_for(cond, timeout: float = WAIT_S) -> bool:
     end = time.time() + timeout
     while time.time() < end:
         if cond():
@@ -118,14 +132,16 @@ def behaviour() -> None:
         check("no marker: not running (status 1)", rc == 1, f"status {rc}")
 
         print("\nCLAIM / EXIT")
-        a = start_loop(tmp, body="sleep 1.5")
+        release = tmp / "release"
+        a = start_loop(tmp, body=f'while [ ! -f "{release}" ]; do sleep 0.1; done')
         check("the marker appears when a loop claims it", wait_for(lambda: marker(tmp).exists()))
         rc, err = ask(tmp)
         check("a claiming loop is seen as running (status 0)", rc == 0, f"status {rc}: {err}")
         text = marker(tmp).read_text() if marker(tmp).exists() else ""
         check("the marker records the loop's pid", f"pid={a.pid}" in text, text)
         check("the marker records a start time", re.search(r"^started_utc=\S", text, re.M) is not None, text)
-        a.wait(timeout=10)
+        release.touch()
+        a.wait(timeout=WAIT_S)
         check("a normal exit removes the marker", wait_for(lambda: not marker(tmp).exists()))
         rc, _ = ask(tmp)
         check("after a normal exit: not running", rc == 1, f"status {rc}")
@@ -137,11 +153,24 @@ def behaviour() -> None:
         check("a plain kill removes the marker", wait_for(lambda: not marker(tmp).exists()),
               "SIGTERM left the marker behind")
 
+        print("\nSTALLED")
+        s = start_loop(tmp)
+        wait_for(lambda: marker(tmp).exists())
+        os.kill(s.pid, signal.SIGSTOP)
+        os.kill(s.pid, signal.SIGTERM)
+        resume = threading.Timer(STALL_S, os.kill, (s.pid, signal.SIGCONT))
+        resume.start()
+        gone = wait_for(lambda: not marker(tmp).exists())
+        resume.join()
+        s.wait(timeout=WAIT_S)
+        check(f"a loop that is not scheduled for {STALL_S:g}s when killed still removes its marker",
+              gone, f"the marker was still there {WAIT_S:g}s after the kill")
+
         print("\nKILL9")
         c = start_loop(tmp)
         wait_for(lambda: marker(tmp).exists())
         os.kill(c.pid, signal.SIGKILL)
-        c.wait(timeout=10)
+        c.wait(timeout=WAIT_S)
         check("kill -9 leaves the marker behind (the case the pid check exists for)",
               marker(tmp).exists(), "the marker vanished, so this case did not reproduce")
         rc, err = ask(tmp)
@@ -172,7 +201,7 @@ def behaviour() -> None:
         wait_for(lambda: marker(tmp).exists())
         d2 = start_loop(tmp)
         try:
-            d2.wait(timeout=10)
+            d2.wait(timeout=WAIT_S)
         except subprocess.TimeoutExpired:
             pass
         check("a second claim while the first loop is alive is refused",
