@@ -99,6 +99,10 @@ there. Add new material under the same headings.
   matches a roster own channel. Leaders entries have no `own_channels`, so leaders QA is
   unchanged. Proof: `.venv/bin/python scripts/test_qa_own_channel.py`.
 
+- P10 sample-size check (no quota): `scripts/pundits_sample_size.py --data <pundits data>` projects
+  G-judge-lean's 90% half-width from the pilot's grades. Result of 2026-10-11 in
+  `docs/PUNDITS-P10-SAMPLE-SIZE.md`: 2.49 at 20 left and 20 right people, above the plan's 2.0, so the
+  operator decides before P9 whether to add people. Proof: `scripts/test_pundits_sample_size.py`.
 - P6 discovery pilot: `scripts/pundits_pilot.py sample | precheck | report`. `precheck` fails
   only what the record proves (no upload date, outside the window, after an archival
   subject's last recording, a substitute host in the opening) and writes a checklist that a

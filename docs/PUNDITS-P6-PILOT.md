@@ -1,5 +1,11 @@
 # P6 discovery pilot (interim, 2026-09-14)
 
+**Status, checked 2026-10-11.** The pilot gate is now **PASS**: `logs/pilot/report.json` in the pundits data
+repository reads `"gate": "PASS"` with nothing pending, after the human speaker checks were imported. The
+extension to the other 29 people is **INCONCLUSIVE**: `logs/p6b/report.json` lists 207 recordings that still
+await a person's check (last import: Krystal Ball and Patrick Bet-David, data `f085084`, 2026-09-20). The
+interim text below is kept as it was written.
+
 **Gate P6: INCONCLUSIVE.** No human speaker label exists yet, and the plan
 requires a person to check every selected pilot recording before grading. The
 fetch also stopped at 22 of 240 recordings after YouTube throttled it. A slower
