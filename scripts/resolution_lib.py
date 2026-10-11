@@ -324,15 +324,16 @@ The resolution criterion, as this pipeline recorded it:
 # think will do assembly-line work", one fire sale for several unicorn failures, the speaker's own earlier forecast
 # (data predictions/_experiments/already-public-20261011/).
 ALREADY_PUBLIC_NOT_A_PRECURSOR = (
-    "   The report must show the SAME event the prediction names, at the scale and\n"
-    "   threshold its criterion sets. None of these counts: an earlier stage of it\n"
-    "   (research, a prototype, an experiment, a demonstration, a trial or a pilot); a\n"
-    "   smaller or partial instance when the prediction needs more (one case where it\n"
-    "   needs several, one place where it needs many); a related but different product,\n"
-    "   capability or measure (a one-off figure that is not the measure the prediction\n"
-    "   names); a vision or aim with no decision behind it; and any forecast, the\n"
-    "   speaker's own earlier forecast included. When the report shows less than the\n"
-    "   prediction claims, \"already_public\" is null.\n")
+    "   The report must be about the SAME event the prediction names. An announcement\n"
+    "   that this event is agreed, decided or scheduled counts, including the speaker's\n"
+    "   own company announcing the plan, the product or the date, even though it has\n"
+    "   not happened yet. These do not count: an earlier stage of the event (research, a\n"
+    "   prototype, an experiment, a demonstration, a trial or a pilot); a smaller or\n"
+    "   partial instance when the prediction needs more (one case where it needs\n"
+    "   several); a related but different product, capability or measure (a one-off\n"
+    "   figure that is not the measure the prediction names); a vision or aim with no\n"
+    "   decision behind it; and a forecast, by anyone and the speaker included, that\n"
+    "   reports no decision, agreement or schedule.\n")
 
 RESOLVER_TASK = """You are resolving a dated public prediction. Decide whether the thing
 described by the resolution criterion actually happened by the deadline.
@@ -1210,7 +1211,7 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # resolution-2026-10-11 (VP-32): an already-public report must show the predicted event itself, never a
 # precursor; text added to the resolver and early-call prompts only. The prior and lead-test prompts are
 # byte-identical to resolution-2026-09-30, so no prior priced under it goes stale.
-POLICY_RELEASE = ("resolution-2026-10-11", "d20cfaa133f5bbb26b79cc43224470782ab44bd1fe796129c79ff10c68e92368")
+POLICY_RELEASE = ("resolution-2026-10-11", "599e9e939b6dea51c0ca21c9bfa63cd04577a13f392e2144454168217fe52979")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.

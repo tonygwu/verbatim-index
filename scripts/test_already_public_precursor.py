@@ -53,7 +53,7 @@ if isinstance(rule, str):
         check(f"{name} carries the rule inside its already-public section", at >= 0 and rule in text[at:at + 3000],
               text[at:at + 600])
     for words in ("earlier stage", "prototype", "experiment", "one case where it needs several",
-                  "different product", "own earlier forecast", "null"):
+                  "different product", "speaker's own company announcing the plan", "reports no decision, agreement or schedule"):
         check(f"the rule names {words!r}", words in " ".join(rule.split()), rule)   # the prompt wraps lines
 check("the early-call prompt says a forecast is not enough, as the resolver's does",
       "another person's forecast, is not" in R.EARLY_TASK, R.EARLY_TASK[R.EARLY_TASK.find("ALREADY PUBLIC"):][:500])
