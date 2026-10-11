@@ -116,14 +116,31 @@ aliases.json block (every existing block byte-identical), and
 exactly his 14 rows and dropped none. Then his 13 transcripts go into
 `transcripts/nate-silver/`.
 
-## What remains, and who runs it
+## Outcome (2026-10-11)
 
-1. repo-0: `OPEN_PER_LEADER=0 bash scripts/grade_loop.sh` grades his 13
-   transcripts with all three judges, then `wrong_person_screen.py`, aggregate,
-   build_site and the leaders deploy (dry run first).
-2. repo-3: predictions, the same pipeline as everyone else's: dating, extract,
-   verify, market consensus, resolve whatever is past due, score, then
-   aggregate and the predictions deploy. Before it deploys, repo-3 syncs with
-   repo-0, which has its own pending predictions redeploy.
+**Leaders board.** repo-0's `grade_loop.sh` graded his 13 transcripts with all three
+judges in its first cycle (+39 grades, 2,299 total) and deployed at 10:00Z. He is
+rank 7 of 51: overall 69.6, 95% interval 66.6 to 72.7, 13 transcripts, high
+confidence, identity recognised by the judges in 13 of 13. Data `459a9983`.
 
-Progress and outcomes are recorded in `docs/LEDGER-predictions.md`.
+**Predictions board.** Astra extracting and Gemini verifying, as for most of the
+corpus. The first pass accepted 2 of 25 verified candidates. Most rejections are the
+eligibility policy as written: "slight favorite", "50/50" and a modelled percentage
+are judged not committed or not falsifiable. Several candidates that both models
+qualified were held by the date rule instead. Dating (astra and fable_web) confirmed
+earlier dates for 8 recordings and the upload day of the ninth. Re-extracting those 9
+under the corrected dates raised his accepted records from 2 to 6. One transcript,
+Conversations with Tyler, was verified by Fable after three identical Gemini
+failures; its two accepted records are 2028 calls and are not scored yet.
+
+Scored at as_of 2026-10-11 (run `predictions/_experiments/nate-silver-20261011/`):
+4 past due, 3 scored, all occurred, mean points +0.747. The fourth, FiveThirtyEight's
+own 2014 House forecasts, is `already_public`. He ranks first of 46 on three
+predictions, so his position rests on a very small sample, which the page shows by
+its count. Deployed from a clean data worktree: data `370b88b1`, public `a335def`.
+
+**Two things the operator may want to decide.** First, the eligibility policy treats
+a stated probability near even, or a "favorite" call, as uncommitted. For a forecaster
+whose public speech is mostly probabilities, that leaves most of his forecasts off the
+board. Changing it is a policy release that affects everyone. Second, both mastheads
+still say "technology leaders".
