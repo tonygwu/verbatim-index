@@ -318,6 +318,22 @@ The resolution criterion, as this pipeline recorded it:
 # rule 6, a company's fiscal year, is now the "fiscal" judged rule, so the prior
 # sees it (critique 1 point 12). Rule 7 keeps its number because the shared
 # deadline note of a trend record names it.
+# VP-32 (2026-10-11, release resolution-2026-10-11): what an "already public" report must show, in the resolver's
+# and the early-call prompts alike. Of the 81 rows the board excluded as already public, 11 cited a precursor: a 1997
+# EXPERIMENTAL malaria vaccine for "a malaria vaccine will be invented", the 2012 Baxter robot for "programs that can
+# think will do assembly-line work", one fire sale for several unicorn failures, the speaker's own earlier forecast
+# (data predictions/_experiments/already-public-20261011/).
+ALREADY_PUBLIC_NOT_A_PRECURSOR = (
+    "   The report must show the SAME event the prediction names, at the scale and\n"
+    "   threshold its criterion sets. None of these counts: an earlier stage of it\n"
+    "   (research, a prototype, an experiment, a demonstration, a trial or a pilot); a\n"
+    "   smaller or partial instance when the prediction needs more (one case where it\n"
+    "   needs several, one place where it needs many); a related but different product,\n"
+    "   capability or measure (a one-off figure that is not the measure the prediction\n"
+    "   names); a vision or aim with no decision behind it; and any forecast, the\n"
+    "   speaker's own earlier forecast included. When the report shows less than the\n"
+    "   prediction claims, \"already_public\" is null.\n")
+
 RESOLVER_TASK = """You are resolving a dated public prediction. Decide whether the thing
 described by the resolution criterion actually happened by the deadline.
 
@@ -386,7 +402,8 @@ RULES
    day, when the Said line gives a range), where it is, and what it shows. A report
    dated the same day does not count. A rumour, or another person's forecast, is not
    enough; a report that the deal was agreed, the product announced or the date set
-   is. Still answer the outcome as usual. If you find no such report, "already_public"
+   is.
+""" + ALREADY_PUBLIC_NOT_A_PRECURSOR + """   Still answer the outcome as usual. If you find no such report, "already_public"
    is null.
 
 9. HOW THIS RECORD IS JUDGED. When the prediction below carries a section with that
@@ -490,7 +507,10 @@ RULES
    the statement date. If it was, fill "already_public" with the earliest such
    source: its date, which is strictly before the statement date (before the first
    day, when the Said line gives a range), where it is, and what it shows. A report
-   dated the same day does not count. Otherwise "already_public" is null.
+   dated the same day does not count. A rumour, or another person's forecast, is not
+   enough; a report that the deal was agreed, the product announced or the date set
+   is.
+""" + ALREADY_PUBLIC_NOT_A_PRECURSOR + """   Otherwise "already_public" is null.
 
 8. HOW THIS RECORD IS JUDGED. When the prediction below carries a section with that
    heading, apply it exactly.
@@ -1187,11 +1207,14 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # Cutting a release: change the text, run test_resolution_policy.py, and put the
 # new id and sha256 below and in that test.
 
-POLICY_RELEASE = ("resolution-2026-09-30", "daf8df3e1cdbe2af764f2a1b11ebb14d942860315a216117ad3f9026754a7aeb")
+# resolution-2026-10-11 (VP-32): an already-public report must show the predicted event itself, never a
+# precursor; text added to the resolver and early-call prompts only. The prior and lead-test prompts are
+# byte-identical to resolution-2026-09-30, so no prior priced under it goes stale.
+POLICY_RELEASE = ("resolution-2026-10-11", "d20cfaa133f5bbb26b79cc43224470782ab44bd1fe796129c79ff10c68e92368")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.
-KNOWN_RELEASES = ("resolution-2026-09-30",)
+KNOWN_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11")
 
 
 def _policy_fixture() -> dict:
