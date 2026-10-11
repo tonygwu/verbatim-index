@@ -696,6 +696,34 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
+- **An unsupported dimension removes the whole recording, though the plan says
+  it should still count toward the dimensions it supports.** Filed 2026-10-11,
+  found while asking why `asmongold/asmongold-tv-ks77-g` is missing from
+  `results.json` despite four schema-valid grades. Three of its four grades
+  mark `d1_steelmanning` `unsupported` (fable/blinded, gemini/blinded,
+  gemini/open). `aggregate.py` marks each such grade `_excluded =
+  "unsupported_dimension"`, which removes the whole grade, and then
+  `drop_partial_panels` drops the fourth, fully supported fable/open grade as
+  an incomplete panel. The recording contributes to no dimension. The plan
+  says otherwise: `docs/PUNDITS-PLAN.md`, "Anchors and minimum evidence", has
+  "A transcript with any unsupported dimension has no `overall`. It still
+  counts toward each dimension it supports. Ranking by overall uses only
+  transcripts with all three dimensions supported." Re-running today's
+  `aggregate.py --study pundits` on a scratch clone of data-pundits at
+  `dced184` reproduces the committed result: 154 transcripts, the same one
+  partial panel, and `grades_excluded_unsupported_dimension 3`, so the loss is
+  counted rather than silent. The panel report's reason, "incomplete panel:
+  missing fable/blinded, gemini/blinded, gemini/open", never says the cells
+  were removed for an unsupported dimension.
+  Size today: 3 grades, 1 recording. NOT fixed, because the change moves the
+  published pundits board and pundits scoring is repo-3's lane. Per-dimension
+  counting also has to decide what a partial panel means per dimension: here
+  d1 has one supported cell out of four, while d2 and d3 have all four. The
+  condition that brings it back: the pundits full grade, or a second recording
+  with an unsupported dimension. At minimum, `drop_partial_panels` should name
+  cells removed for an unsupported dimension, so the report states the true
+  cause.
+
 - **FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings (8 blinded
   grades).** `blind_study()` now leaves a surname, or a caption corruption of
   any part of the name, alone when a DIFFERENT person's given name stands right
@@ -900,9 +928,9 @@ they were filed (50aeaac).
   (2 judges x 2 modes, no refusal, no validation error), which is 312 cells
   ok and 44 missing. The 11 left are 10 Ben Shapiro recordings and
   `asmongold-tv-2vktfl`, and both people are already at 12, as data `bd7edf2`
-  records ("P9 top-up ... target of 12"). One loose end: `results.json` counts
-  77, not 78, and leaves out `asmongold-tv-ks77-g`, which has 4 valid grades.
-  The cause is unknown. The full 39-person roster is a separate job:
+  records ("P9 top-up ... target of 12"). `results.json` counts 77, not 78,
+  because `asmongold-tv-ks77-g` marks `d1_steelmanning` unsupported in three of
+  its four grades; see the next entry. The full 39-person roster is a separate job:
   `logs/p6b/report.json` says `INCONCLUSIVE | 207 recordings await human
   verification`, and none of the 29 newer people is graded.
 
