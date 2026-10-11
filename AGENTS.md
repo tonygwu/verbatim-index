@@ -112,17 +112,16 @@ How to work with it:
   installed as `core.hooksPath`) runs the same check on a raw `git push`, but
   `--no-verify` skips it and this repository forbids that.
 
-**Migration status, 2026-09-27.** Live for leaders. Data main carries
-`ownership.json` and `.gitattributes` since `ceba3cba`. The shared checkout has
-`role=daemon` and the hook installed. repo-2 has moved to `.data-clones/main` as a
-contributor. repo-1 and repo-3, for leaders, still work on
-`.data-clones/experiment` and move with
-`.venv/bin/python scripts/data_sync.py adopt-main --apply` when idle. Read the dry
-run's skipped lines first. Until a clone moves, it keeps the old workflow:
-experiment output under `data/predictions/_experiments/<unique-run>/` on its own
-`codex/*` branch. Pundits data has `role=daemon` but no manifest yet; repo-3 runs
-`data_sync.py bootstrap --data data-pundits --study pundits`. See
-[docs/DATA-CLONE-WORKFLOW.md](docs/DATA-CLONE-WORKFLOW.md) for the old workflow.
+**Migration status, checked 2026-10-11.** Live for leaders and for pundits.
+Leaders data main carries `ownership.json` and `.gitattributes` since `ceba3cba`.
+Pundits data main carries its `ownership.json` since `dced184`. Both production
+checkouts, repo-0's shared `data` and repo-3's `data-pundits`, have `role=daemon`
+and the hook installed. For leaders, repo-1, repo-2 and repo-3 all work on
+`.data-clones/main` as contributors, and no clone is left on
+`.data-clones/experiment`. A clone that still has an experiment checkout moves
+with `.venv/bin/python scripts/data_sync.py adopt-main --apply` when idle, after
+it reads the dry run's skipped lines. Until it moves, it keeps the old workflow,
+described in [docs/DATA-CLONE-WORKFLOW.md](docs/DATA-CLONE-WORKFLOW.md).
 
 Until 2026-09-06 code and data shared one private repo. Its full history remains
 read-only as `tonygwu/verbatim-index-archive`.
