@@ -2557,10 +2557,18 @@ SCORE_INFO_EMPTY = (
 
 
 def score_legend(c: dict) -> str:
-    """The one-sentence description of the column, built from the run's own numbers."""
+    """The one-sentence description of the column, built from the run's own numbers.
+
+    The past-due figure is scored minus early_before, as everywhere else on the page: a prediction
+    called early (VD-5) scores before its deadline, so it is not past due (2026-10-11: this sentence
+    said "495 of 676 past-due" where the rest of the page said 459, the 36 early calls apart)."""
+    early = c.get("early_before", 0)
+    over = (f"{c['scored'] - early} of {c['past_due']} past-due predictions that could be resolved against a "
+            f"cited source and were specific enough to test"
+            + (f", and {early} more called early, when a dated source showed the outcome before the deadline "
+               f"({c['scored']} scored in all)" if early else ""))
     return (f"<b>Score</b> is the mean points per resolved prediction, over the "
-            f"{c['scored']} of {c['past_due']} past-due predictions that could be resolved against a "
-            f"cited source and were specific enough to test. Getting a likely thing right earns "
+            f"{over}. Getting a likely thing right earns "
             f"little and getting an unlikely thing right earns a lot, so the expected score of "
             f"someone with no foresight is zero, whatever they predict. A row shows no number "
             f"below {MIN_SCORED} resolved predictions.")
@@ -2621,7 +2629,7 @@ def score_info(c: dict, rule: dict) -> str:
         f"{1 - rule['clamp']:.2f}] so a stated certainty cannot score infinitely.</p>`,")
 
 
-def score_why(sc: "dict | None", min_lead_days: int) -> str:
+def score_why(sc: "dict | None", min_lead_days: int) -> "str | None":
     """What to say on hover when a row carries no number. Never "no data": the
     reasons differ and the difference is the interesting part.
 
@@ -2633,6 +2641,10 @@ def score_why(sc: "dict | None", min_lead_days: int) -> str:
     because it was interpolated."""
     if sc is None:
         return "no prediction of this person's has come due and been resolved"
+    if sc["ranked"]:
+        # The row carries a number, so there is nothing to explain (VP-19: this used to fall through to
+        # "N scored, below the floor" for every ranked person).
+        return None
     if sc["n_scored"] == 0:
         if sc["eligible"] == 0:
             return (f"{sc['past_due']} past due, none eligible: a scored prediction must be specific, "

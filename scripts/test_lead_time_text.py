@@ -53,7 +53,7 @@ def main() -> int:
     check("methodology does not say six months", "six months" not in info)
 
     # [SITE 2] the hover text, rendered on rows with nothing eligible
-    why = B.score_why({"n_scored": 0, "eligible": 0, "past_due": 9, "unresolvable": 0},
+    why = B.score_why({"n_scored": 0, "ranked": False, "eligible": 0, "past_due": 9, "unresolvable": 0},
                       rule["min_lead_days"])
     check("hover states the run's own lead time", "45 days" in why, why)
     check("hover does not say six months", "six months" not in why)
