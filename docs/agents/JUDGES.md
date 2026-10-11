@@ -407,6 +407,22 @@ they are not exchangeable, which is all a hybrid needed them to be.
   drifts below the other two, run the blinded pass again rather than assuming a
   ceiling.
 
+  MEASURED 2026-10-11 from the whole `data/logs/grade_loop.err` (2026-09-06 on):
+  "not deterministic" stays true, but on the longest transcripts the chance per
+  call is so small that re-running is mostly spent quota. Fei-Fei Li's
+  50,025-word `stanford-hai--wi4xd` failed in 119 cycles and then got its grade on
+  2026-09-11. Six transcripts of 32,912 to 38,858 words have NEVER had a Gemini
+  grade: Luckey `tetragrammaton-with-rick-virjq1`, Zuckerberg `powerfuljre-0xr4x1`
+  and Musk `third-row-tesla-j9oec0` failed in 142 cycles each, Hotz
+  `lex-fridman-dnrtrx` and Wang `shawn-ryan-show-qvfchp` in 99, and Brockman
+  `tetragrammaton-with-rick-mi30-u` in 32. Each cycle makes up to 3 calls, and
+  every failure has the same signature: `empty_response` after a denied
+  `RunCommand`. The failure lines in that log stand for 1,999 Gemini calls.
+  The per-run `FailureBudget` in `grade.py` does not stop this, because it caps a
+  judge's failures within one run and these six are a small share of every run.
+  The backlog entry "Gemini retries on the six longest transcripts" holds the
+  options.
+
 - **The Gemini judge has live web search too, and it also cannot be disabled.**
   Same position as the Astra arm, reached by a different route: the permission
   system recognises three grant actions plus `mcp`, and a builtin tool is not

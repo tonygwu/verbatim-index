@@ -3,6 +3,40 @@
 Work deliberately deferred, with the reason and the condition that brings it back.
 Newest first.
 
+## Judges
+
+- **Gemini retries on the six longest transcripts.** Filed 2026-10-11 by repo-0
+  (overnight run). Six blinded transcripts of 32,912 to 38,858 words have never
+  had a Gemini grade, and every `grade_loop.sh` cycle calls Gemini up to 3 times
+  on each of them. Since 2026-09-06 three of them have failed in 142 cycles
+  each. The measurement and the six ids are in `docs/agents/JUDGES.md`, under
+  "Gemini's coverage gap is a RETRY BUDGET". Each of the six leaders has that
+  recording scored by Fable and Astra only. The options:
+  (a) Change nothing. Cost: about 18 long Gemini calls per cycle, every cycle,
+  for a chance per call that is close to zero (one 50,025-word transcript
+  succeeded once in 119 cycles).
+  (b) A per-transcript cap across runs. After N cycles of `empty_response`
+  with a denied tool, skip that (judge, transcript) and list it in the run
+  summary as skipped, with its count. Cost: a code change in `grade.py` and a
+  test, and the six stay at two judges unless the cap is reset by hand.
+  (c) A Gemini prompt that gives the transcript in parts, so the judge does not
+  reach for a tool. Cost: a new prompt, which changes the measured judge and
+  must be measured against the current one before it is used.
+  Recommendation: (b), because it stops the spend and keeps the record
+  honest; (c) only if two-judge coverage on these six becomes a problem.
+  Comes back when the operator picks one.
+
+- **A Fable stage without `--fable-accounts` runs on the default account.**
+  Filed 2026-10-11 by repo-0. `resolve_predictions.py --stage lead_test`
+  with no `--fable-accounts` ran its one call on `~/.claude`
+  (`accounts=['default']` in `rebuild-20261011/lead_test-1.log`); it served
+  `claude-fable-5-1` and cost $0.21. Nothing failed, but the operator has said
+  account A has no Fable, and batch Fable work is meant to go to the accounts
+  named for it. Option: refuse a Fable stage that names no accounts, or route
+  it by measured quota the way `grade.py` does when `FABLE_ACCOUNTS` is unset.
+  Cost: every caller must pass the flag, or the stage gains the router.
+  Comes back with the next change to `resolve_predictions.py`.
+
 ## Speaker segmentation and caption text
 
 - **Re-checked 2026-10-11: still WAITING, at 15 corrections over 5 recordings
