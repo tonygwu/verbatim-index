@@ -228,6 +228,17 @@ the mix even.
   Note that `codex --json` reports no model anywhere in its response, so
   `served_model` records what was REQUESTED; it is not independently verified.
 
+- **A malformed leaders grade is re-graded only on request: `grade.py
+  --regrade-invalid`.** A leaders (contract v1) job keeps any file already at
+  its dest, so a record that FAILED VALIDATION used to be a permanent hole in
+  its judge's column; 35 such records still carried an attempt at scores on
+  2026-10-11. With the flag, such a record is moved under `grades/_obsolete/`
+  and graded again; a refusal or a qualitative non-answer is never touched,
+  per the rule above. It is off by default and `grade_loop.sh` does not pass
+  it, because turning it on spends daemon quota and moves the published board,
+  which is the operator's and repo-0's call. Contract v2 (pundits) does this
+  always. Guarded by `scripts/test_leaders_regrade_invalid.py`.
+
 ## Experiments run, and what they showed
 
 **Do the judges have tools?** (2026-09-07) Asked each judge directly, with the

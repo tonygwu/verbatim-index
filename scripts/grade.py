@@ -430,6 +430,38 @@ def queue_summary(jobs: list[dict]) -> str:
             f"the queue is uneven, so it is not a product")
 
 
+def leaders_record_to_regrade(dest: Path) -> str | None:
+    """Why a stored leaders grade should be graded again under --regrade-invalid, or None.
+
+    Only a record that FAILED VALIDATION while still carrying an attempt at
+    scores, `dimensions` or `overall`: a malformed answer, which a second call
+    may well get right. Counted 2026-10-11 in the shared leaders data: 35 such
+    records, each a permanent hole in its judge's column until now. A refusal
+    ({reason, status}, {error}) or a qualitative non-answer is NEVER one of
+    these. AGENTS.md: a refusal is retried three times inside the call and then
+    kept. An unreadable file is not a grade either, so it is graded again.
+    """
+    try:
+        stored = json.loads(dest.read_text())
+    except (OSError, ValueError) as exc:
+        return f"the stored record is unreadable ({exc})"
+    if not stored.get("validation_errors"):
+        return None
+    body = stored.get("grade")
+    if isinstance(body, dict) and ("dimensions" in body or "overall" in body):
+        return f"the stored record failed validation: {stored['validation_errors']}"
+    return None
+
+
+def job_pending(job: dict) -> bool:
+    """Is this job real work: no grade on disk, or (opted in) a malformed leaders one?"""
+    dest = Path(job["dest"])
+    if not dest.exists():
+        return True
+    return (bool(job.get("regrade_invalid")) and job.get("contract_version") != 2
+            and leaders_record_to_regrade(dest) is not None)
+
+
 def order_breadth_first(jobs: list[dict]) -> list[dict]:
     """Round-robin the queue across leaders instead of walking them alphabetically.
 
@@ -455,7 +487,7 @@ def order_breadth_first(jobs: list[dict]) -> list[dict]:
     cached, pending = [], []
     for job in jobs:
         key = (job["judge"], job["mode"], job["rec"]["leader_slug"])
-        if Path(job["dest"]).exists():
+        if not job_pending(job):
             done[key] = done.get(key, 0) + 1
             cached.append(job)          # costs no quota, so let it resolve first
         else:
@@ -2188,7 +2220,16 @@ def grade_one(job: dict) -> dict:
             return stored
     else:
         if dest.exists() and not job["force"]:
-            return {"status": "cached", "id": tid, "judge": job["judge"], "mode": job["mode"], "run": job["run"]}
+            # Leaders keep any existing file unless --regrade-invalid opts in,
+            # and even then only a malformed answer goes back to the judge.
+            why = leaders_record_to_regrade(dest) if job.get("regrade_invalid") else None
+            if why is None:
+                return {"status": "cached", "id": tid, "judge": job["judge"], "mode": job["mode"], "run": job["run"]}
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            aside = Path(job["obsolete_root"]) / job["judge"] / rec["leader_slug"] / f"{dest.stem}.{stamp}.json"
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(dest, aside)
+            log(f"    regrading {tid} {job['judge']}/{job['mode']}: {why}; previous record moved to {aside}")
 
         prompt = build_judge_prompt(rec, job["mode"], job["rubric"], job["schema"])
     t0 = time.time()
@@ -2350,6 +2391,10 @@ def main() -> int:
                          "only needs enough transcripts per leader to estimate the reputation halo. "
                          "What it drops is logged, never silent.")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--regrade-invalid", action="store_true",
+                    help="Leaders (contract v1): grade again any stored record that failed validation "
+                         "while carrying scores, moving it under _obsolete/ first. Refusals stay. Off by "
+                         "default, so grade_loop.sh is unchanged. Contract v2 does this always.")
     ap.add_argument("--errors", default=None, help="Default: <study data>/logs/grade_errors.jsonl.")
     ap.add_argument("--astra-model", default="gpt-6-astra",
                     help="Primary model for the Astra arm.")
@@ -2600,6 +2645,8 @@ def main() -> int:
         jobs.append({
             "rec": rec, "judge": judge, "mode": mode, "run": run,
             "rubric": rubric, "schema": schema, "timeout": args.timeout, "force": args.force,
+            "regrade_invalid": args.regrade_invalid,
+            "obsolete_root": str(Path(args.out) / "_obsolete"),
             "contract": contract,
             "config_dir": assign_accounts(judge, i, cfg_dirs, judges),
             "fable_bin": args.fable_bin,
@@ -2643,7 +2690,7 @@ def main() -> int:
         jobs = order_breadth_first(jobs)
 
     log(queue_summary(jobs))
-    pending_jobs = [j for j in jobs if not Path(j["dest"]).exists()]
+    pending_jobs = [j for j in jobs if job_pending(j)]
     if pending_jobs:
         lead = []
         for j in pending_jobs[:len(set(x["rec"]["leader_slug"] for x in pending_jobs))]:

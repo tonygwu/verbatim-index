@@ -262,7 +262,8 @@ def load_grades(root: Path) -> dict[tuple[str, str], list[dict]]:
     """Valid blinded grades per (leader, source)."""
     out: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
     for p in root.rglob("*__blinded__r*.json"):
-        if "_raw" in p.parts:
+        # _obsolete holds records moved aside by grade.py (--force, --regrade-invalid).
+        if "_raw" in p.parts or "_obsolete" in p.parts:
             continue
         g = json.loads(p.read_text())
         if g.get("validation_errors") or g.get("refused") or "dimensions" not in (g.get("grade") or {}):

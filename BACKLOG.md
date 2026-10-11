@@ -766,6 +766,28 @@ they were filed (50aeaac).
   `7aa8f163de1f0b2e` and re-grade everything. Not done, and not needed unless
   the recorded overruns turn out to be large rather than one or two words.
 
+- **LEADERS HALF FIXED 2026-10-11 as an opt-in: `grade.py --regrade-invalid`.
+  Turning it on is the operator's call.** Counted in the shared leaders data:
+  35 records failed validation while still carrying an attempt at scores, 26
+  with `dimensions` and 9 in a judge-invented shape with `overall`. Six more
+  failed validation as refusals or non-answers ({reason, status}, {error},
+  {limitation}), and those stay put by the refusal rule in
+  `docs/agents/JUDGES.md`. With the flag, a malformed record is moved under
+  `grades/_obsolete/` byte for byte and graded again, and the queue's depth
+  ordering and its "not yet on disk" count include it. Without the flag nothing
+  changes, which keeps the leaders-reuse check in `test_pundits_contract.py`
+  green. `grade_loop.sh` does not pass the flag, and a test pins that. It is
+  opt-in rather than default because default-on would make repo-0's daemon
+  spend about 35 calls and move the published board on its next code pull.
+  `aggregate.py`, `coverage_table.py` and now `wrong_person_screen.py` all skip
+  `_obsolete/`. Guarded by `scripts/test_leaders_regrade_invalid.py`: 6 of 12
+  failed before, 16/16 after. The note below that names
+  `test_profile_leaders_identity.py` is stale; no such file exists. Leaders
+  `blind()` identity was checked directly instead, 664 of 664, in the
+  other-person entry above.
+  TO TURN IT ON: one manual pass from repo-0, `grade.py ... --modes blinded
+  --regrade-invalid`, or add the flag to `grade_loop.sh`'s grade call.
+
 - **A grade record that failed validation counts as a cache hit. FIXED for
   pundits (v2) 2026-09-16; LEADERS (v1) still has it.** Filed 2026-09-16.
   `_v2_stored()` in `scripts/grade.py` returned `cached` whenever the stored
