@@ -386,6 +386,29 @@ def bootstrap_ci(rows: list[dict], weights: dict, dims: list[str],
     return (round(lo, 1), round(hi, 1))
 
 
+def distinct_resamples(n: int) -> int:
+    """How many different resamples with replacement n transcripts allow: C(2n - 1, n).
+
+    A person on 5 transcripts has 126, so 20,000 resamples only revisit them; the
+    interval's resolution is set by this number, not by BOOTSTRAP_N (pundits
+    P8A2-STATE decision 5, 2026-10-11)."""
+    return math.comb(2 * n - 1, n) if n > 0 else 0
+
+
+def interval_fields(rows: list[dict], is_v2: bool) -> dict:
+    """The interval fields written beside one score block.
+
+    A contract-v2 study (pundits) gets ci_low / ci_high and distinct_resamples on
+    its blinded AND its open block: plan P5 requires an interval beside every
+    published score, and the open one had none (P8A2-STATE decision 4). The
+    leaders study (v1) keeps exactly the blinded interval it always had, so its
+    results.json is byte-identical; the caller asks only for its blinded block."""
+    if not rows:
+        return {}
+    lo, hi = bootstrap_ci(rows, WEIGHTS, DIMS)
+    return {"ci_low": lo, "ci_high": hi, **({"distinct_resamples": distinct_resamples(len(rows))} if is_v2 else {})}
+
+
 def paired_halo(grades: list[dict], params: dict, n: int = BOOTSTRAP_N,
                 seed: int = BOOTSTRAP_SEED, alpha: float = 0.05) -> dict[str, dict]:
     """Per person: what disclosing the name changes, measured on matched pairs.
@@ -1168,7 +1191,9 @@ def main() -> int:
         # into the same block rather than a parallel structure the renderer has
         # to join back up.
         if b:
-            b["ci_low"], b["ci_high"] = bootstrap_ci(blinded, WEIGHTS, DIMS)
+            b.update(interval_fields(blinded, is_v2))
+        if o and is_v2:
+            o.update(interval_fields(openm, is_v2))
         halo = {}
         if is_v2:
             halo = paired.get(slug, {})

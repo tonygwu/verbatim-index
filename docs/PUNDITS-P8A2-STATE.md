@@ -103,9 +103,13 @@ scheduled calls, and the summary reports `skipped_over_retry_cap` and
    name. Fixing that means re-grading every open cell.
 3. **Seven recordings have zero blinding substitutions**, four of them Zack
    Hoyt's. Fixing means re-blinding and re-grading those.
-4. **The open score has no bootstrap interval**, which plan P5 requires.
+4. **The open score has no bootstrap interval**, which plan P5 requires. **Fixed in code 2026-10-11**: `aggregate.interval_fields()` writes
+   `ci_low` / `ci_high` on a contract-v2 study's open block too; it appears on the next pundits aggregate.
 5. **The bootstrap at small n.** Charlie Kirk sits at 5, where there are only 126
    distinct resamples, so "20,000 resamples" overstates the precision.
+   **Reported, 2026-10-11**: each v2 score block now carries `distinct_resamples` (C(2n-1, n), 126 at
+   n = 5), so the interval states its own resolution. The leaders results.json is byte-identical
+   (frozen-snapshot check). Proof: `scripts/test_interval_fields.py`.
 6. **Whether a gameplay stream belongs in the corpus.** Three cells are excluded
    as `unsupported_dimension`, all from one Zack Hoyt recording where both judges
    independently found no opposing argument to score under D1. That is the rubric
