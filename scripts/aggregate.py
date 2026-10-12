@@ -804,19 +804,47 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
     }
 
 
+_NAME_TITLES = {"mr", "mrs", "ms", "dr", "prof", "professor", "sen", "senator", "rep", "gov", "president"}
+_NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
+
+
 def names_subject(text: str | None, person: dict) -> bool:
-    """Whether `text` names this roster person: the full name, a surname of 4+
-    letters, or a roster handle, case-insensitive, on word boundaries. Used to
-    tell a judge's CORRECT identity guess from a merely confident one."""
+    """Whether `text` names this roster person. Used to tell a judge's CORRECT
+    identity guess from a merely confident one.
+
+    The full name or a roster handle counts anywhere, case-insensitive, on word
+    boundaries. A bare surname of 4+ letters (a hyphenated surname is one word)
+    counts only when it is not part of SOMEONE ELSE's name: a capitalised word
+    right after it means the surname is that person's first name ("Hasan Piker"
+    is not Mehdi Hasan), unless it is a suffix such as "Jr"; a capitalised word
+    right before it means another person with the same surname ("Eric Weinstein"
+    is not Bret Weinstein), unless it is a title, or a shorter or longer form of
+    the subject's own first name ("Matthew Walsh", "B. Weinstein").
+    """
     name = (person.get("name") or "").lower()
     if not name or not text:
         return False
-    tokens = [name] + [h.lower() for h in person.get("handles") or []]
-    parts = re.findall(r"[a-z']+", name)
-    if parts and len(parts[-1]) >= 4:
-        tokens.append(parts[-1])
-    low = text.lower()
-    return any(re.search(r"(?<![a-z])" + re.escape(tok) + r"(?![a-z])", low) for tok in tokens)
+
+    def at(tok: str):
+        return re.finditer(r"(?<![A-Za-z])" + re.escape(tok) + r"(?![A-Za-z])", text, re.IGNORECASE)
+
+    if any(next(at(tok), None) for tok in [name] + [h.lower() for h in person.get("handles") or []]):
+        return True
+    parts = re.findall(r"[a-z'-]+", name)
+    if len(parts) < 1 or len(parts[-1]) < 4:
+        return False
+    surname, first = parts[-1], (parts[0] if len(parts) > 1 else "")
+    for m in at(surname):
+        before = re.search(r"([A-Za-z'.-]+)\s+$", text[:m.start()])
+        after = re.match(r"\s+([A-Za-z'.-]+)", text[m.end():])
+        b = before.group(1).lower().strip(".") if before and before.group(1)[0].isupper() else None
+        a = after.group(1).lower().strip(".") if after and after.group(1)[0].isupper() else None
+        if a and a not in _NAME_SUFFIXES:
+            continue
+        if b and b not in _NAME_TITLES and not (first and (b.startswith(first) or first.startswith(b))):
+            continue
+        return True
+    return False
 
 
 def judge_searched(g: dict) -> bool:

@@ -79,6 +79,28 @@ def main() -> int:
         check("another person's name does not", not fn("Tim Walz", walsh))
         check("a longer word containing the surname does not", not fn("Walshire", walsh))
         check("an empty or missing guess does not", not fn("", walsh) and not fn(None, walsh))
+        # FOUND 2026-10-12 by review: a bare surname token matched another person who
+        # shares it. Mehdi Hasan and Hasan Piker are both on the roster, and the
+        # hyphen in Bet-David made "David" a surname.
+        mehdi = {"name": "Mehdi Hasan", "handles": []}
+        bret = {"name": "Bret Weinstein", "handles": []}
+        pbd = {"name": "Patrick Bet-David", "handles": []}
+        megyn = {"name": "Megyn Kelly", "handles": []}
+        check("another roster person whose FIRST name is the surname does not: Hasan Piker is not Mehdi Hasan",
+              not fn("Hasan Piker", mehdi) and not fn("Hasan Piker (HasanAbi)", mehdi))
+        check("another person with the same surname does not: Eric Weinstein, Jesse Kelly",
+              not fn("Eric Weinstein", bret) and not fn("Jesse Kelly", megyn))
+        check("a hyphenated surname is one word: Larry David and David Pakman are not Patrick Bet-David",
+              not fn("Larry David", pbd) and not fn("David Pakman", pbd))
+        check("and still counts whole", fn("Bet-David", pbd) and fn("Patrick Bet-David (PBD Podcast)", pbd))
+        check("a bare surname, a titled one or an initial still counts",
+              fn("Weinstein", bret) and fn("Dr. Weinstein", bret) and fn("B. Weinstein", bret)
+              and fn("probably Walsh", walsh))
+        check("a longer form of the first name still counts, and a suffix after the surname is fine",
+              fn("Matthew Walsh", walsh) and fn("Weinstein Jr.", bret))
+        check("every guess form seen on the pilot still counts",
+              fn("Destiny (Steven Bonnell)", bonnell) and fn("Asmongold (Zack)", hoyt)
+              and fn("Sam Seder, host of The Majority Report", {"name": "Sam Seder", "handles": []}))
 
     print("\n[RATE]")
     tps = load("tps_bcr", REPO / "scripts" / "test_profile_scoring.py")
