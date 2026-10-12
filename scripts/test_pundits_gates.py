@@ -346,6 +346,21 @@ def main() -> int:
               vc.get("format disputed") == n_disputed and sum(vc.values()) == sum(
                   1 for t in res["transcripts"] if t["mode"] == "blinded"), str(vc))
 
+        print("\n[TWO-STAGE BOOTSTRAP]")
+        # FOUND 2026-10-12 by review: docs/PUNDITS-PLAN.md says the cluster bootstrap
+        # "resamples people, then transcripts within each person", and the helpers
+        # resampled people only. When every person has the same rate, a people-only
+        # bootstrap returns a zero-width interval and hides the recording-level noise.
+        import gates as GT
+        same = [(5, 10)] * 3
+        lo, hi = GT.cluster_rate_diff_ci90(same, same, 2000, 7)
+        check("rates: identical people still give an interval with width, from the second stage",
+              lo < 0 < hi, f"[{lo}, {hi}]")
+        vals = [[0.0, 10.0]] * 3
+        mlo, mhi = GT.cluster_mean_diff_ci90(vals, vals, 2000, 7)
+        check("means: the same", mlo < 0 < mhi, f"[{mlo}, {mhi}]")
+        check("and it stays seeded", GT.cluster_rate_diff_ci90(same, same, 2000, 7) == (lo, hi))
+
         print("\n[STALE]")
         # FOUND 2026-10-12 by review: the report read grades from disk and
         # results.json separately, so a results.json older than the grades turned

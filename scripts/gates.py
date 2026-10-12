@@ -48,10 +48,13 @@ def cluster_rate_diff_ci90(a: list[tuple[int, int]], b: list[tuple[int, int]], n
                            seed: int = 20260914) -> tuple[float, float]:
     """A seeded 90% cluster-bootstrap interval for rate(a) minus rate(b), in percentage points.
 
-    Each element is one PERSON's (events, units), so a resample draws people
-    with replacement inside each group and pools their events over their units.
-    Plan P10 asks for a cluster bootstrap by person: recordings repeat within a
-    person, so resampling recordings would overstate the precision.
+    Each element is one PERSON's (events, units). docs/PUNDITS-PLAN.md P5: the
+    bootstrap "resamples people, then transcripts within each person". So a
+    resample draws people with replacement inside each group, then redraws each
+    picked person's units with replacement (a binomial draw from their own rate),
+    and pools events over units. Resampling recordings alone would overstate the
+    precision, because recordings repeat within a person; resampling people alone
+    would hide the recording-level noise.
     """
     for name, g in (("a", a), ("b", b)):
         if not g:
@@ -62,7 +65,8 @@ def cluster_rate_diff_ci90(a: list[tuple[int, int]], b: list[tuple[int, int]], n
 
     def rate(g: list[tuple[int, int]]) -> float:
         pick = [g[rng.randrange(len(g))] for _ in g]
-        return sum(e for e, _ in pick) / sum(u for _, u in pick)
+        events = sum(sum(1 for _ in range(u) if rng.random() < e / u) for e, u in pick)
+        return events / sum(u for _, u in pick)
 
     draws = sorted(100 * (rate(a) - rate(b)) for _ in range(n))
     return draws[int(0.05 * n)], draws[min(int(0.95 * n), n - 1)]
@@ -73,8 +77,10 @@ def cluster_mean_diff_ci90(a: list[list[float]], b: list[list[float]], n: int = 
     """A seeded 90% cluster-bootstrap interval for mean(a) minus mean(b).
 
     Each element is one PERSON's list of values. A resample draws people with
-    replacement inside each group and pools all their values, so a person with
-    more recordings weighs more, exactly as in the point estimate.
+    replacement inside each group, then redraws each picked person's values with
+    replacement (docs/PUNDITS-PLAN.md P5: "resamples people, then transcripts
+    within each person"), and pools them, so a person with more recordings weighs
+    more, exactly as in the point estimate.
     """
     for name, g in (("a", a), ("b", b)):
         if not g or any(not vals for vals in g):
@@ -83,7 +89,8 @@ def cluster_mean_diff_ci90(a: list[list[float]], b: list[list[float]], n: int = 
 
     def mean(g: list[list[float]]) -> float:
         pick = [g[rng.randrange(len(g))] for _ in g]
-        return sum(sum(v) for v in pick) / sum(len(v) for v in pick)
+        return (sum(sum(v[rng.randrange(len(v))] for _ in v) for v in pick)
+                / sum(len(v) for v in pick))
 
     draws = sorted(mean(a) - mean(b) for _ in range(n))
     return draws[int(0.05 * n)], draws[min(int(0.95 * n), n - 1)]

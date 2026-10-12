@@ -108,4 +108,4 @@ Leave one venue out, rescoring every ranked person:
 - Some lean groups have fewer than 10 people: a percentile cluster bootstrap is too narrow with so few clusters, so treat its intervals as optimistic.
 - No drift anchors were scheduled (plan P5: 6 fixed transcripts re-graded once per block group); drift is unmeasured and must be reported as a limit.
 
-Intervals: 90%, 20000 resamples, seed 20260914, unit person, resampled with replacement inside each lean group.
+Intervals: 90%, 20000 resamples, seed 20260914, unit person, resampled with replacement inside each lean group, then recordings within each person.

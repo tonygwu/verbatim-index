@@ -480,7 +480,7 @@ def report(data: Path, leans: dict[str, str]) -> dict:
         "gates": gate,
         "identity": identity(grades, people, judges, results),
         "bootstrap": {"resamples": BOOTSTRAP_N, "seed": BOOTSTRAP_SEED, "interval": "90%",
-                      "unit": "person, resampled with replacement inside each lean group"},
+                      "unit": "person, resampled with replacement inside each lean group, then recordings within each person"},
     }
 
 
