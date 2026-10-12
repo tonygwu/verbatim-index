@@ -86,8 +86,18 @@ def main() -> int:
         bret = {"name": "Bret Weinstein", "handles": []}
         pbd = {"name": "Patrick Bet-David", "handles": []}
         megyn = {"name": "Megyn Kelly", "handles": []}
+        piker = {"name": "Hasan Piker", "handles": ["HasanAbi"]}
+        roster = [mehdi, piker, walsh, bonnell, hoyt]
         check("another roster person whose FIRST name is the surname does not: Hasan Piker is not Mehdi Hasan",
-              not fn("Hasan Piker", mehdi) and not fn("Hasan Piker (HasanAbi)", mehdi))
+              not fn("Hasan Piker", mehdi, roster) and not fn("Hasan Piker (HasanAbi)", mehdi, roster))
+        # FOUND 2026-10-12 by the second review: the first fix rejected ANY capitalised
+        # neighbour, so real namings and search queries stopped counting.
+        shapiro = {"name": "Ben Shapiro", "handles": []}
+        check("a surname followed by other capitalised words still counts (a search query)",
+              fn("Shapiro Daily Wire", shapiro, roster) and fn("Weinstein Bret", bret, roster))
+        check("a hedge or a possessive before the surname still counts",
+              fn("Likely Walsh", walsh, roster) and fn("Daily Wire's Walsh", walsh, roster)
+              and fn("Possibly Weinstein, the biologist", bret, roster))
         check("another person with the same surname does not: Eric Weinstein, Jesse Kelly",
               not fn("Eric Weinstein", bret) and not fn("Jesse Kelly", megyn))
         check("a hyphenated surname is one word: Larry David and David Pakman are not Patrick Bet-David",

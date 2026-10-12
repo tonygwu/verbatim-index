@@ -148,7 +148,7 @@ def identity(grades: list[dict], people: dict[str, dict], judges: list[str], res
         rows = [g for g in grades if g.get("judge") == j and g.get("mode") == "blinded" and usable(g)]
         c = sum(1 for g in rows if g["grade"].get("identity_confident"))
         k = sum(1 for g in rows if g["grade"].get("identity_confident")
-                and names_subject(g["grade"].get("identity_guess"), people[g["leader_slug"]]))
+                and names_subject(g["grade"].get("identity_guess"), people[g["leader_slug"]], list(people.values())))
         by_judge[j] = {"grades": len(rows), "confident_rate": round(c / len(rows), 3) if rows else None,
                        "correct_rate": round(k / len(rows), 3) if rows else None}
         tot, conf, corr = tot + len(rows), conf + c, corr + k
@@ -157,7 +157,7 @@ def identity(grades: list[dict], people: dict[str, dict], judges: list[str], res
     named = {(g["leader_slug"], g["source_id"]) for g in grades
              if g.get("judge") in judges and g.get("mode") == "blinded" and usable(g)
              and g["grade"].get("identity_confident")
-             and names_subject(g["grade"].get("identity_guess"), people[g["leader_slug"]])}
+             and names_subject(g["grade"].get("identity_guess"), people[g["leader_slug"]], list(people.values()))}
     board_rate = round(len(board & named) / len(board), 3) if board else None
     return {"grades": tot, "confident_rate": round(conf / tot, 3) if tot else None, "correct_rate": rate,
             "board_recordings": len(board), "board_correct_rate": board_rate,
@@ -177,7 +177,7 @@ def search_gate(grades: list[dict], people: dict, leans: dict, judges: list[str]
     for g in grades:
         if g.get("judge") in judges and g.get("mode") == "blinded" and usable(g):
             naming += sum(1 for q in (g.get("telemetry") or {}).get("web_search_queries") or []
-                          if names_subject(q, people[g["leader_slug"]]))
+                          if names_subject(q, people[g["leader_slug"]], list(people.values())))
     for j in judges:
         rows = [g for g in grades if g.get("judge") == j and usable(g)]
         per_person: dict[str, list[int]] = defaultdict(lambda: [0, 0])

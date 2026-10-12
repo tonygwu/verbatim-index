@@ -805,21 +805,27 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
 
 
 _NAME_TITLES = {"mr", "mrs", "ms", "dr", "prof", "professor", "sen", "senator", "rep", "gov", "president"}
-_NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
+# Capitalised words that may stand before a surname without being someone's first name.
+_NAME_HEDGES = {"likely", "possibly", "probably", "perhaps", "maybe", "presumably", "apparently", "almost",
+                "either", "or", "and", "the", "host", "commentator", "guest", "pundit", "streamer"}
 
 
-def names_subject(text: str | None, person: dict) -> bool:
-    """Whether `text` names this roster person. Used to tell a judge's CORRECT
-    identity guess from a merely confident one.
+def names_subject(text: str | None, person: dict, roster: list[dict] | None = None) -> bool:
+    """Whether `text` (an identity guess or a search query) names this roster person.
+    Used to tell a judge's CORRECT identity guess from a merely confident one.
 
     The full name or a roster handle counts anywhere, case-insensitive, on word
     boundaries. A bare surname of 4+ letters (a hyphenated surname is one word)
-    counts only when it is not part of SOMEONE ELSE's name: a capitalised word
-    right after it means the surname is that person's first name ("Hasan Piker"
-    is not Mehdi Hasan), unless it is a suffix such as "Jr"; a capitalised word
-    right before it means another person with the same surname ("Eric Weinstein"
-    is not Bret Weinstein), unless it is a title, or a shorter or longer form of
-    the subject's own first name ("Matthew Walsh", "B. Weinstein").
+    counts too, except in two cases:
+      - it sits inside another ROSTER person's full name or handle in the same
+        text ("Hasan Piker" does not name Mehdi Hasan), which needs `roster`;
+      - a capitalised word right before it is another person's first name
+        ("Eric Weinstein" does not name Bret Weinstein). That word is not a
+        first name when it is a title ("Dr."), a hedge ("Likely"), a possessive
+        ("Wire's"), or a shorter or longer form of the subject's own first name
+        ("Matthew Walsh", "B. Weinstein").
+    Capitalised words AFTER the surname never block it: "Shapiro Daily Wire" is a
+    search for Ben Shapiro.
     """
     name = (person.get("name") or "").lower()
     if not name or not text:
@@ -831,18 +837,22 @@ def names_subject(text: str | None, person: dict) -> bool:
     if any(next(at(tok), None) for tok in [name] + [h.lower() for h in person.get("handles") or []]):
         return True
     parts = re.findall(r"[a-z'-]+", name)
-    if len(parts) < 1 or len(parts[-1]) < 4:
+    if not parts or len(parts[-1]) < 4:
         return False
     surname, first = parts[-1], (parts[0] if len(parts) > 1 else "")
+    others = [(m.start(), m.end()) for q in roster or [] if (q.get("name") or "").lower() != name
+              for tok in [(q.get("name") or "").lower()] + [h.lower() for h in q.get("handles") or []] if tok
+              for m in at(tok)]
     for m in at(surname):
+        if any(a <= m.start() and m.end() <= b for a, b in others):
+            continue
         before = re.search(r"([A-Za-z'.-]+)\s+$", text[:m.start()])
-        after = re.match(r"\s+([A-Za-z'.-]+)", text[m.end():])
-        b = before.group(1).lower().strip(".") if before and before.group(1)[0].isupper() else None
-        a = after.group(1).lower().strip(".") if after and after.group(1)[0].isupper() else None
-        if a and a not in _NAME_SUFFIXES:
-            continue
-        if b and b not in _NAME_TITLES and not (first and (b.startswith(first) or first.startswith(b))):
-            continue
+        if before:
+            w = before.group(1)
+            b = w.lower().strip(".")
+            if (w[0].isupper() and b and not b.endswith("'s") and b not in _NAME_TITLES and b not in _NAME_HEDGES
+                    and not (first and (b.startswith(first) or first.startswith(b)))):
+                continue
         return True
     return False
 
@@ -1709,7 +1719,8 @@ def main() -> int:
         # guess names the subject, which is what "identified" means on the page.
         named = {(g["leader_slug"], g["source_id"]) for g in usable
                  if g["mode"] == "blinded" and (g.get("run") or 0) == 0 and g["grade"].get("identity_confident")
-                 and names_subject(g["grade"].get("identity_guess"), by_slug.get(g["leader_slug"], {}))}
+                 and names_subject(g["grade"].get("identity_guess"), by_slug.get(g["leader_slug"], {}),
+                                   list(by_slug.values()))}
         diagnostics["blinding_correct_rate"] = (round(
             sum(1 for t in all_b if (t["leader_slug"], t["source_id"]) in named) / len(all_b), 3) if all_b else None)
         # The page says web search is "measured and disclosed"; this is the measure.
