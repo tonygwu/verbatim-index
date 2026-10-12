@@ -718,6 +718,85 @@ def weighted(pairs: list[tuple[float, float]]) -> float | None:
     return num / den if den > 0 else None
 
 
+def board_overall(rows: list[dict]) -> float:
+    """A person's overall from their rows, with exactly the arithmetic main()'s
+    agg() publishes: each dimension's coverage-weighted mean, rounded to one
+    decimal, then the weighted sum, rounded to one decimal."""
+    dims = {}
+    for dim in DIMS:
+        key = f"cal_{dim}_venue_adj" if f"cal_{dim}_venue_adj" in rows[0] else f"cal_{dim}"
+        dims[dim] = round(weighted([(r[key], max(r["coverage"], 0.05)) for r in rows]), 1)
+    return round(sum(WEIGHTS[d] * dims[d] for d in DIMS), 1)
+
+
+def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: int) -> dict:
+    """Plan P5: "In both cases a leave-one-venue-out sensitivity is reported."
+
+    For each venue present in the blinded rows, drop that venue's recordings,
+    rescore every ranked person with board_overall(), and report what moved:
+    who falls below the rank floor, how many ranks change among those still
+    ranked, Spearman's rank correlation with the full board (None under three
+    people), and the largest and mean absolute score shift. Ties in a rescored
+    board keep the full board's order. A recording with no venue stays in every
+    run and is counted. Contract-v2 studies only; leaders never calls this.
+
+    The full board is rescored first and must reproduce every published score
+    exactly. If it does not, this would measure some other board, so it refuses.
+    """
+    blinded = [t for t in transcripts if t.get("mode") == "blinded"]
+    by_slug: dict[str, list[dict]] = defaultdict(list)
+    for t in blinded:
+        by_slug[t["leader_slug"]].append(t)
+    order = [p["slug"] for p in sorted(ranked, key=lambda p: p["rank"])]
+    full = {p["slug"]: p["blinded"]["overall"] for p in ranked}
+    for slug in order:
+        again = board_overall(by_slug[slug]) if by_slug.get(slug) else None
+        if again is None or abs(again - full[slug]) > 1e-9:
+            raise RuntimeError(f"venue_leave_one_out: rescoring {slug} gives {again}, the board says "
+                               f"{full[slug]}; the sensitivity would measure a different board")
+    venues = sorted({t["venue_type"] for t in blinded if t.get("venue_type")})
+    by_venue = {}
+    for venue in venues:
+        dropped = [t for t in blinded if t.get("venue_type") == venue]
+        still, below, shifts = {}, [], []
+        for slug in order:
+            keep = [t for t in by_slug[slug] if t.get("venue_type") != venue]
+            if len(keep) < min_rank:
+                below.append(slug)
+                continue
+            still[slug] = board_overall(keep)
+            shifts.append((round(abs(still[slug] - full[slug]), 1), slug))
+        before = [s for s in order if s in still]
+        after = sorted(before, key=lambda s: (-still[s], before.index(s)))
+        m = len(before)
+        rho = None
+        if m >= 3:
+            d2 = sum((before.index(s) - after.index(s)) ** 2 for s in before)
+            rho = round(1 - 6 * d2 / (m * (m * m - 1)), 3)
+        top = max(shifts, key=lambda x: x[0]) if shifts else None
+        by_venue[venue] = {
+            "recordings_dropped": len(dropped),
+            "people_with_venue": len({t["leader_slug"] for t in dropped if t["leader_slug"] in full}),
+            "people_still_ranked": m,
+            "people_below_floor": below,
+            "people_changing_rank": sum(1 for s in before if before.index(s) != after.index(s)),
+            "rank_correlation": rho,
+            "max_abs_shift": top[0] if top else None,
+            "max_shift_slug": top[1] if top else None,
+            "mean_abs_shift": round(st.mean([x[0] for x in shifts]), 2) if shifts else None,
+        }
+    return {
+        "full_board_reproduced": True,
+        "recordings_without_venue": sum(1 for t in blinded if not t.get("venue_type")),
+        "min_transcripts_to_rank": min_rank,
+        "by_venue": by_venue,
+        "note": ("Each venue's recordings dropped in turn and every ranked person rescored with the board's "
+                 "own arithmetic and calibration (not refitted). Shifts are blinded overall points against "
+                 "the published board; people_below_floor would lose their rank; rank_correlation is "
+                 "Spearman's over the people still ranked, None under three."),
+    }
+
+
 def shadow_report(shadow: list[dict], published: list[dict], corpus_n: int | None) -> dict:
     """What a shadow judge would contribute, without letting it contribute.
 
@@ -1379,6 +1458,10 @@ def main() -> int:
         "calibration_params": {"|".join(str(x) for x in k): v for k, v in params.items()},
         "weights": WEIGHTS,
     }
+    # Plan P5 asks for this whether or not the adjustment is applied. Contract
+    # v2 only, so the leaders results.json keeps its bytes.
+    if is_v2:
+        diagnostics["venue_leave_one_out"] = venue_leave_one_out(transcripts_out, scored, MIN_TRANSCRIPTS_TO_RANK)
 
     # Audit payload: everything a human needs to agree or disagree with a score.
     audit: dict[str, list] = defaultdict(list)
