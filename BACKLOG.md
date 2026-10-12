@@ -777,6 +777,28 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
+- **The pundits page has no evidence drawer; do it after the P7 quote audit, not
+  before.** Filed 2026-10-12. The leaders page shows, per person, each judge's
+  reasoning and evidence quotes for every graded transcript. The pundits page
+  lists each board recording with its link, venue and score (since 2026-10-12),
+  but not what the judges wrote. The data is in `results_audit.json`. NOT done,
+  deliberately: the quotes would appear credited to a named political commentator,
+  and attribution is not yet measured. 89 judge quotes credited to the subject do
+  not place in the transcript (entry below), and the P7 quote audit (300 quotes,
+  G-attribution-quotes) has not run. Publishing the drawer first would put
+  possibly misattributed words beside a person's name. Size: a port of
+  `build_site.py`'s drawer into `build_study_site.py`, plus the quote filter that
+  the audit decides.
+
+- **Plan P5's era covariate is not implemented.** Filed 2026-10-12. P5 "Sampling
+  rules": "The board reports era as a covariate, and a sensitivity analysis
+  excludes archival subjects." The archival sensitivity exists since 2026-10-12
+  (`diagnostics.archival_excluded`; on the pilot it moves no score). Era does not:
+  nothing fits recording year. It needs a definition first (upload year from
+  `yt_upload_date`, or years before the subject's last recording), then a fit
+  shaped like `venue_effects()`: an additive person + era model, reported and not
+  applied. Quota-free.
+
 - **An unsupported dimension removes the whole recording, though the plan says
   it should still count toward the dimensions it supports.** Filed 2026-10-11,
   found while asking why `asmongold/asmongold-tv-ks77-g` is missing from

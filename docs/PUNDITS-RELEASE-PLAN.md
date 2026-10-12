@@ -163,9 +163,20 @@ Code and documents only: no judge call, no data write, no deploy. Every item was
   tags, and an inline icon.
 - The data revision, in a meta tag and the footer.
 
+- Every board recording listed under its person, linked to its source video, with venue,
+  upload date and score. Metadata only: the transcript text never reaches the page.
+- The Method section links the public rubric, and the code and tests.
+- A social card (`site-pundits/og.png`) that says "Pilot board".
+- The blinding sentence states the CORRECT-identification rate (a judge named the speaker),
+  not a judge's confidence. On the pilot both are 100%. The page also states each judge's
+  measured web searches: 0 of 154 for each on the pilot.
+
 **The deploy** (`scripts/deploy_pundits.sh`): it writes `site-pundits/revision.json`, refuses
 to replace a newer live page, and after publishing reads the live revision back (the P11
 verification).
+
+**The P9 schedule** (`scripts/schedule.py`): a dry run of the P9 command found two defects,
+both fixed. See "The P9 command".
 
 **The P5 sensitivities** (`aggregate.py`, pundits only; the leaders `results.json` stays
 byte-identical): `venue_leave_one_out` and `archival_excluded`. On the pilot, no remaining
