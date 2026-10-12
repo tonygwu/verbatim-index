@@ -21,6 +21,7 @@ Called through build_site.py:
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
@@ -141,6 +142,31 @@ ul.recs a{color:var(--ink)}
   td.num .ci{display:block; font-size:.75rem}
 }
 """
+
+
+def card_counts(results: dict) -> dict[str, int]:
+    """The three counts the social card draws. build_og_card.py draws them and
+    og_card_drift() re-reads them, so the card and its check cannot disagree."""
+    d = results.get("diagnostics") or {}
+    return {"people": sum(1 for p in results.get("leaders") or [] if p.get("status") == "scored"),
+            "recordings": d["transcripts_with_blinded_consensus"],
+            "judges": len(d["judge_models"])}
+
+
+def og_card_drift(results: dict, meta: dict) -> str | None:
+    """A warning naming each count the committed card draws differently from the
+    board, or None. The card is an image in git, so nothing else would notice."""
+    try:
+        now = card_counts(results)
+    except KeyError as exc:
+        # A warning, never a block: say exactly what is missing.
+        return f"site-pundits/og.png cannot be checked: results.json lacks diagnostics {exc}"
+    drawn = (meta or {}).get("counts") or {}
+    moved = [f"{k}: card says {drawn.get(k)}, board has {v}" for k, v in now.items() if drawn.get(k) != v]
+    if not moved:
+        return None
+    return ("site-pundits/og.png is stale (" + "; ".join(moved) + "); re-run "
+            "scripts/build_og_card.py --site pundits --results <results.json> and commit the card")
 
 
 def roster_size(results: dict) -> int:
@@ -271,7 +297,7 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 def render(results: dict, profile: dict, copy: dict, rundate: str,
            data_revision: str | None = None, data_date: str | None = None,
-           recordings: dict | None = None) -> str:
+           recordings: dict | None = None, og_card: Path | None = None) -> str:
     validate_copy(profile, copy)
     if data_revision is not None and not _SHA.fullmatch(data_revision):
         raise RuntimeError(f"data revision {data_revision!r} is not a full 40-hex SHA")
@@ -338,6 +364,19 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
                    f'{len(results.get("leaders") or [])} of {roster_size(results)} people ranked.')
     revision_meta = (f'<meta name="verbatim:data-revision" content="{data_revision}">\n'
                      if data_revision else "")
+    # The card's URL carries a key from its own bytes: Twitter and LinkedIn cache
+    # a card by URL for days, so a redrawn card at the same URL would not show.
+    if og_card is not None and Path(og_card).is_file():
+        img = f'{copy["site_url"]}og.png?v={hashlib.sha256(Path(og_card).read_bytes()).hexdigest()[:12]}'
+        card_tags = (f'<meta property="og:image" content="{esc(img)}">\n'
+                     '<meta property="og:image:type" content="image/png">\n'
+                     '<meta property="og:image:width" content="1200">\n'
+                     '<meta property="og:image:height" content="630">\n'
+                     f'<meta property="og:image:alt" content="{esc(copy["title"])}">\n'
+                     '<meta name="twitter:card" content="summary_large_image">\n'
+                     f'<meta name="twitter:image" content="{esc(img)}">')
+    else:
+        card_tags = '<meta name="twitter:card" content="summary">'
     stamp = ""
     if data_revision:
         stamp = f", data revision {data_revision[:12]}" + (f" of {esc(data_date)}" if data_date else "")
@@ -356,7 +395,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
 <meta property="og:url" content="{esc(copy["site_url"])}">
 <meta property="og:title" content="{esc(copy["title"])}">
 <meta property="og:description" content="{esc(description)}">
-<meta name="twitter:card" content="summary">
+{card_tags}
 <meta name="twitter:title" content="{esc(copy["title"])}">
 <meta name="twitter:description" content="{esc(description)}">
 {revision_meta}{FONT_LINKS}
@@ -414,11 +453,20 @@ def main_from_args(args) -> int:
         for f in sorted(meta_dir.glob("*/*.json")):
             rec = json.loads(f.read_text())
             recordings[(f.parent.name, f.stem)] = {k: rec[k] for k in keep if k in rec}
+    results = json.loads(Path(args.results).read_text())
+    card = REPO / "site-pundits" / "og.png"
+    if not card.is_file():
+        print(f"WARNING: {card.relative_to(REPO)} is missing; social cards will show no image", file=sys.stderr)
+    elif card.with_suffix(".meta.json").is_file():
+        drift = og_card_drift(results, json.loads(card.with_suffix(".meta.json").read_text()))
+        if drift:
+            print(f"WARNING: {drift}", file=sys.stderr)
     try:
         copy = load_copy(profile)
-        page = render(json.loads(Path(args.results).read_text()), profile, copy,
+        page = render(results, profile, copy,
                       rundate=datetime.now(timezone.utc).strftime("%d %B %Y"),
-                      data_revision=args.data_revision, data_date=args.data_date, recordings=recordings)
+                      data_revision=args.data_revision, data_date=args.data_date, recordings=recordings,
+                      og_card=card)
     except RuntimeError as exc:
         raise SystemExit(f"REFUSING: {exc}") from None
     write_atomic(args.out, page)

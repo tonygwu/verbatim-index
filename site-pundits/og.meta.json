@@ -1,0 +1,10 @@
+{
+ "site": "pundits",
+ "counts": {
+  "people": 10,
+  "recordings": 77,
+  "judges": 2
+ },
+ "drawn_by": "scripts/build_og_card.py",
+ "note": "The site builder warns when these counts drift from the corpus."
+}

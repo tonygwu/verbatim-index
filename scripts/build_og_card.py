@@ -314,6 +314,23 @@ def predictions_counts(args) -> tuple[dict, list[tuple[str, str]]]:
     return counts, stats
 
 
+def pundits_counts_from(results: dict) -> tuple[dict, list[tuple[str, str]]]:
+    """People ranked, board recordings and judges, counted by the page's own
+    card_counts(), so the page's staleness check reads exactly what was drawn."""
+    from build_study_site import card_counts
+    counts = card_counts(results)
+    return counts, [("People ranked", str(counts["people"])), ("Recordings", str(counts["recordings"])),
+                    ("Judges", str(counts["judges"]))]
+
+
+def pundits_counts(args) -> tuple[dict, list[tuple[str, str]]]:
+    return pundits_counts_from(json.loads(Path(args.results).read_text()))
+
+
+# The board's status label goes on the card, so a pilot is never shared as the
+# finished study. It is read from the copy file, never typed here.
+PUNDITS_STATUS = json.loads((REPO / "profiles" / "pundits.site.json").read_text())["status_label"]
+
 SITES = {
     "leaderboard": {
         "out": REPO / "site" / "og.png",
@@ -325,6 +342,14 @@ SITES = {
                     "actually demonstrates."),
         "counts": leaderboard_counts,
         "requires": ("results", "transcripts"),
+    },
+    "pundits": {
+        "out": REPO / "site-pundits" / "og.png",
+        "domain": f"pundits.tonygwu.com &middot; {PUNDITS_STATUS}",
+        "wordmark": "Pundits",
+        "tagline": "Intellectual honesty, scored from <b>what they actually say</b> on the record.",
+        "counts": pundits_counts,
+        "requires": ("results",),
     },
     "predictions": {
         "out": REPO / "site-predictions" / "og.png",
