@@ -70,15 +70,20 @@ def verdict_rows(g: dict, hold: bool) -> list[str]:
                     f"&plusmn;{jl['delta_points']:g} |")
     hl = g["G-halo-lean"]
     for part, e in [("panel", hl["panel"]), *[(f"{j} (raw)", v) for j, v in hl["by_judge_raw"].items()]]:
-        n = f"{e['people'][0]} + {e['people'][1]} people" if e.get("people") else "&ndash;"
+        # A group size is a lean-split figure too, so it is withheld with the estimates.
+        n = (WITHHELD if hold else f"{e['people'][0]} + {e['people'][1]} people") if e.get("people") else "&ndash;"
         rows.append(f"| G-halo-lean | {part} | {e['verdict']} | {WITHHELD if hold else signed(e.get('estimate'))} | "
                     f"{WITHHELD if hold else ci(e.get('ci90'))} | {n} | &plusmn;{hl['delta_points']:g} |")
     d = g["G-drift"]
     if not d.get("ran"):
-        rows.append(f"| G-drift | all | {d['verdict']} | did not run | &ndash; | 0 anchors | &plusmn;{d['delta_points']:g} |")
+        rows.append(f"| G-drift | all | {d['verdict']} | did not run | &ndash; | "
+                    f"{d.get('anchors_scheduled', 0)} anchors scheduled | &plusmn;{d['delta_points']:g} |")
     for cell, e in (d.get("by_judge_mode") or {}).items():
         rows.append(f"| G-drift | {cell.replace('|', ' ')} | {e['verdict']} | {signed(e['estimate'])} | "
                     f"{ci(e['ci90'])} | {e['anchors']} anchors | &plusmn;{d['delta_points']:g} |")
+    for cell in d.get("missing_cells") or []:
+        rows.append(f"| G-drift | {cell.replace('|', ' ')} | INCONCLUSIVE | not re-graded | &ndash; | 0 anchors | "
+                    f"&plusmn;{d['delta_points']:g} |")
     return rows
 
 
@@ -158,7 +163,11 @@ def render(rep: dict, data_revision: str, withhold_lean: bool = False,
     limits = [g["G-judge-lean"]["limit"]]
     warn = next((g[k]["few_clusters"] for k in ("G-judge-lean", "G-halo-lean", "G-search", "G-coverage")
                  if g[k].get("few_clusters")), None)
-    if warn:
+    if warn and withhold_lean:
+        # The warning names every group with its size; state the limit without them.
+        limits.append(f"Some lean groups have fewer than {rep['min_clusters']} people: a percentile cluster bootstrap "
+                      "is too narrow with so few clusters, so treat its intervals as optimistic.")
+    elif warn:
         limits.append(warn[0].upper() + warn[1:] + ".")
     if not g["G-drift"].get("ran"):
         limits.append(g["G-drift"]["why"][0].upper() + g["G-drift"]["why"][1:] + ".")

@@ -345,13 +345,14 @@ def halo_lean_gate(results: dict, leans: dict, judges: list[str]) -> dict:
 
 
 def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str]) -> dict:
-    anchors = set()
+    anchors, expected = set(), set()
     for f in sorted((data / "logs/schedule").glob("*.jsonl")):
         for line in f.read_text().splitlines():
             if line.strip():
                 r = json.loads(line)
                 if r.get("run", 0) >= 1 and r["judge"] in judges:
                     anchors.add((r["slug"], r["source_id"]))
+                    expected.add(f"{r['judge']}|{r['mode']}")
     if not anchors:
         return {"verdict": "INCONCLUSIVE", "ran": False, "delta_points": DELTA_DRIFT,
                 "why": "no drift anchors were scheduled (plan P5: 6 fixed transcripts re-graded once per "
@@ -370,8 +371,17 @@ def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str])
         lo, hi = gates.mean_ci90(diffs, BOOTSTRAP_N, BOOTSTRAP_SEED)
         out[cell] = {"anchors": len(diffs), "estimate": round(sum(diffs) / len(diffs), 2),
                      "ci90": [round(lo, 2), round(hi, 2)], "verdict": gates.equivalence(lo, hi, DELTA_DRIFT)}
-    return {"verdict": combine([e["verdict"] for e in out.values()]), "ran": bool(out), "delta_points": DELTA_DRIFT,
-            "anchors_scheduled": len(anchors), "by_judge_mode": out,
+    if not out:
+        return {"verdict": "INCONCLUSIVE", "ran": False, "delta_points": DELTA_DRIFT,
+                "anchors_scheduled": len(anchors), "by_judge_mode": {},
+                "why": f"{len(anchors)} drift anchors are scheduled but none has been re-graded yet; drift is "
+                       "unmeasured and must be reported as a limit"}
+    # The plan tests drift per judge and mode: a scheduled cell with no re-grade
+    # is unmeasured, so the gate cannot pass on the cells that happen to exist.
+    missing = sorted(expected - set(out))
+    verdicts = [e["verdict"] for e in out.values()] + ["INCONCLUSIVE"] * bool(missing)
+    return {"verdict": combine(verdicts), "ran": True, "delta_points": DELTA_DRIFT,
+            "anchors_scheduled": len(anchors), "by_judge_mode": out, "missing_cells": missing,
             "rule": "per judge and mode, raw overall of the latest run minus the earliest, averaged over anchors; "
                     "bootstrap over anchors"}
 
@@ -380,13 +390,16 @@ def venue_support(results: dict) -> dict:
     d = results.get("diagnostics") or {}
     if "venue_adjustment_applied" not in d:
         raise RuntimeError("results.json diagnostics carry no venue_adjustment_applied")
+    # Plan P5 reports the leave-one-venue-out "in both cases", so its absence is a
+    # stale results.json, not an empty section.
+    for key in ("venue_counts", "venue_leave_one_out"):
+        if key not in d:
+            raise RuntimeError(f"results.json diagnostics carry no {key}; re-aggregate with the current code")
     out = {"applied": d["venue_adjustment_applied"], "reasons": d.get("venue_support_reasons") or [],
-           "venue_counts": d.get("venue_counts") or {}}
-    lovo = d.get("venue_leave_one_out")
-    if lovo:
-        out["leave_one_out"] = {v: {k: e[k] for k in ("people_still_ranked", "people_changing_rank",
-                                                       "rank_correlation", "max_abs_shift")}
-                                for v, e in lovo["by_venue"].items()}
+           "venue_counts": d["venue_counts"]}
+    out["leave_one_out"] = {v: {k: e[k] for k in ("people_still_ranked", "people_changing_rank",
+                                                   "rank_correlation", "max_abs_shift")}
+                            for v, e in d["venue_leave_one_out"]["by_venue"].items()}
     return out
 
 
@@ -414,7 +427,14 @@ def report(data: Path, leans: dict[str, str]) -> dict:
         raise RuntimeError("results.json names no judge_models; the published panel cannot be derived")
     judges = sorted(models)
     people = roster(data)
-    grades = [g for g in load_grades(data) if g.get("leader_slug") in people]
+    on_disk = load_grades(data)
+    # The gates read grades from disk and results.json separately, so the two must
+    # describe one corpus: aggregate.py records how many grade files it read.
+    read_n = (results.get("diagnostics") or {}).get("grade_files_read")
+    if read_n != len(on_disk):
+        raise RuntimeError(f"results.json was built from grade_files_read={read_n} grade files, and {len(on_disk)} "
+                           f"are on disk ({len(on_disk) - (read_n or 0)} newer); re-aggregate first")
+    grades = [g for g in on_disk if g.get("leader_slug") in people]
     scored = {g["leader_slug"] for g in grades}
     groups = lean_groups(leans, scored)
     gate = {
@@ -433,6 +453,7 @@ def report(data: Path, leans: dict[str, str]) -> dict:
     return {
         "published_judges": judges,
         "lean_groups": {k: len(v) for k, v in sorted(groups.items())},
+        "min_clusters": MIN_CLUSTERS,
         "gates": gate,
         "identity": identity(grades, people, judges),
         "bootstrap": {"resamples": BOOTSTRAP_N, "seed": BOOTSTRAP_SEED, "interval": "90%",

@@ -69,7 +69,8 @@ def grade(slug: str, sid: str, judge: str, mode: str, *, tool_calls=0, queries=(
 HALOS = {"p1": (2.0, 1.0, 5.0), "p2": (2.0, 1.0, 5.0), "p3": (0.0, 1.0, -1.0), "p4": (0.0, 1.0, -1.0)}
 
 
-def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None) -> None:
+def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None,
+          anchor_cells=(("fable", "blinded"),), regraded=None, lovo=True) -> None:
     """Four people, two recordings each, fable + gemini, both modes; astra scheduled but dropped.
 
     p4's second recording never reaches the board (both its gemini cells failed).
@@ -108,20 +109,27 @@ def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None
                     venue = "debate" if (slug, i, mode) == ("p1", 0, "open") else "conversation"
                     transcripts.append({"leader_slug": slug, "source_id": sid, "mode": mode, "venue_type": venue})
     if anchor_drift is not None:
-        # p1-r0 is a drift anchor: re-graded as run 1 in a later block by Fable, blinded.
-        sched.append({"block": 4, "judge": "fable", "mode": "blinded", "run": 1, "slug": "p1", "source_id": "p1-r0"})
-        a = grade("p1", "p1-r0", "fable", "blinded", score=50 + anchor_drift, run=1)
-        (root / "grades/fable/p1/p1-r0__fable__blinded__r1.json").write_text(json.dumps(a))
+        # p1-r0 is a drift anchor: scheduled as run 1 in a later block for each of
+        # `anchor_cells`, and re-graded in each of `regraded` (default: all of them).
+        for judge, mode in anchor_cells:
+            sched.append({"block": 4, "judge": judge, "mode": mode, "run": 1, "slug": "p1", "source_id": "p1-r0"})
+            if (judge, mode) in (anchor_cells if regraded is None else regraded):
+                a = grade("p1", "p1-r0", judge, mode, score=50 + anchor_drift, run=1)
+                (root / f"grades/{judge}/p1/p1-r0__{judge}__{mode}__r1.json").write_text(json.dumps(a))
     (root / "logs/schedule").mkdir(parents=True)
     (root / "logs/schedule/s.jsonl").write_text("".join(json.dumps(r) + "\n" for r in sched))
     leaders = [{"slug": s, "rank": k + 1, "halo": {"overall": h[0], "by_judge_raw": {"fable": h[1], "gemini": h[2]}}}
                for k, (s, h) in enumerate(HALOS.items())]
+    n_files = sum(1 for _ in (root / "grades").rglob("*.json"))
     (root / "results.json").write_text(json.dumps({
         "leaders": leaders, "unranked": [], "transcripts": transcripts,
         "diagnostics": {"judge_models": {"fable": {"claude-fable-5-1": 8}, "gemini": {"gemini-3.8-flash-high": 7}},
                         "venue_adjustment_applied": False,
                         "venue_support_reasons": ["venue 'debate' seen 0 times, under the minimum of 8"],
-                        "venue_counts": {"conversation": 7},
+                        "venue_counts": {"conversation": 7}, "grade_files_read": n_files,
+                        **({"venue_leave_one_out": {"by_venue": {"conversation": {
+                            "people_still_ranked": 0, "people_changing_rank": 0, "rank_correlation": None,
+                            "max_abs_shift": None}}}} if lovo else {}),
                         "weights": {"d1_steelmanning": 0.35, "d2_epistemic_rigor": 0.35, "d3_good_faith": 0.3},
                         "calibration_params": {}}}))
 
@@ -265,6 +273,58 @@ def main() -> int:
         cell = d4.get("by_judge_mode", {}).get("fable|blinded", {})
         check("an anchor re-graded 8 points higher: last minus first is +8.0 and FAILS",
               d4.get("ran") is True and cell.get("estimate") == 8.0 and cell.get("verdict") == "FAIL", str(d4))
+        # FOUND 2026-10-12 by review: anchors in the manifest with no re-grade yet
+        # (mid-P9) returned ran=False with no reason, and the document renderer died
+        # on the missing key.
+        root8 = tmp / "data8"
+        root8.mkdir()
+        build(root8, anchor_drift=0, regraded=())
+        d5 = G.report(root8, LEANS)["gates"]["G-drift"]
+        check("anchors scheduled but none re-graded yet: INCONCLUSIVE, did not run, and it says why",
+              d5.get("verdict") == "INCONCLUSIVE" and d5.get("ran") is False
+              and "none has been re-graded" in d5.get("why", ""), str(d5))
+        # FOUND 2026-10-12 by review: the plan tests drift per judge and mode, and a
+        # cell with no re-grade at all (every Gemini re-grade refused) let the gate
+        # PASS on Fable alone.
+        root6 = tmp / "data6"
+        root6.mkdir()
+        build(root6, anchor_drift=0, anchor_cells=(("fable", "blinded"), ("gemini", "blinded")),
+              regraded=(("fable", "blinded"),))
+        d6 = G.report(root6, LEANS)["gates"]["G-drift"]
+        check("a scheduled judge-mode cell with no re-grade: INCONCLUSIVE, naming the cell",
+              d6.get("verdict") == "INCONCLUSIVE" and d6.get("missing_cells") == ["gemini|blinded"]
+              and d6.get("by_judge_mode", {}).get("fable|blinded", {}).get("verdict") == "PASS", str(d6))
+
+        print("\n[VENUE SENSITIVITY]")
+        # FOUND 2026-10-12 by review: plan P5 requires the leave-one-venue-out "in
+        # both cases", and a results.json without it rendered no table and no word.
+        root7 = tmp / "data7"
+        root7.mkdir()
+        build(root7, lovo=False)
+        try:
+            G.report(root7, LEANS)
+            refused = ""
+        except RuntimeError as exc:
+            refused = str(exc)
+        check("a results.json without venue_leave_one_out is refused, naming it",
+              "venue_leave_one_out" in refused, refused or "no refusal")
+
+        print("\n[STALE]")
+        # FOUND 2026-10-12 by review: the report read grades from disk and
+        # results.json separately, so a results.json older than the grades turned
+        # every newer recording into a "loss" in G-coverage.
+        root9 = tmp / "data9"
+        root9.mkdir()
+        build(root9)
+        extra = root9 / "grades/fable/p1/late__fable__blinded__r0.json"
+        extra.write_text((root9 / "grades/fable/p1/p1-r0__fable__blinded__r0.json").read_text())
+        try:
+            G.report(root9, LEANS)
+            stale = ""
+        except RuntimeError as exc:
+            stale = str(exc)
+        check("a grade file newer than results.json is refused, with both counts",
+              "grade_files_read" in stale and "1 newer" in stale, stale or "no refusal")
 
         print("\n[PRIVACY]")
         hits = holds_slug_and_lean(rep)
