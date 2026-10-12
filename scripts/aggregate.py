@@ -739,8 +739,8 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
     who falls below the rank floor, how many ranks change among those still
     ranked, Spearman's rank correlation with the full board (None under three
     people), and the largest and mean absolute score shift. Ties in a rescored
-    board keep the full board's order. A recording with no venue stays in every
-    run and is counted. Contract-v2 studies only; leaders never calls this.
+    board keep the full board's order. A recording with no venue, or with a venue
+    the judges tied on (venue_agreed False), stays in every run and is counted. Contract-v2 studies only; leaders never calls this.
 
     The full board is rescored first and must reproduce every published score
     exactly. If it does not, this would measure some other board, so it refuses.
@@ -756,13 +756,17 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
         if again is None or abs(again - full[slug]) > 1e-9:
             raise RuntimeError(f"venue_leave_one_out: rescoring {slug} gives {again}, the board says "
                                f"{full[slug]}; the sensitivity would measure a different board")
-    venues = sorted({t["venue_type"] for t in blinded if t.get("venue_type")})
+    # A 1-1 judge tie leaves venue_agreed False and an alphabetically chosen label:
+    # the format is unknown, so the recording is treated like one with no venue.
+    def known(t: dict) -> str | None:
+        return t.get("venue_type") if t.get("venue_agreed", True) else None
+    venues = sorted({known(t) for t in blinded if known(t)})
     by_venue = {}
     for venue in venues:
-        dropped = [t for t in blinded if t.get("venue_type") == venue]
+        dropped = [t for t in blinded if known(t) == venue]
         still, below, shifts = {}, [], []
         for slug in order:
-            keep = [t for t in by_slug[slug] if t.get("venue_type") != venue]
+            keep = [t for t in by_slug[slug] if known(t) != venue]
             if len(keep) < min_rank:
                 below.append(slug)
                 continue
@@ -790,6 +794,7 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
     return {
         "full_board_reproduced": True,
         "recordings_without_venue": sum(1 for t in blinded if not t.get("venue_type")),
+        "recordings_venue_disputed": sum(1 for t in blinded if t.get("venue_type") and not known(t)),
         "min_transcripts_to_rank": min_rank,
         "by_venue": by_venue,
         "note": ("Each venue's recordings dropped in turn and every ranked person rescored with the board's "

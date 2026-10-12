@@ -52,9 +52,10 @@ Excluded, not lost: astra, 40 scheduled cells, is not a published judge.
 
 | Venue | Scheduled | Lost |
 |---|---|---|
-| conversation | 34 | 0 |
+| conversation | 33 | 0 |
 | debate | 4 | 0 |
-| reaction | 27 | 0 |
+| format disputed | 4 | 0 |
+| reaction | 24 | 0 |
 | solo | 12 | 0 |
 | unknown (never reached the board) | 1 | 1 |
 
@@ -88,7 +89,7 @@ Queries that name the blinded subject: 0.
 
 Format adjustment applied: no. Why not: venue 'debate' seen 4 times, under the minimum of 8.
 
-Recordings by venue: conversation 34, debate 4, reaction 27, solo 12.
+Recordings by venue: conversation 33, debate 4, format disputed 4, reaction 24, solo 12.
 
 Leave one venue out, rescoring every ranked person:
 
@@ -96,7 +97,7 @@ Leave one venue out, rescoring every ranked person:
 |---|---|---|---|---|
 | conversation | 4 | 2 | 0.8 | 2.3 |
 | debate | 9 | 0 | 1.0 | 0.6 |
-| reaction | 7 | 2 | 0.964 | 2.8 |
+| reaction | 7 | 2 | 0.964 | 2.4 |
 | solo | 9 | 0 | 1.0 | 1.2 |
 
 ## Limits

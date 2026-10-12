@@ -116,6 +116,35 @@ def main() -> int:
         refused = "c" in str(exc) and "58.0" in str(exc)
     check("a score the rescoring cannot reproduce is refused, naming the person and the score", refused)
 
+    print("\n[TIES]")
+    # FOUND 2026-10-12 by review: with two judges a venue disagreement is a 1-1 tie,
+    # and resolve_venue() then returns the alphabetically first label with
+    # venue_agreed=False. That format is unknown, so the recording must not be
+    # dropped as a recording of the label it happens to carry; it stays in every
+    # run, like a recording with no venue, and is counted.
+    #   A: 5 conversation at 60 and 1 disputed recording labelled "reaction" at 90 -> 65.0
+    #   B: 6 reaction at 64 -> 64.0
+    #   C: 5 conversation at 50 and 1 disputed recording labelled "debate" at 80 -> 55.0
+    spec = {"a": [("conversation", True, 60)] * 5 + [("reaction", False, 90)],
+            "b": [("reaction", True, 64)] * 6,
+            "c": [("conversation", True, 50)] * 5 + [("debate", False, 80)]}
+    tie_rows = []
+    for slug, recs in spec.items():
+        for i, (venue, agreed, v) in enumerate(recs):
+            for mode in ("blinded", "open"):
+                tie_rows.append({"leader_slug": slug, "source_id": f"{slug}-{i}", "mode": mode, "coverage": 1.0,
+                                 "venue_type": venue, "venue_agreed": agreed, **{f"cal_{d}": v for d in A.DIMS}})
+    tied = fn(tie_rows, [{"slug": "a", "rank": 1, "blinded": {"overall": 65.0}},
+                         {"slug": "b", "rank": 2, "blinded": {"overall": 64.0}},
+                         {"slug": "c", "rank": 3, "blinded": {"overall": 55.0}}], min_rank=5)
+    check("a venue held only by a disputed recording gets no entry",
+          sorted(tied.get("by_venue", {})) == ["conversation", "reaction"], str(sorted(tied.get("by_venue", {}))))
+    check("the disputed recordings are counted", tied.get("recordings_venue_disputed") == 2, str(tied)[:300])
+    r = tied.get("by_venue", {}).get("reaction", {})
+    check("and stay in every run: dropping reaction removes B and leaves A at 65.0, unmoved",
+          r.get("recordings_dropped") == 6 and r.get("people_below_floor") == ["b"]
+          and r.get("max_abs_shift") == 0.0, str(r))
+
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + "; ".join(FAIL))

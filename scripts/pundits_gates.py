@@ -211,9 +211,11 @@ def coverage_gate(data: Path, grades: list[dict], results: dict, leans: dict, ju
         by_cell[f"{c[2]}|{c[3]}"][1] += 1
     recordings = sorted({(c[0], c[1]) for c in cells})
     on_board = {(t["leader_slug"], t["source_id"]) for t in results.get("transcripts") or [] if t.get("mode") == "blinded"}
-    # The blinded row's venue, as the board's venue_counts count it; the open row can resolve differently.
-    venue = {(t["leader_slug"], t["source_id"]): t.get("venue_type") for t in results.get("transcripts") or []
-             if t.get("mode") == "blinded"}
+    # The blinded row's venue; the open row can resolve differently. A 1-1 judge tie
+    # (venue_agreed False) carries an alphabetically chosen label, so it is "format disputed".
+    venue = {(t["leader_slug"], t["source_id"]): ("format disputed" if t.get("venue_type") and t.get("venue_agreed")
+                                                  is False else t.get("venue_type"))
+             for t in results.get("transcripts") or [] if t.get("mode") == "blinded"}
     per_person: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     per_venue: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for r in recordings:
@@ -392,11 +394,17 @@ def venue_support(results: dict) -> dict:
         raise RuntimeError("results.json diagnostics carry no venue_adjustment_applied")
     # Plan P5 reports the leave-one-venue-out "in both cases", so its absence is a
     # stale results.json, not an empty section.
-    for key in ("venue_counts", "venue_leave_one_out"):
-        if key not in d:
-            raise RuntimeError(f"results.json diagnostics carry no {key}; re-aggregate with the current code")
+    if "venue_leave_one_out" not in d:
+        raise RuntimeError("results.json diagnostics carry no venue_leave_one_out; re-aggregate with the current code")
+    # Counted from the board's blinded rows rather than diagnostics.venue_counts, which
+    # files a 1-1 judge tie under its alphabetically chosen label.
+    counts: dict[str, int] = defaultdict(int)
+    for t in results.get("transcripts") or []:
+        if t.get("mode") == "blinded":
+            counts["format disputed" if t.get("venue_type") and t.get("venue_agreed") is False
+                   else t.get("venue_type") or "format not recorded"] += 1
     out = {"applied": d["venue_adjustment_applied"], "reasons": d.get("venue_support_reasons") or [],
-           "venue_counts": d["venue_counts"]}
+           "venue_counts": dict(sorted(counts.items()))}
     out["leave_one_out"] = {v: {k: e[k] for k in ("people_still_ranked", "people_changing_rank",
                                                    "rank_correlation", "max_abs_shift")}
                             for v, e in d["venue_leave_one_out"]["by_venue"].items()}

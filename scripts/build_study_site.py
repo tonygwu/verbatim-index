@@ -258,7 +258,7 @@ def recordings_section(results: dict, recordings: dict) -> str:
                     else esc(title))
             d = str(m.get("yt_upload_date") or "")
             date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if re.fullmatch(r"\d{8}", d) else ""
-            bits = [x for x in (esc(m.get("yt_channel") or ""), date, esc(t.get("venue_type") or ""),
+            bits = [x for x in (esc(m.get("yt_channel") or ""), date, esc(venue_label(t)),
                                 num(t.get("cal_overall"))) if x]
             items.append((d or "0", t.get("source_id") or "", f"<li>{head} &middot; " + " &middot; ".join(bits) + "</li>"))
         items.sort(key=lambda x: (x[0], x[1]), reverse=True)
@@ -268,20 +268,29 @@ def recordings_section(results: dict, recordings: dict) -> str:
     return "\n".join(out)
 
 
+def venue_label(t: dict) -> str:
+    """A row's format as the page states it. A 1-1 judge tie leaves venue_agreed
+    False and an alphabetically chosen label, so the page says "format disputed"
+    rather than presenting that label as known."""
+    if t.get("venue_type") and t.get("venue_agreed") is False:
+        return "format disputed"
+    return t.get("venue_type") or ""
+
+
 def venue_mix(results: dict) -> dict[str, str]:
     """Each person's formats, as "5 conversation, 2 reaction, 1 debate".
 
     Plan P5 dropped the venue caps and handles format partly by showing this mix.
     It counts each scored recording once, from its blinded row, because the open
     row is the same recording. Largest first; equal counts in name order, so the
-    text is the same on every build. A recording with no venue says so rather
-    than being dropped.
+    text is the same on every build. A recording with no venue, or one whose
+    format the judges disputed, says so rather than being dropped or relabelled.
     """
     seen: dict[str, dict[str, str]] = {}
     for t in results.get("transcripts") or []:
         if t.get("mode") != "blinded":
             continue
-        seen.setdefault(t.get("leader_slug"), {})[t.get("source_id")] = t.get("venue_type") or "format not recorded"
+        seen.setdefault(t.get("leader_slug"), {})[t.get("source_id")] = venue_label(t) or "format not recorded"
     out = {}
     for slug, by_source in seen.items():
         counts: dict[str, int] = {}

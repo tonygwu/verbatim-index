@@ -180,6 +180,24 @@ def main() -> int:
           "5 conversation, 2 reaction, 1 debate" in row_ada, row_ada[:400])
     check("a person with no recorded venues shows no invented mix",
           "conversation" not in row_bo and "reaction" not in row_bo, row_bo[:300])
+    # FOUND 2026-10-12 by review: with two judges a venue disagreement is a 1-1 tie,
+    # aggregate.py marks it venue_agreed=False and keeps the alphabetically first
+    # label, and the page showed that label as if it were known.
+    tie = results()
+    for t in tie["transcripts"]:
+        if t["source_id"] == "ada-7":
+            t["venue_agreed"] = False
+    tp = B.render(tie, prof, cp, rundate="x")
+    trow = tp[tp.find("Ada &lt;script"):]
+    trow = trow[:trow.find("</tr>")]
+    check("a recording whose format the judges disputed counts as disputed, not as its label",
+          "5 conversation, 2 reaction, 1 format disputed" in trow, trow[:400])
+    for t in tie["transcripts"]:
+        t["cal_overall"] = 60.0
+    tr = B.render(tie, prof, cp, rundate="x", recordings={})
+    tsec = tr[tr.find('id="recordings"'):]
+    check("and the recordings list says the format is disputed", "format disputed" in tsec
+          and tsec.count("debate") == 0, tsec[:800])
 
     print("\n[RECORDINGS]")
     # The page says the method can be checked in the open, yet listed no recording

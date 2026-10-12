@@ -309,6 +309,27 @@ def main() -> int:
         check("a results.json without venue_leave_one_out is refused, naming it",
               "venue_leave_one_out" in refused, refused or "no refusal")
 
+        print("\n[DISPUTED VENUE]")
+        # A 1-1 judge tie keeps an alphabetically chosen label with venue_agreed=False;
+        # the loss table must not file that recording under the label.
+        root10 = tmp / "data10"
+        root10.mkdir()
+        build(root10)
+        res = json.loads((root10 / "results.json").read_text())
+        n_disputed = 0
+        for t in res["transcripts"]:
+            if t["mode"] == "blinded" and t["leader_slug"] == "p2":
+                t["venue_agreed"] = False
+                n_disputed += 1
+        (root10 / "results.json").write_text(json.dumps(res))
+        bv = G.report(root10, LEANS)["gates"]["G-coverage"]["by_venue"]
+        check("a disputed format is counted as disputed in the loss table",
+              bv.get("format disputed", {}).get("scheduled") == n_disputed > 0, str(bv))
+        vc = G.report(root10, LEANS)["gates"]["venue_support"]["venue_counts"]
+        check("and in the recordings-by-venue count, which matches the board's blinded rows",
+              vc.get("format disputed") == n_disputed and sum(vc.values()) == sum(
+                  1 for t in res["transcripts"] if t["mode"] == "blinded"), str(vc))
+
         print("\n[STALE]")
         # FOUND 2026-10-12 by review: the report read grades from disk and
         # results.json separately, so a results.json older than the grades turned
