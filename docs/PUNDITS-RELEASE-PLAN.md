@@ -18,10 +18,10 @@ two judges, Fable and Gemini, and the page says that it is a pilot.
 3. repo-3 grades the full corpus (P9) and runs the probe calls (P8b to P8g).
 4. Any clone runs the P10 gate report, and the operator approves P11 publication.
 
-Five decisions are the operator's. Three should come before step 3: the sample size, who does
-the P7 labels, and whether to publish before the P7 and P8 gates exist. Two should come before
-P11: how much of the lean-split figures to publish, and which of two contradicting P5 rules
-governs a recording with an unsupported dimension. Each is set out under "Decisions for the
+Six decisions are the operator's. Three should come before step 3: the sample size, who does
+the P7 labels, and whether to publish before the P7 and P8 gates exist. Three should come before
+P11: how much of the lean-split figures to publish, which of two contradicting P5 rules
+governs a recording with an unsupported dimension, and how a reader reports an error. Each is set out under "Decisions for the
 operator", with its cost.
 
 ## Where each phase stands
@@ -146,6 +146,15 @@ Dry-run on a copy of the pundits data at `dced184` on 2026-10-12, with no judge 
    a recording needs every dimension supported. The code follows "Complete cells", and that
    costs one pilot recording today (`asmongold-tv-ks77-g`, BACKLOG). Choose one rule and
    delete the other sentence from the plan.
+
+6. **A corrections path.** The board scores named people, and neither this page nor the
+   leaders page tells a reader, or a subject, how to report an error.
+   - (a) Link "Report an error" to the public repository's issue form. Cost: corrections
+     arrive in public.
+   - (b) Give a contact address. Cost: an inbox to watch, and the address is public.
+   - (c) No path. Cost: a subject who disputes a score has no route but the press.
+   - **Recommendation: (a).** It needs no new infrastructure, and the record of a correction
+     is itself evidence that the method can be checked in the open.
 
 ## What the 2026-10-12 overnight run did (repo-2)
 
