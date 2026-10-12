@@ -25,6 +25,16 @@ docs/PUNDITS.md from it. Gates in this file so far:
                     dropped 2026-09-16) are reported as excluded, never as loss.
   venue_support     the plan P5 support rule's result, carried from results.json,
                     with the leave-one-venue-out summary when present.
+  G-judge-lean      per judge, on complete blinded run-0 transcripts in calibrated
+                    overall points: its score minus the mean of the other judges',
+                    left minus right. Delta 3, cluster bootstrap by person. A relative
+                    test: a bias every judge shares is invisible, and with two judges
+                    the two estimates are equal and opposite.
+  G-halo-lean       mean person halo, left minus right: the panel's calibrated halo
+                    and each judge's raw paired halo. Delta 3.
+  G-drift           drift-anchor re-grades: per judge and mode, the latest run minus
+                    the earliest, in raw overall points, averaged over anchors.
+                    Delta 3. With no anchors it is INCONCLUSIVE and says it did not run.
 
 PRIVACY. Lean labels are private. The report holds lean only as group keys with
 group-level counts and rates; no object in it pairs a person with a lean. The
@@ -53,6 +63,9 @@ SKIP_PARTS = {"_obsolete", "_raw", "_provenance"}
 DELTA_SEARCH = 5.0      # plan P10, G-search: points of search rate, left minus right
 DELTA_COVERAGE = 5.0    # plan P10, G-coverage: points of loss rate between lean groups
 DISCLOSURE_AT = 0.90    # plan P10: identity rate at which the site must disclose
+DELTA_JUDGE_LEAN = 3.0  # plan P10, G-judge-lean: overall points
+DELTA_HALO_LEAN = 3.0   # plan P10, G-halo-lean: overall points
+DELTA_DRIFT = 3.0       # plan P10, G-drift: overall points
 BOOTSTRAP_N = 20000
 BOOTSTRAP_SEED = 20260914
 
@@ -249,6 +262,131 @@ def coverage_gate(data: Path, grades: list[dict], results: dict, leans: dict, ju
                     "lost when no usable run-0 grade exists for it"}
 
 
+def combine(verdicts: list[str]) -> str:
+    if not verdicts:
+        return "INCONCLUSIVE"
+    if "FAIL" in verdicts:
+        return "FAIL"
+    return "PASS" if all(v == "PASS" for v in verdicts) else "INCONCLUSIVE"
+
+
+def weights_of(results: dict) -> dict[str, float]:
+    w = (results.get("diagnostics") or {}).get("weights")
+    if not w:
+        raise RuntimeError("results.json diagnostics carry no weights")
+    return w
+
+
+def raw_overall(g: dict, weights: dict[str, float]) -> float:
+    return sum(w * g["grade"]["dimensions"][d]["score"] for d, w in weights.items())
+
+
+def judge_lean_gate(grades: list[dict], results: dict, leans: dict, judges: list[str]) -> dict:
+    import aggregate as A
+    weights = weights_of(results)
+    params = {tuple(k.split("|")): v for k, v in
+              ((results.get("diagnostics") or {}).get("calibration_params") or {}).items()}
+
+    def cal_overall(g: dict) -> float:
+        return sum(w * A.apply_calibration(g["grade"]["dimensions"][d]["score"],
+                                           (g["judge"], A.served_model(g), "shared", d), params)
+                   for d, w in weights.items())
+
+    complete = {(t["leader_slug"], t["source_id"]) for t in results.get("transcripts") or []
+                if t.get("mode") == "blinded"}
+    scores: dict[tuple, dict] = defaultdict(dict)
+    for g in grades:
+        key = (g["leader_slug"], g["source_id"])
+        if (g.get("mode") == "blinded" and g.get("run", 0) == 0 and g.get("judge") in judges and usable(g)
+                and key in complete):
+            scores[key][g["judge"]] = cal_overall(g)
+    full = {k: v for k, v in scores.items() if set(v) == set(judges)}
+    groups = lean_groups(leans, {k[0] for k in full})
+    by_judge = {}
+    for j in judges:
+        per_person: dict[str, list[float]] = defaultdict(list)
+        for (slug, _), s in full.items():
+            others = [s[k] for k in judges if k != j]
+            per_person[slug].append(s[j] - sum(others) / len(others))
+        entry = {"by_lean_mean": {lean: round(sum(sum(per_person[x]) for x in ppl)
+                                              / sum(len(per_person[x]) for x in ppl), 2)
+                                  for lean, ppl in sorted(groups.items())}}
+        if "left" in groups and "right" in groups:
+            a = [per_person[x] for x in groups["left"]]
+            b = [per_person[x] for x in groups["right"]]
+            est = sum(map(sum, a)) / sum(map(len, a)) - sum(map(sum, b)) / sum(map(len, b))
+            lo, hi = gates.cluster_mean_diff_ci90(a, b, BOOTSTRAP_N, BOOTSTRAP_SEED)
+            entry.update({"estimate": round(est, 2), "ci90": [round(lo, 2), round(hi, 2)],
+                          "verdict": gates.equivalence(lo, hi, DELTA_JUDGE_LEAN)})
+        else:
+            entry.update({"verdict": "INCONCLUSIVE", "why": "needs both a left and a right group"})
+        by_judge[j] = entry
+    limit = ("A relative test: a bias every judge shares is invisible to it. "
+             + ("With two judges each judge's gap is measured against one other judge, so the two "
+                "estimates are equal and opposite." if len(judges) == 2 else ""))
+    return {"verdict": combine([e["verdict"] for e in by_judge.values()]), "delta_points": DELTA_JUDGE_LEAN,
+            "transcripts": len(full), "by_judge": by_judge, "limit": limit.strip(),
+            "rule": "score = calibrated blinded run-0 overall; per transcript, a judge's score minus the mean of "
+                    "the other judges'; left minus right of its mean; 90% cluster bootstrap by person"}
+
+
+def halo_lean_gate(results: dict, leans: dict, judges: list[str]) -> dict:
+    people = [p for p in (results.get("leaders") or []) + (results.get("unranked") or [])
+              if isinstance((p.get("halo") or {}).get("overall"), (int, float))]
+    groups = lean_groups(leans, {p["slug"] for p in people})
+    by_slug = {p["slug"]: p["halo"] for p in people}
+
+    def test(value_of) -> dict:
+        if "left" not in groups or "right" not in groups:
+            return {"verdict": "INCONCLUSIVE", "why": "needs both a left and a right group"}
+        a = [[value_of(by_slug[x])] for x in groups["left"] if value_of(by_slug[x]) is not None]
+        b = [[value_of(by_slug[x])] for x in groups["right"] if value_of(by_slug[x]) is not None]
+        if not a or not b:
+            return {"verdict": "INCONCLUSIVE", "why": "a lean group has no halo"}
+        est = sum(v[0] for v in a) / len(a) - sum(v[0] for v in b) / len(b)
+        lo, hi = gates.cluster_mean_diff_ci90(a, b, BOOTSTRAP_N, BOOTSTRAP_SEED)
+        return {"estimate": round(est, 2), "ci90": [round(lo, 2), round(hi, 2)], "people": [len(a), len(b)],
+                "verdict": gates.equivalence(lo, hi, DELTA_HALO_LEAN)}
+
+    panel = test(lambda h: h.get("overall"))
+    per_judge = {j: test(lambda h, j=j: (h.get("by_judge_raw") or {}).get(j)) for j in judges}
+    return {"verdict": combine([panel["verdict"], *[e["verdict"] for e in per_judge.values()]]),
+            "delta_points": DELTA_HALO_LEAN, "panel": panel, "by_judge_raw": per_judge,
+            "rule": "mean person halo (open minus blinded), left minus right; panel calibrated, judges raw"}
+
+
+def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str]) -> dict:
+    anchors = set()
+    for f in sorted((data / "logs/schedule").glob("*.jsonl")):
+        for line in f.read_text().splitlines():
+            if line.strip():
+                r = json.loads(line)
+                if r.get("run", 0) >= 1 and r["judge"] in judges:
+                    anchors.add((r["slug"], r["source_id"]))
+    if not anchors:
+        return {"verdict": "INCONCLUSIVE", "ran": False, "delta_points": DELTA_DRIFT,
+                "why": "no drift anchors were scheduled (plan P5: 6 fixed transcripts re-graded once per "
+                       "block group); drift is unmeasured and must be reported as a limit"}
+    weights = weights_of(results)
+    runs: dict[tuple, dict[int, float]] = defaultdict(dict)
+    for g in grades:
+        if (g["leader_slug"], g["source_id"]) in anchors and g.get("judge") in judges and usable(g):
+            runs[(g["judge"], g["mode"], g["leader_slug"], g["source_id"])][g.get("run", 0)] = raw_overall(g, weights)
+    cells: dict[str, list[float]] = defaultdict(list)
+    for (judge, mode, *_), by_run in runs.items():
+        if len(by_run) >= 2:
+            cells[f"{judge}|{mode}"].append(by_run[max(by_run)] - by_run[min(by_run)])
+    out = {}
+    for cell, diffs in sorted(cells.items()):
+        lo, hi = gates.mean_ci90(diffs, BOOTSTRAP_N, BOOTSTRAP_SEED)
+        out[cell] = {"anchors": len(diffs), "estimate": round(sum(diffs) / len(diffs), 2),
+                     "ci90": [round(lo, 2), round(hi, 2)], "verdict": gates.equivalence(lo, hi, DELTA_DRIFT)}
+    return {"verdict": combine([e["verdict"] for e in out.values()]), "ran": bool(out), "delta_points": DELTA_DRIFT,
+            "anchors_scheduled": len(anchors), "by_judge_mode": out,
+            "rule": "per judge and mode, raw overall of the latest run minus the earliest, averaged over anchors; "
+                    "bootstrap over anchors"}
+
+
 def venue_support(results: dict) -> dict:
     d = results.get("diagnostics") or {}
     if "venue_adjustment_applied" not in d:
@@ -263,6 +401,22 @@ def venue_support(results: dict) -> dict:
     return out
 
 
+MIN_CLUSTERS = 10  # below this many people in a lean group, say the interval is too narrow
+
+
+def few_clusters(groups: dict[str, list[str]]) -> str | None:
+    """A warning when any lean group is too small for a percentile cluster bootstrap.
+
+    With a handful of people per group the bootstrap distribution has few distinct
+    values and understates the spread, so a PASS there is weaker than it looks.
+    The threshold is a rule of thumb, stated here rather than tuned."""
+    small = {k: len(v) for k, v in groups.items() if len(v) < MIN_CLUSTERS}
+    if not small:
+        return None
+    return (f"lean groups with fewer than {MIN_CLUSTERS} people ({', '.join(f'{k} {n}' for k, n in sorted(small.items()))}):"
+            f" a percentile cluster bootstrap is too narrow with so few clusters, so treat its interval as optimistic")
+
+
 def report(data: Path, leans: dict[str, str]) -> dict:
     data = Path(data)
     results = json.loads((data / "results.json").read_text())
@@ -274,15 +428,23 @@ def report(data: Path, leans: dict[str, str]) -> dict:
     grades = [g for g in load_grades(data) if g.get("leader_slug") in people]
     scored = {g["leader_slug"] for g in grades}
     groups = lean_groups(leans, scored)
+    gate = {
+        "fable_tool_calls": fable_tool_calls(grades),
+        "G-search": search_gate(grades, people, leans, judges),
+        "G-coverage": coverage_gate(data, grades, results, leans, judges),
+        "venue_support": venue_support(results),
+        "G-judge-lean": judge_lean_gate(grades, results, leans, judges),
+        "G-halo-lean": halo_lean_gate(results, leans, judges),
+        "G-drift": drift_gate(data, grades, results, judges),
+    }
+    warn = few_clusters(groups)
+    if warn:
+        for k in ("G-search", "G-coverage", "G-judge-lean", "G-halo-lean"):
+            gate[k]["few_clusters"] = warn
     return {
         "published_judges": judges,
         "lean_groups": {k: len(v) for k, v in sorted(groups.items())},
-        "gates": {
-            "fable_tool_calls": fable_tool_calls(grades),
-            "G-search": search_gate(grades, people, leans, judges),
-            "G-coverage": coverage_gate(data, grades, results, leans, judges),
-            "venue_support": venue_support(results),
-        },
+        "gates": gate,
         "identity": identity(grades, people, judges),
         "bootstrap": {"resamples": BOOTSTRAP_N, "seed": BOOTSTRAP_SEED, "interval": "90%",
                       "unit": "person, resampled with replacement inside each lean group"},
@@ -306,8 +468,8 @@ def main() -> int:
         return 1
     out.write_text(json.dumps(rep, indent=1, sort_keys=True) + "\n")
     g = rep["gates"]
-    print(f"wrote {out}: tool calls {g['fable_tool_calls']['verdict']}, G-search {g['G-search']['verdict']}, "
-          f"G-coverage {g['G-coverage']['verdict']}, identity correct {rep['identity']['correct_rate']}")
+    print(f"wrote {out}: " + ", ".join(f"{k} {v['verdict']}" for k, v in g.items() if "verdict" in v)
+          + f", identity correct {rep['identity']['correct_rate']}")
     return 0
 
 

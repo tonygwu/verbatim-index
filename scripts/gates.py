@@ -66,3 +66,24 @@ def cluster_rate_diff_ci90(a: list[tuple[int, int]], b: list[tuple[int, int]], n
 
     draws = sorted(100 * (rate(a) - rate(b)) for _ in range(n))
     return draws[int(0.05 * n)], draws[min(int(0.95 * n), n - 1)]
+
+
+def cluster_mean_diff_ci90(a: list[list[float]], b: list[list[float]], n: int = 20000,
+                           seed: int = 20260914) -> tuple[float, float]:
+    """A seeded 90% cluster-bootstrap interval for mean(a) minus mean(b).
+
+    Each element is one PERSON's list of values. A resample draws people with
+    replacement inside each group and pools all their values, so a person with
+    more recordings weighs more, exactly as in the point estimate.
+    """
+    for name, g in (("a", a), ("b", b)):
+        if not g or any(not vals for vals in g):
+            raise ValueError(f"group {name} is empty or has a person with no values")
+    rng = random.Random(seed)
+
+    def mean(g: list[list[float]]) -> float:
+        pick = [g[rng.randrange(len(g))] for _ in g]
+        return sum(sum(v) for v in pick) / sum(len(v) for v in pick)
+
+    draws = sorted(mean(a) - mean(b) for _ in range(n))
+    return draws[int(0.05 * n)], draws[min(int(0.95 * n), n - 1)]

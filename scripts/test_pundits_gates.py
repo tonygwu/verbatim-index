@@ -18,6 +18,13 @@ checks each gate against figures worked out by hand.
               4, right 1 of 4; cells lost by judge and mode; a dropped judge's cells
               are reported as excluded, not counted as loss
   VENUE       the support rule's result is carried from results.json
+  JUDGE-LEAN  per judge, (its score minus the other judges') left minus right, on
+              complete blinded transcripts, calibrated: Fable 6 points higher on
+              the right gives Fable -6 and Gemini +6, both FAIL; no bias PASSES
+  HALO-LEAN   mean person halo, left minus right, for the panel and per judge raw:
+              panel +2 PASSES, Gemini's raw +6 FAILS
+  DRIFT       no anchor re-grades is INCONCLUSIVE and says the gate did not run; an
+              anchor re-graded 8 points higher FAILS
   PRIVACY     no object in the report holds both a person's slug and a lean label,
               and the report is written nowhere inside the data checkout
   CLI         --data and --lean-labels are required; the report goes to --out
@@ -47,19 +54,22 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def grade(slug: str, sid: str, judge: str, mode: str, *, tool_calls=0, queries=(), guess=None,
-          confident=True, venue="conversation") -> dict:
-    dims = {d: {"score": 50, "reasoning": "", "counterevidence": "", "evidence": []}
+          confident=True, venue="conversation", score=50, run=0) -> dict:
+    dims = {d: {"score": score, "reasoning": "", "counterevidence": "", "evidence": []}
             for d in ("d1_steelmanning", "d2_epistemic_rigor", "d3_good_faith")}
     tel = {"transcript_tool_calls": tool_calls} if judge == "fable" else {"web_search_queries": list(queries)}
     if tool_calls is None:
         tel = {}
     return {"transcript_id": f"{slug}/{sid}", "leader_slug": slug, "source_id": sid, "judge": judge,
-            "mode": mode, "run": 0, "study_id": "pundits", "validation_errors": [], "telemetry": tel,
+            "mode": mode, "run": run, "study_id": "pundits", "validation_errors": [], "telemetry": tel,
             "grade": {"identity_guess": NAMES[slug] if guess is None else guess,
                       "identity_confident": confident, "venue_type": venue, "dimensions": dims}}
 
 
-def build(root: Path, *, fable_calls_p1=0) -> None:
+HALOS = {"p1": (2.0, 1.0, 5.0), "p2": (2.0, 1.0, 5.0), "p3": (0.0, 1.0, -1.0), "p4": (0.0, 1.0, -1.0)}
+
+
+def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None) -> None:
     """Four people, two recordings each, fable + gemini, both modes; astra scheduled but dropped.
 
     p4's second recording never reaches the board (both its gemini cells failed).
@@ -86,6 +96,8 @@ def build(root: Path, *, fable_calls_p1=0) -> None:
                         kw["queries"] = ["Carol Righton podcast"] if i == 0 else ["minimum wage study"]
                     if judge == "fable" and slug == "p2" and i == 0 and mode == "blinded":
                         kw["guess"] = "Someone Else"
+                    if judge == "fable" and LEANS[slug] == "right":
+                        kw["score"] = 50 + fable_right_bias
                     g = grade(slug, sid, judge, mode, **kw)
                     p = root / "grades" / judge / slug / f"{sid}__{judge}__{mode}__r0.json"
                     p.parent.mkdir(parents=True, exist_ok=True)
@@ -94,14 +106,23 @@ def build(root: Path, *, fable_calls_p1=0) -> None:
                 for mode in ("blinded", "open"):
                     transcripts.append({"leader_slug": slug, "source_id": sid, "mode": mode,
                                         "venue_type": "conversation"})
+    if anchor_drift is not None:
+        # p1-r0 is a drift anchor: re-graded as run 1 in a later block by Fable, blinded.
+        sched.append({"block": 4, "judge": "fable", "mode": "blinded", "run": 1, "slug": "p1", "source_id": "p1-r0"})
+        a = grade("p1", "p1-r0", "fable", "blinded", score=50 + anchor_drift, run=1)
+        (root / "grades/fable/p1/p1-r0__fable__blinded__r1.json").write_text(json.dumps(a))
     (root / "logs/schedule").mkdir(parents=True)
     (root / "logs/schedule/s.jsonl").write_text("".join(json.dumps(r) + "\n" for r in sched))
+    leaders = [{"slug": s, "rank": k + 1, "halo": {"overall": h[0], "by_judge_raw": {"fable": h[1], "gemini": h[2]}}}
+               for k, (s, h) in enumerate(HALOS.items())]
     (root / "results.json").write_text(json.dumps({
-        "leaders": [], "unranked": [], "transcripts": transcripts,
+        "leaders": leaders, "unranked": [], "transcripts": transcripts,
         "diagnostics": {"judge_models": {"fable": {"claude-fable-5-1": 8}, "gemini": {"gemini-3.8-flash-high": 7}},
                         "venue_adjustment_applied": False,
                         "venue_support_reasons": ["venue 'debate' seen 0 times, under the minimum of 8"],
-                        "venue_counts": {"conversation": 7}}}))
+                        "venue_counts": {"conversation": 7},
+                        "weights": {"d1_steelmanning": 0.35, "d2_epistemic_rigor": 0.35, "d3_good_faith": 0.3},
+                        "calibration_params": {}}}))
 
 
 def holds_slug_and_lean(obj) -> list:
@@ -197,6 +218,49 @@ def main() -> int:
         v = gates.get("venue_support", {})
         check("the support rule's result is carried, with its reason",
               v.get("applied") is False and "debate" in json.dumps(v.get("reasons")), str(v))
+
+        print("\n[JUDGE-LEAN]")
+        jl = gates.get("G-judge-lean", {})
+        jf, jg = jl.get("by_judge", {}).get("fable", {}), jl.get("by_judge", {}).get("gemini", {})
+        check("Fable 6 points higher on the right: Fable's left-minus-right gap is -6, Gemini's +6",
+              jf.get("estimate") == -6.0 and jg.get("estimate") == 6.0, str(jl))
+        check("a 6-point judge-by-lean gap FAILS for both judges", jf.get("verdict") == "FAIL"
+              and jg.get("verdict") == "FAIL" and jl.get("verdict") == "FAIL", str(jl))
+        check("it counts complete blinded transcripts: 7 (p4's second never reached the board)",
+              jl.get("transcripts") == 7, str(jl.get("transcripts")))
+        check("with two judges the report says the test is against one other judge",
+              "one other judge" in jl.get("limit", ""), jl.get("limit", ""))
+        root5 = tmp / "data5"
+        root5.mkdir()
+        build(root5, fable_right_bias=0)
+        check("with no bias it PASSES", G.report(root5, LEANS)["gates"]["G-judge-lean"].get("verdict") == "PASS")
+
+        print("\n[HALO-LEAN]")
+        hl = gates.get("G-halo-lean", {})
+        check("the panel halo, left minus right, is +2.0 and PASSES",
+              hl.get("panel", {}).get("estimate") == 2.0 and hl.get("panel", {}).get("verdict") == "PASS", str(hl))
+        check("Fable's raw halo gap is 0 and PASSES", hl.get("by_judge_raw", {}).get("fable", {}).get("verdict") == "PASS",
+              str(hl))
+        check("Gemini's raw halo gap is +6 and FAILS",
+              hl.get("by_judge_raw", {}).get("gemini", {}).get("estimate") == 6.0
+              and hl.get("by_judge_raw", {}).get("gemini", {}).get("verdict") == "FAIL", str(hl))
+
+        check("two people a side carries the few-clusters warning on every lean test",
+              all("few_clusters" in rep["gates"][k] for k in ("G-search", "G-coverage", "G-judge-lean", "G-halo-lean")),
+              str({k: rep["gates"][k].get("few_clusters") for k in ("G-search", "G-coverage", "G-judge-lean",
+                                                                     "G-halo-lean")}))
+
+        print("\n[DRIFT]")
+        dr = gates.get("G-drift", {})
+        check("no anchor re-grades: INCONCLUSIVE, and it says the gate did not run",
+              dr.get("verdict") == "INCONCLUSIVE" and dr.get("ran") is False, str(dr))
+        root4 = tmp / "data4"
+        root4.mkdir()
+        build(root4, anchor_drift=8)
+        d4 = G.report(root4, LEANS)["gates"]["G-drift"]
+        cell = d4.get("by_judge_mode", {}).get("fable|blinded", {})
+        check("an anchor re-graded 8 points higher: last minus first is +8.0 and FAILS",
+              d4.get("ran") is True and cell.get("estimate") == 8.0 and cell.get("verdict") == "FAIL", str(d4))
 
         print("\n[PRIVACY]")
         hits = holds_slug_and_lean(rep)
