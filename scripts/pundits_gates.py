@@ -57,7 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gates  # noqa: E402
-from aggregate import judge_searched, names_subject  # noqa: E402  (one definition for the page and this report)
+from aggregate import grade_files_digest, judge_searched, load_grades as load_scored_grades, names_subject  # noqa: E402,E501  (one definition for the page and this report)
 
 SKIP_PARTS = {"_obsolete", "_raw", "_provenance"}
 DELTA_SEARCH = 5.0      # plan P10, G-search: points of search rate, left minus right
@@ -470,6 +470,13 @@ def report(data: Path, leans: dict[str, str]) -> dict:
     if read_n != len(on_disk):
         raise RuntimeError(f"results.json was built from grade_files_read={read_n} grade files, and {len(on_disk)} "
                            f"are on disk ({len(on_disk) - (read_n or 0)} newer); re-aggregate first")
+    # The count alone misses grade.py --force, which moves the old grade aside and
+    # writes a new one: compare the bytes, read the way aggregate.py reads them.
+    want = (results.get("diagnostics") or {}).get("grade_files_sha256")
+    have = grade_files_digest(load_scored_grades(data / "grades"))
+    if want != have:
+        raise RuntimeError(f"results.json grade_files_sha256 is {str(want)[:12]}, and the grade files on disk "
+                           f"hash to {have[:12]}; re-aggregate first")
     grades = [g for g in on_disk if g.get("leader_slug") in people]
     scored = {g["leader_slug"] for g in grades}
     groups = lean_groups(leans, scored)

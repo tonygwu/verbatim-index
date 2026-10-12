@@ -26,7 +26,10 @@ there. Add new material under the same headings.
   once. That flag covers only a site with no `revision.json` (HTTP 404); any other failure to
   read still refuses. When the published inputs differ from the data HEAD (owner mode renders
   the daemon's uncommitted output), the footer says "plus uncommitted changes" and
-  `revision.json` records `data_uncommitted: true`. Proof: `scripts/test_deploy_pundits.py`. Right after a trigger deploy the new hostname can
+  `revision.json` records `data_uncommitted: true`. The staleness check compares
+  bytes as well as counts: `results.json` must carry `grade_files_sha256` (written by
+  `aggregate.py` since 2026-10-12) matching the grade files on disk, so the first deploy
+  after repo-3 pulls that code needs a fresh aggregate (the loop's next cycle, or `--refresh`). Proof: `scripts/test_deploy_pundits.py`. Right after a trigger deploy the new hostname can
   return Cloudflare error 1104 for a minute; it clears on its own, so re-check before
   debugging it.
   The board is a PILOT and says so on the page. `status_banner()` in

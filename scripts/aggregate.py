@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import math
 import statistics as st
@@ -230,15 +231,27 @@ def load_grades(root: Path) -> list[dict]:
         # v2. They are evidence of what was replaced, never scores.
         if "_raw" in path.parts or "_obsolete" in path.parts:
             continue
-        rec = json.loads(path.read_text())
+        raw = path.read_bytes()
+        rec = json.loads(raw)
         if "grade" not in rec:
             continue
+        # The exact bytes scored, so a later reader can tell a re-graded corpus from
+        # this one even when the file count is the same (grade.py --force).
+        rec["_file_digest"] = (path.relative_to(root).as_posix(), hashlib.sha256(raw).hexdigest())
         if rec.get("validation_errors"):
             # A grade that failed validation is excluded, and the exclusion is
             # counted in the run report rather than passed off as missing data.
             rec["_excluded"] = "validation_errors"
         out.append(rec)
     return out
+
+
+def grade_files_digest(records: list[dict]) -> str:
+    """One sha256 over every loaded grade file's relative path and content digest.
+    Contract-v2 diagnostics carry it as grade_files_sha256, so the P10 gate report
+    can refuse a results.json built from other grade bytes than those on disk."""
+    lines = sorted(f"{p} {d}" for p, d in (r["_file_digest"] for r in records))
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
 # Below this many grades a model's own mean and spread are too thin to rescale
@@ -1234,6 +1247,7 @@ def main() -> int:
     # staleness equal to the number of dropped rows. deploy.sh compares against
     # this figure instead.
     grade_files_read = len(grades)
+    grade_files_sha256 = grade_files_digest(grades)
 
     # A record that failed schema validation is not a grade, so it leaves HERE,
     # before any filter reads a field out of it.
@@ -1735,6 +1749,7 @@ def main() -> int:
                 searches[g["judge"]][1] += hit
                 by_mode[g["judge"]][g["mode"]][0] += 1
                 by_mode[g["judge"]][g["mode"]][1] += hit
+        diagnostics["grade_files_sha256"] = grade_files_sha256
         diagnostics["judge_web_search"] = {
             j: {"grades": n, "searched": k,
                 "by_mode": {m: {"grades": a, "searched": b} for m, (a, b) in sorted(by_mode[j].items())}}

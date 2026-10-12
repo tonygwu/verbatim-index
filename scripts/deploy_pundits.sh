@@ -83,6 +83,20 @@ elif on_disk != read_n:
     raise SystemExit("REFUSING: stale production aggregate")
 else:
     print(f"  current: results.json covers all {on_disk} grade files on disk")
+# The count misses grade.py --force, which moves the old grade aside and writes a
+# new one: compare the bytes, read the way aggregate.py reads them.
+sys.path.insert(0, "scripts")
+import aggregate as A
+want = r["diagnostics"].get("grade_files_sha256")
+if want is None:
+    print("  results.json predates grade_files_sha256; its grade bytes cannot be checked")
+    raise SystemExit("REFUSING: refresh the production aggregate before publication")
+have = A.grade_files_digest(A.load_grades(data / "grades"))
+if have != want:
+    print(f"  STALE: results.json grade_files_sha256 is {want[:12]}, the grade files on disk hash to {have[:12]} "
+          f"(same count, other bytes: a forced re-grade?). Re-run with --refresh.")
+    raise SystemExit("REFUSING: stale production aggregate")
+print(f"  and the same bytes (grade_files_sha256 {have[:12]})")
 EOF
 
 check_publication_unchanged

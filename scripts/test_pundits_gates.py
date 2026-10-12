@@ -147,12 +147,15 @@ def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None
     leaders = [{"slug": s, "rank": k + 1, "halo": {"overall": h[0], "by_judge_raw": {"fable": h[1], "gemini": h[2]}}}
                for k, (s, h) in enumerate(HALOS.items())]
     n_files = sum(1 for _ in (root / "grades").rglob("*.json"))
+    import aggregate as A
+    digest = A.grade_files_digest(A.load_grades(root / "grades"))
     (root / "results.json").write_text(json.dumps({
         "leaders": leaders, "unranked": [], "transcripts": transcripts,
         "diagnostics": {"judge_models": {"fable": {"claude-fable-5-1": 8}, "gemini": {"gemini-3.8-flash-high": 7}},
                         "venue_adjustment_applied": False,
                         "venue_support_reasons": ["venue 'debate' seen 0 times, under the minimum of 8"],
                         "venue_counts": {"conversation": 7}, "grade_files_read": n_files,
+                        "grade_files_sha256": digest,
                         **({"venue_leave_one_out": {"by_venue": {"conversation": {
                             "people_still_ranked": 0, "people_changing_rank": 0, "rank_correlation": None,
                             "max_abs_shift": None}}}} if lovo else {}),
@@ -416,6 +419,26 @@ def main() -> int:
         check("and in the recordings-by-venue count, which matches the board's blinded rows",
               vc.get("format disputed") == n_disputed and sum(vc.values()) == sum(
                   1 for t in res["transcripts"] if t["mode"] == "blinded"), str(vc))
+
+        # FOUND 2026-10-12 by the second review: the staleness check counted files, and
+        # grade.py --force moves the old grade to _obsolete and writes a new one, so a
+        # re-graded corpus kept its count and passed against an older results.json.
+        root14 = tmp / "data14"
+        root14.mkdir()
+        build(root14)
+        f14 = root14 / "grades/fable/p1/p1-r0__fable__blinded__r0.json"
+        rec14 = json.loads(f14.read_text())
+        (root14 / "grades/_obsolete").mkdir(parents=True)
+        (root14 / "grades/_obsolete/p1-r0__fable__blinded__r0.json").write_text(f14.read_text())
+        rec14["grade"]["dimensions"]["d1_steelmanning"]["score"] = 90
+        f14.write_text(json.dumps(rec14))
+        try:
+            G.report(root14, LEANS)
+            forced = ""
+        except RuntimeError as exc:
+            forced = str(exc)
+        check("a forced re-grade (same file count, new bytes) is refused as stale",
+              "grade_files_sha256" in forced, forced or "no refusal")
 
         print("\n[TWO-STAGE BOOTSTRAP]")
         # FOUND 2026-10-12 by review: docs/PUNDITS-PLAN.md says the cluster bootstrap

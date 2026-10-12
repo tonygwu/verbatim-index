@@ -51,6 +51,9 @@ operator", with its cost.
   calls. See BACKLOG, "Verbatim Pundits".
 - **The open score's interval and the resample count** are in the code since `31dffd9` and
   appear on the next pundits aggregate.
+- **The next pundits deploy needs a `results.json` from the 2026-10-12 code** (the loop's next
+  cycle, or `--refresh`): the deploy now checks `grade_files_sha256`, the bytes the aggregate
+  read, and refuses a `results.json` that predates it.
 - **The next pundits deploy needs `--first-revision-deploy`, once.** Since 2026-10-12 the
   deploy refuses when the live page's `revision.json` is missing or newer, and the live page
   predates `revision.json`.

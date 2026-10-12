@@ -138,6 +138,9 @@ def main() -> int:
         n1 = sum(1 for t in rows if t["leader_slug"] == "p1")
         check("the leakage rate counts both confident people",
               d.get("blinding_leakage_rate") == round((n0 + n1) / len(rows), 3), str(d.get("blinding_leakage_rate")))
+        check("results.json binds itself to the exact grade bytes it read (grade_files_sha256)",
+              d.get("grade_files_sha256") == A.grade_files_digest(A.load_grades(root / "grades"))
+              and len(d.get("grade_files_sha256") or "") == 64, str(d.get("grade_files_sha256")))
         check("the correct rate counts only the person named correctly",
               d.get("blinding_correct_rate") == round(n0 / len(rows), 3),
               f"{d.get('blinding_correct_rate')} vs {round(n0 / len(rows), 3)}")
@@ -145,6 +148,8 @@ def main() -> int:
     print("\n[LEADERS]")
     opener = enclosing_line((REPO / "scripts" / "aggregate.py").read_text(), 'diagnostics["blinding_correct_rate"]')
     check("the key is written only under is_v2", opener == "if is_v2:", opener)
+    opener = enclosing_line((REPO / "scripts" / "aggregate.py").read_text(), 'diagnostics["grade_files_sha256"]')
+    check("and so is grade_files_sha256", opener == "if is_v2:", opener)
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

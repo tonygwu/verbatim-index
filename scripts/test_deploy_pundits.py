@@ -78,7 +78,7 @@ def data_checkout(path: Path, origin: str, study: str | None, grade_files: int, 
     (path / "transcripts_open/p1").mkdir(parents=True)
     (path / "transcripts_open/p1/s0.json").write_text(json.dumps(
         {"url": "https://www.youtube.com/watch?v=fixture1", "yt_title": "Fixture episode", "text": "SECRET TEXT"}))
-    (path / "results.json").write_text(json.dumps(results))
+    (path / "results.json").write_text(json.dumps(results))  # rewritten below with the grade digest
     (path / "results_audit.json").write_text("{}")
     (path / "roster").mkdir()
     (path / "roster/final.json").write_text(json.dumps({"roster": []}))
@@ -87,12 +87,15 @@ def data_checkout(path: Path, origin: str, study: str | None, grade_files: int, 
     for i in range(grade_files):
         g = path / "grades/fable/p1" / f"s{i}__fable__blinded__r0.json"
         g.parent.mkdir(parents=True, exist_ok=True)
-        g.write_text("{}")
+        g.write_text(json.dumps({"grade": {}, "fixture": i}))
     # Not grades: a moved-aside grade and a run provenance record must not count.
     for extra in ("grades/_obsolete/fable/p1/s0.old.json", "grades/_provenance/abc.json", "grades/_raw/fable/p1/s0.txt"):
         e = path / extra
         e.parent.mkdir(parents=True, exist_ok=True)
         e.write_text("{}")
+    import aggregate as A
+    results["diagnostics"]["grade_files_sha256"] = A.grade_files_digest(A.load_grades(path / "grades"))
+    (path / "results.json").write_text(json.dumps(results))
     git(path, "add", "-A")
     git(path, "commit", "-q", "-m", "fixture")
     return git(path, "rev-parse", "HEAD")
@@ -309,6 +312,17 @@ def main() -> int:
         git(pub, "config", "verbatim.pundits.productionData", str(pundits))
         (pub / "data-pundits").unlink()
         (pub / "data-pundits").symlink_to(pundits, target_is_directory=True)
+        # FOUND 2026-10-12 by the second review (in the gate report; the deploy had the
+        # same check): grade.py --force moves the old grade aside and writes a new one,
+        # so the file count matches while results.json describes other bytes.
+        regraded = pundits / "grades/fable/p1/s0__fable__blinded__r0.json"
+        old_bytes = regraded.read_text()
+        regraded.write_text(json.dumps({"grade": {"rescored": True}, "fixture": 0}))
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                bin_dir=bin_dir)
+        regraded.write_text(old_bytes)
+        check("a forced re-grade (same count, new bytes) is refused as stale",
+              r.returncode != 0 and "grade_files_sha256" in (r.stdout + r.stderr), (r.stdout + r.stderr)[-300:])
 
         print("\n[TARGET]")
         r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, bin_dir=bin_dir)
