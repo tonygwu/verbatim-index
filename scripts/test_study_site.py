@@ -139,6 +139,14 @@ def main() -> int:
     check("an inline icon, so the tab and bookmarks show one without a file",
           re.search(r'<link rel="icon" href="data:image/svg\+xml,[^"]+">', page) is not None)
 
+    print("\n[SOURCES]")
+    # The leaders page links "Code, rubric and tests on GitHub"; the pundits page
+    # linked nothing, so a reader could not see the rubric the judges apply.
+    check("the copy names an https rubric URL and code URL",
+          cp.get("rubric_url", "").startswith("https://") and cp.get("code_url", "").startswith("https://"))
+    check("the method section links the rubric", f'<a href="{html.escape(cp.get("rubric_url", "?"))}">' in page)
+    check("and the code and tests", f'<a href="{html.escape(cp.get("code_url", "?"))}">' in page)
+
     print("\n[NOTES]")
     check("the interpretation note appears", html.escape(cp["interpretation"]) in page)
     check("the blinding note appears", html.escape(cp["blinding_note"]) in page)

@@ -33,8 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from site_theme import FONT_LINKS, THEME_CSS  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-REQUIRED_COPY = ("study_id", "title", "site_url", "tagline", "interpretation", "blinding_note", "dimensions",
-                 "method", "status_label", "status_note")
+REQUIRED_COPY = ("study_id", "title", "site_url", "rubric_url", "code_url", "tagline", "interpretation",
+                 "blinding_note", "dimensions", "method", "status_label", "status_note")
 # The tab and bookmark icon, inline so the page needs no second file: the
 # study's initial in the page's ink and surface colours.
 ICON_SVG = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
@@ -64,6 +64,9 @@ def validate_copy(profile: dict, copy: dict) -> None:
         raise RuntimeError(f"site copy is missing {missing}")
     if not re.fullmatch(r"https://[a-z0-9.-]+/", copy["site_url"]):
         raise RuntimeError(f"site_url {copy['site_url']!r} must be https://<host>/")
+    for key in ("rubric_url", "code_url"):
+        if not copy[key].startswith("https://"):
+            raise RuntimeError(f"{key} {copy[key]!r} must be an https URL")
     if copy["study_id"] != profile["study_id"]:
         raise RuntimeError(f"site copy is for study {copy['study_id']!r}, not {profile['study_id']!r}")
     keys = [d["key"] for d in profile["scoring"]["dimensions"]]
@@ -384,6 +387,8 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
 {explainers}
 <h2>Method</h2>
 <p>{esc(copy["method"])}</p>
+<p>Read <a href="{esc(copy["rubric_url"])}">the rubric the judges apply</a>, and the
+<a href="{esc(copy["code_url"])}">code and tests</a>.</p>
 <footer>Built {esc(rundate)} from {esc(grades if grades is not None else "an unknown number of")} judge grades{stamp}.</footer>
 </main>
 </body>
