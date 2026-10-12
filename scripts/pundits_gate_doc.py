@@ -117,8 +117,11 @@ def render(rep: dict, data_revision: str, withhold_lean: bool = False,
     out += [f"| {j} | {e['grades']} | {pct(e['confident_rate'])} | {pct(e['correct_rate'])} |"
             for j, e in i["by_judge"].items()]
     out += [f"| all | {i['grades']} | {pct(i['confident_rate'])} | {pct(i['correct_rate'])} |", "",
-            ("At 90% correct or more the site must say that blinded means the name is removed, not that the "
-             "speaker is anonymous. " + ("That applies." if i["disclosure_required"] else "That does not apply.")),
+            f"Per board recording, as the page counts it (any judge named the speaker): "
+            f"{pct(i['board_correct_rate'])} of {i['board_recordings']} recordings.", "",
+            ("At 90% of board recordings or more the site must say that blinded means the name is removed, not "
+             "that the speaker is anonymous. "
+             + ("That applies." if i["disclosure_required"] else "That does not apply.")),
             ""]
 
     c = g["G-coverage"]

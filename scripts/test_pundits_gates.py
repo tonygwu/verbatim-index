@@ -191,8 +191,16 @@ def main() -> int:
         f = i.get("by_judge", {}).get("fable", {})
         check("Fable's blinded grades: 8, all confident", f.get("grades") == 8 and f.get("confident_rate") == 1.0, str(f))
         check("but 7 of 8 name the right person", f.get("correct_rate") == 0.875, str(f))
-        check("the report says whether the site must call blinding name-removed (>= 90% correct)",
-              i.get("disclosure_required") is True and i.get("correct_rate") == round(14 / 15, 3), str(i))
+        check("the per-grade rate over both judges", i.get("correct_rate") == round(14 / 15, 3), str(i))
+        # FOUND 2026-10-12 by review: the disclosure verdict read the per-grade rate
+        # while the page prints the per-recording one (a board recording counts when
+        # any judge named the speaker). The verdict now reads what the page prints.
+        board = json.loads((root / "results.json").read_text())
+        n_board = sum(1 for t in board["transcripts"] if t["mode"] == "blinded")
+        check("the per-recording rate over the board's recordings, as the page counts it",
+              i.get("board_recordings") == n_board and isinstance(i.get("board_correct_rate"), float), str(i))
+        check("the disclosure verdict follows the per-recording rate (>= 90% correct)",
+              i.get("disclosure_required") is (i.get("board_correct_rate", 0) >= G.DISCLOSURE_AT), str(i))
 
         print("\n[SEARCH]")
         s = gates.get("G-search", {})
@@ -269,7 +277,15 @@ def main() -> int:
         root4 = tmp / "data4"
         root4.mkdir()
         build(root4, anchor_drift=8)
-        d4 = G.report(root4, LEANS)["gates"]["G-drift"]
+        rep4 = G.report(root4, LEANS)
+        d4 = rep4["gates"]["G-drift"]
+        # FOUND 2026-10-12 by review: drift-anchor re-grades (run 1) counted again in
+        # the identity and search rates, so every anchor counted twice.
+        check("a drift re-grade does not count again in identity or search",
+              rep4["identity"]["by_judge"]["fable"]["grades"] == 8
+              and rep4["gates"]["G-search"]["by_judge"]["fable"]["by_mode"]["blinded"]["grades"]
+              == rep["gates"]["G-search"]["by_judge"]["fable"]["by_mode"]["blinded"]["grades"],
+              f'{rep4["identity"]["by_judge"]["fable"]} {rep4["gates"]["G-search"]["by_judge"]["fable"]["by_mode"]}')
         cell = d4.get("by_judge_mode", {}).get("fable|blinded", {})
         check("an anchor re-graded 8 points higher: last minus first is +8.0 and FAILS",
               d4.get("ran") is True and cell.get("estimate") == 8.0 and cell.get("verdict") == "FAIL", str(d4))

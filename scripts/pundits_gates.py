@@ -135,7 +135,13 @@ def fable_tool_calls(grades: list[dict]) -> dict:
             "rule": "Fable's tools are removed; any nonzero transcript tool call means the harness changed"}
 
 
-def identity(grades: list[dict], people: dict[str, dict], judges: list[str]) -> dict:
+def identity(grades: list[dict], people: dict[str, dict], judges: list[str], results: dict) -> dict:
+    """Per grade, by judge, and per board recording. Run-0 grades only: a drift
+    anchor's re-grade is the same recording again. The disclosure verdict reads the
+    per-recording rate, which is what the page prints (aggregate's
+    blinding_correct_rate): a board recording counts when any judge named the
+    speaker."""
+    grades = [g for g in grades if (g.get("run") or 0) == 0]
     by_judge = {}
     tot = conf = corr = 0
     for j in judges:
@@ -147,8 +153,15 @@ def identity(grades: list[dict], people: dict[str, dict], judges: list[str]) -> 
                        "correct_rate": round(k / len(rows), 3) if rows else None}
         tot, conf, corr = tot + len(rows), conf + c, corr + k
     rate = round(corr / tot, 3) if tot else None
+    board = {(t["leader_slug"], t["source_id"]) for t in results.get("transcripts") or [] if t.get("mode") == "blinded"}
+    named = {(g["leader_slug"], g["source_id"]) for g in grades
+             if g.get("judge") in judges and g.get("mode") == "blinded" and usable(g)
+             and g["grade"].get("identity_confident")
+             and names_subject(g["grade"].get("identity_guess"), people[g["leader_slug"]])}
+    board_rate = round(len(board & named) / len(board), 3) if board else None
     return {"grades": tot, "confident_rate": round(conf / tot, 3) if tot else None, "correct_rate": rate,
-            "disclosure_required": rate is not None and rate >= DISCLOSURE_AT, "by_judge": by_judge,
+            "board_recordings": len(board), "board_correct_rate": board_rate,
+            "disclosure_required": board_rate is not None and board_rate >= DISCLOSURE_AT, "by_judge": by_judge,
             "rule": "correct = identity_confident AND the guess names the subject (full name, surname of 4+ "
                     "letters, or a roster handle)"}
 
@@ -158,6 +171,8 @@ def searched(g: dict) -> bool:
 
 
 def search_gate(grades: list[dict], people: dict, leans: dict, judges: list[str]) -> dict:
+    # Run-0 grades only: a drift anchor's re-grade is the same recording again.
+    grades = [g for g in grades if (g.get("run") or 0) == 0]
     out, naming = {}, 0
     for g in grades:
         if g.get("judge") in judges and g.get("mode") == "blinded" and usable(g):
@@ -463,7 +478,7 @@ def report(data: Path, leans: dict[str, str]) -> dict:
         "lean_groups": {k: len(v) for k, v in sorted(groups.items())},
         "min_clusters": MIN_CLUSTERS,
         "gates": gate,
-        "identity": identity(grades, people, judges),
+        "identity": identity(grades, people, judges, results),
         "bootstrap": {"resamples": BOOTSTRAP_N, "seed": BOOTSTRAP_SEED, "interval": "90%",
                       "unit": "person, resampled with replacement inside each lean group"},
     }

@@ -31,7 +31,9 @@ A dry run of the P10 gate report on the pilot corpus (10 people, 77 recordings),
 | gemini | 78 | 100.0% | 100.0% |
 | all | 156 | 100.0% | 100.0% |
 
-At 90% correct or more the site must say that blinded means the name is removed, not that the speaker is anonymous. That applies.
+Per board recording, as the page counts it (any judge named the speaker): 100.0% of 77 recordings.
+
+At 90% of board recordings or more the site must say that blinded means the name is removed, not that the speaker is anonymous. That applies.
 
 ## Losses (G-coverage)
 
