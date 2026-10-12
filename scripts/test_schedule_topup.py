@@ -170,6 +170,18 @@ def main() -> int:
         except TypeError:
             refused = False
         check(label, refused)
+    # FOUND 2026-10-12 running the release plan's P9 command on the pilot snapshot: 9
+    # recordings make 1 block, --anchor-every 4 places no anchor group, and the
+    # requested anchors vanished from the schedule without a word, which would leave
+    # G-drift unmeasured.
+    try:
+        e = S.build_schedule(new_items, leans, ["fable"], block_size=20, seed=1, anchors=[("a", "s0")],
+                             anchor_every=4, anchor_pool={("a", "s0")})
+        why = f"scheduled {len(e)} rows, {sum(1 for x in e if x['run'] >= 1)} of them anchors"
+    except RuntimeError as exc:
+        why = str(exc)
+    check("anchors that no block group can carry are refused, saying how many blocks there are",
+          "no anchor group" in why and "1 block" in why, why)
 
     print("\n[SCAN]")
     if not hasattr(S, "scan_panels"):

@@ -83,7 +83,8 @@ Dry-run on a copy of the pundits data at `dced184` on 2026-10-12, with no judge 
     --judges fable,gemini --block-size 20 --seed 20260914 \
     --graded data-pundits/grades --target-per-person 12 \
     --verified data-pundits/logs/pilot/report.json data-pundits/logs/p6b/report.json \
-    --anchors <6 recordings> --anchor-every 4 --out data-pundits/logs/schedule/p9.jsonl
+    --anchors ana-kasparian/the-young-turks-ltpts-,coleman-hughes/the-free-press-and-colem-qafgvv,ezra-klein/the-majority-report-w-sa-qsqw6x,hasan-piker/hasanabi-k3lzr1,matt-walsh/matt-walsh-i-hnib,sam-seder/the-majority-report-w-sa-sni00x \
+    --anchor-every 4 --out data-pundits/logs/schedule/p9.jsonl
 ```
 
 - **Two fixes were needed first, both made on 2026-10-12.** `--verified` took one report, so
@@ -91,13 +92,17 @@ Dry-run on a copy of the pundits data at `dced184` on 2026-10-12, with no judge 
   The second fix: `build_schedule` refused any anchor that the top-up did not schedule, which
   rejected every already-complete recording, and those are exactly the recordings an anchor
   should be.
-- **Anchors.** The dry run drew 6 complete pilot recordings by seed 20260914, one each from
+- **Anchors.** The six above. The dry run drew 6 complete pilot recordings by seed 20260914, one each from
   6 different people, with lean playing no part, so the list reveals nothing private.
   `--anchor-every` must leave at least 2 anchor groups in the run (blocks / anchor-every of 2
   or more), or G-drift has nothing to compare.
-- **Today it schedules 36 calls**: the 9 recordings verified so far outside the pilot. After
-  P6b it schedules each person up to 12. Ten people are already short of material, and the
-  tool lists them by name and shortfall.
+- **Today the command refuses, by design.** Only 9 recordings verified outside the pilot need
+  grading (36 calls), which make 1 block, and `--anchor-every 4` places no anchor group in
+  1 block. Until 2026-10-12 the tool then dropped the anchors without a word; now it refuses
+  and says how many blocks there are. Run today's 36 calls without `--anchors` and report
+  drift as a limit, or wait for P6b: at about 200 more recordings (10 or more blocks) the
+  command places 2 or more anchor groups as written. Either way it schedules each person up to
+  12, and lists by name and shortfall the ten people already short of material.
 
 ## Decisions for the operator
 

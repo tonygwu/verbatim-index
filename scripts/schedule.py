@@ -114,6 +114,11 @@ def build_schedule(items: list[tuple[str, str]], leans: dict[str, str], judges: 
                                 "judge": judge, "mode": mode, "run": run})
 
     n_blocks = math.ceil(len(order) / block_size)
+    if anchors and n_blocks // anchor_every == 0:
+        raise RuntimeError(f"{len(anchors)} anchors requested, but {n_blocks} block(s) with anchor_every="
+                           f"{anchor_every} place no anchor group, so G-drift would go unmeasured; use "
+                           f"--anchor-every {max(n_blocks, 1)} or less, or schedule without --anchors and "
+                           f"report drift as a limit")
     for b in range(n_blocks):
         for slug, sid in order[b * block_size:(b + 1) * block_size]:
             emit(slug, sid, b, 0)
