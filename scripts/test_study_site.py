@@ -69,7 +69,12 @@ def results() -> dict:
     unranked = [{"slug": "cy", "name": "Cy Unranked", "role": "streamer", "status": "scored", "n_transcripts": 2,
                  "confidence": "low", "blinded": block(70.0, 50.0, 90.0), "open": {}, "halo": {},
                  "unranked_reason": "2 included transcripts, below the floor of 5"}]
-    return {"leaders": ranked, "unranked": unranked,
+    # Ada's recordings in both modes. The venue mix counts recordings, so the
+    # open rows must not double it: 5 conversation, 2 reaction, 1 debate.
+    venues = ["conversation"] * 5 + ["reaction"] * 2 + ["debate"]
+    transcripts = [{"leader_slug": "ada", "source_id": f"ada-{i}", "mode": mode, "venue_type": v}
+                   for i, v in enumerate(venues) for mode in ("blinded", "open")]
+    return {"leaders": ranked, "unranked": unranked, "transcripts": transcripts,
             "diagnostics": {"weights": {d["key"]: d["weight"] for d in profile()["scoring"]["dimensions"]},
                             "grades_used": 90}}
 
@@ -128,6 +133,16 @@ def main() -> int:
     row_bo = row_bo[:row_bo.find("</tr>")]
     check("a missing open score and halo show a dash, not a zero",
           "&ndash;" in row_bo and ">0.0<" not in row_bo, row_bo[:300])
+
+    print("\n[VENUE MIX]")
+    # Plan P5, "Sampling rules": with no venue caps, format is handled in part by
+    # showing each person's venue mix on the page. FOUND 2026-10-12: it was not shown.
+    row_ada = page[page.find("Ada &lt;script"):]
+    row_ada = row_ada[:row_ada.find("</tr>")]
+    check("a person's venue mix appears in their row, largest first, counting each recording once",
+          "5 conversation, 2 reaction, 1 debate" in row_ada, row_ada[:400])
+    check("a person with no recorded venues shows no invented mix",
+          "conversation" not in row_bo and "reaction" not in row_bo, row_bo[:300])
 
     print("\n[UNRANKED]")
     ranked_table = page[page.find('id="board"'):page.find("</table>", page.find('id="board"'))]

@@ -97,6 +97,7 @@ th{font-size:.8rem; color:var(--muted); font-weight:600}
 td.num,th.num{text-align:right; font-family:"IBM Plex Mono",monospace}
 td.person b{font-weight:600}
 td.person span{display:block; color:var(--muted); font-size:.85rem}
+td.person span.mix{color:var(--faint); font-size:.8rem}
 .ci{color:var(--faint); font-size:.85rem}
 footer{color:var(--faint); font-size:.85rem; margin-top:40px}
 """
@@ -145,6 +146,29 @@ def status_banner(results: dict, copy: dict) -> str:
     return '<p class="status">' + " ".join(bits) + "</p>"
 
 
+def venue_mix(results: dict) -> dict[str, str]:
+    """Each person's formats, as "5 conversation, 2 reaction, 1 debate".
+
+    Plan P5 dropped the venue caps and handles format partly by showing this mix.
+    It counts each scored recording once, from its blinded row, because the open
+    row is the same recording. Largest first; equal counts in name order, so the
+    text is the same on every build. A recording with no venue says so rather
+    than being dropped.
+    """
+    seen: dict[str, dict[str, str]] = {}
+    for t in results.get("transcripts") or []:
+        if t.get("mode") != "blinded":
+            continue
+        seen.setdefault(t.get("leader_slug"), {})[t.get("source_id")] = t.get("venue_type") or "format not recorded"
+    out = {}
+    for slug, by_source in seen.items():
+        counts: dict[str, int] = {}
+        for v in by_source.values():
+            counts[v] = counts.get(v, 0) + 1
+        out[slug] = ", ".join(f"{n} {v}" for v, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+    return out
+
+
 def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
     validate_copy(profile, copy)
     by_key = {d["key"]: i + 1 for i, d in enumerate(profile["scoring"]["dimensions"])}
@@ -160,6 +184,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
             + '<th class="num">Open overall</th><th class="num">Halo</th>'
               '<th class="num">Recordings</th><th>Confidence</th></tr>')
 
+    mixes = venue_mix(results)
     rows = []
     for p in sorted(results.get("leaders", []), key=lambda x: x.get("rank") or 10 ** 9):
         b = p.get("blinded") or {}
@@ -169,7 +194,9 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
             "<tr>"
             f'<td class="num">{esc(p.get("rank", ""))}</td>'
             f'<td class="person"><b>{esc(p.get("name", p.get("slug", "")))}</b>'
-            f'<span>{esc(p.get("role", ""))}</span></td>'
+            f'<span>{esc(p.get("role", ""))}</span>'
+            + (f'<span class="mix">{esc(mixes[p.get("slug")])}</span>' if p.get("slug") in mixes else "")
+            + '</td>'
             f'<td class="num">{num(b.get("overall"))} '
             f'<span class="ci">[{num(b.get("ci_low"))}, {num(b.get("ci_high"))}]</span></td>'
             + "".join(f'<td class="num">{num(b.get(d["key"]))}</td>' for d in dims)
