@@ -259,7 +259,17 @@ The era interval now resamples people and then recordings, as plan P5 prescribes
 pilot it widens to -2.77 to 3.49 points a year.
 
 Running the P9 command as written then showed that `schedule.py` silently dropped anchors
-it could not place; it now refuses (see "The P9 command"). A fourth entry records what remains of the confirm fix: a loop render
+it could not place; it now refuses (see "The P9 command").
+
+**A third review** found 7 more, all fixed the same way. The two that mattered: G-drift
+counted an anchor as measured after its first re-grade, though anchors are re-graded once per
+group and the latest drift is the one that matters; and the surname rule needed a stated
+principle. `names_subject` now excludes only a CLEAR other person (a roster collision, or a
+lone given name right before the surname, as in "Eric Weinstein") and counts every ambiguous
+case, because over-counting is the cautious direction for a claim about how far blinding
+fails. "Kirk Cameron" therefore counts for Charlie Kirk, and the test pins that as a stated
+over-count. The other five made the gate document's venue counts board-only, corrected its
+note on what the page counts, and turned the last silent defaults into refusals. A fourth entry records what remains of the confirm fix: a loop render
 can still race the upload, which the confirm now reports instead of passing. Two
 were checked and left as they are: `venue_counts` files a tie under its label, but the leaders
 study shares it, so the gate tool counts venues itself; and per-grade identity counts keep a
