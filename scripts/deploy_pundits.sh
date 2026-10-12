@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Render Verbatim Pundits from the explicitly named pundits production checkout,
-# then publish it to verbatim-pundits.tonygwu.com. See docs/DATA-CLONE-WORKFLOW.md
+# then publish it to pundits.tonygwu.com (also routed as verbatim-pundits.tonygwu.com,
+# both in wrangler.pundits.toml). See docs/DATA-CLONE-WORKFLOW.md
 # and docs/PUNDITS-PLAN.md (P4, P11). --dry-run renders but does not publish;
 # --refresh first re-aggregates the production results and requires the owner.
 #
@@ -13,8 +14,9 @@
 # revision. Before publishing, the live revision.json must be an ancestor of
 # ours, so an older render never replaces a newer page; the first deploy after
 # this check existed passes --first-revision-deploy once, because the live page
-# had no revision.json. After publishing, the live revision is read back and
-# must equal ours. LIVE_CONFIRM_ATTEMPTS and LIVE_CONFIRM_WAIT are test seams.
+# had no revision.json. After publishing, the live revision.json is read back and
+# must equal the one this deploy wrote, whole, and the live page must carry the
+# data revision's meta tag. LIVE_CONFIRM_ATTEMPTS and LIVE_CONFIRM_WAIT are test seams.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

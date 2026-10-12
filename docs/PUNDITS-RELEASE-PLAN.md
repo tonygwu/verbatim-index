@@ -107,6 +107,51 @@ Dry-run on a copy of the pundits data at `dced184` on 2026-10-12, with no judge 
   command places 2 or more anchor groups as written. Either way it schedules each person up to
   12, and lists by name and shortfall the ten people already short of material.
 
+## P11 runbook: the full release, step by step
+
+Run in repo-3, the pundits daemon clone, after P9 and P10. Step 7 is the operator's. Every
+flag below exists in the scripts as of 2026-10-12.
+
+1. Take the current code: `git pull --ff-only`.
+2. Rebuild the aggregate and render without publishing. This prints the staleness checks
+   (grade count and `grade_files_sha256`), "about to publish", and the live-revision check:
+   ```
+   bash scripts/deploy_pundits.sh --production-data data-pundits \
+       --data-revision "$(git -C data-pundits rev-parse HEAD)" --refresh --dry-run
+   ```
+3. Run the gate report, written outside the data checkout:
+   ```
+   .venv/bin/python scripts/pundits_gates.py --data data-pundits \
+       --lean-labels data-pundits/private/lean_labels.json --out <scratch>/gates.json
+   ```
+4. P11 step 1, the public gate document, with lean-split figures withheld until decision 4:
+   ```
+   .venv/bin/python scripts/pundits_gate_doc.py --report <scratch>/gates.json \
+       --data-revision "$(git -C data-pundits rev-parse HEAD)" --withhold-lean --out docs/PUNDITS.md
+   ```
+   Read it, then commit `docs/PUNDITS.md` by name.
+5. If the board is no longer a pilot (decision 3), change `status_label` and `status_note` in
+   `profiles/pundits.site.json`, then redraw the card, which carries the label:
+   ```
+   .venv/bin/python scripts/build_og_card.py --site pundits --results data-pundits/results.json
+   ```
+   Commit `site-pundits/og.png` and `site-pundits/og.meta.json`. The page build warns when
+   the card's counts or label differ from the page.
+6. Render again, read `site-pundits/index.html`, and check it at phone width:
+   ```
+   bash scripts/deploy_pundits.sh --production-data data-pundits \
+       --data-revision "$(git -C data-pundits rev-parse HEAD)" --dry-run
+   .venv/bin/python scripts/check_pundits_phone_layout.py --page site-pundits/index.html --width 390
+   ```
+7. The operator approves publication, explicitly, at the time.
+8. Publish. The first deploy since `revision.json` existed adds `--first-revision-deploy`, once:
+   ```
+   bash scripts/deploy_pundits.sh --production-data data-pundits \
+       --data-revision "$(git -C data-pundits rev-parse HEAD)" --first-revision-deploy
+   ```
+   Success ends with "live page confirmed at data revision <sha>". Any other ending is a
+   failure: the script prints every read it made.
+
 ## Decisions for the operator
 
 1. **Sample size before P9.** At 20 left and 20 right people, G-judge-lean projects to a 2.49
