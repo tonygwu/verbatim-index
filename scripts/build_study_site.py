@@ -77,6 +77,19 @@ def num(v, signed: bool = False) -> str:
     return f"{v:+.1f}" if signed else f"{v:.1f}"
 
 
+def interval(block: dict, signed: bool = False) -> str:
+    """A block's bootstrap interval as "[lo, hi]", or nothing when it has none.
+
+    Nothing rather than a pair of dashes: a score whose interval was never
+    computed is a different fact from a score whose interval is unknown, and
+    the plan wants every published interval to be a real one.
+    """
+    lo, hi = block.get("ci_low"), block.get("ci_high")
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lo, hi)):
+        return ""
+    return f' <span class="ci">[{num(lo, signed)}, {num(hi, signed)}]</span>'
+
+
 CSS = r"""
 *{box-sizing:border-box}
 body{background:var(--ground); color:var(--ink); margin:0;
@@ -189,7 +202,11 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
     for p in sorted(results.get("leaders", []), key=lambda x: x.get("rank") or 10 ** 9):
         b = p.get("blinded") or {}
         o = p.get("open") or {}
-        halo = (p.get("halo") or {}).get("overall")
+        hb = p.get("halo") or {}
+        halo = hb.get("overall")
+        pairs = hb.get("n_pairs")
+        pairs_html = (f' <span class="ci">{esc(pairs)} pairs</span>'
+                      if isinstance(pairs, int) and not isinstance(pairs, bool) else "")
         rows.append(
             "<tr>"
             f'<td class="num">{esc(p.get("rank", ""))}</td>'
@@ -197,11 +214,10 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
             f'<span>{esc(p.get("role", ""))}</span>'
             + (f'<span class="mix">{esc(mixes[p.get("slug")])}</span>' if p.get("slug") in mixes else "")
             + '</td>'
-            f'<td class="num">{num(b.get("overall"))} '
-            f'<span class="ci">[{num(b.get("ci_low"))}, {num(b.get("ci_high"))}]</span></td>'
+            f'<td class="num">{num(b.get("overall"))}{interval(b)}</td>'
             + "".join(f'<td class="num">{num(b.get(d["key"]))}</td>' for d in dims)
-            + f'<td class="num">{num(o.get("overall"))}</td>'
-            f'<td class="num">{num(halo, signed=True)}</td>'
+            + f'<td class="num">{num(o.get("overall"))}{interval(o)}</td>'
+            f'<td class="num">{num(halo, signed=True)}{interval(hb, signed=True)}{pairs_html}</td>'
             f'<td class="num">{esc(p.get("n_transcripts", ""))}</td>'
             f'<td>{esc(p.get("confidence", ""))}</td>'
             "</tr>")

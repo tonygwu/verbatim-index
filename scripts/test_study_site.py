@@ -62,7 +62,7 @@ def results() -> dict:
         {"rank": 1, "slug": "ada", "name": "Ada <script>alert(1)</script> Lovelace", "role": "host",
          "status": "scored", "n_transcripts": 8, "confidence": "high",
          "blinded": block(61.2, 55.0, 67.4), "open": block(64.0, 58.1, 70.2),
-         "halo": {"overall": 2.8}},
+         "halo": {"overall": 2.8, "ci_low": 0.4, "ci_high": 5.1, "n_pairs": 16}},
         {"rank": 2, "slug": "bo", "name": "Bo Diddley", "role": "columnist", "status": "scored",
          "n_transcripts": 6, "confidence": "medium", "blinded": block(48.5, 41.0, 55.9), "open": {}, "halo": {}},
     ]
@@ -129,6 +129,14 @@ def main() -> int:
     check("the blinded score and its interval render", "61.2" in page and "55.0" in page and "67.4" in page)
     check("the open score renders", "64.0" in page)
     check("the halo renders with its sign", "+2.8" in page)
+    # Plan P5: "Published per person: blinded score, open score, halo, each with
+    # an interval, and the paired count." FOUND 2026-10-12: only the blinded
+    # score carried its interval.
+    row_ada_s = page[page.find("Ada &lt;script"):]
+    row_ada_s = row_ada_s[:row_ada_s.find("</tr>")]
+    check("the open score carries its interval", "[58.1, 70.2]" in row_ada_s, row_ada_s[:600])
+    check("the halo carries its signed interval", "[+0.4, +5.1]" in row_ada_s, row_ada_s[:600])
+    check("the halo states its paired count", "16 pairs" in row_ada_s, row_ada_s[:600])
     row_bo = page[page.find("Bo Diddley"):]
     row_bo = row_bo[:row_bo.find("</tr>")]
     check("a missing open score and halo show a dash, not a zero",
