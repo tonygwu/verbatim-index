@@ -23,5 +23,5 @@
    "explainer": "Credit for applying the same standard to cases set side by side, for conceding a good point, for answering the question actually asked, for avoiding insults and insinuation, and for departing from their own side with reasons when the recording shows what that side is."
   }
  },
- "method": "Each recording is transcribed, the speaker's name and show are removed for the blinded score, and two AI judges score it against a fixed rubric: Claude Fable and Gemini Flash. Each judge's scale is calibrated onto a shared one, a person's score is the mean over their recordings, and the interval is a bootstrap over those recordings. When a judge marks a dimension not observed in a recording, because the recording gives it no real chance to show, that recording is left out of the score."
+ "method": "Each recording is transcribed, the speaker's name and show are removed for the blinded score, and two AI judges score it against a fixed rubric: Claude Fable and Gemini Flash. Each judge's scale is calibrated onto a shared one, a person's score is the mean over their recordings, each weighted by how much of it the judges could score, and the interval is a bootstrap over those recordings. When a judge marks a dimension not observed in a recording, because the recording gives it no real chance to show, that recording is left out of the score."
 }

@@ -236,6 +236,10 @@ def main() -> int:
     method = cp["method"]
     check("the method copy says a recording with a dimension marked not observed is left out",
           "left out of the score" in method and "does not count" not in method, method)
+    # board_overall() and agg() weight each recording by its coverage (floored at
+    # 0.05), so a plain "mean" understates what the score is.
+    check("and that a person's score weights each recording by how much of it could be scored",
+          "weighted by how much of it the judges could score" in method, method)
 
     print("\n[UNRANKED]")
     ranked_table = page[page.find('id="board"'):page.find("</table>", page.find('id="board"'))]
