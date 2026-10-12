@@ -108,6 +108,26 @@ there. Add new material under the same headings.
   matches a roster own channel. Leaders entries have no `own_channels`, so leaders QA is
   unchanged. Proof: `.venv/bin/python scripts/test_qa_own_channel.py`.
 
+- P10 gate report (no quota): `scripts/pundits_gates.py --data <pundits data> --lean-labels <the
+  private lean file> --out <scratch>/gates.json` computes Fable tool calls, identity (confident
+  and correct), G-search, G-coverage, G-judge-lean, G-halo-lean and G-drift, each PASS, FAIL or
+  INCONCLUSIVE, with a few-clusters warning under 10 people a group. It refuses an `--out`
+  inside the data checkout. `scripts/pundits_gate_doc.py --report ... --data-revision ...
+  --withhold-lean --out ...` renders it as Markdown (P11 step 1). Keep `--withhold-lean` for
+  anything public until the operator sets a disclosure rule (`docs/PUNDITS-RELEASE-PLAN.md`,
+  decision 4): a lean-split figure next to public per-person facts can name a person's lean.
+  Pilot dry run: `docs/PUNDITS-P10-PILOT-GATES.md`. Proof: `scripts/test_pundits_gates.py`,
+  `scripts/test_pundits_gate_doc.py`.
+
+- P5 sensitivities, in `results.json` diagnostics for a contract-v2 study only:
+  `venue_leave_one_out` (each venue dropped in turn) and `archival_excluded` (calibration
+  refitted without archival subjects, proved against a real re-run). Proof:
+  `scripts/test_venue_leave_one_out.py`, `scripts/test_archival_sensitivity.py`.
+
+- Phone layout: after any change to the page's CSS or columns, run
+  `.venv/bin/python scripts/check_pundits_phone_layout.py --page site-pundits/index.html` (needs
+  Google Chrome, so it is a check_ script outside the globbed suite).
+
 - P10 sample-size check (no quota): `scripts/pundits_sample_size.py --data <pundits data>` projects
   G-judge-lean's 90% half-width from the pilot's grades. Result of 2026-10-11 in
   `docs/PUNDITS-P10-SAMPLE-SIZE.md`: 2.49 at 20 left and 20 right people, above the plan's 2.0, so the

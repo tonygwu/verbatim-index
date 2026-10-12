@@ -18,9 +18,11 @@ two judges, Fable and Gemini, and the page says that it is a pilot.
 3. repo-3 grades the full corpus (P9) and runs the probe calls (P8b to P8g).
 4. Any clone runs the P10 gate report, and the operator approves P11 publication.
 
-Three decisions are the operator's and should come before step 3: the sample size, who does
-the P7 labels, and whether to publish before the P7 and P8 gates exist. Each is set out under
-"Decisions for the operator", with its cost.
+Five decisions are the operator's. Three should come before step 3: the sample size, who does
+the P7 labels, and whether to publish before the P7 and P8 gates exist. Two should come before
+P11: how much of the lean-split figures to publish, and which of two contradicting P5 rules
+governs a recording with an unsupported dimension. Each is set out under "Decisions for the
+operator", with its cost.
 
 ## Where each phase stands
 
@@ -49,6 +51,11 @@ the P7 labels, and whether to publish before the P7 and P8 gates exist. Each is 
   calls. See BACKLOG, "Verbatim Pundits".
 - **The open score's interval and the resample count** are in the code since `31dffd9` and
   appear on the next pundits aggregate.
+- **The next pundits deploy needs `--first-revision-deploy`, once.** Since 2026-10-12 the
+  deploy refuses when the live page's `revision.json` is missing or newer, and the live page
+  predates `revision.json`.
+- **P9 must schedule drift anchors.** No anchor has been scheduled yet, so G-drift has never
+  run. `schedule.py build` takes `--anchors` and `--anchor-every`.
 
 ## The critical path, with owners
 
@@ -69,7 +76,12 @@ P8b 80, P8c 120, P8d 32, P8e 96, P8f 40 and P8g 160 nominal calls.
 ## Decisions for the operator
 
 1. **Sample size before P9.** At 20 left and 20 right people, G-judge-lean projects to a 2.49
-   half-width, and a pass needs about 2.0.
+   half-width, and a pass needs about 2.0. **The roster has 13 left and 13 right people**
+   (and 13 heterodox; counted from the private labels, group sizes only), and at 13 / 13 the
+   projection is 3.09, wider than the bound of 3 itself
+   ([PUNDITS-P10-SAMPLE-SIZE.md](PUNDITS-P10-SAMPLE-SIZE.md)). So at the current roster
+   G-judge-lean is very unlikely to PASS, unless the full corpus shows less between-person
+   spread than the pilot did.
    - (a) Add people: about 31 per side, against 39 in the whole roster today. Cost: more
      discovery, more speaker checks and about 50% more grading.
    - (b) Accept a likely INCONCLUSIVE and disclose it. Cost: the board cannot claim that the
@@ -92,12 +104,62 @@ P8b 80, P8c 120, P8d 32, P8e 96, P8f 40 and P8g 160 nominal calls.
      only.
    - **Recommendation: (b) as the next public step, then (a)'s gates as they arrive.** The
      pilot already publishes under the same limits, and the page states them.
-4. **A contradiction inside P5.** "Anchors and minimum evidence" says a recording with an
+4. **Disclosure of lean-split figures.** The lean labels are private, and every P10 lean gate
+   is a figure split by lean. With few people, such a figure next to public per-person facts
+   can reveal who is in which group. On the pilot, the one lost recording is Asmongold's, and
+   BACKLOG names it; a lean-split loss table would then name his lean.
+   - (a) Publish the group figures, as the plan intends. Cost: a reader may infer some leans.
+   - (b) Publish verdicts only, and withhold the estimates, intervals and lean-group tables.
+     Cost: a reader cannot check a verdict's size.
+   - (c) Publish the lean labels themselves. Cost: the plan's privacy promise.
+   - **Recommendation: (b) for any group under 10 people, and (a) above that.** That is the
+     size at which the report also stops warning that its intervals are optimistic.
+     `pundits_gate_doc.py --withhold-lean` implements (b).
+5. **A contradiction inside P5.** "Anchors and minimum evidence" says a recording with an
    unsupported dimension still counts toward the dimensions it supports. "Complete cells" says
    a recording needs every dimension supported. The code follows "Complete cells", and that
    costs one pilot recording today (`asmongold-tv-ks77-g`, BACKLOG). Choose one rule and
    delete the other sentence from the plan.
 
-## What tonight's run did
+## What the 2026-10-12 overnight run did (repo-2)
 
-This section is filled in at the end of the run (2026-10-12, before 08:26 PDT).
+Code and documents only: no judge call, no data write, no deploy. Every item was test-first.
+
+**The page, for a public audience** (`scripts/build_study_site.py`):
+- A real HTML document: doctype, language, UTF-8 and a viewport. The live page has none of
+  them, so a phone lays it out at desktop width.
+- On a phone, rank, person and the blinded score show without sideways scrolling. At 390 px
+  the live page cuts the score off. Proof in a real browser:
+  `scripts/check_pundits_phone_layout.py`, which passes at 320, 360, 390, 430 and 1024 px.
+- Each person's venue mix (plan P5), the open score's interval, and the halo's interval and
+  paired count (plan P5 "Published per person").
+- A description, a canonical URL (`https://pundits.tonygwu.com/`), Open Graph and Twitter
+  tags, and an inline icon.
+- The data revision, in a meta tag and the footer.
+
+**The deploy** (`scripts/deploy_pundits.sh`): it writes `site-pundits/revision.json`, refuses
+to replace a newer live page, and after publishing reads the live revision back (the P11
+verification).
+
+**The P5 sensitivities** (`aggregate.py`, pundits only; the leaders `results.json` stays
+byte-identical): `venue_leave_one_out` and `archival_excluded`. On the pilot, no remaining
+person moves more than 2.8 points when any one format is dropped. Dropping Charlie Kirk refits
+calibration but moves no remaining score at one decimal, which a real re-run confirms.
+
+**The P10 gate report and the P11 document**: `scripts/pundits_gates.py` and
+`scripts/pundits_gate_doc.py`. The pilot dry run is in
+[PUNDITS-P10-PILOT-GATES.md](PUNDITS-P10-PILOT-GATES.md), with lean-split figures withheld.
+Its verdicts:
+
+| Gate | Pilot verdict |
+|---|---|
+| Fable tool calls | PASS (156 grades, 0 calls) |
+| G-search | PASS (0 searches in 312 grades) |
+| G-coverage | INCONCLUSIVE (1 recording of 78 lost) |
+| G-judge-lean | INCONCLUSIVE |
+| G-halo-lean | PASS |
+| G-drift | did not run (no anchors) |
+
+Every lean test carries a warning that 4 people a side is too few for its interval. Blinded
+identity was 100% confident and 100% correct, so the page's "identified" claim holds on the
+pilot.
