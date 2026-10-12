@@ -566,6 +566,17 @@ SITE_REPO_INPUTS = {
 }
 
 
+def publication_dirty(source: Path, site: str) -> bool:
+    """Whether any published input of `site` differs from the data checkout's HEAD:
+    a modified, staged, deleted or untracked file under its SITE_SHELVES paths.
+    Owner mode renders those bytes, so the page must not present HEAD alone as
+    its source."""
+    if site not in SITE_SHELVES:
+        raise RuntimeError(f'unknown site {site!r}; known: {sorted(SITE_SHELVES)}')
+    out = git(source, 'status', '--porcelain', '--untracked-files=all', '--', *SITE_SHELVES[site])
+    return bool(out.strip())
+
+
 def fingerprint(source: Path, site: str, repo: Path | None = None) -> str:
     """Bind one render to the live bytes read, including dirty production files.
 
@@ -1078,6 +1089,9 @@ def main() -> int:
     n.add_argument('--verifier', required=True)
     n.add_argument('--astra-model', default='gpt-6-astra')
     sub.add_parser('consumers', help='inspect this clone without changing jobs')
+    pd = sub.add_parser('publication-dirty', help="print yes if the site's published inputs differ from HEAD")
+    pd.add_argument('--production-data', type=Path, required=True)
+    pd.add_argument('--site', choices=sorted(SITE_SHELVES), required=True)
     p = sub.add_parser('publication-source')
     p.add_argument('--production-data', type=Path)
     p.add_argument('--data-revision')
@@ -1120,6 +1134,8 @@ def main() -> int:
                 raise RuntimeError(why)
         elif args.command == 'origin-unmoved':
             origin_unmoved(REPO, args.production_data.resolve(), args.data_revision, args.public_revision)
+        elif args.command == 'publication-dirty':
+            print('yes' if publication_dirty(args.production_data.resolve(), args.site) else 'no')
         elif args.command == 'live-revision' and args.confirm:
             why = live_revision_confirm_error(args.data_revision, args.site, args.attempts, args.wait_seconds,
                                               expect=json.loads(args.expect.read_text()) if args.expect else None,

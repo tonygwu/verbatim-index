@@ -214,7 +214,7 @@ Its verdicts:
 | G-drift | did not run (no anchors) |
 
 **An independent review of the night's commits**, by two read-only reviewers on other
-accounts, found 20 defects (11 and 9). Eighteen were fixed the same night, each with a
+accounts, found 20 defects (11 and 9). Nineteen were fixed the same night, each with a
 failing-then-passing test:
 - the gate document still printed lean group sizes under `--withhold-lean` (the pilot split
   was already public, so nothing new leaked; later renders would have);
@@ -233,9 +233,10 @@ failing-then-passing test:
 - the page's search count pooled open grades, and the card counted unranked people's
   recordings;
 - G-judge-lean's calibrated path was untested, and a calibration key that stopped matching
-  would have compared raw scores in silence.
-Two are filed in BACKLOG ("Verbatim Pundits"): the page names the HEAD data commit while it
-renders uncommitted output, and a file read can count as a web search. A fourth entry records what remains of the confirm fix: a loop render
+  would have compared raw scores in silence;
+- the footer named the HEAD data commit while the page rendered uncommitted output; it now
+  says "plus uncommitted changes" when that is so.
+One is filed in BACKLOG ("Verbatim Pundits"): a file read can count as a web search. A fourth entry records what remains of the confirm fix: a loop render
 can still race the upload, which the confirm now reports instead of passing. Two
 were checked and left as they are: `venue_counts` files a tie under its label, but the leaders
 study shares it, so the gate tool counts venues itself; and per-grade identity counts keep a

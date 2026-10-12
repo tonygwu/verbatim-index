@@ -44,11 +44,19 @@ PUBLICATION_BEFORE="$(publication_fingerprint)"
 DATA_DATE="$($PY -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).date())' \
   "$(git -C "$PRODUCTION_DATA" show -s --format=%ct "$DATA_REVISION")")" || { echo "REFUSING: cannot read the data revision's date" >&2; exit 1; }
 
+# Owner mode renders the daemon's uncommitted output, so the stamp says when the
+# published inputs differ from the commit it names.
+DATA_UNCOMMITTED="$($PY scripts/data_clone_workflow.py publication-dirty --production-data "$PRODUCTION_DATA" \
+  --site pundits)" || { echo "REFUSING: cannot tell whether the published inputs are committed" >&2; exit 1; }
+UNCOMMITTED=()
+[ "$DATA_UNCOMMITTED" = "yes" ] && UNCOMMITTED=(--data-uncommitted)
+
 # The same invocation grade_loop.sh uses for this study, plus the provenance stamp.
 $PY scripts/build_site.py --results "${PRODUCTION_DATA}/results.json" --audit "${PRODUCTION_DATA}/results_audit.json" \
     --roster "${PRODUCTION_DATA}/roster/final.json" --calibration "${PRODUCTION_DATA}/logs/calibration.json" \
     --sources "${PRODUCTION_DATA}/sources/discovered.json" --out "${SITE_DIR}/index.html" \
-    --data-revision "$DATA_REVISION" --data-date "$DATA_DATE" --transcripts-meta "${PRODUCTION_DATA}/transcripts_open"
+    --data-revision "$DATA_REVISION" --data-date "$DATA_DATE" --transcripts-meta "${PRODUCTION_DATA}/transcripts_open" \
+    ${UNCOMMITTED[@]+"${UNCOMMITTED[@]}"}
 
 $PY - "$PRODUCTION_DATA" <<'EOF'
 import json, pathlib, sys
@@ -84,13 +92,16 @@ check_publication_unchanged
 # uncommitted output, so the content fingerprint is recorded beside the commit.
 PUBLIC_HEAD="$(git rev-parse --verify -q HEAD || true)"
 [ -n "$PUBLIC_HEAD" ] || echo "public revision: this public tree has no commit; revision.json records null"
-$PY - "${SITE_DIR}" "$DATA_REVISION" "$DATA_DATE" "$PUBLICATION_BEFORE" "$PUBLIC_HEAD" <<'EOF'
+$PY - "${SITE_DIR}" "$DATA_REVISION" "$DATA_DATE" "$PUBLICATION_BEFORE" "$PUBLIC_HEAD" "$DATA_UNCOMMITTED" <<'EOF'
 import json, pathlib, sys
-site, data_revision, data_date, content, public = sys.argv[1:6]
+site, data_revision, data_date, content, public, uncommitted = sys.argv[1:7]
+if uncommitted not in ("yes", "no"):
+    raise SystemExit(f"REFUSING: publication-dirty said {uncommitted!r}")
 out = pathlib.Path(site)
 (out / "revision.json").write_text(json.dumps(
     {"data_revision": data_revision, "data_date": data_date, "content_sha256": content,
-     "public_revision": public or None}, indent=1, sort_keys=True) + "\n")
+     "data_uncommitted": uncommitted == "yes", "public_revision": public or None},
+    indent=1, sort_keys=True) + "\n")
 (out / "_headers").write_text(
     "# Written by scripts/deploy_pundits.sh. Cloudflare reads this file and does not serve it.\n"
     "/revision.json\n  Cache-Control: no-store\n")

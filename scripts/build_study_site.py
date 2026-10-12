@@ -397,7 +397,7 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def render(results: dict, profile: dict, copy: dict, rundate: str,
-           data_revision: str | None = None, data_date: str | None = None,
+           data_revision: str | None = None, data_date: str | None = None, data_uncommitted: bool = False,
            recordings: dict | None = None, og_card: Path | None = None) -> str:
     validate_copy(profile, copy)
     if data_revision is not None and not _SHA.fullmatch(data_revision):
@@ -480,7 +480,8 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
         card_tags = '<meta name="twitter:card" content="summary">'
     stamp = ""
     if data_revision:
-        stamp = f", data revision {data_revision[:12]}" + (f" of {esc(data_date)}" if data_date else "")
+        stamp = (f", data revision {data_revision[:12]}" + (f" of {esc(data_date)}" if data_date else "")
+                 + (" plus uncommitted changes" if data_uncommitted else ""))
     return f"""<!doctype html>
 <html lang="en-GB">
 <head>
@@ -567,7 +568,8 @@ def main_from_args(args) -> int:
         copy = load_copy(profile)
         page = render(results, profile, copy,
                       rundate=datetime.now(timezone.utc).strftime("%d %B %Y"),
-                      data_revision=args.data_revision, data_date=args.data_date, recordings=recordings,
+                      data_revision=args.data_revision, data_date=args.data_date,
+                      data_uncommitted=bool(getattr(args, "data_uncommitted", False)), recordings=recordings,
                       og_card=card)
     except RuntimeError as exc:
         raise SystemExit(f"REFUSING: {exc}") from None

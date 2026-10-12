@@ -197,6 +197,21 @@ def main() -> int:
               meta.get("data_date") == committed.date().isoformat(), f"{meta} vs {committed.date()}")
         check("and the 64-hex content fingerprint of what was rendered",
               isinstance(meta.get("content_sha256"), str) and len(meta["content_sha256"]) == 64, str(meta))
+        # FOUND 2026-10-12 by review: owner mode renders the daemon's uncommitted
+        # output, and the footer named the HEAD commit as if it reproduced the page.
+        check("clean published inputs: revision.json says so, and the footer claims nothing more",
+              meta.get("data_uncommitted") is False and "uncommitted" not in text, str(meta))
+        cal = pundits / "logs/calibration.json"
+        cal.write_text('{"edited": "after the commit"}')
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                bin_dir=bin_dir)
+        dirty_text = page.read_text() if page.exists() else ""
+        dirty_meta = json.loads(rj.read_text()) if rj.exists() else {}
+        git(pundits, "checkout", "--", "logs/calibration.json")
+        check("uncommitted published inputs: the footer says the page includes them",
+              r.returncode == 0 and f"data revision {rev_p[:12]}" in dirty_text
+              and "plus uncommitted changes" in dirty_text, (r.stderr + dirty_text)[-400:])
+        check("and revision.json records it", dirty_meta.get("data_uncommitted") is True, str(dirty_meta))
         headers = pub / "site-pundits" / "_headers"
         htext = headers.read_text() if headers.exists() else ""
         check("site-pundits/_headers serves revision.json no-store",

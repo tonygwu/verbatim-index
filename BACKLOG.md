@@ -777,8 +777,10 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
-- **The pundits page names the HEAD data commit while it renders the daemon's
-  uncommitted output.** Filed 2026-10-12, from an independent review of that
+- **RESOLVED 2026-10-12, same night, with option (a): when the published inputs differ
+  from HEAD the footer says "plus uncommitted changes" and revision.json records
+  `data_uncommitted`. Option (b) stays the operator's call. The pundits page names the
+  HEAD data commit while it renders the daemon's uncommitted output.** Filed 2026-10-12, from an independent review of that
   night's commits. Owner mode (`deploy_pundits.sh`) renders results.json and grades
   as they sit in repo-3's data checkout, which the grading loop writes without
   committing. The footer and `verbatim:data-revision` meta say "data revision X of
