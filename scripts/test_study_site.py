@@ -118,6 +118,12 @@ def main() -> int:
           desc is not None and html.escape(cp["tagline"]) in desc.group(1)
           and "2 of 3 people" in desc.group(1), desc.group(0) if desc else "no description")
 
+    # The layout itself is proven in a browser by check_pundits_phone_layout.py;
+    # this guards the rule that made it pass from being deleted unnoticed.
+    check("a narrow-screen rule wraps the person cell and drops intervals below their scores",
+          "@media (max-width:600px)" in page and "td.person{white-space:normal" in page
+          and "td.num .ci{display:block" in page)
+
     print("\n[SOCIAL]")
     # A link to the board on Twitter, LinkedIn or Slack showed a bare URL: the page
     # carried no Open Graph or Twitter tags (FOUND 2026-10-12).

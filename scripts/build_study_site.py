@@ -122,6 +122,16 @@ td.person span{display:block; color:var(--muted); font-size:.85rem}
 td.person span.mix{color:var(--faint); font-size:.8rem}
 .ci{color:var(--faint); font-size:.85rem}
 footer{color:var(--faint); font-size:.85rem; margin-top:40px}
+/* A phone must see rank, person and the blinded score without scrolling the
+   table (scripts/check_pundits_phone_layout.py): the person cell wraps, and each
+   interval drops below its score. */
+@media (max-width:600px){
+  main{padding-inline:16px}
+  th,td{padding:8px 6px}
+  th{white-space:normal}
+  td.person{white-space:normal; min-width:7.5rem}
+  td.num .ci{display:block; font-size:.75rem}
+}
 """
 
 
