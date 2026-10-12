@@ -371,14 +371,17 @@ def halo_lean_gate(results: dict, leans: dict, judges: list[str]) -> dict:
 
 
 def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str]) -> dict:
-    anchors, expected = set(), defaultdict(set)
+    # expected[cell][anchor] = the latest run scheduled for that anchor in that cell.
+    anchors, expected = set(), defaultdict(dict)
     for f in sorted((data / "logs/schedule").glob("*.jsonl")):
         for line in f.read_text().splitlines():
             if line.strip():
                 r = json.loads(line)
                 if r.get("run", 0) >= 1 and r["judge"] in judges:
                     anchors.add((r["slug"], r["source_id"]))
-                    expected[f"{r['judge']}|{r['mode']}"].add((r["slug"], r["source_id"]))
+                    cell = expected[f"{r['judge']}|{r['mode']}"]
+                    key = (r["slug"], r["source_id"])
+                    cell[key] = max(cell.get(key, 0), r["run"])
     if not anchors:
         return {"verdict": "INCONCLUSIVE", "ran": False, "delta_points": DELTA_DRIFT,
                 "why": "no drift anchors were scheduled (plan P5: 6 fixed transcripts re-graded once per "
@@ -389,8 +392,11 @@ def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str])
         if (g["leader_slug"], g["source_id"]) in anchors and g.get("judge") in judges and usable(g):
             runs[(g["judge"], g["mode"], g["leader_slug"], g["source_id"])][g.get("run", 0)] = raw_overall(g, weights)
     cells: dict[str, list[float]] = defaultdict(list)
-    for (judge, mode, *_), by_run in runs.items():
-        if len(by_run) >= 2:
+    for (judge, mode, slug, sid), by_run in runs.items():
+        # An anchor is measured only once its LATEST scheduled run is graded: the
+        # latest drift is the one the gate exists to catch.
+        latest = expected.get(f"{judge}|{mode}", {}).get((slug, sid))
+        if len(by_run) >= 2 and (latest is None or max(by_run) >= latest):
             cells[f"{judge}|{mode}"].append(by_run[max(by_run)] - by_run[min(by_run)])
     out = {}
     for cell, diffs in sorted(cells.items()):
