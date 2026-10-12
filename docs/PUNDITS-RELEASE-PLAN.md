@@ -321,7 +321,21 @@ lone given name right before the surname, as in "Eric Weinstein") and counts eve
 case, because over-counting is the cautious direction for a claim about how far blinding
 fails. "Kirk Cameron" therefore counts for Charlie Kirk, and the test pins that as a stated
 over-count. The other five made the gate document's venue counts board-only, corrected its
-note on what the page counts, and turned the last silent defaults into refusals. A fourth entry records what remains of the confirm fix: a loop render
+note on what the page counts, and turned the last silent defaults into refusals.
+
+**A fourth review** found 2 medium defects, both in what the gate document says, and both
+were fixed: a run stopped before its last anchor group now reports the drift it measured
+(and a FAIL-sized one stays FAIL), and the venue paragraph labels which recordings each of
+its two counts covers. Review rounds found 20, 11, 7 and 2 defects; the night stopped there.
+
+**Last, for the release itself:**
+- The page's Method section now says what the code does: a recording with a dimension marked
+  not observed is left out of the score (decision 5 names this sentence), and a person's
+  score weights each recording by how much of it the judges could score.
+- The social card records the status label it draws ("Pilot board"), and the page build
+  warns when the page's label differs, so a relabelled full release cannot keep a pilot card.
+- "P11 runbook" above lists the release commands in order.
+- A corrections link is built and off (`corrections_url: null`); decision 6 says what to set. A fourth entry records what remains of the confirm fix: a loop render
 can still race the upload, which the confirm now reports instead of passing. Two
 were checked and left as they are: `venue_counts` files a tie under its label, but the leaders
 study shares it, so the gate tool counts venues itself; and per-grade identity counts keep a
