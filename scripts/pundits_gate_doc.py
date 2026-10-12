@@ -80,7 +80,8 @@ def verdict_rows(g: dict, hold: bool) -> list[str]:
                     f"{d.get('anchors_scheduled', 0)} anchors scheduled | &plusmn;{d['delta_points']:g} |")
     for cell, e in (d.get("by_judge_mode") or {}).items():
         rows.append(f"| G-drift | {cell.replace('|', ' ')} | {e['verdict']} | {signed(e['estimate'])} | "
-                    f"{ci(e['ci90'])} | {e['anchors']} anchors | &plusmn;{d['delta_points']:g} |")
+                    f"{ci(e['ci90'])} | {e['anchors']} of {e.get('anchors_scheduled', e['anchors'])} anchors | "
+                    f"&plusmn;{d['delta_points']:g} |")
     for cell in d.get("missing_cells") or []:
         rows.append(f"| G-drift | {cell.replace('|', ' ')} | INCONCLUSIVE | not re-graded | &ndash; | 0 anchors | "
                     f"&plusmn;{d['delta_points']:g} |")
@@ -174,6 +175,11 @@ def render(rep: dict, data_revision: str, withhold_lean: bool = False,
         limits.append(warn[0].upper() + warn[1:] + ".")
     if not g["G-drift"].get("ran"):
         limits.append(g["G-drift"]["why"][0].upper() + g["G-drift"]["why"][1:] + ".")
+    elif g["G-drift"]["verdict"] != "PASS":
+        # Plan P10: "If not PASS, drift is reported as a limit."
+        limits.append(f"G-drift is {g['G-drift']['verdict']}: judge drift across the run is not shown to be within "
+                      f"&plusmn;{g['G-drift']['delta_points']:g} points, so it is a limit on every comparison "
+                      "across blocks.")
     out += ["## Limits", "", *[f"- {x}" for x in limits], ""]
     b = rep["bootstrap"]
     out += [f"Intervals: {b['interval']}, {b['resamples']} resamples, seed {b['seed']}, unit {b['unit']}.", ""]

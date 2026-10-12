@@ -371,14 +371,14 @@ def halo_lean_gate(results: dict, leans: dict, judges: list[str]) -> dict:
 
 
 def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str]) -> dict:
-    anchors, expected = set(), set()
+    anchors, expected = set(), defaultdict(set)
     for f in sorted((data / "logs/schedule").glob("*.jsonl")):
         for line in f.read_text().splitlines():
             if line.strip():
                 r = json.loads(line)
                 if r.get("run", 0) >= 1 and r["judge"] in judges:
                     anchors.add((r["slug"], r["source_id"]))
-                    expected.add(f"{r['judge']}|{r['mode']}")
+                    expected[f"{r['judge']}|{r['mode']}"].add((r["slug"], r["source_id"]))
     if not anchors:
         return {"verdict": "INCONCLUSIVE", "ran": False, "delta_points": DELTA_DRIFT,
                 "why": "no drift anchors were scheduled (plan P5: 6 fixed transcripts re-graded once per "
@@ -395,8 +395,12 @@ def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str])
     out = {}
     for cell, diffs in sorted(cells.items()):
         lo, hi = gates.mean_ci90(diffs, BOOTSTRAP_N, BOOTSTRAP_SEED)
-        out[cell] = {"anchors": len(diffs), "estimate": round(sum(diffs) / len(diffs), 2),
-                     "ci90": [round(lo, 2), round(hi, 2)], "verdict": gates.equivalence(lo, hi, DELTA_DRIFT)}
+        # A cell is measured on the anchors scheduled for it, not on whichever of them
+        # happened to be re-graded: fewer than scheduled is INCONCLUSIVE.
+        scheduled = len(expected.get(cell, ()))
+        verdict = gates.equivalence(lo, hi, DELTA_DRIFT) if len(diffs) >= scheduled else "INCONCLUSIVE"
+        out[cell] = {"anchors": len(diffs), "anchors_scheduled": scheduled, "estimate": round(sum(diffs) / len(diffs), 2),
+                     "ci90": [round(lo, 2), round(hi, 2)], "verdict": verdict}
     if not out:
         return {"verdict": "INCONCLUSIVE", "ran": False, "delta_points": DELTA_DRIFT,
                 "anchors_scheduled": len(anchors), "by_judge_mode": {},
@@ -404,7 +408,7 @@ def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str])
                        "unmeasured and must be reported as a limit"}
     # The plan tests drift per judge and mode: a scheduled cell with no re-grade
     # is unmeasured, so the gate cannot pass on the cells that happen to exist.
-    missing = sorted(expected - set(out))
+    missing = sorted(set(expected) - set(out))
     verdicts = [e["verdict"] for e in out.values()] + ["INCONCLUSIVE"] * bool(missing)
     return {"verdict": combine(verdicts), "ran": True, "delta_points": DELTA_DRIFT,
             "anchors_scheduled": len(anchors), "by_judge_mode": out, "missing_cells": missing,

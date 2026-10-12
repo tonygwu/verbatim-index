@@ -91,7 +91,8 @@ def cal_params(kind: str) -> dict:
 
 
 def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None,
-          anchor_cells=(("fable", "blinded"),), regraded=None, lovo=True, calibration="raw") -> None:
+          anchor_cells=(("fable", "blinded"),), regraded=None, lovo=True, calibration="raw",
+          anchor_ids=(("p1", "p1-r0"),), regraded_ids=None) -> None:
     """Four people, two recordings each, fable + gemini, both modes; astra scheduled but dropped.
 
     p4's second recording never reaches the board (both its gemini cells failed).
@@ -132,11 +133,13 @@ def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None
     if anchor_drift is not None:
         # p1-r0 is a drift anchor: scheduled as run 1 in a later block for each of
         # `anchor_cells`, and re-graded in each of `regraded` (default: all of them).
-        for judge, mode in anchor_cells:
-            sched.append({"block": 4, "judge": judge, "mode": mode, "run": 1, "slug": "p1", "source_id": "p1-r0"})
-            if (judge, mode) in (anchor_cells if regraded is None else regraded):
-                a = grade("p1", "p1-r0", judge, mode, score=50 + anchor_drift, run=1)
-                (root / f"grades/{judge}/p1/p1-r0__{judge}__{mode}__r1.json").write_text(json.dumps(a))
+        for aslug, asid in anchor_ids:
+            for judge, mode in anchor_cells:
+                sched.append({"block": 4, "judge": judge, "mode": mode, "run": 1, "slug": aslug, "source_id": asid})
+                if ((judge, mode) in (anchor_cells if regraded is None else regraded)
+                        and (aslug, asid) in (anchor_ids if regraded_ids is None else regraded_ids)):
+                    a = grade(aslug, asid, judge, mode, score=50 + anchor_drift, run=1)
+                    (root / f"grades/{judge}/{aslug}/{asid}__{judge}__{mode}__r1.json").write_text(json.dumps(a))
     (root / "logs/schedule").mkdir(parents=True)
     (root / "logs/schedule/s.jsonl").write_text("".join(json.dumps(r) + "\n" for r in sched))
     leaders = [{"slug": s, "rank": k + 1, "halo": {"overall": h[0], "by_judge_raw": {"fable": h[1], "gemini": h[2]}}}
@@ -350,6 +353,23 @@ def main() -> int:
         check("a scheduled judge-mode cell with no re-grade: INCONCLUSIVE, naming the cell",
               d6.get("verdict") == "INCONCLUSIVE" and d6.get("missing_cells") == ["gemini|blinded"]
               and d6.get("by_judge_mode", {}).get("fable|blinded", {}).get("verdict") == "PASS", str(d6))
+
+        # FOUND 2026-10-12 by the second review: a cell passed on whichever anchors
+        # happened to be re-graded, 1 of 6 as readily as 6 of 6.
+        root12 = tmp / "data12"
+        root12.mkdir()
+        build(root12, anchor_drift=0, anchor_ids=(("p1", "p1-r0"), ("p2", "p2-r0")),
+              regraded_ids=(("p1", "p1-r0"),))
+        d12 = G.report(root12, LEANS)
+        c12 = d12["gates"]["G-drift"]["by_judge_mode"].get("fable|blinded", {})
+        check("a cell with 1 of its 2 scheduled anchors re-graded is INCONCLUSIVE, with both counts",
+              c12.get("verdict") == "INCONCLUSIVE" and c12.get("anchors") == 1 and c12.get("anchors_scheduled") == 2
+              and d12["gates"]["G-drift"]["verdict"] == "INCONCLUSIVE", str(c12))
+        import pundits_gate_doc as GD
+        doc12 = GD.render(d12, data_revision="0" * 40)
+        lim = doc12[doc12.find("## Limits"):]
+        check("and the document reports drift as a limit when the gate ran but did not PASS",
+              "drift" in lim.lower(), lim[:400])
 
         print("\n[VENUE SENSITIVITY]")
         # FOUND 2026-10-12 by review: plan P5 requires the leave-one-venue-out "in
