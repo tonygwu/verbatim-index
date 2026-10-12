@@ -777,6 +777,46 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
+- **The pundits page names the HEAD data commit while it renders the daemon's
+  uncommitted output.** Filed 2026-10-12, from an independent review of that
+  night's commits. Owner mode (`deploy_pundits.sh`) renders results.json and grades
+  as they sit in repo-3's data checkout, which the grading loop writes without
+  committing. The footer and `verbatim:data-revision` meta say "data revision X of
+  <X's commit date>", so a page built from grades added after X names a commit that
+  does not reproduce it. `revision.json` does carry `content_sha256`, the input
+  fingerprint, so the deploy guard is not fooled; only the reader-facing stamp is.
+  Options: (a) the deploy states "plus uncommitted grades" when
+  `git status --porcelain` shows the published inputs dirty, and records it in
+  `revision.json` (cheap, honest, needs one test); (b) refuse a deploy with dirty
+  inputs, so the daemon commits and pushes before publishing (strongest, but it
+  changes repo-3's routine and needs the operator). Recommend (a). Quota-free.
+
+- **G-judge-lean's calibrated path is untested, and a key miss falls back to raw
+  scores silently.** Filed 2026-10-12, same review. `test_pundits_gates.py` gives
+  `calibration_params: {}`, so `apply_calibration` returns every raw score. If the
+  key `pundits_gates.py` rebuilds (`judge|served_model|shared|dim`) stopped matching
+  the one aggregate writes, every judge-lean test would still pass and production
+  would quietly compare raw scores. The keys match on the pilot today. Fix: a
+  fixture with real `calibration_params` (one judge rescaled), an expected
+  calibrated estimate, and a refusal when a used key is missing. Quota-free.
+
+- **`judge_searched` can count a local file read as a web search.** Filed
+  2026-10-12, same review; plausible, not seen in data. `grade.py`'s
+  `count_gemini_tool_events` puts any completed tool step with a `query`, `Url` or
+  `AbsolutePath` parameter into `web_search_queries`, so a `view_file` step would
+  count. The error runs toward disclosing more searches than happened, never fewer.
+  The `tool_use_counts["web_search"]` branch matches only codex (Astra, dropped);
+  agy names its tool `search_web`. Fix: record the tool name per step in grade.py
+  and count only search tools; needs a recorded agy transcript with a file step as
+  the fixture. Quota-free.
+
+- **A grade_loop.sh render can still replace site-pundits/index.html between the
+  deploy's render and its upload.** Filed 2026-10-12. Since that night the
+  post-publish confirm fails loudly when it happens (the live page lacks the data
+  revision's meta tag), so it is reported, not silent. Removing the race needs the
+  deploy to render into its own directory and upload that, or the loop to stop
+  rendering while a deploy runs. Quota-free.
+
 - **The pundits page has no evidence drawer; do it after the P7 quote audit, not
   before.** Filed 2026-10-12. The leaders page shows, per person, each judge's
   reasoning and evidence quotes for every graded transcript. The pundits page

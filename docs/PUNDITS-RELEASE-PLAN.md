@@ -178,7 +178,11 @@ Code and documents only: no judge call, no data write, no deploy. Every item was
 - A social card (`site-pundits/og.png`) that says "Pilot board".
 - The blinding sentence states the CORRECT-identification rate (a judge named the speaker),
   not a judge's confidence. On the pilot both are 100%. The page also states each judge's
-  measured web searches: 0 of 154 for each on the pilot.
+  measured web searches, blinded and open apart: 0 of 77 and 0 of 77 for each on the pilot.
+- A Sensitivity section states plan P5's three sensitivities from `results.json`: each format
+  dropped in turn, the archival subject removed with calibration refitted, and the era slope.
+- A recording whose format the two judges disputed (a 1-1 tie) says "format disputed" instead
+  of its alphabetical tie-break label. On the pilot that is 4 of 77 recordings.
 
 **The deploy** (`scripts/deploy_pundits.sh`): it writes `site-pundits/revision.json`, refuses
 to replace a newer live page, and after publishing reads the live revision back (the P11
@@ -188,7 +192,9 @@ verification).
 both fixed. See "The P9 command".
 
 **The P5 sensitivities** (`aggregate.py`, pundits only; the leaders `results.json` stays
-byte-identical): `venue_leave_one_out` and `archival_excluded`. On the pilot, no remaining
+byte-identical): `venue_leave_one_out`, `archival_excluded` and `era_covariate`. On the pilot,
+a recording uploaded a year later scores +0.63 points within the same person (95% interval
+-1.78 to 2.63), so upload date moves nothing measurable. On the pilot, no remaining
 person moves more than 2.4 points when any one format is dropped. The 4 recordings whose format
 the two judges disputed stay in every run, because their label is a tie-break, not a format. Dropping Charlie Kirk refits
 calibration but moves no remaining score at one decimal, which a real re-run confirms.
@@ -206,6 +212,33 @@ Its verdicts:
 | G-judge-lean | INCONCLUSIVE |
 | G-halo-lean | PASS |
 | G-drift | did not run (no anchors) |
+
+**An independent review of the night's commits**, by two read-only reviewers on other
+accounts, found 20 defects (11 and 9). Seventeen were fixed the same night, each with a
+failing-then-passing test:
+- the gate document still printed lean group sizes under `--withhold-lean` (the pilot split
+  was already public, so nothing new leaked; later renders would have);
+- tied venues were dropped under their tie-break label in the leave-one-venue-out, and shown
+  as known on the page; the largest pilot shift falls from 2.8 to 2.4 points;
+- `names_subject` counted "Hasan Piker" as naming Mehdi Hasan, both on the roster;
+- the deploy confirm compared only `data_revision`, so an earlier page at the same revision
+  passed; `--first-revision-deploy` passed on any read failure; the same data revision with
+  older public code passed; the fingerprint missed `transcripts_open`;
+- G-drift could PASS with a judge-mode cell missing, and crashed the renderer mid-P9; the gate
+  report read a stale `results.json` without noticing; the leave-one-venue-out vanished from
+  the gate document without a word;
+- identity and search counted drift re-grades twice, and the disclosure verdict read a
+  per-grade rate where the page prints a per-recording one;
+- the cluster bootstrap resampled people only, where plan P5 says people, then recordings;
+- the page's search count pooled open grades, and the card counted unranked people's
+  recordings.
+Three are filed in BACKLOG ("Verbatim Pundits"): the page names the HEAD data commit while it
+renders uncommitted output, G-judge-lean's calibrated path is untested, and a file read can
+count as a web search. A fourth entry records what remains of the confirm fix: a loop render
+can still race the upload, which the confirm now reports instead of passing. Two
+were checked and left as they are: `venue_counts` files a tie under its label, but the leaders
+study shares it, so the gate tool counts venues itself; and per-grade identity counts keep a
+recording that never reached the board, because they describe judge behaviour.
 
 Every lean test carries a warning that 4 people a side is too few for its interval. Blinded
 identity was 100% confident and 100% correct, so the page's "identified" claim holds on the
