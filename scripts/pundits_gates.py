@@ -292,11 +292,20 @@ def judge_lean_gate(grades: list[dict], results: dict, leans: dict, judges: list
     weights = weights_of(results)
     params = {tuple(k.split("|")): v for k, v in
               ((results.get("diagnostics") or {}).get("calibration_params") or {}).items()}
+    # apply_calibration() returns the raw score for a key it does not know, so a key
+    # that stopped matching would compare raw scores in silence. Refuse instead.
+    if not params:
+        raise RuntimeError("results.json carries no calibration_params; G-judge-lean compares calibrated scores")
 
     def cal_overall(g: dict) -> float:
-        return sum(w * A.apply_calibration(g["grade"]["dimensions"][d]["score"],
-                                           (g["judge"], A.served_model(g), "shared", d), params)
-                   for d, w in weights.items())
+        total = 0.0
+        for d, w in weights.items():
+            key = (g["judge"], A.served_model(g), "shared", d)
+            if key not in params:
+                raise RuntimeError(f"calibration_params has no entry {'|'.join(key)}; re-aggregate, or the key "
+                                   "this gate rebuilds no longer matches aggregate.py's")
+            total += w * A.apply_calibration(g["grade"]["dimensions"][d]["score"], key, params)
+        return total
 
     complete = {(t["leader_slug"], t["source_id"]) for t in results.get("transcripts") or []
                 if t.get("mode") == "blinded"}

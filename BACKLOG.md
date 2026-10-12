@@ -791,8 +791,10 @@ they were filed (50aeaac).
   inputs, so the daemon commits and pushes before publishing (strongest, but it
   changes repo-3's routine and needs the operator). Recommend (a). Quota-free.
 
-- **G-judge-lean's calibrated path is untested, and a key miss falls back to raw
-  scores silently.** Filed 2026-10-12, same review. `test_pundits_gates.py` gives
+- **RESOLVED 2026-10-12, same night: the fixture now carries calibration_params, one
+  test runs the rescaled path (-12/+12 where raw gives -6/+6), and a missing key or
+  missing params refuses. G-judge-lean's calibrated path is untested, and a key miss
+  falls back to raw scores silently.** Filed 2026-10-12, same review. `test_pundits_gates.py` gives
   `calibration_params: {}`, so `apply_calibration` returns every raw score. If the
   key `pundits_gates.py` rebuilds (`judge|served_model|shared|dim`) stopped matching
   the one aggregate writes, every judge-lean test would still pass and production

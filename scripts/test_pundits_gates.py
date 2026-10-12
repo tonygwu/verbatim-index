@@ -69,8 +69,29 @@ def grade(slug: str, sid: str, judge: str, mode: str, *, tool_calls=0, queries=(
 HALOS = {"p1": (2.0, 1.0, 5.0), "p2": (2.0, 1.0, 5.0), "p3": (0.0, 1.0, -1.0), "p4": (0.0, 1.0, -1.0)}
 
 
+DIMS = ("d1_steelmanning", "d2_epistemic_rigor", "d3_good_faith")
+MODELS = {"fable": "claude-fable-5-1", "gemini": "gemini-3.8-flash-high"}
+
+
+def cal_params(kind: str) -> dict:
+    """calibration_params as aggregate.py writes them. "raw": no judge rescaled.
+    "fable-x2": Fable rescaled so each point away from 50 counts twice. "missing":
+    Gemini's entries absent. "none": no params at all."""
+    if kind == "none":
+        return {}
+    out = {}
+    for j, m in MODELS.items():
+        if kind == "missing" and j == "gemini":
+            continue
+        for d in DIMS:
+            out[f"{j}|{m}|shared|{d}"] = {"judge_mean": 50.0, "judge_sd": 5.0, "pooled_mean": 50.0,
+                                          "pooled_sd": 10.0, "n": 8, "model": m,
+                                          "rescaled": kind == "fable-x2" and j == "fable"}
+    return out
+
+
 def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None,
-          anchor_cells=(("fable", "blinded"),), regraded=None, lovo=True) -> None:
+          anchor_cells=(("fable", "blinded"),), regraded=None, lovo=True, calibration="raw") -> None:
     """Four people, two recordings each, fable + gemini, both modes; astra scheduled but dropped.
 
     p4's second recording never reaches the board (both its gemini cells failed).
@@ -131,7 +152,7 @@ def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None
                             "people_still_ranked": 0, "people_changing_rank": 0, "rank_correlation": None,
                             "max_abs_shift": None}}}} if lovo else {}),
                         "weights": {"d1_steelmanning": 0.35, "d2_epistemic_rigor": 0.35, "d3_good_faith": 0.3},
-                        "calibration_params": {}}}))
+                        "calibration_params": cal_params(calibration)}}))
 
 
 def holds_slug_and_lean(obj) -> list:
@@ -250,6 +271,25 @@ def main() -> int:
               jl.get("transcripts") == 7, str(jl.get("transcripts")))
         check("with two judges the report says the test is against one other judge",
               "one other judge" in jl.get("limit", ""), jl.get("limit", ""))
+        # FOUND 2026-10-12 by review: every fixture had calibration_params {}, so the
+        # calibrated path never ran, and a key that stopped matching would have fallen
+        # back to raw scores in silence.
+        root11 = tmp / "data11"
+        root11.mkdir()
+        build(root11, calibration="fable-x2")
+        jl11 = G.report(root11, LEANS)["gates"]["G-judge-lean"]["by_judge"]
+        check("calibrated: Fable's 6 raw points on the right count as 12, so its gap is -12 and Gemini's +12",
+              jl11["fable"]["estimate"] == -12.0 and jl11["gemini"]["estimate"] == 12.0, str(jl11))
+        for kind, needle in (("missing", "gemini|"), ("none", "calibration_params")):
+            rootk = tmp / f"data-cal-{kind}"
+            rootk.mkdir()
+            build(rootk, calibration=kind)
+            try:
+                G.report(rootk, LEANS)
+                why = ""
+            except RuntimeError as exc:
+                why = str(exc)
+            check(f"calibration params {kind}: refused, naming what is missing", needle in why, why or "no refusal")
         root5 = tmp / "data5"
         root5.mkdir()
         build(root5, fable_right_bias=0)
