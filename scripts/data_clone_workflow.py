@@ -573,8 +573,27 @@ def publication_dirty(source: Path, site: str) -> bool:
     its source."""
     if site not in SITE_SHELVES:
         raise RuntimeError(f'unknown site {site!r}; known: {sorted(SITE_SHELVES)}')
-    out = git(source, 'status', '--porcelain', '--untracked-files=all', '--', *SITE_SHELVES[site])
-    return bool(out.strip())
+    # Not git(): it strips the output, which eats the leading space of a " M path" entry.
+    p = subprocess.run(['git', '-C', str(source), 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--',
+                        *SITE_SHELVES[site]], capture_output=True, text=True,
+                       env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'})
+    if p.returncode:
+        raise RuntimeError(f'git status in {source}: {p.stderr.strip()}')
+    # Entries are "XY path", NUL-separated; a rename or copy adds its old path as the
+    # next field. Paths under an underscore directory (_provenance, _obsolete, _raw)
+    # are not render inputs: fingerprint() skips them too.
+    fields, paths = p.stdout.split('\0'), []
+    i = 0
+    while i < len(fields):
+        e = fields[i]
+        i += 1
+        if not e:
+            continue
+        paths.append(e[3:])
+        if 'R' in e[:2] or 'C' in e[:2]:
+            paths.append(fields[i])
+            i += 1
+    return any(not any(part.startswith('_') for part in Path(x).parts) for x in paths)
 
 
 def fingerprint(source: Path, site: str, repo: Path | None = None) -> str:

@@ -215,6 +215,16 @@ def main() -> int:
               r.returncode == 0 and f"data revision {rev_p[:12]}" in dirty_text
               and "plus uncommitted changes" in dirty_text, (r.stderr + dirty_text)[-400:])
         check("and revision.json records it", dirty_meta.get("data_uncommitted") is True, str(dirty_meta))
+        # FOUND 2026-10-12 by the second review: a grading cycle's run record under
+        # grades/_provenance changes no rendered byte, and the fingerprint skips it.
+        prov = pundits / "grades/_provenance/abc.json"
+        prov.write_text('{"run": "a later cycle"}')
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                bin_dir=bin_dir)
+        prov_meta = json.loads(rj.read_text()) if rj.exists() else {}
+        git(pundits, "checkout", "--", "grades/_provenance/abc.json")
+        check("a change only under an underscore directory (_provenance) is not an uncommitted input",
+              r.returncode == 0 and prov_meta.get("data_uncommitted") is False, (r.stderr + str(prov_meta))[-300:])
         headers = pub / "site-pundits" / "_headers"
         htext = headers.read_text() if headers.exists() else ""
         check("site-pundits/_headers serves revision.json no-store",
