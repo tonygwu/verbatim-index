@@ -226,6 +226,17 @@ def main() -> int:
     check("a recording with no metadata shows its source id, unlinked", "ada-7" in ada)
     check("without metadata the section is not rendered", 'id="recordings"' not in page)
 
+    print("\n[METHOD CLAIMS]")
+    # FOUND 2026-10-12 reading the pilot page as a visitor: the Method section said a
+    # dimension marked not observed "does not count", which reads as "the rest of the
+    # recording still counts". The code drops that grade, so the recording loses a
+    # judge and leaves the board (asmongold-tv-ks77-g on the pilot). Until the
+    # operator settles plan P5's two rules (docs/PUNDITS-RELEASE-PLAN.md, decision 5),
+    # the page says what the code does.
+    method = cp["method"]
+    check("the method copy says a recording with a dimension marked not observed is left out",
+          "left out of the score" in method and "does not count" not in method, method)
+
     print("\n[UNRANKED]")
     ranked_table = page[page.find('id="board"'):page.find("</table>", page.find('id="board"'))]
     check("an unranked person is not in the ranked table", "Cy Unranked" not in ranked_table)

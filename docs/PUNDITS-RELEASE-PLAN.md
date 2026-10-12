@@ -153,7 +153,10 @@ Dry-run on a copy of the pundits data at `dced184` on 2026-10-12, with no judge 
    unsupported dimension still counts toward the dimensions it supports. "Complete cells" says
    a recording needs every dimension supported. The code follows "Complete cells", and that
    costs one pilot recording today (`asmongold-tv-ks77-g`, BACKLOG). Choose one rule and
-   delete the other sentence from the plan.
+   delete the other sentence from the plan. The page's Method section states the rule the
+   code follows ("that recording is left out of the score", since 2026-10-12); if you choose
+   the other rule, change that sentence in `profiles/pundits.site.json` and its test in
+   `scripts/test_study_site.py` with the code.
 
 6. **A corrections path.** The board scores named people, and neither this page nor the
    leaders page tells a reader, or a subject, how to report an error.
