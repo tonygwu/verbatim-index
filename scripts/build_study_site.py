@@ -232,6 +232,75 @@ def search_sentence(results: dict) -> str:
     return " Measured: " + ", ".join(parts) + "."
 
 
+def _people(n: int, verb: str, verbs: str) -> str:
+    return f"{n} person {verb}" if n == 1 else f"{n} people {verbs}"
+
+
+def sensitivity_section(results: dict) -> str:
+    """Plan P5's three sensitivities, stated from results.json, or nothing.
+
+    aggregate.py writes venue_leave_one_out, archival_excluded and
+    era_covariate into the diagnostics of a contract-v2 study. Each item here
+    reads one of them and prints only what it holds, so an older results.json
+    without them gets no section rather than an invented zero. An era fit that
+    did not run says so on the page, because P5 promises the covariate.
+    """
+    d = results.get("diagnostics") or {}
+    names = {p.get("slug"): p.get("name") or p.get("slug")
+             for p in (results.get("leaders") or []) + (results.get("unranked") or [])}
+    items = []
+    loo = d.get("venue_leave_one_out")
+    if isinstance(loo, dict):
+        floor = loo.get("min_transcripts_to_rank")
+        for venue, e in (loo.get("by_venue") or {}).items():
+            below = len(e.get("people_below_floor") or [])
+            line = (f"Without the {e['recordings_dropped']} {esc(venue)} recordings, "
+                    f"{_people(below, 'falls', 'fall')} below the {floor}-recording floor.")
+            kept = e.get("people_still_ranked")
+            if kept:
+                line += (f" Among the {kept} still ranked, {e['people_changing_rank']} change rank, and the "
+                         f"largest score shift is {num(e.get('max_abs_shift'))} points.")
+            else:
+                line += " Nobody stays ranked."
+            items.append(line)
+        disputed = loo.get("recordings_venue_disputed") or 0
+        if disputed:
+            items.append(f"The {disputed} recording{'s' if disputed != 1 else ''} whose format the judges "
+                         f"disputed stay{'s' if disputed == 1 else ''} in every run.")
+    arch = d.get("archival_excluded")
+    if isinstance(arch, dict) and arch.get("excluded"):
+        who = " and ".join(esc(names.get(s, s)) for s in arch["excluded"])
+        plural = len(arch["excluded"]) != 1
+        if arch.get("computed"):
+            items.append(f"Without {who}, the archival subject{'s' if plural else ''} "
+                         f"({arch['recordings_excluded']} recordings), with calibration refitted on everyone "
+                         f"else: {arch['people_changing_rank']} of the other {arch['people_ranked']} ranked "
+                         f"people change rank, and the largest score shift is {num(arch.get('max_abs_shift'))} "
+                         f"points.")
+        else:
+            items.append(f"The check without {who}, the archival subject{'s' if plural else ''}, did not run "
+                         f"for this build.")
+    era = d.get("era_covariate")
+    if isinstance(era, dict):
+        if era.get("computed"):
+            lo, hi = era["ci95"]
+            line = (f"Upload date: within the same person, a recording uploaded one year later scores "
+                    f"{num(era['slope_per_year'], signed=True)} points (95% interval {num(lo, signed=True)} to "
+                    f"{num(hi, signed=True)}), over {era['recordings_used']} recordings uploaded "
+                    f"{esc(era['first_upload'])} to {esc(era['last_upload'])}.")
+            undated = len(era.get("recordings_without_date") or [])
+            if undated:
+                line += f" {undated} recording{'s have' if undated != 1 else ' has'} no upload date and {'are' if undated != 1 else 'is'} left out."
+            items.append(line)
+        else:
+            items.append("Upload date: not measured for this build.")
+    if not items:
+        return ""
+    return ('<h2 id="sensitivity">Sensitivity</h2>\n<p>These checks change no published score. Each one shows '
+            'how much the board depends on one choice.</p>\n<ul class="sens">'
+            + "".join(f"<li>{x}</li>" for x in items) + "</ul>")
+
+
 def recordings_section(results: dict, recordings: dict) -> str:
     """Every board recording of every ranked person, so the board can be checked.
 
@@ -437,6 +506,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
 <p>{esc(copy["method"])}</p>
 <p>Read <a href="{esc(copy["rubric_url"])}">the rubric the judges apply</a>, and the
 <a href="{esc(copy["code_url"])}">code and tests</a>.</p>
+{sensitivity_section(results)}
 <footer>Built {esc(rundate)} from {esc(grades if grades is not None else "an unknown number of")} judge grades{stamp}.</footer>
 </main>
 </body>

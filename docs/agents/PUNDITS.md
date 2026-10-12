@@ -127,7 +127,9 @@ there. Add new material under the same headings.
   refitted without archival subjects, proved against a real re-run) and `era_covariate` (the
   within-person slope of the blinded score on `yt_upload_date`, in points a year, with a
   person-resampled 95% interval; reported, never applied). `era_covariate` reads the dates
-  from the records under `--transcripts`, and without that flag it says so. Proof:
+  from the records under `--transcripts`, and without that flag it says so. The page states
+  all three in its Sensitivity section (`build_study_site.sensitivity_section`), every number
+  read from `results.json`. Proof: `scripts/test_pundits_sensitivity_page.py`,
   `scripts/test_venue_leave_one_out.py`, `scripts/test_archival_sensitivity.py`,
   `scripts/test_era_covariate.py`.
 
