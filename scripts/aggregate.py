@@ -40,6 +40,7 @@ import math
 import statistics as st
 import sys
 import random
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -797,6 +798,21 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
     }
 
 
+def names_subject(text: str | None, person: dict) -> bool:
+    """Whether `text` names this roster person: the full name, a surname of 4+
+    letters, or a roster handle, case-insensitive, on word boundaries. Used to
+    tell a judge's CORRECT identity guess from a merely confident one."""
+    name = (person.get("name") or "").lower()
+    if not name or not text:
+        return False
+    tokens = [name] + [h.lower() for h in person.get("handles") or []]
+    parts = re.findall(r"[a-z']+", name)
+    if parts and len(parts[-1]) >= 4:
+        tokens.append(parts[-1])
+    low = text.lower()
+    return any(re.search(r"(?<![a-z])" + re.escape(tok) + r"(?![a-z])", low) for tok in tokens)
+
+
 def _blinded_person_rows(grades: list[dict], params: dict) -> dict[str, list[dict]]:
     """Each person's blinded run-0 rows, built as main() builds transcripts_out:
     each judge's calibrated score averaged per recording, and rounded the same way."""
@@ -1533,6 +1549,14 @@ def main() -> int:
     # Plan P5 asks for this whether or not the adjustment is applied. Contract
     # v2 only, so the leaders results.json keeps its bytes.
     if is_v2:
+        # blinding_leakage_rate counts identity_confident, the judge's own claim.
+        # This counts a blinded recording only when a judge was confident AND its
+        # guess names the subject, which is what "identified" means on the page.
+        named = {(g["leader_slug"], g["source_id"]) for g in usable
+                 if g["mode"] == "blinded" and (g.get("run") or 0) == 0 and g["grade"].get("identity_confident")
+                 and names_subject(g["grade"].get("identity_guess"), by_slug.get(g["leader_slug"], {}))}
+        diagnostics["blinding_correct_rate"] = (round(
+            sum(1 for t in all_b if (t["leader_slug"], t["source_id"]) in named) / len(all_b), 3) if all_b else None)
         diagnostics["venue_leave_one_out"] = venue_leave_one_out(transcripts_out, scored, MIN_TRANSCRIPTS_TO_RANK)
         diagnostics["archival_excluded"] = archival_excluded(
             usable, scored, {s for s, p in by_slug.items() if p.get("archival")}, venue_applied=bool(venue_ok))

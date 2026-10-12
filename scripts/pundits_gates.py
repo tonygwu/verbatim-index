@@ -50,7 +50,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from collections import defaultdict
 from itertools import combinations
@@ -58,6 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gates  # noqa: E402
+from aggregate import names_subject  # noqa: E402  (one matcher for the page's claim and this report)
 
 SKIP_PARTS = {"_obsolete", "_raw", "_provenance"}
 DELTA_SEARCH = 5.0      # plan P10, G-search: points of search rate, left minus right
@@ -92,21 +92,6 @@ def roster(data: Path) -> dict[str, dict]:
     raw = json.loads((data / "roster/final.json").read_text())
     people = raw["roster"] if isinstance(raw, dict) else raw
     return {p["slug"]: p for p in people}
-
-
-def name_tokens(person: dict) -> list[str]:
-    """What counts as naming the person: full name, a surname of 4+ letters, a handle."""
-    name = person["name"].lower()
-    toks = [name] + [h.lower() for h in person.get("handles") or []]
-    parts = re.findall(r"[a-z']+", name)
-    if parts and len(parts[-1]) >= 4:
-        toks.append(parts[-1])
-    return toks
-
-
-def names_subject(text: str, person: dict) -> bool:
-    low = (text or "").lower()
-    return any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low) for t in name_tokens(person))
 
 
 def scheduled_cells(data: Path) -> set[tuple[str, str, str, str]]:

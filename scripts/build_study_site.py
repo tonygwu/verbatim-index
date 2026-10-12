@@ -163,10 +163,16 @@ def status_banner(results: dict, copy: dict) -> str:
                      else f", each on {lo} to {hi} recordings.")
     else:
         bits[-1] += "."
-    leak = d.get("blinding_leakage_rate")
-    if isinstance(leak, (int, float)):
+    # The correct rate counts a recording only when a judge named the speaker;
+    # the leakage rate counts a judge's own confidence. Say only what was measured.
+    correct, leak = d.get("blinding_correct_rate"), d.get("blinding_leakage_rate")
+    if isinstance(correct, (int, float)):
         bits.append(f"Blinding removes the name from the transcript and does not make the speaker "
-                    f"unknown: the judges still identified them on {leak * 100:.0f}% of blinded "
+                    f"unknown: a judge still named the speaker correctly on {correct * 100:.0f}% of blinded "
+                    f"recordings, so read the blinded score as name-removed rather than anonymous.")
+    elif isinstance(leak, (int, float)):
+        bits.append(f"Blinding removes the name from the transcript and does not make the speaker "
+                    f"unknown: a judge was confident it knew the speaker on {leak * 100:.0f}% of blinded "
                     f"recordings, so read the blinded score as name-removed rather than anonymous.")
     if d.get("venue_adjustment_applied") is False:
         reasons = d.get("venue_support_reasons") or []

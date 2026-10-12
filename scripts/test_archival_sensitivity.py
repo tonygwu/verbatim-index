@@ -96,6 +96,19 @@ def aggregate(root: Path, profiles: Path, out: str, study: str = "pundits") -> t
     return r, (json.loads((root / out).read_text()) if (root / out).exists() else {})
 
 
+def enclosing_line(src: str, needle: str) -> str:
+    """The statement that opens the block holding the first line with `needle`."""
+    lines = src.splitlines()
+    i = next((k for k, ln in enumerate(lines) if needle in ln), None)
+    if i is None:
+        return ""
+    depth = len(lines[i]) - len(lines[i].lstrip())
+    for ln in reversed(lines[:i]):
+        if ln.strip() and len(ln) - len(ln.lstrip()) < depth:
+            return ln.strip()
+    return ""
+
+
 def main() -> int:
     print("archival-excluded sensitivity")
     tps = load("tps_arch", REPO / "scripts" / "test_profile_scoring.py")
@@ -142,9 +155,8 @@ def main() -> int:
               r3.returncode == 0 and d3.get("computed") is False and "archival" in d3.get("why", ""), str(d3))
 
     print("\n[LEADERS]")
-    src = (REPO / "scripts" / "aggregate.py").read_text()
-    call = src[src.find('diagnostics["archival_excluded"]') - 200:src.find('diagnostics["archival_excluded"]')]
-    check("the key is written only under is_v2", "if is_v2:" in call, call[-200:])
+    opener = enclosing_line((REPO / "scripts" / "aggregate.py").read_text(), 'diagnostics["archival_excluded"]')
+    check("the key is written only under is_v2", opener == "if is_v2:", opener)
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

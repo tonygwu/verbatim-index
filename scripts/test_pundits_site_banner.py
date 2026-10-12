@@ -43,7 +43,7 @@ def check(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"\n        {detail}" if not ok and detail else ""))
 
 
-def fake_results(n_leaders=3, n_unscored=6, leakage=1.0, venue_applied=False, ns=(5, 9, 12)):
+def fake_results(n_leaders=3, n_unscored=6, leakage=1.0, venue_applied=False, ns=(5, 9, 12), correct=None):
     dims = ["d1_steelmanning", "d2_epistemic_rigor", "d3_good_faith"]
     leaders = []
     for i in range(n_leaders):
@@ -57,7 +57,8 @@ def fake_results(n_leaders=3, n_unscored=6, leakage=1.0, venue_applied=False, ns
             "transcripts": [],
             "diagnostics": {"grades_used": 100, "blinding_leakage_rate": leakage,
                             "venue_adjustment_applied": venue_applied,
-                            "min_transcripts_to_rank": 5}}
+                            "min_transcripts_to_rank": 5,
+                            **({} if correct is None else {"blinding_correct_rate": correct})}}
 
 
 def banner(page: str) -> str:
@@ -104,6 +105,15 @@ def main() -> int:
     check("the banner states the measured leakage rate", "100%" in bn, bn)
     half = banner(B.render(fake_results(leakage=0.5), profile, site_copy, rundate="x"))
     check("and it follows the measurement", "50%" in half, half)
+    # FOUND 2026-10-12: blinding_leakage_rate counts identity_confident, a judge's
+    # own claim, yet the banner said the judges "identified" the speaker. When the
+    # correct-identification rate exists the banner states that; otherwise it says
+    # only what was measured, that a judge was confident.
+    check("with only the confident rate, the banner says confident, not identified",
+          "confident" in bn and "identified" not in bn, bn)
+    right = banner(B.render(fake_results(leakage=1.0, correct=0.9), profile, site_copy, rundate="x"))
+    check("with the correct rate, the banner states it and calls it correct",
+          "90%" in right and "correctly" in right and "100%" not in right, right)
 
     print("\n[WITHHELD]")
     check("the banner names the withheld format adjustment", "withheld" in bn.lower(), bn)
