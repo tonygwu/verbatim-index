@@ -27,13 +27,20 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from site_theme import FONT_LINKS, THEME_CSS  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-REQUIRED_COPY = ("study_id", "title", "tagline", "interpretation", "blinding_note", "dimensions", "method",
-                 "status_label", "status_note")
+REQUIRED_COPY = ("study_id", "title", "site_url", "tagline", "interpretation", "blinding_note", "dimensions",
+                 "method", "status_label", "status_note")
+# The tab and bookmark icon, inline so the page needs no second file: the
+# study's initial in the page's ink and surface colours.
+ICON_SVG = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+            "<rect width='32' height='32' rx='6' fill='#15181D'/>"
+            "<text x='16' y='23' font-family='Georgia,serif' font-size='22' text-anchor='middle' "
+            "fill='#FCFCFB'>{initial}</text></svg>")
 _TYPED_PERCENT = re.compile(r"\d+\s*%")
 
 
@@ -55,6 +62,8 @@ def validate_copy(profile: dict, copy: dict) -> None:
     missing = [k for k in REQUIRED_COPY if k not in copy]
     if missing:
         raise RuntimeError(f"site copy is missing {missing}")
+    if not re.fullmatch(r"https://[a-z0-9.-]+/", copy["site_url"]):
+        raise RuntimeError(f"site_url {copy['site_url']!r} must be https://<host>/")
     if copy["study_id"] != profile["study_id"]:
         raise RuntimeError(f"site copy is for study {copy['study_id']!r}, not {profile['study_id']!r}")
     keys = [d["key"] for d in profile["scoring"]["dimensions"]]
@@ -264,6 +273,17 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(copy["title"])}</title>
 <meta name="description" content="{esc(description)}">
+<link rel="canonical" href="{esc(copy["site_url"])}">
+<link rel="icon" href="data:image/svg+xml,{quote(ICON_SVG.format(initial=esc(copy["title"].split()[-1][0])))}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{esc(copy["title"])}">
+<meta property="og:locale" content="en_GB">
+<meta property="og:url" content="{esc(copy["site_url"])}">
+<meta property="og:title" content="{esc(copy["title"])}">
+<meta property="og:description" content="{esc(description)}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{esc(copy["title"])}">
+<meta name="twitter:description" content="{esc(description)}">
 {revision_meta}{FONT_LINKS}
 <style>
 {theme}

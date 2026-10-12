@@ -118,6 +118,21 @@ def main() -> int:
           desc is not None and html.escape(cp["tagline"]) in desc.group(1)
           and "2 of 3 people" in desc.group(1), desc.group(0) if desc else "no description")
 
+    print("\n[SOCIAL]")
+    # A link to the board on Twitter, LinkedIn or Slack showed a bare URL: the page
+    # carried no Open Graph or Twitter tags (FOUND 2026-10-12).
+    url = cp.get("site_url", "")
+    check("the copy names the canonical site URL", url.startswith("https://") and url.endswith("/"), url)
+    check("a canonical link names it", f'<link rel="canonical" href="{url}">' in page)
+    check("og:url names it", f'<meta property="og:url" content="{url}">' in page)
+    check("og:title is the copy title", f'<meta property="og:title" content="{html.escape(cp["title"])}">' in page)
+    check("og:description repeats the derived description",
+          desc is not None and f'<meta property="og:description" content="{desc.group(1)}">' in page)
+    check("a text-only Twitter card, since no image is drawn yet",
+          '<meta name="twitter:card" content="summary">' in page and "og:image" not in page)
+    check("an inline icon, so the tab and bookmarks show one without a file",
+          re.search(r'<link rel="icon" href="data:image/svg\+xml,[^"]+">', page) is not None)
+
     print("\n[NOTES]")
     check("the interpretation note appears", html.escape(cp["interpretation"]) in page)
     check("the blinding note appears", html.escape(cp["blinding_note"]) in page)
