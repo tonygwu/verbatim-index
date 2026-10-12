@@ -790,7 +790,9 @@ they were filed (50aeaac).
   `build_site.py`'s drawer into `build_study_site.py`, plus the quote filter that
   the audit decides.
 
-- **Plan P5's era covariate is not implemented.** Filed 2026-10-12. P5 "Sampling
+- **RESOLVED 2026-10-12, same night: `aggregate.era_covariate()` (`diagnostics.era_covariate`) fits
+  upload date within person; on the pilot, +0.63 points a year, 95% interval -1.78 to 2.63.
+  Plan P5's era covariate is not implemented.** Filed 2026-10-12. P5 "Sampling
   rules": "The board reports era as a covariate, and a sensitivity analysis
   excludes archival subjects." The archival sensitivity exists since 2026-10-12
   (`diagnostics.archival_excluded`; on the pilot it moves no score). Era does not:

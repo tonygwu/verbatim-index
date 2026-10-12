@@ -35,6 +35,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import math
 import statistics as st
@@ -894,6 +895,118 @@ def archival_excluded(usable: list[dict], ranked: list[dict], archival: set[str]
     }
 
 
+def _upload_day(raw) -> datetime.date | None:
+    """A yt_upload_date (YYYYMMDD, a UTC calendar date) as a date, or None if it is not one."""
+    if not isinstance(raw, str) or not re.fullmatch(r"\d{8}", raw):
+        return None
+    try:
+        return datetime.date(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
+    except ValueError:
+        return None
+
+
+def upload_years(raw: str) -> float:
+    """A valid yt_upload_date in years (days / 365.25). Raises on anything else."""
+    day = _upload_day(raw)
+    if day is None:
+        raise ValueError(f"not a YYYYMMDD calendar date: {raw!r}")
+    return day.toordinal() / 365.25
+
+
+def load_upload_dates(transcripts_dir: Path, keys) -> dict[tuple[str, str], str | None]:
+    """Each (slug, source_id)'s raw yt_upload_date from <dir>/<slug>/<source_id>.json.
+
+    A missing file maps to None, which era_covariate() lists by name. A file
+    that names a different recording, or does not parse, raises: that is a
+    corrupt checkout, not a missing date.
+    """
+    out: dict[tuple[str, str], str | None] = {}
+    for slug, sid in keys:
+        f = Path(transcripts_dir) / slug / f"{sid}.json"
+        if not f.exists():
+            out[(slug, sid)] = None
+            continue
+        rec = json.loads(f.read_text())
+        if rec.get("source_id") != sid:
+            raise RuntimeError(f"{f} holds source_id {rec.get('source_id')!r}, not {sid!r}")
+        out[(slug, sid)] = rec.get("yt_upload_date")
+    return out
+
+
+def era_covariate(transcripts: list[dict], ranked: list[dict], dates: dict,
+                  n: int = BOOTSTRAP_N, seed: int = BOOTSTRAP_SEED) -> dict:
+    """Plan P5, "Sampling rules": "The board reports era as a covariate."
+
+    Era is the recording's upload date (yt_upload_date, a UTC calendar date, in
+    years). The covariate is the pooled within-person slope of each board
+    recording's blinded score on that date, in points per year: every person's
+    own centred dates and scores, summed, so a person recorded mostly in 2022
+    and another mostly in 2025 cannot pass a difference between the two people
+    off as a change over time. venue_effects() holds the person fixed for the
+    same reason.
+
+    The score is the per-recording value board_overall() averages (the
+    venue-adjusted one when the adjustment is applied). The interval resamples
+    PEOPLE with replacement, because recordings of one person are not
+    independent, and is a seeded 95% percentile interval like bootstrap_ci().
+    Reported, never applied. Contract-v2 studies only.
+
+    A board recording with no valid date is left out and listed by name. A
+    person whose recordings all share one date carries no within-person slope
+    and is listed too.
+    """
+    on_board = {p["slug"] for p in ranked}
+    blinded = [t for t in transcripts if t.get("mode") == "blinded" and t["leader_slug"] in on_board]
+    undated, by_person = [], defaultdict(list)
+    for t in blinded:
+        raw = dates.get((t["leader_slug"], t["source_id"]))
+        if _upload_day(raw) is None:
+            undated.append(f"{t['leader_slug']}/{t['source_id']}")
+            continue
+        key = "cal_overall_venue_adj" if "cal_overall_venue_adj" in t else "cal_overall"
+        by_person[t["leader_slug"]].append((upload_years(raw), t[key], raw))
+    days = sorted(raw for pts in by_person.values() for _, _, raw in pts)
+    by_year = Counter(raw[:4] for raw in days)
+    sums, flat = {}, []
+    for slug, pts in sorted(by_person.items()):
+        mx = sum(x for x, _, _ in pts) / len(pts)
+        my = sum(y for _, y, _ in pts) / len(pts)
+        sxx = sum((x - mx) ** 2 for x, _, _ in pts)
+        if sxx <= 0:
+            flat.append(slug)
+            continue
+        sums[slug] = (sum((x - mx) * (y - my) for x, y, _ in pts), sxx)
+    base = {"definition": "upload date (yt_upload_date, UTC) in years; slope of the blinded per-recording score "
+                          "within each person, pooled",
+            "applied": False,
+            "recordings_without_date": sorted(undated),
+            "people_without_spread": flat,
+            "recordings_by_year": dict(sorted(by_year.items())),
+            "first_upload": f"{days[0][:4]}-{days[0][4:6]}-{days[0][6:]}" if days else None,
+            "last_upload": f"{days[-1][:4]}-{days[-1][4:6]}-{days[-1][6:]}" if days else None}
+    if len(sums) < 2:
+        return {"computed": False, **base,
+                "why": f"{len(sums)} of {len(on_board)} ranked people have recordings on more than one date; "
+                       "a within-person slope needs at least two people"}
+    people = sorted(sums)
+    slope = sum(sums[s][0] for s in people) / sum(sums[s][1] for s in people)
+    rng = random.Random(seed)
+    k = len(people)
+    draws = []
+    for _ in range(n):
+        pick = [people[rng.randrange(k)] for _ in range(k)]
+        draws.append(sum(sums[s][0] for s in pick) / sum(sums[s][1] for s in pick))
+    draws.sort()
+    lo, hi = draws[int(0.025 * n)], draws[min(int(0.975 * n), n - 1)]
+    # "+ 0.0" turns a rounded -0.0 into 0.0, so a flat slope never prints as "-0.0".
+    return {"computed": True, **base,
+            "slope_per_year": round(slope, 2) + 0.0,
+            "ci95": [round(lo, 2) + 0.0, round(hi, 2) + 0.0],
+            "resamples": n, "seed": seed, "resample_unit": "person",
+            "recordings_used": sum(len(by_person[s]) for s in people),
+            "people_used": k}
+
+
 def shadow_report(shadow: list[dict], published: list[dict], corpus_n: int | None) -> dict:
     """What a shadow judge would contribute, without letting it contribute.
 
@@ -1576,6 +1689,12 @@ def main() -> int:
         diagnostics["venue_leave_one_out"] = venue_leave_one_out(transcripts_out, scored, MIN_TRANSCRIPTS_TO_RANK)
         diagnostics["archival_excluded"] = archival_excluded(
             usable, scored, {s for s, p in by_slug.items() if p.get("archival")}, venue_applied=bool(venue_ok))
+        # The upload dates live in the transcript records, which only --transcripts names.
+        board_keys = sorted({(t["leader_slug"], t["source_id"]) for t in transcripts_out if t["mode"] == "blinded"})
+        diagnostics["era_covariate"] = (
+            era_covariate(transcripts_out, scored, load_upload_dates(Path(args.transcripts), board_keys))
+            if args.transcripts else
+            {"computed": False, "why": "aggregate.py ran without --transcripts, so it has no upload dates"})
 
     # Audit payload: everything a human needs to agree or disagree with a score.
     audit: dict[str, list] = defaultdict(list)

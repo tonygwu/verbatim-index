@@ -120,9 +120,13 @@ there. Add new material under the same headings.
   `scripts/test_pundits_gate_doc.py`.
 
 - P5 sensitivities, in `results.json` diagnostics for a contract-v2 study only:
-  `venue_leave_one_out` (each venue dropped in turn) and `archival_excluded` (calibration
-  refitted without archival subjects, proved against a real re-run). Proof:
-  `scripts/test_venue_leave_one_out.py`, `scripts/test_archival_sensitivity.py`.
+  `venue_leave_one_out` (each venue dropped in turn), `archival_excluded` (calibration
+  refitted without archival subjects, proved against a real re-run) and `era_covariate` (the
+  within-person slope of the blinded score on `yt_upload_date`, in points a year, with a
+  person-resampled 95% interval; reported, never applied). `era_covariate` reads the dates
+  from the records under `--transcripts`, and without that flag it says so. Proof:
+  `scripts/test_venue_leave_one_out.py`, `scripts/test_archival_sensitivity.py`,
+  `scripts/test_era_covariate.py`.
 
 - Phone layout: after any change to the page's CSS or columns, run
   `.venv/bin/python scripts/check_pundits_phone_layout.py --page site-pundits/index.html` (needs
