@@ -797,6 +797,78 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
     }
 
 
+def _blinded_person_rows(grades: list[dict], params: dict) -> dict[str, list[dict]]:
+    """Each person's blinded run-0 rows, built as main() builds transcripts_out:
+    each judge's calibrated score averaged per recording, and rounded the same way."""
+    per: dict[tuple, dict] = defaultdict(lambda: defaultdict(list))
+    for g in grades:
+        if g["mode"] != "blinded" or (g.get("run") or 0) != 0:
+            continue
+        e = per[(g["leader_slug"], g["source_id"])]
+        for dim in DIMS:
+            e[dim].append(apply_calibration(g["grade"]["dimensions"][dim]["score"],
+                                            (g["judge"], served_model(g), "shared", dim), params))
+        e["coverage"].append(g["grade"].get("coverage") or 0.0)
+    out: dict[str, list[dict]] = defaultdict(list)
+    for (slug, _), e in per.items():
+        out[slug].append({"coverage": round(st.mean(e["coverage"]), 3),
+                          **{f"cal_{d}": round(st.mean(e[d]), 2) for d in DIMS}})
+    return out
+
+
+def archival_excluded(usable: list[dict], ranked: list[dict], archival: set[str], venue_applied: bool) -> dict:
+    """Plan P5, "Sampling rules": "a sensitivity analysis excludes archival subjects."
+
+    Removing a person is not removing a row: calibration is fitted on every
+    person's blinded run-0 grades, so it moves everyone else. This refits
+    calibration without the archival subjects and rescores every other ranked
+    person with board_overall(). It first rebuilds the full board the same way
+    and refuses unless every published score reproduces exactly. Contract-v2
+    studies only, and not while the venue adjustment is applied, whose refit it
+    does not implement.
+    """
+    present = sorted({g["leader_slug"] for g in usable} & archival)
+    if not present:
+        return {"computed": False, "why": "no archival subject has grades in this corpus"}
+    if venue_applied:
+        return {"computed": False, "excluded": present,
+                "why": "the venue adjustment is applied; refitting it without archival subjects is not implemented"}
+    full_rows = _blinded_person_rows(usable, calibrate(usable, shared=True))
+    full = {p["slug"]: p["blinded"]["overall"] for p in ranked}
+    for slug, published in full.items():
+        again = board_overall(full_rows[slug]) if full_rows.get(slug) else None
+        if again is None or abs(again - published) > 1e-9:
+            raise RuntimeError(f"archival_excluded: rebuilding {slug} gives {again}, the board says {published}")
+    kept = [g for g in usable if g["leader_slug"] not in archival]
+    rows = _blinded_person_rows(kept, calibrate(kept, shared=True))
+    order = [p["slug"] for p in sorted(ranked, key=lambda p: p["rank"]) if p["slug"] not in archival]
+    new = {s: board_overall(rows[s]) for s in order}
+    after = sorted(order, key=lambda s: (-new[s], order.index(s)))
+    m = len(order)
+    rho = None
+    if m >= 3:
+        rho = round(1 - 6 * sum((order.index(s) - after.index(s)) ** 2 for s in order) / (m * (m * m - 1)), 3)
+    shifts = [(round(abs(new[s] - full[s]), 1), s) for s in order]
+    top = max(shifts, key=lambda x: x[0]) if shifts else None
+    return {
+        "computed": True,
+        "excluded": present,
+        "recordings_excluded": len({(g["leader_slug"], g["source_id"]) for g in usable
+                                    if g["leader_slug"] in archival and g["mode"] == "blinded"}),
+        "calibration_refit": True,
+        "people_ranked": m,
+        "people_changing_rank": sum(1 for s in order if order.index(s) != after.index(s)),
+        "rank_correlation": rho,
+        "max_abs_shift": top[0] if top else None,
+        "max_shift_slug": top[1] if top else None,
+        "mean_abs_shift": round(st.mean([x[0] for x in shifts]), 2) if shifts else None,
+        "by_person": {s: {"full": full[s], "without_archival": new[s]} for s in order},
+        "note": ("Archival subjects' grades removed, calibration refitted on the rest, every other ranked person "
+                 "rescored with the board's arithmetic. Shifts are blinded overall points; rank_correlation is "
+                 "Spearman's, None under three people."),
+    }
+
+
 def shadow_report(shadow: list[dict], published: list[dict], corpus_n: int | None) -> dict:
     """What a shadow judge would contribute, without letting it contribute.
 
@@ -1462,6 +1534,8 @@ def main() -> int:
     # v2 only, so the leaders results.json keeps its bytes.
     if is_v2:
         diagnostics["venue_leave_one_out"] = venue_leave_one_out(transcripts_out, scored, MIN_TRANSCRIPTS_TO_RANK)
+        diagnostics["archival_excluded"] = archival_excluded(
+            usable, scored, {s for s, p in by_slug.items() if p.get("archival")}, venue_applied=bool(venue_ok))
 
     # Audit payload: everything a human needs to agree or disagree with a score.
     audit: dict[str, list] = defaultdict(list)
