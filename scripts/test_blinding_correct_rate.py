@@ -95,6 +95,21 @@ def main() -> int:
         shapiro = {"name": "Ben Shapiro", "handles": []}
         check("a surname followed by other capitalised words still counts (a search query)",
               fn("Shapiro Daily Wire", shapiro, roster) and fn("Weinstein Bret", bret, roster))
+        # FOUND 2026-10-12 by the third review: an organisation or show name before the
+        # surname ("Fox News Kelly") was read as another person's first name, and with
+        # the after-word rule gone "Kirk Cameron" counted for Charlie Kirk. Words alone
+        # cannot tell these apart, so the rule now excludes only a CLEAR other person
+        # and counts the rest: over-counting is the cautious direction for a claim about
+        # how far blinding fails.
+        kirk = {"name": "Charlie Kirk", "handles": []}
+        kelly = {"name": "Megyn Kelly", "handles": []}
+        check("an organisation or show name before the surname still counts",
+              fn("Turning Point USA Kirk", kirk, roster) and fn("Daily Wire Walsh", walsh, roster)
+              and fn("Fox News Kelly", kelly, roster))
+        check("a lone given name before the surname is still another person",
+              not fn("Eric Weinstein", bret, roster) and not fn("Jesse Kelly", kelly, roster))
+        check("a capitalised word after the surname is ambiguous and counts, a stated over-count",
+              fn("Kirk Cameron", kirk, roster))
         check("a hedge or a possessive before the surname still counts",
               fn("Likely Walsh", walsh, roster) and fn("Daily Wire's Walsh", walsh, roster)
               and fn("Possibly Weinstein, the biologist", bret, roster))

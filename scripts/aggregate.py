@@ -831,16 +831,21 @@ def names_subject(text: str | None, person: dict, roster: list[dict] | None = No
 
     The full name or a roster handle counts anywhere, case-insensitive, on word
     boundaries. A bare surname of 4+ letters (a hyphenated surname is one word)
-    counts too, except in two cases:
-      - it sits inside another ROSTER person's full name or handle in the same
-        text ("Hasan Piker" does not name Mehdi Hasan), which needs `roster`;
-      - a capitalised word right before it is another person's first name
-        ("Eric Weinstein" does not name Bret Weinstein). That word is not a
-        first name when it is a title ("Dr."), a hedge ("Likely"), a possessive
-        ("Wire's"), or a shorter or longer form of the subject's own first name
-        ("Matthew Walsh", "B. Weinstein").
-    Capitalised words AFTER the surname never block it: "Shapiro Daily Wire" is a
-    search for Ben Shapiro.
+    counts too, unless the text CLEARLY names someone else:
+      - the surname sits inside another ROSTER person's full name or handle in
+        the same text ("Hasan Piker" does not name Mehdi Hasan), which needs
+        `roster`;
+      - a lone given name stands right before it ("Eric Weinstein" does not name
+        Bret Weinstein): a capitalised word that is not a title ("Dr."), a hedge
+        ("Likely"), a possessive ("Wire's") or a form of the subject's own first
+        name ("Matthew", "B."), and is not itself preceded by another capitalised
+        word other than a title or hedge, as an organisation or show name is
+        ("Fox News Kelly", "Daily Wire Walsh").
+    Anything less clear counts, including a capitalised word AFTER the surname
+    ("Shapiro Daily Wire" is a search for Ben Shapiro, and "Kirk Cameron" also
+    counts for Charlie Kirk). Words alone cannot separate those two, and
+    over-counting is the cautious direction for a claim about how far blinding
+    fails, so that over-count is stated rather than hidden.
     """
     name = (person.get("name") or "").lower()
     if not name or not text:
@@ -867,7 +872,13 @@ def names_subject(text: str | None, person: dict, roster: list[dict] | None = No
             b = w.lower().strip(".")
             if (w[0].isupper() and b and not b.endswith("'s") and b not in _NAME_TITLES and b not in _NAME_HEDGES
                     and not (first and (b.startswith(first) or first.startswith(b)))):
-                continue
+                # A capitalised, non-title, non-hedge word before THAT makes it part of an
+                # organisation or show name ("Fox News Kelly"), not a given name.
+                prior = re.search(r"([A-Za-z'.-]+)\s+$", text[:before.start()])
+                pw = prior.group(1) if prior else ""
+                pb = pw.lower().strip(".")
+                if not (pw and pw[0].isupper() and pb not in _NAME_TITLES and pb not in _NAME_HEDGES):
+                    continue
         return True
     return False
 
