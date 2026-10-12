@@ -244,7 +244,22 @@ failing-then-passing test:
   would have compared raw scores in silence;
 - the footer named the HEAD data commit while the page rendered uncommitted output; it now
   says "plus uncommitted changes" when that is so.
-One is filed in BACKLOG ("Verbatim Pundits"): a file read can count as a web search. A fourth entry records what remains of the confirm fix: a loop render
+One is filed in BACKLOG ("Verbatim Pundits"): a file read can count as a web search.
+
+**A second review, of the fixes themselves**, found 11 more defects, none severe, and all
+were fixed with failing-then-passing tests. The four that mattered most:
+- the stricter surname rule had started rejecting real namings and search queries ("Shapiro
+  Daily Wire", "Likely Walsh"); a roster collision is now caught by name spans instead;
+- G-drift passed a cell on 1 of its 6 scheduled anchors;
+- a disclosure test could not fail;
+- the staleness checks, in the gate report and in the deploy, counted grade files, and
+  `grade.py --force` keeps the count while changing the bytes. Both now compare
+  `grade_files_sha256`, a hash of the bytes the aggregate read.
+The era interval now resamples people and then recordings, as plan P5 prescribes: on the
+pilot it widens to -2.77 to 3.49 points a year.
+
+Running the P9 command as written then showed that `schedule.py` silently dropped anchors
+it could not place; it now refuses (see "The P9 command"). A fourth entry records what remains of the confirm fix: a loop render
 can still race the upload, which the confirm now reports instead of passing. Two
 were checked and left as they are: `venue_counts` files a tie under its label, but the leaders
 study shares it, so the gate tool counts venues itself; and per-grade identity counts keep a
