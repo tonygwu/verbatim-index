@@ -26,6 +26,10 @@ there. Add new material under the same headings.
   cannot vanish by omission, and no figure may be typed into `profiles/pundits.site.json`.
   Guarded by `scripts/test_pundits_site_banner.py`.
 
+- Release plan: `docs/PUNDITS-RELEASE-PLAN.md` says what still stands between the pilot board
+  and a full public release, phase by phase, with owners and the operator's open decisions.
+  Read it before you pick up pundits work, so you take a step on its critical path.
+
 - Pundits study plan: `docs/PUNDITS-PLAN.md` is the approved plan (revision 2, with the
   P3 decisions folded in). It is the contract every clone works from: phases P0-P11,
   their PASS/FAIL/INCONCLUSIVE gates, and the call-budget manifest. Edit the committed
