@@ -122,6 +122,11 @@ td.person span{display:block; color:var(--muted); font-size:.85rem}
 td.person span.mix{color:var(--faint); font-size:.8rem}
 .ci{color:var(--faint); font-size:.85rem}
 footer{color:var(--faint); font-size:.85rem; margin-top:40px}
+details{background:var(--surface); border:1px solid var(--rule); border-radius:8px; padding:8px 14px; margin:6px 0}
+summary{cursor:pointer}
+ul.recs{margin:8px 0 4px; padding-left:18px; color:var(--ink-2); font-size:.9rem}
+ul.recs li{margin:4px 0}
+ul.recs a{color:var(--ink)}
 /* A phone must see rank, person and the blinded score without scrolling the
    table (scripts/check_pundits_phone_layout.py): the person cell wraps, and each
    interval drops below its score. */
@@ -198,6 +203,42 @@ def search_sentence(results: dict) -> str:
     return " Measured: " + ", ".join(parts) + "."
 
 
+def recordings_section(results: dict, recordings: dict) -> str:
+    """Every board recording of every ranked person, so the board can be checked.
+
+    `recordings` maps (slug, source_id) to the recording's public metadata, read
+    from the open transcripts: url, yt_title, yt_channel, yt_upload_date. Only an
+    https URL becomes a link. A recording with no metadata shows its source id
+    rather than disappearing, so the count always matches the board.
+    """
+    rows: dict[str, list[dict]] = {}
+    for t in results.get("transcripts") or []:
+        if t.get("mode") == "blinded":
+            rows.setdefault(t.get("leader_slug"), []).append(t)
+    out = ['<h2 id="recordings">Recordings</h2>',
+           '<p>Every recording behind a ranked score, with its format and its blinded score after calibration. '
+           'Follow a link to hear what the judges read.</p>']
+    for p in sorted(results.get("leaders", []), key=lambda x: x.get("rank") or 10 ** 9):
+        mine = rows.get(p.get("slug")) or []
+        items = []
+        for t in mine:
+            m = recordings.get((p.get("slug"), t.get("source_id"))) or {}
+            title = m.get("yt_title") or m.get("declared_title") or t.get("source_id")
+            url = m.get("url") or ""
+            head = (f'<a href="{esc(url)}" rel="noopener">{esc(title)}</a>' if url.startswith("https://")
+                    else esc(title))
+            d = str(m.get("yt_upload_date") or "")
+            date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if re.fullmatch(r"\d{8}", d) else ""
+            bits = [x for x in (esc(m.get("yt_channel") or ""), date, esc(t.get("venue_type") or ""),
+                                num(t.get("cal_overall"))) if x]
+            items.append((d or "0", t.get("source_id") or "", f"<li>{head} &middot; " + " &middot; ".join(bits) + "</li>"))
+        items.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        out.append(f'<details><summary><b>{esc(p.get("name", p.get("slug", "")))}</b> &mdash; '
+                   f'{len(items)} recording{"s" if len(items) != 1 else ""}</summary><ul class="recs">'
+                   + "".join(x[2] for x in items) + "</ul></details>")
+    return "\n".join(out)
+
+
 def venue_mix(results: dict) -> dict[str, str]:
     """Each person's formats, as "5 conversation, 2 reaction, 1 debate".
 
@@ -226,7 +267,8 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def render(results: dict, profile: dict, copy: dict, rundate: str,
-           data_revision: str | None = None, data_date: str | None = None) -> str:
+           data_revision: str | None = None, data_date: str | None = None,
+           recordings: dict | None = None) -> str:
     validate_copy(profile, copy)
     if data_revision is not None and not _SHA.fullmatch(data_revision):
         raise RuntimeError(f"data revision {data_revision!r} is not a full 40-hex SHA")
@@ -336,6 +378,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
 </tbody>
 </table></div>
 {unranked_html}
+{"" if recordings is None else recordings_section(results, recordings)}
 <h2>What the scores mean</h2>
 <p class="note">{esc(copy["blinding_note"])}{search_sentence(results)}</p>
 {explainers}
@@ -354,11 +397,23 @@ def main_from_args(args) -> int:
     from atomicio import write_atomic
     SP.guard(args.study, args.results, args.audit, args.roster, args.calibration, args.sources)
     profile = SP.load(args.study)
+    recordings = None
+    if getattr(args, "transcripts_meta", None):
+        SP.guard(args.study, args.transcripts_meta)
+        meta_dir = Path(args.transcripts_meta)
+        if not meta_dir.is_dir():
+            raise SystemExit(f"REFUSING: --transcripts-meta {meta_dir} is not a directory")
+        # Public fields only: the transcript text never reaches the page.
+        keep = ("url", "yt_title", "declared_title", "yt_channel", "yt_upload_date")
+        recordings = {}
+        for f in sorted(meta_dir.glob("*/*.json")):
+            rec = json.loads(f.read_text())
+            recordings[(f.parent.name, f.stem)] = {k: rec[k] for k in keep if k in rec}
     try:
         copy = load_copy(profile)
         page = render(json.loads(Path(args.results).read_text()), profile, copy,
                       rundate=datetime.now(timezone.utc).strftime("%d %B %Y"),
-                      data_revision=args.data_revision, data_date=args.data_date)
+                      data_revision=args.data_revision, data_date=args.data_date, recordings=recordings)
     except RuntimeError as exc:
         raise SystemExit(f"REFUSING: {exc}") from None
     write_atomic(args.out, page)

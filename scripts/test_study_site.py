@@ -173,6 +173,33 @@ def main() -> int:
     check("a person with no recorded venues shows no invented mix",
           "conversation" not in row_bo and "reaction" not in row_bo, row_bo[:300])
 
+    print("\n[RECORDINGS]")
+    # The page says the method can be checked in the open, yet listed no recording
+    # (FOUND 2026-10-12; the leaders page links every graded transcript). Each
+    # ranked person gets a list of their board recordings: title linked to the
+    # source, channel, upload date, venue and the recording's blinded score.
+    meta = {("ada", "ada-0"): {"url": "https://www.youtube.com/watch?v=abc123",
+                               "yt_title": "Ada <b>debates</b> Bo", "yt_channel": "Some Show",
+                               "yt_upload_date": "20250507"},
+            ("ada", "ada-1"): {"url": "javascript:alert(1)", "yt_title": "Bad link", "yt_channel": "X",
+                               "yt_upload_date": "20240101"}}
+    res = results()
+    for t in res["transcripts"]:
+        t["cal_overall"] = 60.0 + int(t["source_id"].split("-")[1])
+    rp = B.render(res, prof, cp, rundate="x", recordings=meta)
+    sec = rp[rp.find('id="recordings"'):]
+    check("a recordings section follows the board", 'id="recordings"' in rp and rp.find('id="recordings"') > rp.find('id="board"'))
+    ada = sec[sec.find("Ada &lt;script"):]
+    ada = ada[:ada.find("</details>")]
+    check("each ranked person lists every board recording once", ada.count("<li>") == 8, ada[:500])
+    check("a title links to its source, escaped",
+          '<a href="https://www.youtube.com/watch?v=abc123" rel="noopener">Ada &lt;b&gt;debates&lt;/b&gt; Bo</a>' in ada, ada[:600])
+    check("with channel, upload date, venue and the recording's blinded score",
+          "Some Show" in ada and "2025-05-07" in ada and "conversation" in ada and "60.0" in ada, ada[:600])
+    check("a link that is not https is not rendered as a link", "javascript:" not in rp and "Bad link" in ada)
+    check("a recording with no metadata shows its source id, unlinked", "ada-7" in ada)
+    check("without metadata the section is not rendered", 'id="recordings"' not in page)
+
     print("\n[UNRANKED]")
     ranked_table = page[page.find('id="board"'):page.find("</table>", page.find('id="board"'))]
     check("an unranked person is not in the ranked table", "Cy Unranked" not in ranked_table)

@@ -48,7 +48,7 @@ DATA_DATE="$($PY -c 'import datetime, sys; print(datetime.datetime.fromtimestamp
 $PY scripts/build_site.py --results "${PRODUCTION_DATA}/results.json" --audit "${PRODUCTION_DATA}/results_audit.json" \
     --roster "${PRODUCTION_DATA}/roster/final.json" --calibration "${PRODUCTION_DATA}/logs/calibration.json" \
     --sources "${PRODUCTION_DATA}/sources/discovered.json" --out "${SITE_DIR}/index.html" \
-    --data-revision "$DATA_REVISION" --data-date "$DATA_DATE"
+    --data-revision "$DATA_REVISION" --data-date "$DATA_DATE" --transcripts-meta "${PRODUCTION_DATA}/transcripts_open"
 
 $PY - "$PRODUCTION_DATA" <<'EOF'
 import json, pathlib, sys

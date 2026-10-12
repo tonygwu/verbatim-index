@@ -1319,6 +1319,9 @@ def main() -> int:
                     help="full SHA of the data revision rendered; study pages only")
     ap.add_argument("--data-date", default=None,
                     help="UTC date of that revision's commit, YYYY-MM-DD; study pages only")
+    ap.add_argument("--transcripts-meta", default=None,
+                    help="the open transcripts directory, read for each recording's public metadata "
+                         "(url, title, channel, upload date); study pages only")
     args = ap.parse_args()
     # This template is the leaders page and nothing else. Any other study is
     # rendered from its profile by build_study_site.py, so a leaders byte cannot
@@ -1333,9 +1336,9 @@ def main() -> int:
     # quota_router import inside grade.fable_accounts is the precedent. Adding
     # membership.py to that typed tuple would be the stale-list defect this repo
     # has paid for twice.
-    if args.data_revision or args.data_date:
-        raise SystemExit("REFUSING: --data-revision and --data-date are for study pages; "
-                         "the leaders page does not render them")
+    if args.data_revision or args.data_date or args.transcripts_meta:
+        raise SystemExit("REFUSING: --data-revision, --data-date and --transcripts-meta are for study "
+                         "pages; the leaders page does not render them")
     import membership as MB
     membership_board = MB.for_study(args.study, args.membership)
 

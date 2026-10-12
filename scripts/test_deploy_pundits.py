@@ -71,7 +71,13 @@ def data_checkout(path: Path, origin: str, study: str | None, grade_files: int, 
                             "n_transcripts": 6, "confidence": "high",
                             "blinded": {"overall": 55.0, "ci_low": 50.0, "ci_high": 60.0, **{d: 55.0 for d in dims}},
                             "open": {}, "halo": {}}],
-               "unranked": [], "diagnostics": {"grades_used": grade_files, "grade_files_read": read_n}}
+               "unranked": [], "diagnostics": {"grades_used": grade_files, "grade_files_read": read_n},
+               "transcripts": [{"leader_slug": "p1", "source_id": "s0", "mode": "blinded", "venue_type": "solo",
+                                "cal_overall": 55.0}]}
+    # The open transcript's public metadata, which the page's recordings list reads.
+    (path / "transcripts_open/p1").mkdir(parents=True)
+    (path / "transcripts_open/p1/s0.json").write_text(json.dumps(
+        {"url": "https://www.youtube.com/watch?v=fixture1", "yt_title": "Fixture episode", "text": "SECRET TEXT"}))
     (path / "results.json").write_text(json.dumps(results))
     (path / "results_audit.json").write_text("{}")
     (path / "roster").mkdir()
@@ -187,6 +193,10 @@ def main() -> int:
         htext = headers.read_text() if headers.exists() else ""
         check("site-pundits/_headers serves revision.json no-store",
               "/revision.json" in htext and "Cache-Control: no-store" in htext, htext)
+
+        check("the page lists the recording, linked to its source",
+              '<a href="https://www.youtube.com/watch?v=fixture1" rel="noopener">Fixture episode</a>' in text, text[-800:])
+        check("and never the transcript text", "SECRET TEXT" not in text)
 
         print("\n[LIVE]")
         live.unlink()
