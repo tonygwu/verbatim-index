@@ -4,6 +4,7 @@
  "site_url": "https://pundits.tonygwu.com/",
  "rubric_url": "https://github.com/tonygwu/verbatim-index/blob/main/.agents/skills/pundit-transcript-grader/RUBRIC.md",
  "code_url": "https://github.com/tonygwu/verbatim-index",
+ "corrections_url": null,
  "tagline": "How intellectually honest political commentators are in what they actually say on the record.",
  "interpretation": "Scores describe argumentative behaviour observed in sampled recordings. They are not fact-checks, and they are not judgements of a person's sincerity or character.",
  "status_label": "Pilot board",

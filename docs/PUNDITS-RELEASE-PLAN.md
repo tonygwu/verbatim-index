@@ -211,6 +211,10 @@ flag below exists in the scripts as of 2026-10-12.
    - (c) No path. Cost: a subject who disputes a score has no route but the press.
    - **Recommendation: (a).** It needs no new infrastructure, and the record of a correction
      is itself evidence that the method can be checked in the open.
+   - Built and off: `corrections_url` in `profiles/pundits.site.json` is `null` (no link).
+     For (a) set it to `https://github.com/tonygwu/verbatim-index/issues/new`; for (b) to a
+     `mailto:` address. The page then shows "Report an error in a score or a recording"
+     after Method. Anything else is refused at render.
 
 ## What the 2026-10-12 overnight run did (repo-2)
 

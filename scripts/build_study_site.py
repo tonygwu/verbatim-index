@@ -35,7 +35,7 @@ from site_theme import FONT_LINKS, THEME_CSS  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 REQUIRED_COPY = ("study_id", "title", "site_url", "rubric_url", "code_url", "tagline", "interpretation",
-                 "blinding_note", "dimensions", "method", "status_label", "status_note")
+                 "blinding_note", "dimensions", "method", "status_label", "status_note", "corrections_url")
 # The tab and bookmark icon, inline so the page needs no second file: the
 # study's initial in the page's ink and surface colours.
 ICON_SVG = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
@@ -68,6 +68,10 @@ def validate_copy(profile: dict, copy: dict) -> None:
     for key in ("rubric_url", "code_url"):
         if not copy[key].startswith("https://"):
             raise RuntimeError(f"{key} {copy[key]!r} must be an https URL")
+    # Release plan decision 6: null is "no corrections path yet", stated, not omitted.
+    cu = copy["corrections_url"]
+    if cu is not None and not (isinstance(cu, str) and re.match(r"(https://|mailto:)\S+$", cu)):
+        raise RuntimeError(f"corrections_url {cu!r} must be null, an https URL or a mailto: address")
     if copy["study_id"] != profile["study_id"]:
         raise RuntimeError(f"site copy is for study {copy['study_id']!r}, not {profile['study_id']!r}")
     keys = [d["key"] for d in profile["scoring"]["dimensions"]]
@@ -556,6 +560,8 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
 <p>{esc(copy["method"])}</p>
 <p>Read <a href="{esc(copy["rubric_url"])}">the rubric the judges apply</a>, and the
 <a href="{esc(copy["code_url"])}">code and tests</a>.</p>
+{"" if copy["corrections_url"] is None else
+ f'<p><a href="{esc(copy["corrections_url"])}">Report an error</a> in a score or a recording.</p>'}
 {sensitivity_section(results)}
 <footer>Built {esc(rundate)} from {esc(grades if grades is not None else "an unknown number of")} judge grades{stamp}.</footer>
 </main>

@@ -241,6 +241,27 @@ def main() -> int:
     check("and that a person's score weights each recording by how much of it could be scored",
           "weighted by how much of it the judges could score" in method, method)
 
+    print("\n[CORRECTIONS]")
+    # Release plan decision 6: the board scores named people and gave no way to report
+    # an error. corrections_url is REQUIRED in the copy, so the choice is explicit:
+    # null (no path yet) renders nothing; an https or mailto URL renders a link.
+    check("the copy states its corrections choice explicitly", "corrections_url" in cp, str(sorted(cp)))
+    none = dict(cp, corrections_url=None)
+    check("null: no corrections link", "Report an error" not in B.render(results(), prof, none, rundate="x"))
+    for url in ("https://github.com/tonygwu/verbatim-index/issues/new", "mailto:errors@example.org"):
+        pg = B.render(results(), prof, dict(cp, corrections_url=url), rundate="x")
+        check(f"a {url.split(':')[0]} URL renders the link after Method",
+              f'<a href="{html.escape(url)}">Report an error</a>' in pg
+              and pg.find("Report an error") > pg.find("<h2>Method</h2>"), pg[pg.find("<h2>Method"):][:400])
+    for bad, label in (({k: v for k, v in cp.items() if k != "corrections_url"}, "a missing key"),
+                       (dict(cp, corrections_url="javascript:alert(1)"), "a javascript: URL")):
+        try:
+            B.render(results(), prof, bad, rundate="x")
+            refused = ""
+        except RuntimeError as exc:
+            refused = str(exc)
+        check(f"{label} is refused", "corrections_url" in refused, refused or "rendered")
+
     print("\n[UNRANKED]")
     ranked_table = page[page.find('id="board"'):page.find("</table>", page.find('id="board"'))]
     check("an unranked person is not in the ranked table", "Cy Unranked" not in ranked_table)
