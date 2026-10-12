@@ -16,7 +16,12 @@ there. Add new material under the same headings.
   `site-pundits/index.html`. Deploy with
   `bash scripts/deploy_pundits.sh --production-data data-pundits --data-revision "$(git -C data-pundits rev-parse HEAD)"`,
   and `--dry-run` first. A bare `npx wrangler deploy` reads `wrangler.toml` and publishes the
-  LEADERS board instead, never this one. Right after a trigger deploy the new hostname can
+  LEADERS board instead, never this one.
+  Since 2026-10-12 the page and `site-pundits/revision.json` carry the data revision. The
+  deploy refuses when the live `revision.json` names a revision this checkout does not descend
+  from, and after publishing it reads the live revision back and fails unless it equals
+  `--data-revision`. The page live on 2026-10-12 predates `revision.json`, so the NEXT deploy
+  adds `--first-revision-deploy`, once. Proof: `scripts/test_deploy_pundits.py`. Right after a trigger deploy the new hostname can
   return Cloudflare error 1104 for a minute; it clears on its own, so re-check before
   debugging it.
   The board is a PILOT and says so on the page. `status_banner()` in

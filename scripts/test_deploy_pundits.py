@@ -13,6 +13,14 @@ arguments and exits 93, so nothing is ever published by this test.
   TARGET       a non-dry run reaches only the tripwire, and names wrangler.pundits.toml
   LEADERS      the leaders deploy.sh still refuses the pundits checkout
   CONFIG       wrangler.pundits.toml names its own Worker, directory and domain
+  REVISION     the page and site-pundits/revision.json carry the data revision,
+               and revision.json is served no-store
+  LIVE         a live page from a revision we do not descend from is refused, and
+               a live page with no revision.json needs --first-revision-deploy
+  CONFIRM      after a publish the live revision is read back and must equal ours
+
+The live revision is read through VI_LIVE_REVISION_URL, a file:// URL here, so
+no check in this file touches the network.
 
   .venv/bin/python scripts/test_deploy_pundits.py
 """
@@ -24,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -121,14 +130,33 @@ def main() -> int:
         leaders = tmp / "leaders-data"
         rev_l = data_checkout(leaders, "verbatim-index-data", None, 1, 1)
         pundits = tmp / "pundits-data"
-        rev_p = data_checkout(pundits, "verbatim-pundits-data", "pundits", 2, 2)
+        rev_old = data_checkout(pundits, "verbatim-pundits-data", "pundits", 2, 2)
+        # A second commit, so the fixture has an older revision a live page can carry.
+        (pundits / "README.md").write_text("fixture\n")
+        git(pundits, "add", "README.md")
+        git(pundits, "commit", "-q", "-m", "second")
+        rev_p = git(pundits, "rev-parse", "HEAD")
         stale = tmp / "pundits-stale"
         pub = public_clone(tmp, leaders, pundits)
         bin_dir = tmp / "bin"
         bin_dir.mkdir()
         record = tmp / "npx-args.txt"
-        (bin_dir / "npx").write_text(f'#!/bin/sh\necho "$@" > "{record}"\necho DEPLOY-TRIPWIRE >&2\nexit 93\n')
+        live = tmp / "live-revision.json"
+        # NPX_MODE picks the stub: the tripwire by default; "publish" plays a
+        # deploy that worked (the live revision becomes ours); "noop" one that
+        # exited 0 and changed nothing.
+        (bin_dir / "npx").write_text(
+            f'#!/bin/sh\necho "$@" > "{record}"\n'
+            f'case "$NPX_MODE" in\n'
+            f'  publish) cp site-pundits/revision.json "{live}"; exit 0 ;;\n'
+            f'  noop) exit 0 ;;\n'
+            f'esac\necho DEPLOY-TRIPWIRE >&2\nexit 93\n')
         (bin_dir / "npx").chmod(0o755)
+
+        os.environ["VI_LIVE_REVISION_URL"] = live.as_uri()
+        os.environ["LIVE_CONFIRM_ATTEMPTS"], os.environ["LIVE_CONFIRM_WAIT"] = "1", "0"
+        os.environ.pop("NPX_MODE", None)
+        live.write_text(json.dumps({"data_revision": rev_old}))
 
         print("\n[DRY-RUN]")
         r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
@@ -141,6 +169,46 @@ def main() -> int:
         check("the staleness count ignores _obsolete, _provenance and _raw", "covers all 2 grade files" in r.stdout,
               r.stdout[-300:])
         check("the leaders page was not written", not (pub / "site" / "index.html").exists())
+
+        print("\n[REVISION]")
+        text = page.read_text() if page.exists() else ""
+        check("the page carries the full data revision in a meta tag",
+              f'<meta name="verbatim:data-revision" content="{rev_p}">' in text)
+        check("and its short form in the footer", f"data revision {rev_p[:12]}" in text)
+        rj = pub / "site-pundits" / "revision.json"
+        meta = json.loads(rj.read_text()) if rj.exists() else {}
+        check("site-pundits/revision.json names the data revision", meta.get("data_revision") == rev_p, str(meta))
+        committed = datetime.fromtimestamp(int(git(pundits, "show", "-s", "--format=%ct", rev_p)), timezone.utc)
+        check("with the data date: the revision's commit time as a UTC date, never a clock",
+              meta.get("data_date") == committed.date().isoformat(), f"{meta} vs {committed.date()}")
+        check("and the 64-hex content fingerprint of what was rendered",
+              isinstance(meta.get("content_sha256"), str) and len(meta["content_sha256"]) == 64, str(meta))
+        headers = pub / "site-pundits" / "_headers"
+        htext = headers.read_text() if headers.exists() else ""
+        check("site-pundits/_headers serves revision.json no-store",
+              "/revision.json" in htext and "Cache-Control: no-store" in htext, htext)
+
+        print("\n[LIVE]")
+        live.unlink()
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                bin_dir=bin_dir)
+        check("a live page with no revision.json is refused",
+              r.returncode != 0 and "--first-revision-deploy" in r.stderr, r.stderr[-300:])
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                "--first-revision-deploy", bin_dir=bin_dir)
+        check("--first-revision-deploy lets that one through", r.returncode == 0, r.stderr[-300:])
+        # A newer revision that our checkout does not contain: made, then reset away.
+        (pundits / "NEWER.md").write_text("newer\n")
+        git(pundits, "add", "NEWER.md")
+        git(pundits, "commit", "-q", "-m", "newer")
+        newer = git(pundits, "rev-parse", "HEAD")
+        git(pundits, "reset", "-q", "--hard", rev_p)
+        live.write_text(json.dumps({"data_revision": newer}))
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                bin_dir=bin_dir)
+        check("a live page built from a revision we do not descend from is refused",
+              r.returncode != 0 and "not an ancestor" in r.stderr, r.stderr[-300:])
+        live.write_text(json.dumps({"data_revision": rev_old}))
 
         print("\n[SOURCE]")
         r = run(pub, "deploy_pundits.sh", "--production-data", leaders, "--data-revision", rev_l, "--dry-run",
@@ -168,6 +236,19 @@ def main() -> int:
         check("a non-dry run reaches only the tripwire", r.returncode != 0 and "DEPLOY-TRIPWIRE" in r.stderr,
               f"rc={r.returncode} {r.stderr[-200:]}")
         check("and names wrangler.pundits.toml", args == "wrangler deploy -c wrangler.pundits.toml", args)
+
+        print("\n[CONFIRM]")
+        os.environ["NPX_MODE"] = "publish"
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, bin_dir=bin_dir)
+        check("a publish whose live revision reads back as ours succeeds and says so",
+              r.returncode == 0 and f"live page confirmed at data revision {rev_p[:12]}" in r.stdout,
+              f"rc={r.returncode} {r.stdout[-300:]} {r.stderr[-300:]}")
+        live.write_text(json.dumps({"data_revision": rev_old}))
+        os.environ["NPX_MODE"] = "noop"
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, bin_dir=bin_dir)
+        check("a publish whose live page still serves the old revision fails loudly",
+              r.returncode != 0 and rev_old[:12] in r.stderr, f"rc={r.returncode} {r.stderr[-300:]}")
+        os.environ.pop("NPX_MODE", None)
 
         print("\n[LEADERS]")
         r = run(pub, "deploy.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",

@@ -8,6 +8,13 @@
 #       --data-revision "$(git -C data-pundits rev-parse HEAD)" --dry-run
 #
 # Publication is P11 and needs the operator's explicit approval.
+#
+# Provenance (2026-10-12): the page and site-pundits/revision.json name the data
+# revision. Before publishing, the live revision.json must be an ancestor of
+# ours, so an older render never replaces a newer page; the first deploy after
+# this check existed passes --first-revision-deploy once, because the live page
+# had no revision.json. After publishing, the live revision is read back and
+# must equal ours. LIVE_CONFIRM_ATTEMPTS and LIVE_CONFIRM_WAIT are test seams.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,10 +40,15 @@ PUBLICATION_BEFORE="$(publication_fingerprint)"
 
 [ -f "${PRODUCTION_DATA}/results.json" ] || { echo "no ${PRODUCTION_DATA}/results.json; nothing to publish" >&2; exit 1; }
 
-# The same invocation grade_loop.sh uses for this study.
+# The page's date is the data revision's commit time, in UTC, never a clock.
+DATA_DATE="$($PY -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).date())' \
+  "$(git -C "$PRODUCTION_DATA" show -s --format=%ct "$DATA_REVISION")")" || { echo "REFUSING: cannot read the data revision's date" >&2; exit 1; }
+
+# The same invocation grade_loop.sh uses for this study, plus the provenance stamp.
 $PY scripts/build_site.py --results "${PRODUCTION_DATA}/results.json" --audit "${PRODUCTION_DATA}/results_audit.json" \
     --roster "${PRODUCTION_DATA}/roster/final.json" --calibration "${PRODUCTION_DATA}/logs/calibration.json" \
-    --sources "${PRODUCTION_DATA}/sources/discovered.json" --out "${SITE_DIR}/index.html"
+    --sources "${PRODUCTION_DATA}/sources/discovered.json" --out "${SITE_DIR}/index.html" \
+    --data-revision "$DATA_REVISION" --data-date "$DATA_DATE"
 
 $PY - "$PRODUCTION_DATA" <<'EOF'
 import json, pathlib, sys
@@ -67,8 +79,33 @@ EOF
 
 check_publication_unchanged
 
+# The page's own provenance, served no-store so the next deploy can refuse to
+# replace a newer page with an older one. Owner mode renders the daemon's
+# uncommitted output, so the content fingerprint is recorded beside the commit.
+PUBLIC_HEAD="$(git rev-parse --verify -q HEAD || true)"
+[ -n "$PUBLIC_HEAD" ] || echo "public revision: this public tree has no commit; revision.json records null"
+$PY - "${SITE_DIR}" "$DATA_REVISION" "$DATA_DATE" "$PUBLICATION_BEFORE" "$PUBLIC_HEAD" <<'EOF'
+import json, pathlib, sys
+site, data_revision, data_date, content, public = sys.argv[1:6]
+out = pathlib.Path(site)
+(out / "revision.json").write_text(json.dumps(
+    {"data_revision": data_revision, "data_date": data_date, "content_sha256": content,
+     "public_revision": public or None}, indent=1, sort_keys=True) + "\n")
+(out / "_headers").write_text(
+    "# Written by scripts/deploy_pundits.sh. Cloudflare reads this file and does not serve it.\n"
+    "/revision.json\n  Cache-Control: no-store\n")
+EOF
+FIRST=()
+[ "$FIRST_REVISION" -eq 1 ] && FIRST=(--first-revision-deploy)
+$PY scripts/data_clone_workflow.py live-revision --site pundits --production-data "$PRODUCTION_DATA" \
+    --data-revision "$DATA_REVISION" ${FIRST[@]+"${FIRST[@]}"}
+echo "the live page is not newer than data revision ${DATA_REVISION:0:12}"
+
 if [ "$DRY" -eq 1 ]; then
   echo "--dry-run: rendered ${SITE_DIR}/index.html, published nothing"
   exit 0
 fi
 npx wrangler deploy -c wrangler.pundits.toml
+# P11 verification: the live page must now carry this data revision.
+$PY scripts/data_clone_workflow.py live-revision --site pundits --confirm --production-data "$PRODUCTION_DATA" \
+    --data-revision "$DATA_REVISION" --attempts "${LIVE_CONFIRM_ATTEMPTS:-12}" --wait-seconds "${LIVE_CONFIRM_WAIT:-10}"

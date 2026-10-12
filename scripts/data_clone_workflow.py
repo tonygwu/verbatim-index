@@ -121,7 +121,12 @@ def publication_source(repo: Path, source: Path | None, revision: str | None,
 ORIGIN_SITES = ('predictions',)
 # What the page reads plus what its index counts: all must be committed.
 ORIGIN_CLEAN_PATHS = {'predictions': ['predictions', 'roster/final.json', 'transcripts_open', 'transcripts_web']}
-LIVE_REVISION_URL = 'https://verbatim-predictions.tonygwu.com/revision.json'
+# Every site that publishes a revision.json, and where its live copy is read.
+# pundits is an owner-mode site, but the check is the same: never replace a
+# newer page, and after a publish read the revision back.
+LIVE_REVISION_URLS = {'predictions': 'https://verbatim-predictions.tonygwu.com/revision.json',
+                      'pundits': 'https://pundits.tonygwu.com/revision.json'}
+LIVE_REVISION_URL = LIVE_REVISION_URLS['predictions']
 DEPLOY_UA = 'verbatim-index-deploy/1.0 (+https://verbatim-index.tonygwu.com)'
 
 
@@ -177,18 +182,30 @@ def origin_unmoved(repo: Path, source: Path, data_revision: str, public_revision
         raise RuntimeError(f'public origin/main moved to {public_main[:12]} during rendering; pull and render again')
 
 
-def live_revision_error(source: Path, revision: str, first: bool) -> str | None:
+def live_revision_url(site: str) -> str:
+    """VI_LIVE_REVISION_URL is a TEST SEAM only."""
+    if site not in LIVE_REVISION_URLS:
+        raise RuntimeError(f'{site} publishes no revision.json; known: {sorted(LIVE_REVISION_URLS)}')
+    return os.environ.get('VI_LIVE_REVISION_URL', LIVE_REVISION_URLS[site])
+
+
+def read_live_revision(url: str):
+    """The live page's data_revision, as served. Raises on any failure to read."""
+    import urllib.request
+    # A named agent: since 2026-09-29 the site's bot filter answers 403 to
+    # urllib's default "Python-urllib/3.x", which refused every deploy.
+    req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'User-Agent': DEPLOY_UA})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read())['data_revision']
+
+
+def live_revision_error(source: Path, revision: str, first: bool, site: str = 'predictions') -> str | None:
     """None when the live page's data revision is an ancestor of ours. wrangler
     publishes last-writer-wins, so this is what stops an older render replacing a
-    newer page. VI_LIVE_REVISION_URL is a TEST SEAM only."""
-    import urllib.request
-    url = os.environ.get('VI_LIVE_REVISION_URL', LIVE_REVISION_URL)
+    newer page."""
+    url = live_revision_url(site)
     try:
-        # A named agent: since 2026-09-29 the site's bot filter answers 403 to
-        # urllib's default "Python-urllib/3.x", which refused every deploy.
-        req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'User-Agent': DEPLOY_UA})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            live = json.loads(resp.read())['data_revision']
+        live = read_live_revision(url)
     except Exception as exc:  # noqa: BLE001 - any failure to read is a refusal, reported whole
         if first:
             return None
@@ -204,6 +221,34 @@ def live_revision_error(source: Path, revision: str, first: bool) -> str | None:
         return (f'the live page was built from {live[:12]}, which is not an ancestor of {revision[:12]}; '
                 f'publishing would replace a newer page')
     return f'the live revision {live[:12]} is not in this checkout history; fetch, then retry'
+
+
+def live_revision_confirm_error(revision: str, site: str, attempts: int, wait_seconds: float) -> str | None:
+    """None once the live page reads back as `revision`. Run AFTER a publish.
+
+    A fresh deploy can serve the old page, or a Cloudflare 1104, for a minute,
+    so the read is retried `attempts` times, `wait_seconds` apart. Every read is
+    reported in the error, so a page that never moved is told apart from one
+    that could not be read.
+    """
+    import time
+    if attempts < 1:
+        raise RuntimeError('attempts must be at least 1')
+    url = live_revision_url(site)
+    seen = []
+    for i in range(attempts):
+        if i:
+            time.sleep(wait_seconds)
+        try:
+            live = read_live_revision(url)
+        except Exception as exc:  # noqa: BLE001 - reported, then read again
+            seen.append(f'unreadable ({exc})')
+            continue
+        if live == revision:
+            return None
+        seen.append(str(live)[:12])
+    return (f'after the publish the live page at {url} does not serve data revision {revision[:12]}; '
+            f'{attempts} read(s): {", ".join(seen)}')
 
 
 def tree_hashes(root: Path) -> dict[str, str]:
@@ -965,6 +1010,11 @@ def main() -> int:
     lv.add_argument('--production-data', type=Path, required=True)
     lv.add_argument('--data-revision', required=True)
     lv.add_argument('--first-revision-deploy', action='store_true')
+    lv.add_argument('--site', choices=sorted(LIVE_REVISION_URLS), default='predictions')
+    lv.add_argument('--confirm', action='store_true',
+                    help='after a publish: require the live revision to EQUAL --data-revision')
+    lv.add_argument('--attempts', type=int, default=12)
+    lv.add_argument('--wait-seconds', type=float, default=10.0)
     args = ap.parse_args()
     try:
         if args.command == 'setup':
@@ -979,8 +1029,14 @@ def main() -> int:
                 raise RuntimeError(why)
         elif args.command == 'origin-unmoved':
             origin_unmoved(REPO, args.production_data.resolve(), args.data_revision, args.public_revision)
+        elif args.command == 'live-revision' and args.confirm:
+            why = live_revision_confirm_error(args.data_revision, args.site, args.attempts, args.wait_seconds)
+            if why:
+                raise RuntimeError(why)
+            print(f'live page confirmed at data revision {args.data_revision[:12]}')
         elif args.command == 'live-revision':
-            why = live_revision_error(args.production_data.resolve(), args.data_revision, args.first_revision_deploy)
+            why = live_revision_error(args.production_data.resolve(), args.data_revision, args.first_revision_deploy,
+                                      args.site)
             if why:
                 raise RuntimeError(why)
         elif args.origin:

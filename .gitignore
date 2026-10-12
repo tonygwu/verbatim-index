@@ -26,6 +26,8 @@ site-predictions/revision.json
 # The pundits study's private data link, and its site build artifact.
 /data-pundits
 site-pundits/index.html
+site-pundits/revision.json
+site-pundits/_headers
 
 # Build artifacts: each leader's evidence and each person's prediction records,
 # written beside the pages by build_site.py and build_predictions_site.py and

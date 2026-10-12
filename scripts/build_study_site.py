@@ -182,8 +182,17 @@ def venue_mix(results: dict) -> dict[str, str]:
     return out
 
 
-def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
+_SHA = re.compile(r"[0-9a-f]{40}")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def render(results: dict, profile: dict, copy: dict, rundate: str,
+           data_revision: str | None = None, data_date: str | None = None) -> str:
     validate_copy(profile, copy)
+    if data_revision is not None and not _SHA.fullmatch(data_revision):
+        raise RuntimeError(f"data revision {data_revision!r} is not a full 40-hex SHA")
+    if data_date is not None and not _DATE.fullmatch(data_date):
+        raise RuntimeError(f"data date {data_date!r} is not YYYY-MM-DD")
     by_key = {d["key"]: i + 1 for i, d in enumerate(profile["scoring"]["dimensions"])}
     dims = sorted(profile["scoring"]["dimensions"], key=lambda d: -d["weight"])
 
@@ -243,6 +252,11 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
     # cannot go stale the way a typed sentence would.
     description = (f'{copy["tagline"]} {copy["status_label"]}: '
                    f'{len(results.get("leaders") or [])} of {roster_size(results)} people ranked.')
+    revision_meta = (f'<meta name="verbatim:data-revision" content="{data_revision}">\n'
+                     if data_revision else "")
+    stamp = ""
+    if data_revision:
+        stamp = f", data revision {data_revision[:12]}" + (f" of {esc(data_date)}" if data_date else "")
     return f"""<!doctype html>
 <html lang="en-GB">
 <head>
@@ -250,7 +264,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(copy["title"])}</title>
 <meta name="description" content="{esc(description)}">
-{FONT_LINKS}
+{revision_meta}{FONT_LINKS}
 <style>
 {theme}
 {CSS}
@@ -277,7 +291,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
 {explainers}
 <h2>Method</h2>
 <p>{esc(copy["method"])}</p>
-<footer>Built {esc(rundate)} from {esc(grades if grades is not None else "an unknown number of")} judge grades.</footer>
+<footer>Built {esc(rundate)} from {esc(grades if grades is not None else "an unknown number of")} judge grades{stamp}.</footer>
 </main>
 </body>
 </html>
@@ -293,7 +307,8 @@ def main_from_args(args) -> int:
     try:
         copy = load_copy(profile)
         page = render(json.loads(Path(args.results).read_text()), profile, copy,
-                      rundate=datetime.now(timezone.utc).strftime("%d %B %Y"))
+                      rundate=datetime.now(timezone.utc).strftime("%d %B %Y"),
+                      data_revision=args.data_revision, data_date=args.data_date)
     except RuntimeError as exc:
         raise SystemExit(f"REFUSING: {exc}") from None
     write_atomic(args.out, page)

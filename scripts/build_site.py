@@ -1312,6 +1312,13 @@ def main() -> int:
                     help="Path to membership.json, which declares which boards each slug "
                          "publishes on. Defaults to the copy beside this repository's "
                          "scripts/. Leaders study only; other studies ignore it.")
+    # The study page's provenance (P11: "confirm that its rendered data revision
+    # equals --data-revision"). deploy_pundits.sh passes both; the leaders page
+    # renders neither, so passing them for leaders is refused, not ignored.
+    ap.add_argument("--data-revision", default=None,
+                    help="full SHA of the data revision rendered; study pages only")
+    ap.add_argument("--data-date", default=None,
+                    help="UTC date of that revision's commit, YYYY-MM-DD; study pages only")
     args = ap.parse_args()
     # This template is the leaders page and nothing else. Any other study is
     # rendered from its profile by build_study_site.py, so a leaders byte cannot
@@ -1326,6 +1333,9 @@ def main() -> int:
     # quota_router import inside grade.fable_accounts is the precedent. Adding
     # membership.py to that typed tuple would be the stale-list defect this repo
     # has paid for twice.
+    if args.data_revision or args.data_date:
+        raise SystemExit("REFUSING: --data-revision and --data-date are for study pages; "
+                         "the leaders page does not render them")
     import membership as MB
     membership_board = MB.for_study(args.study, args.membership)
 
