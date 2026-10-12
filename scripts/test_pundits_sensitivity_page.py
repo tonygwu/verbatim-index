@@ -130,7 +130,14 @@ def main() -> int:
     # would have reached the HTML unescaped.
     for label, mutate in (("a count that is not an integer",
                            lambda d: d["venue_leave_one_out"]["by_venue"]["debate"].update(recordings_dropped="<b>4</b>")),
-                          ("a missing rank floor", lambda d: d["venue_leave_one_out"].pop("min_transcripts_to_rank"))):
+                          ("a missing rank floor", lambda d: d["venue_leave_one_out"].pop("min_transcripts_to_rank")),
+                          # FOUND 2026-10-12 by the third review: these still defaulted quietly.
+                          ("a missing people_below_floor",
+                           lambda d: d["venue_leave_one_out"]["by_venue"]["debate"].pop("people_below_floor")),
+                          ("a missing largest shift while people stay ranked",
+                           lambda d: d["venue_leave_one_out"]["by_venue"]["debate"].pop("max_abs_shift")),
+                          ("a missing disputed count",
+                           lambda d: d["venue_leave_one_out"].pop("recordings_venue_disputed"))):
         bad = tss.results()
         bad["diagnostics"].update(_copy.deepcopy(SENS))
         mutate(bad["diagnostics"])

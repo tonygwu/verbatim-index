@@ -148,7 +148,7 @@ def card_counts(results: dict) -> dict[str, int]:
     """The three counts the social card draws. build_og_card.py draws them and
     og_card_drift() re-reads them, so the card and its check cannot disagree."""
     d = results.get("diagnostics") or {}
-    if "transcripts" not in results:
+    if not isinstance(results.get("transcripts"), list):
         raise RuntimeError("results.json has no transcripts; the card's recordings cannot be counted")
     ranked = {p.get("slug") for p in results.get("leaders") or [] if p.get("status") == "scored"}
     # The board's recordings, as the page's recordings list counts them: blinded rows
@@ -167,6 +167,8 @@ def og_card_drift(results: dict, meta: dict) -> str | None:
     except KeyError as exc:
         # A warning, never a block: say exactly what is missing.
         return f"site-pundits/og.png cannot be checked: results.json lacks diagnostics {exc}"
+    except RuntimeError as exc:
+        return f"site-pundits/og.png cannot be checked: {exc}"
     drawn = (meta or {}).get("counts") or {}
     moved = [f"{k}: card says {drawn.get(k)}, board has {v}" for k, v in now.items() if drawn.get(k) != v]
     if not moved:
@@ -291,17 +293,21 @@ def sensitivity_section(results: dict) -> str:
         floor = _count(loo.get("min_transcripts_to_rank"), "venue_leave_one_out.min_transcripts_to_rank")
         for venue, e in (loo.get("by_venue") or {}).items():
             what = f"venue_leave_one_out.by_venue[{venue!r}]"
-            below = len(e.get("people_below_floor") or [])
+            if not isinstance(e.get("people_below_floor"), list):
+                raise RuntimeError(f"{what} holds no people_below_floor list")
+            below = len(e["people_below_floor"])
             line = (f"Without the {_count(e.get('recordings_dropped'), what)} {esc(venue)} recordings, "
                     f"{_people(below, 'falls', 'fall')} below the {floor}-recording floor.")
             kept = _count(e.get("people_still_ranked"), what)
             if kept:
+                if not isinstance(e.get("max_abs_shift"), (int, float)):
+                    raise RuntimeError(f"{what} ranks {kept} people but holds no max_abs_shift")
                 line += (f" Among the {kept} still ranked, {_count(e.get('people_changing_rank'), what)} change "
-                         f"rank, and the largest score shift is {num(e.get('max_abs_shift'))} points.")
+                         f"rank, and the largest score shift is {num(e['max_abs_shift'])} points.")
             else:
                 line += " Nobody stays ranked."
             items.append(line)
-        disputed = _count(loo.get("recordings_venue_disputed", 0), "venue_leave_one_out.recordings_venue_disputed")
+        disputed = _count(loo.get("recordings_venue_disputed"), "venue_leave_one_out.recordings_venue_disputed")
         if disputed:
             items.append(f"The {disputed} recording{'s' if disputed != 1 else ''} whose format the judges "
                          f"disputed stay{'s' if disputed == 1 else ''} in every run.")

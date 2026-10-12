@@ -74,6 +74,23 @@ def main() -> int:
         why = str(exc)
     check("a results.json with no transcripts is refused, not drawn as 0 recordings", "transcripts" in why,
           why or "no refusal")
+    nul = T.results()
+    nul["transcripts"] = None
+    nul["diagnostics"]["judge_models"] = {"fable": {"m": 1}}
+    try:
+        B.card_counts(nul)
+        why = ""
+    except RuntimeError as exc:
+        why = str(exc)
+    check("and so is transcripts: null", "transcripts" in why, why or "no refusal")
+    # FOUND 2026-10-12 by the third review: og_card_drift caught only KeyError, so
+    # the new refusal crashed the build where the drift check promises a warning.
+    try:
+        warned = B.og_card_drift(gone, {"counts": {"people": 2, "recordings": 8, "judges": 1}})
+    except Exception as exc:  # noqa: BLE001 - the crash is the failure under test
+        warned = f"RAISED {exc!r}"
+    check("the drift check turns that refusal into a warning, never a crash",
+          isinstance(warned, str) and not warned.startswith("RAISED") and "transcripts" in warned, str(warned))
     check("build_og_card knows a pundits site writing site-pundits/og.png",
           "pundits" in O.SITES and O.SITES["pundits"]["out"] == REPO / "site-pundits" / "og.png")
     check("the card's eyebrow carries the board's status label",
