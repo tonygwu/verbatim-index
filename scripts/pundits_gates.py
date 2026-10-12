@@ -226,7 +226,9 @@ def coverage_gate(data: Path, grades: list[dict], results: dict, leans: dict, ju
         by_cell[f"{c[2]}|{c[3]}"][1] += 1
     recordings = sorted({(c[0], c[1]) for c in cells})
     on_board = {(t["leader_slug"], t["source_id"]) for t in results.get("transcripts") or [] if t.get("mode") == "blinded"}
-    venue = {(t["leader_slug"], t["source_id"]): t.get("venue_type") for t in results.get("transcripts") or []}
+    # The blinded row's venue, as the board's venue_counts count it; the open row can resolve differently.
+    venue = {(t["leader_slug"], t["source_id"]): t.get("venue_type") for t in results.get("transcripts") or []
+             if t.get("mode") == "blinded"}
     per_person: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     per_venue: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for r in recordings:
@@ -259,7 +261,9 @@ def coverage_gate(data: Path, grades: list[dict], results: dict, leans: dict, ju
             "cells_by_judge_mode": {k: {"scheduled": u, "lost": e} for k, (e, u) in sorted(by_cell.items())},
             "excluded_judges": dict(sorted(excluded.items())),
             "rule": "a scheduled run-0 recording is lost when it has no blinded row in results.json; a cell is "
-                    "lost when no usable run-0 grade exists for it"}
+                    "lost when no usable run-0 grade exists for it. A recording can be lost with every cell graded: "
+                    "aggregate.py drops it for an unsupported dimension or an incomplete panel "
+                    "(results.json partial_panel_detail names which)"}
 
 
 def combine(verdicts: list[str]) -> str:

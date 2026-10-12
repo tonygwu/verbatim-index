@@ -104,8 +104,9 @@ def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None
                     p.write_text(json.dumps(g))
             if not (slug == "p4" and i == 1):
                 for mode in ("blinded", "open"):
-                    transcripts.append({"leader_slug": slug, "source_id": sid, "mode": mode,
-                                        "venue_type": "conversation"})
+                    # The open row can resolve a different venue; the board counts the blinded one.
+                    venue = "debate" if (slug, i, mode) == ("p1", 0, "open") else "conversation"
+                    transcripts.append({"leader_slug": slug, "source_id": sid, "mode": mode, "venue_type": venue})
     if anchor_drift is not None:
         # p1-r0 is a drift anchor: re-graded as run 1 in a later block by Fable, blinded.
         sched.append({"block": 4, "judge": "fable", "mode": "blinded", "run": 1, "slug": "p1", "source_id": "p1-r0"})
@@ -210,6 +211,9 @@ def main() -> int:
         check("cells lost by judge and mode: gemini blinded 1 of 8",
               cells.get("gemini|blinded", {}).get("lost") == 1 and cells.get("gemini|blinded", {}).get("scheduled") == 8,
               str(cells))
+        check("venue comes from the blinded row, as the board counts it",
+              c.get("by_venue", {}).get("conversation", {}).get("scheduled") == 7 and "debate" not in c.get("by_venue", {}),
+              str(c.get("by_venue")))
         check("the dropped judge's cells are excluded, not lost",
               c.get("excluded_judges") == {"astra": 16} and "astra|blinded" not in cells, str(c.get("excluded_judges")))
         check("25 points of loss on two people a side is INCONCLUSIVE", c.get("verdict") == "INCONCLUSIVE", str(c))
