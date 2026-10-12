@@ -159,9 +159,11 @@ def card_counts(results: dict) -> dict[str, int]:
             "judges": len(d["judge_models"])}
 
 
-def og_card_drift(results: dict, meta: dict) -> str | None:
+def og_card_drift(results: dict, meta: dict, status_label: str | None = None) -> str | None:
     """A warning naming each count the committed card draws differently from the
-    board, or None. The card is an image in git, so nothing else would notice."""
+    board, or None. The card is an image in git, so nothing else would notice.
+    With `status_label` (the page's), the card's recorded label must match too:
+    the card says "Pilot board", and a relabelled page must not keep that card."""
     try:
         now = card_counts(results)
     except KeyError as exc:
@@ -171,6 +173,8 @@ def og_card_drift(results: dict, meta: dict) -> str | None:
         return f"site-pundits/og.png cannot be checked: {exc}"
     drawn = (meta or {}).get("counts") or {}
     moved = [f"{k}: card says {drawn.get(k)}, board has {v}" for k, v in now.items() if drawn.get(k) != v]
+    if status_label is not None and (meta or {}).get("status_label") != status_label:
+        moved.append(f"status label: card says {(meta or {}).get('status_label')!r}, page says {status_label!r}")
     if not moved:
         return None
     return ("site-pundits/og.png is stale (" + "; ".join(moved) + "); re-run "
@@ -583,7 +587,8 @@ def main_from_args(args) -> int:
     if not card.is_file():
         print(f"WARNING: {card.relative_to(REPO)} is missing; social cards will show no image", file=sys.stderr)
     elif card.with_suffix(".meta.json").is_file():
-        drift = og_card_drift(results, json.loads(card.with_suffix(".meta.json").read_text()))
+        drift = og_card_drift(results, json.loads(card.with_suffix(".meta.json").read_text()),
+                              status_label=load_copy(profile).get("status_label"))
         if drift:
             print(f"WARNING: {drift}", file=sys.stderr)
     try:

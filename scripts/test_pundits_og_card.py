@@ -121,6 +121,24 @@ def main() -> int:
         same = warn(res, {"counts": {"people": 2, "recordings": 8, "judges": 2}})
         moved = warn(res, {"counts": {"people": 2, "recordings": 9, "judges": 3}})
         check("a matching card draws no warning", same is None, str(same))
+        # FOUND 2026-10-12 writing the P11 runbook: the card draws the board's status
+        # label ("Pilot board"), and the drift check compared counts only, so a full
+        # release that relabels the page would keep a card that says PILOT BOARD.
+        label = T.copy()["status_label"]
+        same_counts = {"people": 2, "recordings": 8, "judges": 2}
+        check("a card drawn with the page's status label draws no warning",
+              warn(res, {"counts": same_counts, "status_label": label}, status_label=label) is None)
+        relabelled = warn(res, {"counts": same_counts, "status_label": label}, status_label="Full board")
+        check("a card drawn with another status label warns, naming both",
+              relabelled is not None and "status label" in relabelled and label in relabelled
+              and "Full board" in relabelled, str(relabelled))
+        unrecorded = warn(res, {"counts": same_counts}, status_label=label)
+        check("a card whose meta records no status label warns", unrecorded is not None
+              and "status label" in unrecorded, str(unrecorded))
+        cm = getattr(O, "card_meta", None)
+        check("build_og_card records the pundits card's status label in og.meta.json",
+              cm is not None and cm("pundits", same_counts).get("status_label") == label
+              and "status_label" not in cm("leaderboard", same_counts), str(cm and cm("pundits", same_counts)))
         lacking = warn(T.results(), {"counts": {"people": 2}})
         check("a results.json without the counts warns that the card cannot be checked, never raises",
               lacking is not None and "cannot be checked" in lacking, str(lacking))

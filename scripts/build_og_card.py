@@ -363,6 +363,18 @@ SITES = {
 }
 
 
+def card_meta(site: str, counts: dict) -> dict:
+    """What og.meta.json records beside the card, so the site builder can tell when
+    the committed image no longer matches the page. The pundits card also draws the
+    board's status label, so that is recorded too."""
+    meta = {"site": site, "counts": counts}
+    if site == "pundits":
+        meta["status_label"] = PUNDITS_STATUS
+    meta.update({"drawn_by": "scripts/build_og_card.py",
+                 "note": "The site builder warns when these counts or this label drift from the page."})
+    return meta
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--site", choices=sorted(SITES), default="leaderboard")
@@ -419,11 +431,7 @@ def main() -> int:
         sys.exit(f"REFUSING: {out} was not written, or is too small to be the card")
 
     meta = out.with_suffix(".meta.json")
-    meta.write_text(json.dumps(
-        {"site": args.site, "counts": counts,
-         "drawn_by": "scripts/build_og_card.py",
-         "note": "The site builder warns when these counts drift from the corpus."},
-        indent=1) + "\n")
+    meta.write_text(json.dumps(card_meta(args.site, counts), indent=1) + "\n")
     print(f"wrote {out} ({out.stat().st_size} bytes) and {meta.name}")
     print(f"  site {args.site}, counts: {counts}")
     return 0

@@ -5,6 +5,7 @@
   "recordings": 77,
   "judges": 2
  },
+ "status_label": "Pilot board",
  "drawn_by": "scripts/build_og_card.py",
- "note": "The site builder warns when these counts drift from the corpus."
+ "note": "The site builder warns when these counts or this label drift from the page."
 }
