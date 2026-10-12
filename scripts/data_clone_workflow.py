@@ -127,6 +127,8 @@ ORIGIN_CLEAN_PATHS = {'predictions': ['predictions', 'roster/final.json', 'trans
 LIVE_REVISION_URLS = {'predictions': 'https://verbatim-predictions.tonygwu.com/revision.json',
                       'pundits': 'https://pundits.tonygwu.com/revision.json'}
 LIVE_REVISION_URL = LIVE_REVISION_URLS['predictions']
+#: The page each revision.json describes, read back after a publish.
+LIVE_PAGE_URLS = {'pundits': 'https://pundits.tonygwu.com/'}
 DEPLOY_UA = 'verbatim-index-deploy/1.0 (+https://verbatim-index.tonygwu.com)'
 
 
@@ -189,42 +191,107 @@ def live_revision_url(site: str) -> str:
     return os.environ.get('VI_LIVE_REVISION_URL', LIVE_REVISION_URLS[site])
 
 
-def read_live_revision(url: str):
-    """The live page's data_revision, as served. Raises on any failure to read."""
+def live_page_url(site: str) -> str:
+    """VI_LIVE_PAGE_URL is a TEST SEAM only."""
+    if site not in LIVE_PAGE_URLS:
+        raise RuntimeError(f'{site} has no page to read back; known: {sorted(LIVE_PAGE_URLS)}')
+    return os.environ.get('VI_LIVE_PAGE_URL', LIVE_PAGE_URLS[site])
+
+
+class LiveRevisionMissing(Exception):
+    """The live site serves no revision.json at all: HTTP 404, or no file behind a file:// seam."""
+
+
+def _fetch(url: str) -> bytes:
+    import urllib.error
     import urllib.request
     # A named agent: since 2026-09-29 the site's bot filter answers 403 to
     # urllib's default "Python-urllib/3.x", which refused every deploy.
     req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'User-Agent': DEPLOY_UA})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read())['data_revision']
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise LiveRevisionMissing(f'HTTP 404 from {url}') from exc
+        raise
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, FileNotFoundError):
+            raise LiveRevisionMissing(f'no file at {url}') from exc
+        raise
 
 
-def live_revision_error(source: Path, revision: str, first: bool, site: str = 'predictions') -> str | None:
+def read_live_doc(url: str) -> dict:
+    """The live revision.json, whole. Raises on any failure to read; LiveRevisionMissing
+    when there is none at all."""
+    doc = json.loads(_fetch(url))
+    if not isinstance(doc, dict) or 'data_revision' not in doc:
+        raise RuntimeError(f'{url} is not a revision.json: {str(doc)[:120]}')
+    return doc
+
+
+def read_live_revision(url: str):
+    """The live page's data_revision, as served. Raises on any failure to read."""
+    return read_live_doc(url)['data_revision']
+
+
+def live_revision_error(source: Path, revision: str, first: bool, site: str = 'predictions',
+                        public: str | None = None) -> str | None:
     """None when the live page's data revision is an ancestor of ours. wrangler
     publishes last-writer-wins, so this is what stops an older render replacing a
-    newer page."""
+    newer page.
+
+    --first-revision-deploy covers only a live site with NO revision.json. Any
+    other failure to read refuses, because an error page in front of a newer live
+    page must not let an older render through. At the SAME data revision the
+    ancestor check always passes, so when `public` (our public HEAD) and the live
+    page's public_revision are both known, the live code must be an ancestor of
+    ours too.
+    """
     url = live_revision_url(site)
     try:
-        live = read_live_revision(url)
-    except Exception as exc:  # noqa: BLE001 - any failure to read is a refusal, reported whole
+        doc = read_live_doc(url)
+    except LiveRevisionMissing as exc:
         if first:
             return None
         return (f'cannot read the live revision from {url} ({exc}); pass --first-revision-deploy only for '
                 f'the first deploy that publishes revision.json')
+    except Exception as exc:  # noqa: BLE001 - any other failure to read is a refusal, reported whole
+        return (f'cannot read the live revision from {url} ({exc}); --first-revision-deploy covers only a '
+                f'live site with no revision.json')
+    live = doc['data_revision']
     if not isinstance(live, str) or not re.fullmatch(r'[0-9a-f]{40}', live):
         return f'the live revision {live!r} is not a full SHA'
     p = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', live, revision],
                        capture_output=True, text=True)
-    if p.returncode == 0:
-        return None
     if p.returncode == 1:
         return (f'the live page was built from {live[:12]}, which is not an ancestor of {revision[:12]}; '
                 f'publishing would replace a newer page')
-    return f'the live revision {live[:12]} is not in this checkout history; fetch, then retry'
+    if p.returncode != 0:
+        return f'the live revision {live[:12]} is not in this checkout history; fetch, then retry'
+    live_public = doc.get('public_revision')
+    if live == revision and public and live_public and live_public != public:
+        q = subprocess.run(['git', '-C', str(REPO), 'merge-base', '--is-ancestor', live_public, public],
+                           capture_output=True, text=True)
+        if q.returncode == 1:
+            return (f'the live page is at the same data revision but was rendered by public code '
+                    f'{live_public[:12]}, which {public[:12]} does not descend from; publishing would replace '
+                    f'newer code')
+        if q.returncode != 0:
+            return (f'the live page was rendered by public code {live_public[:12]}, which is not in this '
+                    f'checkout history; fetch, then retry')
+    return None
 
 
-def live_revision_confirm_error(revision: str, site: str, attempts: int, wait_seconds: float) -> str | None:
+def live_revision_confirm_error(revision: str, site: str, attempts: int, wait_seconds: float,
+                                expect: dict | None = None, page: bool = False) -> str | None:
     """None once the live page reads back as `revision`. Run AFTER a publish.
+
+    With `expect` (the revision.json this deploy wrote), the live revision.json
+    must equal it whole: an earlier page at the same data revision differs in
+    content_sha256, because owner mode renders uncommitted output. With `page`,
+    the live page must also carry this data revision in its meta tag, which a
+    render by grade_loop.sh does not.
 
     A fresh deploy can serve the old page, or a Cloudflare 1104, for a minute,
     so the read is retried `attempts` times, `wait_seconds` apart. Every read is
@@ -240,13 +307,30 @@ def live_revision_confirm_error(revision: str, site: str, attempts: int, wait_se
         if i:
             time.sleep(wait_seconds)
         try:
-            live = read_live_revision(url)
+            doc = read_live_doc(url)
         except Exception as exc:  # noqa: BLE001 - reported, then read again
             seen.append(f'unreadable ({exc})')
             continue
-        if live == revision:
-            return None
-        seen.append(str(live)[:12])
+        live = doc['data_revision']
+        if live != revision:
+            seen.append(str(live)[:12])
+            continue
+        if expect is not None and doc != expect:
+            diff = sorted(k for k in set(doc) | set(expect) if doc.get(k) != expect.get(k))
+            seen.append(f'{str(live)[:12]} with other {", ".join(diff)}')
+            continue
+        if page:
+            stamp = f'<meta name="verbatim:data-revision" content="{revision}">'
+            try:
+                text = _fetch(live_page_url(site)).decode('utf-8', 'replace')
+            except Exception as exc:  # noqa: BLE001 - reported, then read again
+                seen.append(f'page unreadable ({exc})')
+                continue
+            if stamp not in text:
+                seen.append(f'revision.json matches but the page at {live_page_url(site)} carries no '
+                            f'data-revision meta for {revision[:12]}')
+                continue
+        return None
     return (f'after the publish the live page at {url} does not serve data revision {revision[:12]}; '
             f'{attempts} read(s): {", ".join(seen)}')
 
@@ -463,8 +547,9 @@ def setup(repo: Path, source: Path, revision: str, branch: str,
 SITE_SHELVES = {
     'leaderboard': ['results.json', 'results_audit.json', 'roster/final.json',
                     'logs/calibration.json', 'sources/discovered.json', 'grades'],
+    # transcripts_open: the page's recordings list reads titles and links from it.
     'pundits': ['results.json', 'results_audit.json', 'roster/final.json',
-                'logs/calibration.json', 'sources/discovered.json', 'grades'],
+                'logs/calibration.json', 'sources/discovered.json', 'grades', 'transcripts_open'],
     'predictions': ['predictions', 'roster/final.json'],
 }
 
@@ -1013,6 +1098,12 @@ def main() -> int:
     lv.add_argument('--site', choices=sorted(LIVE_REVISION_URLS), default='predictions')
     lv.add_argument('--confirm', action='store_true',
                     help='after a publish: require the live revision to EQUAL --data-revision')
+    lv.add_argument('--expect', type=Path, default=None,
+                    help='with --confirm: the revision.json this deploy wrote; the live one must equal it')
+    lv.add_argument('--page', action='store_true',
+                    help="with --confirm: the live page must carry this data revision's meta tag")
+    lv.add_argument('--public-revision', default=None,
+                    help='our public HEAD; at the same data revision the live code must be its ancestor')
     lv.add_argument('--attempts', type=int, default=12)
     lv.add_argument('--wait-seconds', type=float, default=10.0)
     args = ap.parse_args()
@@ -1030,13 +1121,15 @@ def main() -> int:
         elif args.command == 'origin-unmoved':
             origin_unmoved(REPO, args.production_data.resolve(), args.data_revision, args.public_revision)
         elif args.command == 'live-revision' and args.confirm:
-            why = live_revision_confirm_error(args.data_revision, args.site, args.attempts, args.wait_seconds)
+            why = live_revision_confirm_error(args.data_revision, args.site, args.attempts, args.wait_seconds,
+                                              expect=json.loads(args.expect.read_text()) if args.expect else None,
+                                              page=args.page)
             if why:
                 raise RuntimeError(why)
             print(f'live page confirmed at data revision {args.data_revision[:12]}')
         elif args.command == 'live-revision':
             why = live_revision_error(args.production_data.resolve(), args.data_revision, args.first_revision_deploy,
-                                      args.site)
+                                      args.site, public=args.public_revision)
             if why:
                 raise RuntimeError(why)
         elif args.origin:

@@ -147,19 +147,27 @@ def main() -> int:
         bin_dir = tmp / "bin"
         bin_dir.mkdir()
         record = tmp / "npx-args.txt"
-        live = tmp / "live-revision.json"
+        live_dir = tmp / "live"
+        live_dir.mkdir()
+        live = live_dir / "revision.json"
+        live_page = live_dir / "index.html"
         # NPX_MODE picks the stub: the tripwire by default; "publish" plays a
-        # deploy that worked (the live revision becomes ours); "noop" one that
-        # exited 0 and changed nothing.
+        # deploy that worked (the live revision and page become ours); "noop" one
+        # that exited 0 and changed nothing; "clobber" one where another render
+        # (grade_loop.sh rewrites site-pundits/index.html every cycle, with no
+        # revision stamp) replaced the page just before the upload.
         (bin_dir / "npx").write_text(
             f'#!/bin/sh\necho "$@" > "{record}"\n'
             f'case "$NPX_MODE" in\n'
-            f'  publish) cp site-pundits/revision.json "{live}"; exit 0 ;;\n'
+            f'  publish) cp site-pundits/revision.json "{live}"; cp site-pundits/index.html "{live_page}"; exit 0 ;;\n'
+            f'  clobber) echo "<html>a loop render</html>" > site-pundits/index.html;\n'
+            f'           cp site-pundits/revision.json "{live}"; cp site-pundits/index.html "{live_page}"; exit 0 ;;\n'
             f'  noop) exit 0 ;;\n'
             f'esac\necho DEPLOY-TRIPWIRE >&2\nexit 93\n')
         (bin_dir / "npx").chmod(0o755)
 
         os.environ["VI_LIVE_REVISION_URL"] = live.as_uri()
+        os.environ["VI_LIVE_PAGE_URL"] = live_page.as_uri()
         os.environ["LIVE_CONFIRM_ATTEMPTS"], os.environ["LIVE_CONFIRM_WAIT"] = "1", "0"
         os.environ.pop("NPX_MODE", None)
         live.write_text(json.dumps({"data_revision": rev_old}))
@@ -207,6 +215,14 @@ def main() -> int:
         r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
                 "--first-revision-deploy", bin_dir=bin_dir)
         check("--first-revision-deploy lets that one through", r.returncode == 0, r.stderr[-300:])
+        # FOUND 2026-10-12 by review: the flag turned ANY failure to read into a pass,
+        # so an error page or a bot-filter answer in front of a newer live page would
+        # have let an older render replace it.
+        live.write_text("<html>error code: 1104</html>")
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                "--first-revision-deploy", bin_dir=bin_dir)
+        check("--first-revision-deploy does not cover a live revision.json that cannot be read",
+              r.returncode != 0 and "cannot read" in r.stderr, r.stderr[-300:])
         # A newer revision that our checkout does not contain: made, then reset away.
         (pundits / "NEWER.md").write_text("newer\n")
         git(pundits, "add", "NEWER.md")
@@ -218,7 +234,46 @@ def main() -> int:
                 bin_dir=bin_dir)
         check("a live page built from a revision we do not descend from is refused",
               r.returncode != 0 and "not an ancestor" in r.stderr, r.stderr[-300:])
+        # FOUND 2026-10-12 by review: at the SAME data revision the ancestor check
+        # always passes, so a render by older public code replaced a newer page.
+        ident = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        git(pub, "add", "scripts", "profiles")
+        git(pub, *ident, "commit", "-q", "-m", "public one")
+        pub_one = git(pub, "rev-parse", "HEAD")
+        (pub / "NEWER-CODE.md").write_text("newer\n")
+        git(pub, "add", "NEWER-CODE.md")
+        git(pub, *ident, "commit", "-q", "-m", "public two")
+        pub_two = git(pub, "rev-parse", "HEAD")
+        git(pub, "reset", "-q", "--hard", pub_one)
+        live.write_text(json.dumps({"data_revision": rev_p, "public_revision": pub_two}))
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                bin_dir=bin_dir)
+        check("at the same data revision, a live page rendered by public code we lack is refused",
+              r.returncode != 0 and "public" in r.stderr and pub_two[:12] in r.stderr, r.stderr[-300:])
+        live.write_text(json.dumps({"data_revision": rev_p, "public_revision": pub_one}))
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, "--dry-run",
+                bin_dir=bin_dir)
+        check("and one rendered by the same public code passes", r.returncode == 0, r.stderr[-300:])
         live.write_text(json.dumps({"data_revision": rev_old}))
+
+        print("\n[FINGERPRINT]")
+        # FOUND 2026-10-12 by review: the page now reads transcripts_open for its
+        # recordings list, and the fingerprint that binds a render to its inputs did
+        # not cover it.
+        def fp() -> str:
+            return subprocess.run([sys.executable, "scripts/data_clone_workflow.py", "publication-source",
+                                   "--production-data", str(pundits), "--data-revision", rev_p, "--site", "pundits",
+                                   "--study", "pundits", "--fingerprint"], cwd=pub, capture_output=True, text=True).stdout.strip()
+        before = fp()
+        meta_files = sorted((pundits / "transcripts_open").rglob("*.json"))
+        saved = meta_files[0].read_text() if meta_files else ""
+        if meta_files:
+            meta_files[0].write_text(saved.replace("Fixture episode", "Renamed episode"))
+        after = fp()
+        if meta_files:
+            meta_files[0].write_text(saved)
+        check("a change under transcripts_open changes the publication fingerprint",
+              bool(meta_files) and len(before) == 64 and before != after, f"{before!r} {after!r}")
 
         print("\n[SOURCE]")
         r = run(pub, "deploy_pundits.sh", "--production-data", leaders, "--data-revision", rev_l, "--dry-run",
@@ -258,6 +313,18 @@ def main() -> int:
         r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, bin_dir=bin_dir)
         check("a publish whose live page still serves the old revision fails loudly",
               r.returncode != 0 and rev_old[:12] in r.stderr, f"rc={r.returncode} {r.stderr[-300:]}")
+        # FOUND 2026-10-12 by review: an earlier page at the SAME data revision read
+        # back as a success, because only data_revision was compared. The daemon
+        # renders uncommitted output, so the same revision can carry other content.
+        live.write_text(json.dumps({"data_revision": rev_p, "content_sha256": "0" * 64}))
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, bin_dir=bin_dir)
+        check("an earlier page at the same data revision is not taken for this publish",
+              r.returncode != 0 and "content_sha256" in r.stderr, f"rc={r.returncode} {r.stderr[-300:]}")
+        os.environ["NPX_MODE"] = "clobber"
+        r = run(pub, "deploy_pundits.sh", "--production-data", pundits, "--data-revision", rev_p, bin_dir=bin_dir)
+        check("a page replaced by another render before the upload fails the confirm, naming the page",
+              r.returncode != 0 and "page" in r.stderr and "data-revision" in r.stderr,
+              f"rc={r.returncode} {r.stderr[-300:]}")
         os.environ.pop("NPX_MODE", None)
 
         print("\n[LEADERS]")

@@ -97,6 +97,8 @@ out = pathlib.Path(site)
 EOF
 FIRST=()
 [ "$FIRST_REVISION" -eq 1 ] && FIRST=(--first-revision-deploy)
+# At the same data revision the live page's public code must be an ancestor of ours.
+[ -n "$PUBLIC_HEAD" ] && FIRST+=(--public-revision "$PUBLIC_HEAD")
 $PY scripts/data_clone_workflow.py live-revision --site pundits --production-data "$PRODUCTION_DATA" \
     --data-revision "$DATA_REVISION" ${FIRST[@]+"${FIRST[@]}"}
 echo "the live page is not newer than data revision ${DATA_REVISION:0:12}"
@@ -106,6 +108,10 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 npx wrangler deploy -c wrangler.pundits.toml
-# P11 verification: the live page must now carry this data revision.
+# P11 verification: the live revision.json must equal the one this deploy wrote,
+# whole, and the live page must carry this data revision. An earlier page at the
+# same data revision differs in content_sha256; a grade_loop.sh render that
+# replaced site-pundits/index.html before the upload carries no revision stamp.
 $PY scripts/data_clone_workflow.py live-revision --site pundits --confirm --production-data "$PRODUCTION_DATA" \
-    --data-revision "$DATA_REVISION" --attempts "${LIVE_CONFIRM_ATTEMPTS:-12}" --wait-seconds "${LIVE_CONFIRM_WAIT:-10}"
+    --data-revision "$DATA_REVISION" --expect "${SITE_DIR}/revision.json" --page \
+    --attempts "${LIVE_CONFIRM_ATTEMPTS:-12}" --wait-seconds "${LIVE_CONFIRM_WAIT:-10}"

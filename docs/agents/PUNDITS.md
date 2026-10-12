@@ -19,9 +19,12 @@ there. Add new material under the same headings.
   LEADERS board instead, never this one.
   Since 2026-10-12 the page and `site-pundits/revision.json` carry the data revision. The
   deploy refuses when the live `revision.json` names a revision this checkout does not descend
-  from, and after publishing it reads the live revision back and fails unless it equals
-  `--data-revision`. The page live on 2026-10-12 predates `revision.json`, so the NEXT deploy
-  adds `--first-revision-deploy`, once. Proof: `scripts/test_deploy_pundits.py`. Right after a trigger deploy the new hostname can
+  from, or, at the same data revision, public code this checkout does not descend from. After
+  publishing it reads the live `revision.json` back and fails unless it equals the one this
+  deploy wrote, whole, and the live page carries the data revision's meta tag. The page live
+  on 2026-10-12 predates `revision.json`, so the NEXT deploy adds `--first-revision-deploy`,
+  once. That flag covers only a site with no `revision.json` (HTTP 404); any other failure to
+  read still refuses. Proof: `scripts/test_deploy_pundits.py`. Right after a trigger deploy the new hostname can
   return Cloudflare error 1104 for a minute; it clears on its own, so re-check before
   debugging it.
   The board is a PILOT and says so on the page. `status_banner()` in
