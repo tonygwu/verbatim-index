@@ -102,6 +102,11 @@ footer{color:var(--faint); font-size:.85rem; margin-top:40px}
 """
 
 
+def roster_size(results: dict) -> int:
+    """Everyone on the roster: ranked, scored below the rank floor, and not yet scored."""
+    return sum(len(results.get(k) or []) for k in ("leaders", "unranked", "unscored"))
+
+
 def status_banner(results: dict, copy: dict) -> str:
     """How much evidence stands behind this board, in figures taken from the run.
 
@@ -115,7 +120,7 @@ def status_banner(results: dict, copy: dict) -> str:
     """
     d = results.get("diagnostics") or {}
     ranked = results.get("leaders") or []
-    roster = len(ranked) + len(results.get("unranked") or []) + len(results.get("unscored") or [])
+    roster = roster_size(results)
     ns = [p.get("n_transcripts") for p in ranked if isinstance(p.get("n_transcripts"), int)]
     bits = [f"<b>{esc(copy['status_label'])}.</b> {esc(copy['status_note'])}"]
     bits.append(f"It ranks {len(ranked)} of {roster} people on the roster")
@@ -191,12 +196,24 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
     # names its "Insight" hue). They are stripped here rather than edited in
     # site_theme.py, which would change the leaders and predictions pages' bytes.
     theme = re.sub(r"/\*.*?\*/", "", THEME_CSS, flags=re.S)
-    return f"""<title>{esc(copy["title"])}</title>
+    # The description is the tagline plus counts read from the board, so it
+    # cannot go stale the way a typed sentence would.
+    description = (f'{copy["tagline"]} {copy["status_label"]}: '
+                   f'{len(results.get("leaders") or [])} of {roster_size(results)} people ranked.')
+    return f"""<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(copy["title"])}</title>
+<meta name="description" content="{esc(description)}">
 {FONT_LINKS}
 <style>
 {theme}
 {CSS}
 </style>
+</head>
+<body>
 <main>
 <h1>{esc(copy["title"])}</h1>
 <p class="tagline">{esc(copy["tagline"])}</p>
@@ -219,6 +236,8 @@ def render(results: dict, profile: dict, copy: dict, rundate: str) -> str:
 <p>{esc(copy["method"])}</p>
 <footer>Built {esc(rundate)} from {esc(grades if grades is not None else "an unknown number of")} judge grades.</footer>
 </main>
+</body>
+</html>
 """
 
 

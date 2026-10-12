@@ -97,6 +97,22 @@ def main() -> int:
     for word in ("Clarity", "Technical", "Insight", "Verbatim Index"):
         check(f"no leaders wording: {word!r}", word not in page)
 
+    print("\n[DOCUMENT]")
+    # FOUND 2026-10-12 on the live page: no doctype, no charset and no viewport,
+    # so a phone laid the table out at desktop width and the encoding of every
+    # em dash was left to the browser's guess (the server sends bare text/html).
+    check("the page opens with a doctype", page.lstrip().lower().startswith("<!doctype html>"), page[:80])
+    check("the html element names its language", re.search(r'<html lang="en(-GB)?">', page) is not None)
+    charset = page.lower().find('<meta charset="utf-8">')
+    check("it declares utf-8 before the title, inside the first 1024 bytes",
+          0 <= charset < page.find("<title>") and charset < 1024, str(charset))
+    check("it carries a viewport, so a phone does not lay it out at desktop width",
+          '<meta name="viewport" content="width=device-width, initial-scale=1">' in page)
+    desc = re.search(r'<meta name="description" content="([^"]*)">', page)
+    check("it carries a description built from the copy and the board",
+          desc is not None and html.escape(cp["tagline"]) in desc.group(1)
+          and "2 of 3 people" in desc.group(1), desc.group(0) if desc else "no description")
+
     print("\n[NOTES]")
     check("the interpretation note appears", html.escape(cp["interpretation"]) in page)
     check("the blinding note appears", html.escape(cp["blinding_note"]) in page)
