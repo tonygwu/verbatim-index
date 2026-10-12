@@ -73,6 +73,32 @@ operator", with its cost.
 The probe call count assumes the manifest with two judges instead of three:
 P8b 80, P8c 120, P8d 32, P8e 96, P8f 40 and P8g 160 nominal calls.
 
+## The P9 command
+
+Dry-run on a copy of the pundits data at `dced184` on 2026-10-12, with no judge call:
+
+```
+.venv/bin/python scripts/schedule.py build --study pundits \
+    --transcripts data-pundits/transcripts_blind --lean-labels data-pundits/private/lean_labels.json \
+    --judges fable,gemini --block-size 20 --seed 20260914 \
+    --graded data-pundits/grades --target-per-person 12 \
+    --verified data-pundits/logs/pilot/report.json data-pundits/logs/p6b/report.json \
+    --anchors <6 recordings> --anchor-every 4 --out data-pundits/logs/schedule/p9.jsonl
+```
+
+- **Two fixes were needed first, both made on 2026-10-12.** `--verified` took one report, so
+  P9 could have scheduled only the pilot's verified set or the rest of the roster's, not both.
+  The second fix: `build_schedule` refused any anchor that the top-up did not schedule, which
+  rejected every already-complete recording, and those are exactly the recordings an anchor
+  should be.
+- **Anchors.** The dry run drew 6 complete pilot recordings by seed 20260914, one each from
+  6 different people, with lean playing no part, so the list reveals nothing private.
+  `--anchor-every` must leave at least 2 anchor groups in the run (blocks / anchor-every of 2
+  or more), or G-drift has nothing to compare.
+- **Today it schedules 36 calls**: the 9 recordings verified so far outside the pilot. After
+  P6b it schedules each person up to 12. Ten people are already short of material, and the
+  tool lists them by name and shortfall.
+
 ## Decisions for the operator
 
 1. **Sample size before P9.** At 20 left and 20 right people, G-judge-lean projects to a 2.49

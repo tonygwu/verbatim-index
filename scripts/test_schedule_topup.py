@@ -125,6 +125,51 @@ def main() -> int:
                 refused = "verified" in str(exc).lower()
             check("a report naming no verified recording is refused, not read as 'allow nothing'",
                   refused)
+        # P9 schedules from two reports: the pilot's (logs/pilot) and the rest of
+        # the roster's (logs/p6b). FOUND 2026-10-12: --verified took one file, so
+        # the full run could only have scheduled one of the two verified sets.
+        with tempfile.TemporaryDirectory(prefix="ver3-") as td:
+            r1, r2 = Path(td) / "pilot.json", Path(td) / "p6b.json"
+            r1.write_text(json.dumps({"people": {"a": {"selected_keys": ["a/s0"]}}}))
+            r2.write_text(json.dumps({"people": {"c": {"selected_keys": ["c/s4", "c/s5"]}}}))
+            union = getattr(S, "verified_union", None)
+            check("several reports are read as the union of their verified sets",
+                  union is not None and union([r1, r2]) == {("a", "s0"), ("c", "s4"), ("c", "s5")},
+                  "verified_union missing" if union is None else str(union([r1, r2])))
+            import subprocess
+            h = subprocess.run([sys.executable, Path(__file__).resolve().parent / "schedule.py", "build", "--help"],
+                               capture_output=True, text=True).stdout
+            check("the CLI's --verified takes more than one report", "--verified VERIFIED [VERIFIED ...]" in h,
+                  h[h.find("--verified"):][:120])
+
+    print("\n[ANCHORS IN A TOP-UP]")
+    # P9 is a top-up: the pilot's complete recordings are reused, and the drift
+    # anchors are, by design, fixed recordings that are already graded. FOUND
+    # 2026-10-12 in a dry run of the P9 command: build_schedule refused every
+    # anchor as "not in the schedule's transcripts", because the top-up had
+    # (correctly) left complete recordings out. So P9 could not schedule anchors.
+    leans = {"a": "left", "b": "right"}
+    new_items = [("a", "s5"), ("b", "s6")]
+    try:
+        e = S.build_schedule(new_items, leans, ["fable", "gemini"], block_size=1, seed=1,
+                             anchors=[("a", "s0")], anchor_every=1, anchor_pool={("a", "s0")})
+        runs = sorted({x["run"] for x in e if (x["slug"], x["source_id"]) == ("a", "s0")})
+        check("an already-complete recording can be a drift anchor in a top-up", runs == [1, 2], str(runs))
+        check("and it is re-graded only, never re-scheduled at run 0",
+              not any(x["run"] == 0 and (x["slug"], x["source_id"]) == ("a", "s0") for x in e))
+    except TypeError as exc:
+        check("build_schedule takes an anchor_pool", False, repr(exc))
+    for pool, label in ((None, "with no pool, an anchor outside the schedule is still refused (typo guard)"),
+                        ({("b", "s9")}, "an anchor neither scheduled nor in the pool is refused")):
+        try:
+            S.build_schedule(new_items, leans, ["fable"], block_size=1, seed=1, anchors=[("a", "s0")],
+                             anchor_every=1, **({} if pool is None else {"anchor_pool": pool}))
+            refused = False
+        except RuntimeError:
+            refused = True
+        except TypeError:
+            refused = False
+        check(label, refused)
 
     print("\n[SCAN]")
     if not hasattr(S, "scan_panels"):

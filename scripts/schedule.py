@@ -26,6 +26,15 @@ manifest is an operational file.
       --out data-pundits/logs/schedule/pilot.jsonl
 
 Then: grade.py --study pundits --schedule data-pundits/logs/schedule/pilot.jsonl ...
+
+P9, the full run, is a top-up from two verified reports, with drift anchors that
+are already-complete recordings (see docs/PUNDITS-RELEASE-PLAN.md, "The P9 command"):
+
+  schedule.py build --study pundits --transcripts data-pundits/transcripts_blind \
+      --lean-labels data-pundits/private/lean_labels.json --judges fable,gemini \
+      --block-size 20 --seed 20260914 --graded data-pundits/grades --target-per-person 12 \
+      --verified data-pundits/logs/pilot/report.json data-pundits/logs/p6b/report.json \
+      --anchors slug/source,... --anchor-every 4 --out data-pundits/logs/schedule/p9.jsonl
 """
 from __future__ import annotations
 
@@ -46,7 +55,11 @@ FIELDS = ("block", "slug", "source_id", "judge", "mode", "run")
 def build_schedule(items: list[tuple[str, str]], leans: dict[str, str], judges: list[str],
                    block_size: int = 20, seed: int = 0,
                    anchors: list[tuple[str, str]] | None = None,
-                   anchor_every: int | None = None) -> list[dict]:
+                   anchor_every: int | None = None,
+                   anchor_pool: set[tuple[str, str]] | None = None) -> list[dict]:
+    """`anchor_pool` names recordings that may be anchors without being scheduled
+    here: in a top-up (P9) the anchors are fixed recordings already graded, so
+    the caller passes the complete set. Anything else must be in `items`."""
     if block_size < 1:
         raise ValueError("block_size must be at least 1")
     if not judges:
@@ -57,9 +70,10 @@ def build_schedule(items: list[tuple[str, str]], leans: dict[str, str], judges: 
         raise RuntimeError(f"no lean label for {missing}; the schedule is stratified by lean and never "
                            f"guesses one")
     anchors = list(anchors or [])
-    unknown = [a for a in anchors if a not in set(items)]
+    unknown = [a for a in anchors if a not in set(items) | set(anchor_pool or ())]
     if unknown:
-        raise RuntimeError(f"anchor transcripts {unknown} are not in the schedule's transcripts")
+        raise RuntimeError(f"anchor transcripts {unknown} are neither in the schedule's transcripts nor "
+                           f"already complete")
     if anchors and not anchor_every:
         raise ValueError("anchors need anchor_every")
 
@@ -132,6 +146,16 @@ def verified_keys(report_path: Path) -> set[tuple[str, str]]:
         raise RuntimeError(f"{report_path} names no verified recording; refusing to treat that as "
                            f"an empty allow-list")
     return keys
+
+
+def verified_union(report_paths: list[Path]) -> set[tuple[str, str]]:
+    """The union of several reports' verified sets. P9 schedules from the pilot's
+    report and the rest of the roster's (logs/pilot and logs/p6b); each report
+    must name at least one verified recording, as verified_keys() requires."""
+    out: set[tuple[str, str]] = set()
+    for rp in report_paths:
+        out |= verified_keys(Path(rp))
+    return out
 
 
 def scan_panels(grades_dir: Path, judges: list[str]) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
@@ -261,13 +285,14 @@ def main() -> int:
     b.add_argument("--target-per-person", type=int, default=None,
                    help="Schedule up to this many COMPLETE recordings per person, counting what "
                         "--graded already holds. This is a target, not a quantity to add.")
-    b.add_argument("--verified", default=None,
-                   help="P6 pilot report.json. Only recordings a person verified are scheduled; "
-                        "the transcripts directory also holds unverified ones.")
+    b.add_argument("--verified", nargs="+", default=None,
+                   help="One or more P6 report.json files (P9: logs/pilot and logs/p6b). Only recordings "
+                        "a person verified in one of them are scheduled; the transcripts directory also "
+                        "holds unverified ones.")
     SP.add_study_arg(b)
     args = ap.parse_args()
     paths = [args.transcripts, args.lean_labels, args.out]
-    paths += [p for p in (args.graded, args.verified) if p]
+    paths += [p for p in (args.graded, *(args.verified or [])) if p]
     SP.guard(args.study, *paths)
     if (args.target_per_person is None) != (args.graded is None):
         raise SystemExit("REFUSING: --target-per-person and --graded are used together; a target "
@@ -276,13 +301,14 @@ def main() -> int:
              if not p.name.endswith(".tmp")]
     leans = json.loads(Path(args.lean_labels).read_text())
     if args.verified:
-        allowed = verified_keys(Path(args.verified))
+        allowed = verified_union([Path(v) for v in args.verified])
         dropped = [i for i in items if i not in allowed]
         items = [i for i in items if i in allowed]
         print(f"verified filter: {len(items)} of {len(items) + len(dropped)} transcripts on disk "
               f"were verified by a person; {len(dropped)} unverified are not scheduled", file=sys.stderr)
         if not items:
             raise SystemExit("REFUSING: no transcript on disk is in the verified set")
+    complete: set[tuple[str, str]] = set()
     if args.target_per_person is not None:
         judges = [j.strip() for j in args.judges.split(",") if j.strip()]
         complete, partial = scan_panels(Path(args.graded), judges)
@@ -296,8 +322,9 @@ def main() -> int:
             raise SystemExit("REFUSING: every person is already at the target; nothing to schedule")
     anchors = [tuple(a.split("/", 1)) for a in args.anchors.split(",") if a.strip()]
     try:
+        # In a top-up the anchors are already-complete recordings (plan P5/P9b).
         entries = build_schedule(items, leans, [j.strip() for j in args.judges.split(",") if j.strip()],
-                                 args.block_size, args.seed, anchors, args.anchor_every)
+                                 args.block_size, args.seed, anchors, args.anchor_every, anchor_pool=complete)
     except (RuntimeError, ValueError) as exc:
         raise SystemExit(f"REFUSING: {exc}") from None
     write_manifest(Path(args.out), entries)
