@@ -44,7 +44,12 @@ def main() -> int:
     import test_study_site as T
 
     res = T.results()
-    res["diagnostics"].update({"transcripts_with_blinded_consensus": 14,
+    # FOUND 2026-10-12 by review: the card counted transcripts_with_blinded_consensus,
+    # which includes unranked people's recordings, while the page lists only the
+    # board's. Cy is unranked and has 2 recordings; Ada, ranked, has 8.
+    res["transcripts"] += [{"leader_slug": "cy", "source_id": f"cy-{i}", "mode": m, "venue_type": "solo"}
+                           for i in range(2) for m in ("blinded", "open")]
+    res["diagnostics"].update({"transcripts_with_blinded_consensus": 10,
                                "judge_models": {"fable": {"m": 1}, "gemini": {"m": 1}}})
 
     print("\n[COUNTS]")
@@ -54,9 +59,9 @@ def main() -> int:
     else:
         counts, stats = fn(res)
         check("people ranked, board recordings and judges come from results.json",
-              counts == {"people": 2, "recordings": 14, "judges": 2}, str(counts))
+              counts == {"people": 2, "recordings": 8, "judges": 2}, str(counts))
         check("and are drawn as the card's three stats",
-              stats == [("People ranked", "2"), ("Recordings", "14"), ("Judges", "2")], str(stats))
+              stats == [("People ranked", "2"), ("Recordings", "8"), ("Judges", "2")], str(stats))
     check("build_og_card knows a pundits site writing site-pundits/og.png",
           "pundits" in O.SITES and O.SITES["pundits"]["out"] == REPO / "site-pundits" / "og.png")
     check("the card's eyebrow carries the board's status label",
@@ -84,14 +89,14 @@ def main() -> int:
     if warn is None:
         check("build_study_site.og_card_drift exists", False)
     else:
-        same = warn(res, {"counts": {"people": 2, "recordings": 14, "judges": 2}})
+        same = warn(res, {"counts": {"people": 2, "recordings": 8, "judges": 2}})
         moved = warn(res, {"counts": {"people": 2, "recordings": 9, "judges": 3}})
         check("a matching card draws no warning", same is None, str(same))
         lacking = warn(T.results(), {"counts": {"people": 2}})
         check("a results.json without the counts warns that the card cannot be checked, never raises",
               lacking is not None and "cannot be checked" in lacking, str(lacking))
         check("a drifted card names each moved count",
-              moved is not None and "recordings: card says 9, board has 14" in moved and "judges" in moved, str(moved))
+              moved is not None and "recordings: card says 9, board has 8" in moved and "judges" in moved, str(moved))
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

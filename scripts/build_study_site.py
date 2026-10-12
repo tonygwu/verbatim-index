@@ -148,8 +148,12 @@ def card_counts(results: dict) -> dict[str, int]:
     """The three counts the social card draws. build_og_card.py draws them and
     og_card_drift() re-reads them, so the card and its check cannot disagree."""
     d = results.get("diagnostics") or {}
-    return {"people": sum(1 for p in results.get("leaders") or [] if p.get("status") == "scored"),
-            "recordings": d["transcripts_with_blinded_consensus"],
+    ranked = {p.get("slug") for p in results.get("leaders") or [] if p.get("status") == "scored"}
+    # The board's recordings, as the page's recordings list counts them: blinded rows
+    # of ranked people. transcripts_with_blinded_consensus also counts unranked people.
+    return {"people": len(ranked),
+            "recordings": sum(1 for t in results.get("transcripts") or []
+                              if t.get("mode") == "blinded" and t.get("leader_slug") in ranked),
             "judges": len(d["judge_models"])}
 
 
