@@ -135,9 +135,15 @@ failures; its two accepted records are 2028 calls and are not scored yet.
 
 Scored at as_of 2026-10-11 (run `predictions/_experiments/nate-silver-20261011/`):
 4 past due, 3 scored, all occurred, mean points +0.747. The fourth, FiveThirtyEight's
-own 2014 House forecasts, is `already_public`. He ranks first of 46 on three
-predictions, so his position rests on a very small sample, which the page shows by
-its count. Deployed from a clean data worktree: data `370b88b1`, public `a335def`.
+own 2014 House forecasts, is `already_public`. On 2026-10-11 that ranked him first of 46 on three
+predictions, a position resting on a very small sample (see the update below). Deployed from a clean data worktree: data `370b88b1`, public `a335def`.
+
+**Update 2026-10-12, ledger VP-40.** On the operator's choice, he got a predictions-only
+supplement of 35 older recordings (23 open web transcripts, 12 YouTube recordings; 19 more
+YouTube rows wait for a new IP). Accepted predictions went from 6 to 18 and scored from 3 to
+15. With more of his record in view, his mean points went from +0.747 to -0.064 (hit rate
+0.73) and his rank from first to 29th of 46: his early lead rested on three calls. Details:
+`predictions/_experiments/nate-silver-supplement-20261012/NOTES.md` in the data repository.
 
 **Two things the operator may want to decide.** First, the eligibility policy treats
 a stated probability near even, or a "favorite" call, as uncommitted. For a forecaster
