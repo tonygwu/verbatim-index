@@ -431,10 +431,16 @@ def main() -> int:
         bv = G.report(root10, LEANS)["gates"]["G-coverage"]["by_venue"]
         check("a disputed format is counted as disputed in the loss table",
               bv.get("format disputed", {}).get("scheduled") == n_disputed > 0, str(bv))
+        # FOUND 2026-10-12 by the third review: the page's sensitivity counts the board
+        # (ranked people) only, and these counts took unranked people's rows too.
+        res["transcripts"].append({"leader_slug": "zz", "source_id": "zz-0", "mode": "blinded",
+                                   "venue_type": "solo", "venue_agreed": False})
+        (root10 / "results.json").write_text(json.dumps(res))
         vc = G.report(root10, LEANS)["gates"]["venue_support"]["venue_counts"]
-        check("and in the recordings-by-venue count, which matches the board's blinded rows",
+        ranked10 = {p["slug"] for p in res["leaders"]}
+        check("and in the recordings-by-venue count, which counts the board's blinded rows only",
               vc.get("format disputed") == n_disputed and sum(vc.values()) == sum(
-                  1 for t in res["transcripts"] if t["mode"] == "blinded"), str(vc))
+                  1 for t in res["transcripts"] if t["mode"] == "blinded" and t["leader_slug"] in ranked10), str(vc))
 
         # FOUND 2026-10-12 by the second review: the staleness check counted files, and
         # grade.py --force moves the old grade to _obsolete and writes a new one, so a

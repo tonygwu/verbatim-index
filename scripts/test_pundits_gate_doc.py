@@ -88,8 +88,13 @@ def main() -> int:
 
     # FOUND 2026-10-12 by the second review: this table and the page's search
     # sentence count different grades, under the same labels.
+    # FOUND 2026-10-12 by the third review: the first wording said the page counts
+    # "only the grades behind the board", but it counts every grade the aggregate
+    # used, unranked people's included.
     check("the search table says what it counts and why it can differ from the page",
-          "including grades of recordings that did not reach the board" in doc, doc[doc.find("## Search"):][:400])
+          "including grades of recordings that did not reach the board" in doc
+          and "every grade the aggregate scored" in doc and "only the grades behind the board" not in doc,
+          doc[doc.find("## Search"):][:500])
 
     print("\n[EXCLUSIONS]")
     check("lost cells by judge and mode appear", "| gemini | blinded | 8 | 1 |" in doc, doc[doc.find("Cells"):][:400])

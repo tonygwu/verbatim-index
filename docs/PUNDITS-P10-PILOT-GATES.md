@@ -80,7 +80,7 @@ Excluded, not lost: astra, 40 scheduled cells, is not a published judge.
 
 Queries that name the blinded subject: 0.
 
-The table counts every valid run-0 grade of a published judge, including grades of recordings that did not reach the board, because it describes what the judges did. The page counts only the grades behind the board, so its figures can be smaller.
+The table counts every valid run-0 grade of a published judge, including grades of recordings that did not reach the board, because it describes what the judges did. The page counts every grade the aggregate scored, which leaves out grades dropped for an incomplete panel, an unscorable recording or an unsupported dimension, so its figures can be smaller.
 
 | Judge | Mode | Grades | Searched |
 |---|---|---|---|

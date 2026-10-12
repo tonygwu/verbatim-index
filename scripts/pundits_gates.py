@@ -433,8 +433,10 @@ def venue_support(results: dict) -> dict:
     # Counted from the board's blinded rows rather than diagnostics.venue_counts, which
     # files a 1-1 judge tie under its alphabetically chosen label.
     counts: dict[str, int] = defaultdict(int)
+    ranked = {p["slug"] for p in results.get("leaders") or []}
     for t in results.get("transcripts") or []:
-        if t.get("mode") == "blinded":
+        # The board only (ranked people), as the page's sensitivity section counts.
+        if t.get("mode") == "blinded" and t.get("leader_slug") in ranked:
             counts["format disputed" if t.get("venue_type") and t.get("venue_agreed") is False
                    else t.get("venue_type") or "format not recorded"] += 1
     out = {"applied": d["venue_adjustment_applied"], "reasons": d.get("venue_support_reasons") or [],
