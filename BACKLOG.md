@@ -835,7 +835,7 @@ they were filed (50aeaac).
   the audit decides.
 
 - **RESOLVED 2026-10-12, same night: `aggregate.era_covariate()` (`diagnostics.era_covariate`) fits
-  upload date within person; on the pilot, +0.63 points a year, 95% interval -1.78 to 2.63.
+  upload date within person; on the pilot, +0.63 points a year, 95% interval -2.77 to 3.49.
   Plan P5's era covariate is not implemented.** Filed 2026-10-12. P5 "Sampling
   rules": "The board reports era as a covariate, and a sensitivity analysis
   excludes archival subjects." The archival sensitivity exists since 2026-10-12

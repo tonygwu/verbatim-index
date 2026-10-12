@@ -202,7 +202,7 @@ both fixed. See "The P9 command".
 **The P5 sensitivities** (`aggregate.py`, pundits only; the leaders `results.json` stays
 byte-identical): `venue_leave_one_out`, `archival_excluded` and `era_covariate`. On the pilot,
 a recording uploaded a year later scores +0.63 points within the same person (95% interval
--1.78 to 2.63), so upload date moves nothing measurable. On the pilot, no remaining
+-2.77 to 3.49), so upload date moves nothing measurable. On the pilot, no remaining
 person moves more than 2.4 points when any one format is dropped. The 4 recordings whose format
 the two judges disputed stay in every run, because their label is a tie-break, not a format. Dropping Charlie Kirk refits
 calibration but moves no remaining score at one decimal, which a real re-run confirms.

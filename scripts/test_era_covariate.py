@@ -154,6 +154,24 @@ def main() -> int:
           out.get("slope_per_year") == 2.0, str(out.get("slope_per_year")))
     check("a person whose recordings share one date is counted, not fitted",
           out.get("people_used") == 2 and out.get("people_without_spread") == ["one-day"], str(out))
+    # FOUND 2026-10-12 by the second review: the span and the year counts included
+    # the unfitted person, though the page states them beside recordings_used.
+    check("the date span and year counts describe the fitted recordings only",
+          out.get("recordings_by_year") == {"2022": 1, "2023": 2, "2025": 1} and out.get("recordings_used") == 4
+          and out.get("first_upload") == "2022-06-01" and out.get("last_upload") == "2025-01-01", str(out))
+
+    print("\n[TWO STAGE]")
+    # FOUND 2026-10-12 by the second review: plan P5's bootstrap "resamples people,
+    # then transcripts within each person", and this one resampled people only, so
+    # people with the same noisy pattern gave a zero-width interval.
+    spec = {p: [("20220601", 50.0), ("20230601", 54.0), ("20240601", 50.0)] for p in ("a", "b", "c")}
+    rows, ranked, dates = board(spec)
+    out = fn(rows, ranked, dates, n=2000)
+    lo, hi = out.get("ci95") or [0, 0]
+    check("identical noisy people: slope 0.0 with an interval that has width", out.get("slope_per_year") == 0.0
+          and lo < 0 < hi, str(out.get("ci95")))
+    check("it says which draws it could not use, if any",
+          isinstance(out.get("degenerate_resamples"), int), str(out.get("degenerate_resamples")))
 
     print("\n[TOO FEW]")
     spec = {"a": [("20220601", 50.0), ("20230601", 52.0)], "b": [("20230101", 30.0)]}

@@ -773,10 +773,12 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
     # the format is unknown, so the recording is treated like one with no venue.
     def known(t: dict) -> str | None:
         return t.get("venue_type") if t.get("venue_agreed", True) else None
-    venues = sorted({known(t) for t in blinded if known(t)})
+    # Only ranked people's recordings: the board is what this sensitivity describes.
+    board = [t for t in blinded if t["leader_slug"] in full]
+    venues = sorted({known(t) for t in board if known(t)})
     by_venue = {}
     for venue in venues:
-        dropped = [t for t in blinded if known(t) == venue]
+        dropped = [t for t in board if known(t) == venue]
         still, below, shifts = {}, [], []
         for slug in order:
             keep = [t for t in by_slug[slug] if known(t) != venue]
@@ -806,8 +808,8 @@ def venue_leave_one_out(transcripts: list[dict], ranked: list[dict], min_rank: i
         }
     return {
         "full_board_reproduced": True,
-        "recordings_without_venue": sum(1 for t in blinded if not t.get("venue_type")),
-        "recordings_venue_disputed": sum(1 for t in blinded if t.get("venue_type") and not known(t)),
+        "recordings_without_venue": sum(1 for t in board if not t.get("venue_type")),
+        "recordings_venue_disputed": sum(1 for t in board if t.get("venue_type") and not known(t)),
         "min_transcripts_to_rank": min_rank,
         "by_venue": by_venue,
         "note": ("Each venue's recordings dropped in turn and every ranked person rescored with the board's "
@@ -1002,14 +1004,19 @@ def era_covariate(transcripts: list[dict], ranked: list[dict], dates: dict,
     same reason.
 
     The score is the per-recording value board_overall() averages (the
-    venue-adjusted one when the adjustment is applied). The interval resamples
-    PEOPLE with replacement, because recordings of one person are not
-    independent, and is a seeded 95% percentile interval like bootstrap_ci().
-    Reported, never applied. Contract-v2 studies only.
+    venue-adjusted one when the adjustment is applied), but here each recording
+    weighs the same: board_overall() weights by coverage, a fit of a trend does
+    not. The interval follows plan P5's clustering rule: it resamples PEOPLE with
+    replacement, then each picked person's recordings with replacement, and is a
+    seeded 95% percentile interval like bootstrap_ci(). A draw in which every
+    picked person's resampled recordings share one date has no slope; it is left
+    out and counted as degenerate_resamples. Reported, never applied.
+    Contract-v2 studies only.
 
     A board recording with no valid date is left out and listed by name. A
     person whose recordings all share one date carries no within-person slope
-    and is listed too.
+    and is listed too. The date span and year counts describe the recordings
+    actually fitted.
     """
     on_board = {p["slug"] for p in ranked}
     blinded = [t for t in transcripts if t.get("mode") == "blinded" and t["leader_slug"] in on_board]
@@ -1021,17 +1028,20 @@ def era_covariate(transcripts: list[dict], ranked: list[dict], dates: dict,
             continue
         key = "cal_overall_venue_adj" if "cal_overall_venue_adj" in t else "cal_overall"
         by_person[t["leader_slug"]].append((upload_years(raw), t[key], raw))
-    days = sorted(raw for pts in by_person.values() for _, _, raw in pts)
-    by_year = Counter(raw[:4] for raw in days)
-    sums, flat = {}, []
-    for slug, pts in sorted(by_person.items()):
+    def moments(pts: list) -> tuple[float, float]:
         mx = sum(x for x, _, _ in pts) / len(pts)
         my = sum(y for _, y, _ in pts) / len(pts)
-        sxx = sum((x - mx) ** 2 for x, _, _ in pts)
+        return sum((x - mx) * (y - my) for x, y, _ in pts), sum((x - mx) ** 2 for x, _, _ in pts)
+
+    sums, flat = {}, []
+    for slug, pts in sorted(by_person.items()):
+        sxy, sxx = moments(pts)
         if sxx <= 0:
             flat.append(slug)
             continue
-        sums[slug] = (sum((x - mx) * (y - my) for x, y, _ in pts), sxx)
+        sums[slug] = (sxy, sxx)
+    days = sorted(raw for s in sums for _, _, raw in by_person[s])
+    by_year = Counter(raw[:4] for raw in days)
     base = {"definition": "upload date (yt_upload_date, UTC) in years; slope of the blinded per-recording score "
                           "within each person, pooled",
             "applied": False,
@@ -1048,17 +1058,28 @@ def era_covariate(transcripts: list[dict], ranked: list[dict], dates: dict,
     slope = sum(sums[s][0] for s in people) / sum(sums[s][1] for s in people)
     rng = random.Random(seed)
     k = len(people)
-    draws = []
+    draws, degenerate = [], 0
     for _ in range(n):
-        pick = [people[rng.randrange(k)] for _ in range(k)]
-        draws.append(sum(sums[s][0] for s in pick) / sum(sums[s][1] for s in pick))
+        num_, den = 0.0, 0.0
+        for s in (people[rng.randrange(k)] for _ in range(k)):
+            pts = by_person[s]
+            sxy, sxx = moments([pts[rng.randrange(len(pts))] for _ in pts])
+            num_, den = num_ + sxy, den + sxx
+        if den <= 0:
+            degenerate += 1
+            continue
+        draws.append(num_ / den)
+    if not draws:
+        raise RuntimeError(f"era_covariate: all {n} resamples were degenerate; no interval can be stated")
     draws.sort()
-    lo, hi = draws[int(0.025 * n)], draws[min(int(0.975 * n), n - 1)]
+    m = len(draws)
+    lo, hi = draws[int(0.025 * m)], draws[min(int(0.975 * m), m - 1)]
     # "+ 0.0" turns a rounded -0.0 into 0.0, so a flat slope never prints as "-0.0".
     return {"computed": True, **base,
             "slope_per_year": round(slope, 2) + 0.0,
             "ci95": [round(lo, 2) + 0.0, round(hi, 2) + 0.0],
-            "resamples": n, "seed": seed, "resample_unit": "person",
+            "resamples": n, "seed": seed, "resample_unit": "person, then recordings within each person",
+            "degenerate_resamples": degenerate,
             "recordings_used": sum(len(by_person[s]) for s in people),
             "people_used": k}
 

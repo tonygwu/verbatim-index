@@ -145,6 +145,20 @@ def main() -> int:
           r.get("recordings_dropped") == 6 and r.get("people_below_floor") == ["b"]
           and r.get("max_abs_shift") == 0.0, str(r))
 
+    print("\n[UNRANKED]")
+    # FOUND 2026-10-12 by the second review: the venues and the dropped counts
+    # included unranked people's recordings, so the page could say "Without the 2
+    # solo recordings" about a format no ranked person has.
+    extra = rows(A) + [{"leader_slug": "z", "source_id": f"z-{i}", "mode": "blinded", "venue_type": "solo",
+                        "coverage": 1.0, **{f"cal_{d}": 50 for d in A.DIMS}} for i in range(2)]
+    ex = fn(extra, ranked(), min_rank=5)
+    check("a format only an unranked person has gets no entry",
+          "solo" not in ex.get("by_venue", {}), str(sorted(ex.get("by_venue", {}))))
+    extra2 = rows(A) + [{"leader_slug": "z", "source_id": "z-d", "mode": "blinded", "venue_type": "debate",
+                         "coverage": 1.0, **{f"cal_{d}": 50 for d in A.DIMS}}]
+    check("and an unranked person's recording is not counted as dropped",
+          fn(extra2, ranked(), min_rank=5)["by_venue"]["debate"]["recordings_dropped"] == 1)
+
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + "; ".join(FAIL))
