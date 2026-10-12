@@ -184,6 +184,20 @@ def status_banner(results: dict, copy: dict) -> str:
     return '<p class="status">' + " ".join(bits) + "</p>"
 
 
+def search_sentence(results: dict) -> str:
+    """The measured web-search count per judge, from results.json, or nothing.
+
+    The blinding note says search is measured and disclosed; this is the
+    disclosure. Nothing is printed when the count is absent, so an older
+    results.json cannot show an invented zero."""
+    ws = (results.get("diagnostics") or {}).get("judge_web_search")
+    if not ws:
+        return ""
+    parts = [f"{esc(j.capitalize())} {'searched the web in ' if i == 0 else 'in '}{e['searched']} of {e['grades']}"
+             + (" grades" if i == 0 else "") for i, (j, e) in enumerate(sorted(ws.items()))]
+    return " Measured: " + ", ".join(parts) + "."
+
+
 def venue_mix(results: dict) -> dict[str, str]:
     """Each person's formats, as "5 conversation, 2 reaction, 1 debate".
 
@@ -323,7 +337,7 @@ def render(results: dict, profile: dict, copy: dict, rundate: str,
 </table></div>
 {unranked_html}
 <h2>What the scores mean</h2>
-<p class="note">{esc(copy["blinding_note"])}</p>
+<p class="note">{esc(copy["blinding_note"])}{search_sentence(results)}</p>
 {explainers}
 <h2>Method</h2>
 <p>{esc(copy["method"])}</p>

@@ -57,7 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gates  # noqa: E402
-from aggregate import names_subject  # noqa: E402  (one matcher for the page's claim and this report)
+from aggregate import judge_searched, names_subject  # noqa: E402  (one definition for the page and this report)
 
 SKIP_PARTS = {"_obsolete", "_raw", "_provenance"}
 DELTA_SEARCH = 5.0      # plan P10, G-search: points of search rate, left minus right
@@ -154,7 +154,7 @@ def identity(grades: list[dict], people: dict[str, dict], judges: list[str]) -> 
 
 
 def searched(g: dict) -> bool:
-    return bool((g.get("telemetry") or {}).get("web_search_queries"))
+    return judge_searched(g)
 
 
 def search_gate(grades: list[dict], people: dict, leans: dict, judges: list[str]) -> dict:

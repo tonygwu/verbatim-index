@@ -813,6 +813,15 @@ def names_subject(text: str | None, person: dict) -> bool:
     return any(re.search(r"(?<![a-z])" + re.escape(tok) + r"(?![a-z])", low) for tok in tokens)
 
 
+def judge_searched(g: dict) -> bool:
+    """Whether a grade's judge searched the web, from whichever harness wrote it:
+    agy's web_search_queries, codex's web_search.search_actions, or a web_search
+    tool count. A grade with none of them did not search."""
+    tel = g.get("telemetry") or {}
+    return bool(tel.get("web_search_queries") or (tel.get("web_search") or {}).get("search_actions")
+                or (tel.get("tool_use_counts") or {}).get("web_search"))
+
+
 def _blinded_person_rows(grades: list[dict], params: dict) -> dict[str, list[dict]]:
     """Each person's blinded run-0 rows, built as main() builds transcripts_out:
     each judge's calibrated score averaged per recording, and rounded the same way."""
@@ -1557,6 +1566,13 @@ def main() -> int:
                  and names_subject(g["grade"].get("identity_guess"), by_slug.get(g["leader_slug"], {}))}
         diagnostics["blinding_correct_rate"] = (round(
             sum(1 for t in all_b if (t["leader_slug"], t["source_id"]) in named) / len(all_b), 3) if all_b else None)
+        # The page says web search is "measured and disclosed"; this is the measure.
+        searches: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        for g in usable:
+            if (g.get("run") or 0) == 0:
+                searches[g["judge"]][0] += 1
+                searches[g["judge"]][1] += judge_searched(g)
+        diagnostics["judge_web_search"] = {j: {"grades": n, "searched": k} for j, (n, k) in sorted(searches.items())}
         diagnostics["venue_leave_one_out"] = venue_leave_one_out(transcripts_out, scored, MIN_TRANSCRIPTS_TO_RANK)
         diagnostics["archival_excluded"] = archival_excluded(
             usable, scored, {s for s, p in by_slug.items() if p.get("archival")}, venue_applied=bool(venue_ok))
