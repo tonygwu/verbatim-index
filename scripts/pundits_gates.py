@@ -392,20 +392,29 @@ def drift_gate(data: Path, grades: list[dict], results: dict, judges: list[str])
         if (g["leader_slug"], g["source_id"]) in anchors and g.get("judge") in judges and usable(g):
             runs[(g["judge"], g["mode"], g["leader_slug"], g["source_id"])][g.get("run", 0)] = raw_overall(g, weights)
     cells: dict[str, list[float]] = defaultdict(list)
+    at_latest: dict[str, int] = defaultdict(int)
     for (judge, mode, slug, sid), by_run in runs.items():
-        # An anchor is measured only once its LATEST scheduled run is graded: the
-        # latest drift is the one the gate exists to catch.
-        latest = expected.get(f"{judge}|{mode}", {}).get((slug, sid))
-        if len(by_run) >= 2 and (latest is None or max(by_run) >= latest):
-            cells[f"{judge}|{mode}"].append(by_run[max(by_run)] - by_run[min(by_run)])
+        if len(by_run) >= 2:
+            cell = f"{judge}|{mode}"
+            # Measured on the latest run GRADED, so drift from an earlier group is
+            # reported even when a run stopped before its last group.
+            cells[cell].append(by_run[max(by_run)] - by_run[min(by_run)])
+            latest = expected.get(cell, {}).get((slug, sid))
+            at_latest[cell] += latest is None or max(by_run) >= latest
     out = {}
     for cell, diffs in sorted(cells.items()):
         lo, hi = gates.mean_ci90(diffs, BOOTSTRAP_N, BOOTSTRAP_SEED)
-        # A cell is measured on the anchors scheduled for it, not on whichever of them
-        # happened to be re-graded: fewer than scheduled is INCONCLUSIVE.
+        measured = gates.equivalence(lo, hi, DELTA_DRIFT)
         scheduled = len(expected.get(cell, ()))
-        verdict = gates.equivalence(lo, hi, DELTA_DRIFT) if len(diffs) >= scheduled else "INCONCLUSIVE"
-        out[cell] = {"anchors": len(diffs), "anchors_scheduled": scheduled, "estimate": round(sum(diffs) / len(diffs), 2),
+        # A PASS needs every scheduled anchor graded at its LATEST scheduled run: the
+        # latest drift is the one the gate exists to catch. A measured FAIL stands
+        # whatever is missing, because drift beyond the bound was seen.
+        complete = len(diffs) >= scheduled and at_latest[cell] >= scheduled
+        verdict = measured if complete or measured == "FAIL" else "INCONCLUSIVE"
+        out[cell] = {"anchors": len(diffs), "anchors_scheduled": scheduled,
+                     "anchors_at_latest_run": at_latest[cell],
+                     "latest_run_scheduled": max(expected.get(cell, {}).values(), default=None),
+                     "estimate": round(sum(diffs) / len(diffs), 2),
                      "ci90": [round(lo, 2), round(hi, 2)], "verdict": verdict}
     if not out:
         return {"verdict": "INCONCLUSIVE", "ran": False, "delta_points": DELTA_DRIFT,

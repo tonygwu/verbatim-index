@@ -392,9 +392,28 @@ def main() -> int:
         build(root15, anchor_drift=0, anchor_ids=(("p1", "p1-r0"), ("p2", "p2-r0")), anchor_runs=(1, 2),
               late_runs_for=(("p1", "p1-r0"),))
         c15 = G.report(root15, LEANS)["gates"]["G-drift"]["by_judge_mode"].get("fable|blinded", {})
-        check("an anchor missing its latest scheduled run does not count as measured: INCONCLUSIVE, 1 of 2",
-              c15.get("verdict") == "INCONCLUSIVE" and c15.get("anchors") == 1 and c15.get("anchors_scheduled") == 2,
-              str(c15))
+        check("an anchor missing its latest scheduled run cannot PASS: INCONCLUSIVE, 1 of 2 at the latest run",
+              c15.get("verdict") == "INCONCLUSIVE" and c15.get("anchors") == 2 and c15.get("anchors_scheduled") == 2
+              and c15.get("anchors_at_latest_run") == 1 and c15.get("latest_run_scheduled") == 2, str(c15))
+        # FOUND 2026-10-12 by the fourth review: with run 1 graded everywhere and run 2
+        # nowhere (a run stopped early), the gate said "none has been re-graded" and hid
+        # the drift it had measured, even a FAIL-sized one.
+        for drift, want in ((0, "INCONCLUSIVE"), (8, "FAIL")):
+            r16 = tmp / f"data16-{drift}"
+            r16.mkdir()
+            build(r16, anchor_drift=drift, anchor_ids=(("p1", "p1-r0"), ("p2", "p2-r0")), anchor_runs=(1, 2),
+                  late_runs_for=())
+            g16 = G.report(r16, LEANS)["gates"]["G-drift"]
+            c16 = g16.get("by_judge_mode", {}).get("fable|blinded", {})
+            check(f"earlier groups re-graded, latest not, drift {drift}: it ran, measured 2 anchors, 0 at the latest "
+                  f"run, and is {want}",
+                  g16.get("ran") is True and c16.get("anchors") == 2 and c16.get("anchors_at_latest_run") == 0
+                  and c16.get("verdict") == want and g16.get("verdict") == want, str(g16)[:400])
+            import pundits_gate_doc as GD16
+            doc16 = GD16.render(G.report(r16, LEANS), data_revision="0" * 40)
+            check(f"and the document row says so (drift {drift})",
+                  "2 of 2 anchors, 0 at run 2" in doc16 and "none has been re-graded" not in doc16,
+                  doc16[doc16.find("| G-drift"):][:300])
         import pundits_gate_doc as GD
         doc12 = GD.render(d12, data_revision="0" * 40)
         lim = doc12[doc12.find("## Limits"):]

@@ -96,6 +96,14 @@ def main() -> int:
           and "every grade the aggregate scored" in doc and "only the grades behind the board" not in doc,
           doc[doc.find("## Search"):][:500])
 
+    # FOUND 2026-10-12 by the fourth review: the venue paragraph printed the support
+    # rule's counts (every scored person's recordings) beside the board's counts
+    # (ranked people only) with nothing to say they differ.
+    vpar = doc[doc.find("## Venue support"):][:700]
+    check("the venue paragraph names which recordings each count covers",
+          "counted over every scored person's recordings" in vpar and "Recordings by venue on the board" in vpar,
+          vpar)
+
     print("\n[EXCLUSIONS]")
     check("lost cells by judge and mode appear", "| gemini | blinded | 8 | 1 |" in doc, doc[doc.find("Cells"):][:400])
     check("the excluded judge and its cell count appear", "astra" in doc and "16" in doc)

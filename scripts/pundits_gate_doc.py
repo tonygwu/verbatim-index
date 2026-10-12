@@ -80,8 +80,11 @@ def verdict_rows(g: dict, hold: bool) -> list[str]:
                     f"{d.get('anchors_scheduled', 0)} anchors scheduled | &plusmn;{d['delta_points']:g} |")
     for cell, e in (d.get("by_judge_mode") or {}).items():
         rows.append(f"| G-drift | {cell.replace('|', ' ')} | {e['verdict']} | {signed(e['estimate'])} | "
-                    f"{ci(e['ci90'])} | {e['anchors']} of {e.get('anchors_scheduled', e['anchors'])} anchors | "
-                    f"&plusmn;{d['delta_points']:g} |")
+                    f"{ci(e['ci90'])} | {e['anchors']} of {e.get('anchors_scheduled', e['anchors'])} anchors"
+                    + (f", {e['anchors_at_latest_run']} at run {e['latest_run_scheduled']}"
+                       if e.get("anchors_at_latest_run", e["anchors"]) < e.get("anchors_scheduled", e["anchors"])
+                       else "")
+                    + f" | &plusmn;{d['delta_points']:g} |")
     for cell in d.get("missing_cells") or []:
         rows.append(f"| G-drift | {cell.replace('|', ' ')} | INCONCLUSIVE | not re-graded | &ndash; | 0 anchors | "
                     f"&plusmn;{d['delta_points']:g} |")
@@ -157,8 +160,10 @@ def render(rep: dict, data_revision: str, withhold_lean: bool = False,
 
     v = g["venue_support"]
     out += ["## Venue support", "", f"Format adjustment applied: {'yes' if v['applied'] else 'no'}."
-            + (f" Why not: {'; '.join(v['reasons'])}." if v["reasons"] else ""), "",
-            "Recordings by venue: " + ", ".join(f"{k} {n}" for k, n in v["venue_counts"].items()) + "."]
+            + (f" Why not (counted over every scored person's recordings, as the support rule is): "
+               f"{'; '.join(v['reasons'])}." if v["reasons"] else ""), "",
+            "Recordings by venue on the board (ranked people only, as the page's Sensitivity section counts): "
+            + ", ".join(f"{k} {n}" for k, n in v["venue_counts"].items()) + "."]
     if v.get("leave_one_out"):
         out += ["", "Leave one venue out, rescoring every ranked person:", "",
                 "| Venue dropped | Still ranked | Ranks changed | Spearman | Largest shift |", "|---|---|---|---|---|"]

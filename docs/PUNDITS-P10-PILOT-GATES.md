@@ -91,9 +91,9 @@ The table counts every valid run-0 grade of a published judge, including grades 
 
 ## Venue support
 
-Format adjustment applied: no. Why not: venue 'debate' seen 4 times, under the minimum of 8.
+Format adjustment applied: no. Why not (counted over every scored person's recordings, as the support rule is): venue 'debate' seen 4 times, under the minimum of 8.
 
-Recordings by venue: conversation 33, debate 4, format disputed 4, reaction 24, solo 12.
+Recordings by venue on the board (ranked people only, as the page's Sensitivity section counts): conversation 33, debate 4, format disputed 4, reaction 24, solo 12.
 
 Leave one venue out, rescoring every ranked person:
 
