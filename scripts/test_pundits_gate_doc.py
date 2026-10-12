@@ -86,6 +86,11 @@ def main() -> int:
     check("its n, the complete transcripts, appears", f"{rep['gates']['G-judge-lean']['transcripts']} transcripts" in doc)
     check("the identity rates appear", "93.3%" in doc and "100.0%" in doc)
 
+    # FOUND 2026-10-12 by the second review: this table and the page's search
+    # sentence count different grades, under the same labels.
+    check("the search table says what it counts and why it can differ from the page",
+          "including grades of recordings that did not reach the board" in doc, doc[doc.find("## Search"):][:400])
+
     print("\n[EXCLUSIONS]")
     check("lost cells by judge and mode appear", "| gemini | blinded | 8 | 1 |" in doc, doc[doc.find("Cells"):][:400])
     check("the excluded judge and its cell count appear", "astra" in doc and "16" in doc)

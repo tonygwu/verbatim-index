@@ -146,6 +146,9 @@ def render(rep: dict, data_revision: str, withhold_lean: bool = False,
 
     s = g["G-search"]
     out += ["## Search (G-search)", "", f"Queries that name the blinded subject: {s['queries_naming_subject']}.", "",
+            "The table counts every valid run-0 grade of a published judge, including grades of recordings that "
+            "did not reach the board, because it describes what the judges did. The page counts only the grades "
+            "behind the board, so its figures can be smaller.", "",
             "| Judge | Mode | Grades | Searched |", "|---|---|---|---|"]
     for j, e in s["by_judge"].items():
         out += [f"| {j} | {m} | {v['grades']} | {v['searched']} |" for m, v in e["by_mode"].items()]
