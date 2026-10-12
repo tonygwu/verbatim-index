@@ -1713,12 +1713,21 @@ def main() -> int:
         diagnostics["blinding_correct_rate"] = (round(
             sum(1 for t in all_b if (t["leader_slug"], t["source_id"]) in named) / len(all_b), 3) if all_b else None)
         # The page says web search is "measured and disclosed"; this is the measure.
+        # Split by mode too: in an open grade the judge already has the name, so only
+        # the blinded count bears on blinding.
         searches: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        by_mode: dict[str, dict[str, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
         for g in usable:
             if (g.get("run") or 0) == 0:
+                hit = judge_searched(g)
                 searches[g["judge"]][0] += 1
-                searches[g["judge"]][1] += judge_searched(g)
-        diagnostics["judge_web_search"] = {j: {"grades": n, "searched": k} for j, (n, k) in sorted(searches.items())}
+                searches[g["judge"]][1] += hit
+                by_mode[g["judge"]][g["mode"]][0] += 1
+                by_mode[g["judge"]][g["mode"]][1] += hit
+        diagnostics["judge_web_search"] = {
+            j: {"grades": n, "searched": k,
+                "by_mode": {m: {"grades": a, "searched": b} for m, (a, b) in sorted(by_mode[j].items())}}
+            for j, (n, k) in sorted(searches.items())}
         diagnostics["venue_leave_one_out"] = venue_leave_one_out(transcripts_out, scored, MIN_TRANSCRIPTS_TO_RANK)
         diagnostics["archival_excluded"] = archival_excluded(
             usable, scored, {s for s, p in by_slug.items() if p.get("archival")}, venue_applied=bool(venue_ok))

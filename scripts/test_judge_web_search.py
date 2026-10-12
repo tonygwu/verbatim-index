@@ -96,17 +96,41 @@ def main() -> int:
               ws.get("gemini", {}).get("grades") == len(gem_rows) and ws.get("gemini", {}).get("searched") == len(p1),
               f"{ws.get('gemini')} vs grades {len(gem_rows)}, searched {len(p1)}")
         check("Fable searched in none", ws.get("fable", {}).get("searched") == 0, str(ws.get("fable")))
+        # FOUND 2026-10-12 by review: the count pooled open grades, where the judge
+        # already has the name, so it said nothing about blinding on its own.
+        check("each judge's count is also split by mode",
+              (ws.get("gemini", {}).get("by_mode") or {}).get("blinded") == {"grades": len(gem_rows),
+                                                                             "searched": len(p1)},
+              str(ws.get("gemini")))
 
     print("\n[PAGE]")
     import build_study_site as B
     import test_study_site as T
     base = T.results()
-    base["diagnostics"]["judge_web_search"] = {"fable": {"grades": 40, "searched": 0},
-                                               "gemini": {"grades": 38, "searched": 3}}
+    def mode(bn, bs, on, os_):
+        return {"blinded": {"grades": bn, "searched": bs}, "open": {"grades": on, "searched": os_}}
+    base["diagnostics"]["judge_web_search"] = {"fable": {"grades": 40, "searched": 0, "by_mode": mode(20, 0, 20, 0)},
+                                               "gemini": {"grades": 38, "searched": 3, "by_mode": mode(19, 1, 19, 2)}}
     page = B.render(base, T.profile(), T.copy(), rundate="x")
-    check("the page states each judge's measured count",
-          "Fable searched the web in 0 of 40 grades" in page and "Gemini in 3 of 38" in page,
-          page[page.find("searched"):][:200])
+    check("the page states each judge's measured count, blinded and open apart",
+          "Fable searched the web in 0 of 20 blinded grades and 0 of 20 open ones" in page
+          and "Gemini in 1 of 19 blinded and 2 of 19 open" in page, page[page.find("searched"):][:200])
+    old = T.results()
+    old["diagnostics"]["judge_web_search"] = {"fable": {"grades": 40, "searched": 0},
+                                              "gemini": {"grades": 38, "searched": 3}}
+    opage = B.render(old, T.profile(), T.copy(), rundate="x")
+    check("an older results.json without the split still states the totals",
+          "Fable searched the web in 0 of 40 grades" in opage and "Gemini in 3 of 38" in opage,
+          opage[opage.find("searched"):][:200])
+    bad = T.results()
+    bad["diagnostics"]["judge_web_search"] = {"fable": {"grades": 40, "searched": "<b>0</b>"}}
+    try:
+        B.render(bad, T.profile(), T.copy(), rundate="x")
+        refused = ""
+    except RuntimeError as exc:
+        refused = str(exc)
+    check("a count that is not an integer is refused, never printed into the page",
+          "judge_web_search" in refused, refused or "rendered it")
     plain = B.render(T.results(), T.profile(), T.copy(), rundate="x")
     check("with no counts it states none", "searched the web in" not in plain)
 

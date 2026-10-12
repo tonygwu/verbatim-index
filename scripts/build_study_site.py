@@ -226,13 +226,32 @@ def search_sentence(results: dict) -> str:
     """The measured web-search count per judge, from results.json, or nothing.
 
     The blinding note says search is measured and disclosed; this is the
-    disclosure. Nothing is printed when the count is absent, so an older
-    results.json cannot show an invented zero."""
+    disclosure, blinded and open apart, because in an open grade the judge
+    already has the name. An older results.json without the split states the
+    totals. Nothing is printed when the count is absent, so an older results.json
+    cannot show an invented zero, and a count that is not an integer refuses."""
     ws = (results.get("diagnostics") or {}).get("judge_web_search")
     if not ws:
         return ""
-    parts = [f"{esc(j.capitalize())} {'searched the web in ' if i == 0 else 'in '}{e['searched']} of {e['grades']}"
-             + (" grades" if i == 0 else "") for i, (j, e) in enumerate(sorted(ws.items()))]
+
+    def n(e: dict, key: str) -> int:
+        # aggregate.py writes ints; anything else is a corrupt file, never page text.
+        v = e.get(key)
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise RuntimeError(f"judge_web_search holds {key}={v!r}, not a count")
+        return v
+
+    parts = []
+    for i, (j, e) in enumerate(sorted(ws.items())):
+        lead = f"{esc(j.capitalize())} {'searched the web in ' if i == 0 else 'in '}"
+        modes = e.get("by_mode") or {}
+        if "blinded" in modes and "open" in modes:
+            b, o = modes["blinded"], modes["open"]
+            parts.append(lead + f"{n(b, 'searched')} of {n(b, 'grades')} blinded"
+                         + (" grades and " if i == 0 else " and ")
+                         + f"{n(o, 'searched')} of {n(o, 'grades')} open" + (" ones" if i == 0 else ""))
+        else:
+            parts.append(lead + f"{n(e, 'searched')} of {n(e, 'grades')}" + (" grades" if i == 0 else ""))
     return " Measured: " + ", ".join(parts) + "."
 
 
