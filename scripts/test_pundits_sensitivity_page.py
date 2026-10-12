@@ -124,6 +124,28 @@ def main() -> int:
     page3 = B.render(res3, tss.profile(), tss.copy(), rundate="12 October 2026")
     check("undated recordings are counted on the page", "2 recordings have no upload date and are left out." in page3)
 
+    print("\n[TYPES]")
+    # FOUND 2026-10-12 by the second review: the counts went into the page as they
+    # came, so a missing floor read "below the None-recording floor" and a string
+    # would have reached the HTML unescaped.
+    for label, mutate in (("a count that is not an integer",
+                           lambda d: d["venue_leave_one_out"]["by_venue"]["debate"].update(recordings_dropped="<b>4</b>")),
+                          ("a missing rank floor", lambda d: d["venue_leave_one_out"].pop("min_transcripts_to_rank"))):
+        bad = tss.results()
+        bad["diagnostics"].update(_copy.deepcopy(SENS))
+        mutate(bad["diagnostics"])
+        try:
+            B.render(bad, tss.profile(), tss.copy(), rundate="x")
+            why = ""
+        except RuntimeError as exc:
+            why = str(exc)
+        check(f"{label} is refused, never printed", "venue_leave_one_out" in why, why or "rendered it")
+    tiny = tss.results()
+    tiny["diagnostics"]["era_covariate"] = dict(SENS["era_covariate"], slope_per_year=-0.04, ci95=[-0.04, 2.0])
+    tpage = B.render(tiny, tss.profile(), tss.copy(), rundate="x")
+    check("a slope that rounds to zero never prints as -0.0", "-0.0" not in tpage and "+0.0 points" in tpage,
+          tpage[tpage.find("Upload date"):][:200])
+
     print("\n[PLACE]")
     check("the section follows Method", page.find("<h2>Method</h2>") < page.find('id="sensitivity"'))
 

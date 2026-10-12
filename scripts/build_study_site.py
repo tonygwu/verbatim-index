@@ -148,6 +148,8 @@ def card_counts(results: dict) -> dict[str, int]:
     """The three counts the social card draws. build_og_card.py draws them and
     og_card_drift() re-reads them, so the card and its check cannot disagree."""
     d = results.get("diagnostics") or {}
+    if "transcripts" not in results:
+        raise RuntimeError("results.json has no transcripts; the card's recordings cannot be counted")
     ranked = {p.get("slug") for p in results.get("leaders") or [] if p.get("status") == "scored"}
     # The board's recordings, as the page's recordings list counts them: blinded rows
     # of ranked people. transcripts_with_blinded_consensus also counts unranked people.
@@ -255,6 +257,18 @@ def search_sentence(results: dict) -> str:
     return " Measured: " + ", ".join(parts) + "."
 
 
+def _count(v, what: str) -> int:
+    """A count read from results.json, refused unless it is an integer, so it can go into the page as is."""
+    if not isinstance(v, int) or isinstance(v, bool):
+        raise RuntimeError(f"{what} holds {v!r}, not a count")
+    return v
+
+
+def _signed(v: float) -> str:
+    """One decimal with a sign, where a value that rounds to zero prints +0.0, never -0.0."""
+    return num(round(v, 1) + 0.0, signed=True)
+
+
 def _people(n: int, verb: str, verbs: str) -> str:
     return f"{n} person {verb}" if n == 1 else f"{n} people {verbs}"
 
@@ -274,19 +288,20 @@ def sensitivity_section(results: dict) -> str:
     items = []
     loo = d.get("venue_leave_one_out")
     if isinstance(loo, dict):
-        floor = loo.get("min_transcripts_to_rank")
+        floor = _count(loo.get("min_transcripts_to_rank"), "venue_leave_one_out.min_transcripts_to_rank")
         for venue, e in (loo.get("by_venue") or {}).items():
+            what = f"venue_leave_one_out.by_venue[{venue!r}]"
             below = len(e.get("people_below_floor") or [])
-            line = (f"Without the {e['recordings_dropped']} {esc(venue)} recordings, "
+            line = (f"Without the {_count(e.get('recordings_dropped'), what)} {esc(venue)} recordings, "
                     f"{_people(below, 'falls', 'fall')} below the {floor}-recording floor.")
-            kept = e.get("people_still_ranked")
+            kept = _count(e.get("people_still_ranked"), what)
             if kept:
-                line += (f" Among the {kept} still ranked, {e['people_changing_rank']} change rank, and the "
-                         f"largest score shift is {num(e.get('max_abs_shift'))} points.")
+                line += (f" Among the {kept} still ranked, {_count(e.get('people_changing_rank'), what)} change "
+                         f"rank, and the largest score shift is {num(e.get('max_abs_shift'))} points.")
             else:
                 line += " Nobody stays ranked."
             items.append(line)
-        disputed = loo.get("recordings_venue_disputed") or 0
+        disputed = _count(loo.get("recordings_venue_disputed", 0), "venue_leave_one_out.recordings_venue_disputed")
         if disputed:
             items.append(f"The {disputed} recording{'s' if disputed != 1 else ''} whose format the judges "
                          f"disputed stay{'s' if disputed == 1 else ''} in every run.")
@@ -296,10 +311,11 @@ def sensitivity_section(results: dict) -> str:
         plural = len(arch["excluded"]) != 1
         if arch.get("computed"):
             items.append(f"Without {who}, the archival subject{'s' if plural else ''} "
-                         f"({arch['recordings_excluded']} recordings), with calibration refitted on everyone "
-                         f"else: {arch['people_changing_rank']} of the other {arch['people_ranked']} ranked "
-                         f"people change rank, and the largest score shift is {num(arch.get('max_abs_shift'))} "
-                         f"points.")
+                         f"({_count(arch.get('recordings_excluded'), 'archival_excluded')} recordings), with "
+                         f"calibration refitted on everyone else: "
+                         f"{_count(arch.get('people_changing_rank'), 'archival_excluded')} of the other "
+                         f"{_count(arch.get('people_ranked'), 'archival_excluded')} ranked people change rank, and "
+                         f"the largest score shift is {num(arch.get('max_abs_shift'))} points.")
         else:
             items.append(f"The check without {who}, the archival subject{'s' if plural else ''}, did not run "
                          f"for this build.")
@@ -308,8 +324,8 @@ def sensitivity_section(results: dict) -> str:
         if era.get("computed"):
             lo, hi = era["ci95"]
             line = (f"Upload date: within the same person, a recording uploaded one year later scores "
-                    f"{num(era['slope_per_year'], signed=True)} points (95% interval {num(lo, signed=True)} to "
-                    f"{num(hi, signed=True)}), over {era['recordings_used']} recordings uploaded "
+                    f"{_signed(era['slope_per_year'])} points (95% interval {_signed(lo)} to "
+                    f"{_signed(hi)}), over {_count(era.get('recordings_used'), 'era_covariate')} recordings uploaded "
                     f"{esc(era['first_upload'])} to {esc(era['last_upload'])}.")
             undated = len(era.get("recordings_without_date") or [])
             if undated:

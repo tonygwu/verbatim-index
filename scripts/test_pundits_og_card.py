@@ -62,6 +62,18 @@ def main() -> int:
               counts == {"people": 2, "recordings": 8, "judges": 2}, str(counts))
         check("and are drawn as the card's three stats",
               stats == [("People ranked", "2"), ("Recordings", "8"), ("Judges", "2")], str(stats))
+    # FOUND 2026-10-12 by the second review: with no transcripts the card drew
+    # "Recordings 0" where the old code refused.
+    gone = T.results()
+    gone.pop("transcripts")
+    gone["diagnostics"]["judge_models"] = {"fable": {"m": 1}}
+    try:
+        B.card_counts(gone)
+        why = ""
+    except RuntimeError as exc:
+        why = str(exc)
+    check("a results.json with no transcripts is refused, not drawn as 0 recordings", "transcripts" in why,
+          why or "no refusal")
     check("build_og_card knows a pundits site writing site-pundits/og.png",
           "pundits" in O.SITES and O.SITES["pundits"]["out"] == REPO / "site-pundits" / "og.png")
     check("the card's eyebrow carries the board's status label",
