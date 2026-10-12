@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""The P10 gate report: each gate a verdict, every lean figure at group level only.
+
+docs/PUNDITS-PLAN.md, P10 "Full-corpus validation (no quota)". scripts/pundits_gates.py
+reads a pundits data checkout and the private lean labels and writes one JSON report.
+This file builds a synthetic checkout of four people, two left and two right, and
+checks each gate against figures worked out by hand.
+
+  TOOLS       Fable's transcript_tool_calls: all zero is PASS; any nonzero is FAIL,
+              naming the grade; a missing count is INCONCLUSIVE, never PASS
+  IDENTITY    the confident rate counts identity_confident; the correct rate also
+              requires the guess to name the subject, so a confident wrong guess
+              shows the gap between the two
+  SEARCH      search rate by judge and mode; a query that names the blinded
+              subject is counted; Fable at 0 vs 0 PASSES, Gemini's 0% vs 33% on two
+              people per side is INCONCLUSIVE, not PASS
+  COVERAGE    loss is scheduled recordings that did not reach the board: left 0 of
+              4, right 1 of 4; cells lost by judge and mode; a dropped judge's cells
+              are reported as excluded, not counted as loss
+  VENUE       the support rule's result is carried from results.json
+  PRIVACY     no object in the report holds both a person's slug and a lean label,
+              and the report is written nowhere inside the data checkout
+  CLI         --data and --lean-labels are required; the report goes to --out
+
+No quota, no live data.
+
+  .venv/bin/python scripts/test_pundits_gates.py
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts"))
+PASS, FAIL = [], []
+LEANS = {"p1": "left", "p2": "left", "p3": "right", "p4": "right"}
+NAMES = {"p1": "Alice Leftwood", "p2": "Bob Lefter", "p3": "Carol Righton", "p4": "Dan Rightley"}
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    (PASS if ok else FAIL).append(name)
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"\n        {detail}" if not ok and detail else ""))
+
+
+def grade(slug: str, sid: str, judge: str, mode: str, *, tool_calls=0, queries=(), guess=None,
+          confident=True, venue="conversation") -> dict:
+    dims = {d: {"score": 50, "reasoning": "", "counterevidence": "", "evidence": []}
+            for d in ("d1_steelmanning", "d2_epistemic_rigor", "d3_good_faith")}
+    tel = {"transcript_tool_calls": tool_calls} if judge == "fable" else {"web_search_queries": list(queries)}
+    if tool_calls is None:
+        tel = {}
+    return {"transcript_id": f"{slug}/{sid}", "leader_slug": slug, "source_id": sid, "judge": judge,
+            "mode": mode, "run": 0, "study_id": "pundits", "validation_errors": [], "telemetry": tel,
+            "grade": {"identity_guess": NAMES[slug] if guess is None else guess,
+                      "identity_confident": confident, "venue_type": venue, "dimensions": dims}}
+
+
+def build(root: Path, *, fable_calls_p1=0) -> None:
+    """Four people, two recordings each, fable + gemini, both modes; astra scheduled but dropped.
+
+    p4's second recording never reaches the board (both its gemini cells failed).
+    p3's two blinded gemini grades searched, one query naming Carol Righton.
+    p2's first blinded fable grade guessed the wrong person, confidently.
+    """
+    (root / ".study").write_text("pundits\n")
+    (root / "roster").mkdir(parents=True)
+    (root / "roster/final.json").write_text(json.dumps({"roster": [
+        {"slug": s, "name": n, "handles": [], "archival": False} for s, n in NAMES.items()]}))
+    sched, transcripts = [], []
+    for slug in NAMES:
+        for i in (0, 1):
+            sid = f"{slug}-r{i}"
+            for judge in ("fable", "gemini", "astra"):
+                for mode in ("blinded", "open"):
+                    sched.append({"block": 0, "judge": judge, "mode": mode, "run": 0, "slug": slug, "source_id": sid})
+                    if judge == "astra" or (slug == "p4" and i == 1 and judge == "gemini"):
+                        continue
+                    kw = {}
+                    if judge == "fable" and slug == "p1" and i == 0 and mode == "blinded":
+                        kw["tool_calls"] = fable_calls_p1
+                    if judge == "gemini" and slug == "p3" and mode == "blinded":
+                        kw["queries"] = ["Carol Righton podcast"] if i == 0 else ["minimum wage study"]
+                    if judge == "fable" and slug == "p2" and i == 0 and mode == "blinded":
+                        kw["guess"] = "Someone Else"
+                    g = grade(slug, sid, judge, mode, **kw)
+                    p = root / "grades" / judge / slug / f"{sid}__{judge}__{mode}__r0.json"
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(json.dumps(g))
+            if not (slug == "p4" and i == 1):
+                for mode in ("blinded", "open"):
+                    transcripts.append({"leader_slug": slug, "source_id": sid, "mode": mode,
+                                        "venue_type": "conversation"})
+    (root / "logs/schedule").mkdir(parents=True)
+    (root / "logs/schedule/s.jsonl").write_text("".join(json.dumps(r) + "\n" for r in sched))
+    (root / "results.json").write_text(json.dumps({
+        "leaders": [], "unranked": [], "transcripts": transcripts,
+        "diagnostics": {"judge_models": {"fable": {"claude-fable-5-1": 8}, "gemini": {"gemini-3.8-flash-high": 7}},
+                        "venue_adjustment_applied": False,
+                        "venue_support_reasons": ["venue 'debate' seen 0 times, under the minimum of 8"],
+                        "venue_counts": {"conversation": 7}}}))
+
+
+def holds_slug_and_lean(obj) -> list:
+    """Every dict or list in `obj` whose own scalar values include both a slug and a lean."""
+    hits = []
+    if isinstance(obj, dict):
+        vals = [*obj.keys(), *[v for v in obj.values() if isinstance(v, str)]]
+        if any(v in LEANS for v in vals) and any(v in set(LEANS.values()) for v in vals):
+            hits.append(obj)
+        for v in obj.values():
+            hits += holds_slug_and_lean(v)
+    elif isinstance(obj, list):
+        if any(v in LEANS for v in obj if isinstance(v, str)) and any(
+                v in set(LEANS.values()) for v in obj if isinstance(v, str)):
+            hits.append(obj)
+        for v in obj:
+            hits += holds_slug_and_lean(v)
+    return hits
+
+
+def main() -> int:
+    print("P10 gate report")
+    try:
+        import pundits_gates as G
+    except Exception as exc:  # noqa: BLE001 - the missing module is the failure under test
+        check("scripts/pundits_gates.py is importable", False, repr(exc))
+        print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
+        return 1
+
+    with tempfile.TemporaryDirectory(prefix="p10-") as td:
+        tmp = Path(td)
+        root = tmp / "data"
+        root.mkdir()
+        build(root)
+        leans = tmp / "leans.json"
+        leans.write_text(json.dumps(LEANS))
+        rep = G.report(root, json.loads(leans.read_text()))
+        gates = rep.get("gates", {})
+
+        print("\n[TOOLS]")
+        t = gates.get("fable_tool_calls", {})
+        check("all-zero Fable tool calls PASS", t.get("verdict") == "PASS" and t.get("grades") == 16, str(t))
+        root2 = tmp / "data2"
+        root2.mkdir()
+        build(root2, fable_calls_p1=2)
+        t2 = G.report(root2, LEANS)["gates"]["fable_tool_calls"]
+        check("one nonzero count FAILS and names the grade",
+              t2.get("verdict") == "FAIL" and "p1/p1-r0" in json.dumps(t2), str(t2))
+        root3 = tmp / "data3"
+        root3.mkdir()
+        build(root3, fable_calls_p1=None)
+        t3 = G.report(root3, LEANS)["gates"]["fable_tool_calls"]
+        check("a missing count is INCONCLUSIVE, never PASS", t3.get("verdict") == "INCONCLUSIVE", str(t3))
+
+        print("\n[IDENTITY]")
+        i = rep.get("identity", {})
+        f = i.get("by_judge", {}).get("fable", {})
+        check("Fable's blinded grades: 8, all confident", f.get("grades") == 8 and f.get("confident_rate") == 1.0, str(f))
+        check("but 7 of 8 name the right person", f.get("correct_rate") == 0.875, str(f))
+        check("the report says whether the site must call blinding name-removed (>= 90% correct)",
+              i.get("disclosure_required") is True and i.get("correct_rate") == round(14 / 15, 3), str(i))
+
+        print("\n[SEARCH]")
+        s = gates.get("G-search", {})
+        gem = s.get("by_judge", {}).get("gemini", {})
+        check("Gemini searched in 2 of its 14 grades", gem.get("searched") == 2 and gem.get("grades") == 14, str(gem))
+        check("one query names the blinded subject", s.get("queries_naming_subject") == 1, str(s))
+        check("Fable, whose tools are removed, PASSES at 0 vs 0",
+              s.get("by_judge", {}).get("fable", {}).get("verdict") == "PASS", str(s.get("by_judge", {}).get("fable")))
+        check("Gemini at 0% vs 33% on two people a side is INCONCLUSIVE, not PASS",
+              gem.get("verdict") == "INCONCLUSIVE", str(gem))
+        check("the left-minus-right point estimate is in percentage points",
+              gem.get("left_minus_right_points") == round(0 - 100 * 2 / 6, 1), str(gem))
+
+        print("\n[COVERAGE]")
+        c = gates.get("G-coverage", {})
+        bl = c.get("by_lean", {})
+        check("left loses 0 of 4 scheduled recordings", bl.get("left", {}).get("lost") == 0
+              and bl.get("left", {}).get("scheduled") == 4, str(bl))
+        check("right loses 1 of 4", bl.get("right", {}).get("lost") == 1 and bl.get("right", {}).get("scheduled") == 4,
+              str(bl))
+        check("the by-person table names p4's loss without its lean",
+              c.get("by_person", {}).get("p4", {}).get("lost") == 1, str(c.get("by_person")))
+        cells = c.get("cells_by_judge_mode", {})
+        check("cells lost by judge and mode: gemini blinded 1 of 8",
+              cells.get("gemini|blinded", {}).get("lost") == 1 and cells.get("gemini|blinded", {}).get("scheduled") == 8,
+              str(cells))
+        check("the dropped judge's cells are excluded, not lost",
+              c.get("excluded_judges") == {"astra": 16} and "astra|blinded" not in cells, str(c.get("excluded_judges")))
+        check("25 points of loss on two people a side is INCONCLUSIVE", c.get("verdict") == "INCONCLUSIVE", str(c))
+
+        print("\n[VENUE]")
+        v = gates.get("venue_support", {})
+        check("the support rule's result is carried, with its reason",
+              v.get("applied") is False and "debate" in json.dumps(v.get("reasons")), str(v))
+
+        print("\n[PRIVACY]")
+        hits = holds_slug_and_lean(rep)
+        check("no object pairs a slug with a lean label", not hits, json.dumps(hits)[:400])
+        check("the lean groups are counted, not listed",
+              rep.get("lean_groups") == {"left": 2, "right": 2}, str(rep.get("lean_groups")))
+
+        print("\n[CLI]")
+        out = tmp / "report.json"
+        r = subprocess.run([sys.executable, REPO / "scripts/pundits_gates.py", "--data", root,
+                            "--lean-labels", leans, "--out", out], capture_output=True, text=True)
+        check("the CLI writes the report to --out", r.returncode == 0 and out.exists()
+              and json.loads(out.read_text()).get("gates"), r.stderr[-300:])
+        r = subprocess.run([sys.executable, REPO / "scripts/pundits_gates.py", "--data", root,
+                            "--lean-labels", leans, "--out", root / "gates.json"], capture_output=True, text=True)
+        check("a report path inside the data checkout is refused",
+              r.returncode != 0 and not (root / "gates.json").exists(), r.stderr[-300:])
+        r = subprocess.run([sys.executable, REPO / "scripts/pundits_gates.py", "--data", root, "--out", out],
+                           capture_output=True, text=True)
+        check("--lean-labels is required", r.returncode != 0, r.stderr[-200:])
+
+    print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
+    if FAIL:
+        print("failed: " + "; ".join(FAIL))
+    return 1 if FAIL else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

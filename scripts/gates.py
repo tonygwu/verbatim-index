@@ -42,3 +42,27 @@ def mean_ci90(values: list[float], n: int = 20000, seed: int = 20260914) -> tupl
     k = len(values)
     draws = sorted(sum(values[rng.randrange(k)] for _ in range(k)) / k for _ in range(n))
     return draws[int(0.05 * n)], draws[min(int(0.95 * n), n - 1)]
+
+
+def cluster_rate_diff_ci90(a: list[tuple[int, int]], b: list[tuple[int, int]], n: int = 20000,
+                           seed: int = 20260914) -> tuple[float, float]:
+    """A seeded 90% cluster-bootstrap interval for rate(a) minus rate(b), in percentage points.
+
+    Each element is one PERSON's (events, units), so a resample draws people
+    with replacement inside each group and pools their events over their units.
+    Plan P10 asks for a cluster bootstrap by person: recordings repeat within a
+    person, so resampling recordings would overstate the precision.
+    """
+    for name, g in (("a", a), ("b", b)):
+        if not g:
+            raise ValueError(f"group {name} has no people")
+        if any(u <= 0 or e < 0 or e > u for e, u in g):
+            raise ValueError(f"group {name} has a person with no units or an impossible count: {g}")
+    rng = random.Random(seed)
+
+    def rate(g: list[tuple[int, int]]) -> float:
+        pick = [g[rng.randrange(len(g))] for _ in g]
+        return sum(e for e, _ in pick) / sum(u for _, u in pick)
+
+    draws = sorted(100 * (rate(a) - rate(b)) for _ in range(n))
+    return draws[int(0.05 * n)], draws[min(int(0.95 * n), n - 1)]

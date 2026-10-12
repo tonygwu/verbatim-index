@@ -34,8 +34,11 @@ CANARY = "LEANCANARY7f3a9c"
 PRIVATE_NAMES = re.compile(r"lean_labels|lean_sources|lean_notes|private/")
 # schedule.py stratifies by lean; pundits_roster.py validates the labels;
 # p3_judge_probe.py only PLANTS a fake canary named lean_labels_canary.json in its
-# jail and never opens the real file.
-ALLOWED_READERS = {"schedule.py", "pundits_roster.py", "p3_judge_probe.py"}
+# jail and never opens the real file. pundits_gates.py (added 2026-10-12) needs
+# the labels because plan P10's lean gates are defined on them; it publishes lean
+# only as group keys, and test_pundits_gates.py [PRIVACY] proves no object in its
+# report pairs a person with a lean.
+ALLOWED_READERS = {"schedule.py", "pundits_roster.py", "p3_judge_probe.py", "pundits_gates.py"}
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
