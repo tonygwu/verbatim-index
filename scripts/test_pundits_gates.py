@@ -92,7 +92,7 @@ def cal_params(kind: str) -> dict:
 
 def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None,
           anchor_cells=(("fable", "blinded"),), regraded=None, lovo=True, calibration="raw",
-          anchor_ids=(("p1", "p1-r0"),), regraded_ids=None) -> None:
+          anchor_ids=(("p1", "p1-r0"),), regraded_ids=None, fable_wrong_p2=True, gemini_wrong=False) -> None:
     """Four people, two recordings each, fable + gemini, both modes; astra scheduled but dropped.
 
     p4's second recording never reaches the board (both its gemini cells failed).
@@ -117,7 +117,9 @@ def build(root: Path, *, fable_calls_p1=0, fable_right_bias=6, anchor_drift=None
                         kw["tool_calls"] = fable_calls_p1
                     if judge == "gemini" and slug == "p3" and mode == "blinded":
                         kw["queries"] = ["Carol Righton podcast"] if i == 0 else ["minimum wage study"]
-                    if judge == "fable" and slug == "p2" and i == 0 and mode == "blinded":
+                    if judge == "fable" and slug == "p2" and i == 0 and mode == "blinded" and fable_wrong_p2:
+                        kw["guess"] = "Someone Else"
+                    if judge == "gemini" and gemini_wrong:
                         kw["guess"] = "Someone Else"
                     if judge == "fable" and LEANS[slug] == "right":
                         kw["score"] = 50 + fable_right_bias
@@ -221,10 +223,19 @@ def main() -> int:
         # any judge named the speaker). The verdict now reads what the page prints.
         board = json.loads((root / "results.json").read_text())
         n_board = sum(1 for t in board["transcripts"] if t["mode"] == "blinded")
-        check("the per-recording rate over the board's recordings, as the page counts it",
-              i.get("board_recordings") == n_board and isinstance(i.get("board_correct_rate"), float), str(i))
-        check("the disclosure verdict follows the per-recording rate (>= 90% correct)",
-              i.get("disclosure_required") is (i.get("board_correct_rate", 0) >= G.DISCLOSURE_AT), str(i))
+        check("the per-recording rate over the board's recordings, as the page counts it: Gemini names p2-r0, "
+              "so all 7 count", i.get("board_recordings") == n_board == 7 and i.get("board_correct_rate") == 1.0, str(i))
+        # FOUND 2026-10-12 by the second review: the check above was a float test and
+        # the verdict check re-derived the code's own expression, so neither could fail.
+        # Here the two rates fall on opposite sides of 90%: Fable names all 8, Gemini
+        # none, so per grade it is 8 of 15 and per board recording 7 of 7.
+        root13 = tmp / "data13"
+        root13.mkdir()
+        build(root13, fable_wrong_p2=False, gemini_wrong=True)
+        i13 = G.report(root13, LEANS)["identity"]
+        check("per grade 8 of 15, per board recording 7 of 7, and the verdict follows the board rate",
+              i13.get("correct_rate") == round(8 / 15, 3) and i13.get("board_correct_rate") == 1.0
+              and i13.get("disclosure_required") is True, str(i13))
 
         print("\n[SEARCH]")
         s = gates.get("G-search", {})
