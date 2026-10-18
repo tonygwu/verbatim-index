@@ -27,7 +27,7 @@ The block is per-endpoint.
 The REAL reason not to run it turned up while checking: leaders discovery had no
 pacing at all, because commit `9925c0e` paced `discover_pundits.py` and left this
 path at **eight unpaced workers**. That configuration ran while the pundits pilot
-hit 202 IP blocks (the count is from BACKLOG.md at `1db54a2`, cut the same day when
+hit 202 IP blocks (the count is from BACKLOG.md at `1db54a2`, cut when
 `0f77d06` withdrew the claim that the fetch pace caused them; the withdrawal is in
 `docs/BACKLOG-RESOLVED.md`, Shared fetcher). It is fixed, and this run used three
 workers at 1.5s: 27 seconds for one person, 62 for the other six.

@@ -24,10 +24,10 @@ change to its file is an ordinary item.
 | ID scheme | `VI-<n>` (Verbatim Index), one counter for the file. Next ID = 1 + the highest `VI-` number in this file **and** its git history, because a deleted ID never returns; the command is under this table. Ledger IDs (`VP-`, `VD-`, `CI-`) are a different series, in `docs/LEDGER-*.md` |
 | Difficulty ladder | `low`, `medium`, `high`, `xhigh`; `ultra/workflows` is split into normal items when filing. The skill's § 5 maps the running model to a row; claim at or below it |
 | Agent handle | `#<n>` from a `repo-<n>` clone directory (`repo-0` is `#0`). Commit subjects: `claim: VI-n (#<n>)`, `backlog: delete VI-n (#<n>)` |
-| Priority | file order within `## Open items`: the first unclaimed, unblocked item in the file is the next one to take. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them; a new item goes at the end of the unblocked run unless it must be done sooner |
+| Priority | file order within `## Open items`: the first unclaimed, unblocked item in the file whose Background's first sentence does not name another clone's lane is the next one to take. Read that sentence before the claim, and never claim a lane item from another clone. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them; a new item goes at the end of the unblocked run unless it must be done sooner |
 | Validation gate | `bash scripts/run_tests.sh` from the clone root, the whole output kept, `failed: 0` required. Never pipe it through `tail -1`: the per-file `FAILED <path>` lines are the finding. `test_log_bloat.py` and the `LIVE DATA` checks in `test_render_integrity.py` read the leaders daemon's live checkout, so a red there is reported with its text, never retried until green (VI-12) |
 | Pre-push review | `adversarial-self-review` on `origin/main..HEAD` before every push, verdict `ship` required, two fix rounds at most |
-| Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Two kinds: an operator decision, or a measurement or event that has not happened. Nobody claims a blocked item, and the loop never lists one, so a lane is never a block: an item that only one clone can finish (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; AGENTS.md, "Clone roles") says so in the first line of its Background, and an agent on another clone releases its claim instead of working it. Whoever lifts a block deletes the tag in its own commit |
+| Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Two kinds: an operator decision, or a measurement or event that has not happened. Nobody claims a blocked item, and the loop never lists one, so a lane is never a block: an item that only one clone can finish (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; AGENTS.md, "Clone roles") says so in the first sentence of its Background, and an agent on another clone skips it without claiming, and releases if it claimed before reading. Whoever lifts a block deletes the tag in its own commit |
 | Completion | delete the item; git history is the record. A decision or measurement worth keeping goes in the `docs/agents/` file of its topic, under "Rules that exist because something broke" or "Experiments run", never back into this file |
 | Doc-gap routing | a standalone `low` item |
 | Scan logs / ledgers | `backlog/scan-logs/improve-code/<shard>.md` and `backlog/scan-logs/improve-data/<domain>.md`, tracked, created when those modes first run here |
@@ -47,7 +47,7 @@ The skill's § 3, repeated here so a filing agent has it in front of it:
 ```markdown
 ### VI-<n>. <one-line problem statement>  `[difficulty: <level>]`  `[filed: YYYY-MM-DD]`  `[BLOCKED: <what lifts it>]`?
 
-**Background:** what the code or data does today and where; at least one `file:line`. For a doc item, the stale sentence verbatim.
+**Background:** first sentence, when only one clone can finish the item: which clone, and why. Then what the code or data does today and where; at least one `file:line`. For a doc item, the stale sentence verbatim.
 
 **Impact:** the concrete consequence.
 
@@ -137,7 +137,7 @@ in a Background is provenance, not a claim.
 2. `scripts/test_fable_pool.py` and `scripts/test_credit_run.py` both stay green; add one check that a served-field mismatch produces the same label through both entry points, failing first against a stubbed `credit_run.run`.
 3. `docs/agents/JUDGES.md` names the one call path.
 
-*Risks and edge cases:* `call_fable_pool` takes a `spent` tally and a `request_id` (`:1163-1165`); keep them. `FABLE_POOL_MAX_TIMEOUT` (`:1152`, `:1181`) must still refuse a longer timeout before any call. `grade_loop.sh` never passes `--fable-pool`, so production is untouched.
+*Risks and edge cases:* `call_fable_pool` takes a `spent` tally and a `request_id` (`:1163-1165`); keep them. `FABLE_POOL_MAX_TIMEOUT` (`:1154`, `:1181`) must still refuse a longer timeout before any call. `grade_loop.sh` never passes `--fable-pool`, so production is untouched.
 
 *Why high not medium:* two modules, two test files and a label mapping that decides what the run summary's taxonomy says about a refused credit call.
 
@@ -167,7 +167,7 @@ in a Background is provenance, not a claim.
 
 ### VI-7. `judge_searched` can count a local file read as a web search  `[difficulty: high]`  `[filed: 2026-10-12]`
 
-**Background:** Filed from the independent review of the 2026-10-12 pundits commits; plausible, not seen in data. `scripts/grade.py:2027` (`count_gemini_tool_events`) puts any completed tool step with a `query`, `Query`, `url`, `Url` or `AbsolutePath` parameter (`:2055`) into `web_search_queries`, so a `view_file` step would count. The error runs toward disclosing more searches than happened, never fewer. The `tool_use_counts["web_search"]` branch (`:1339`) matches only the codex harness (Astra, dropped); agy names its tool `search_web` (`:2031-2035`).
+**Background:** Filed from the independent review of the 2026-10-12 pundits commits; plausible, not seen in data. `scripts/grade.py:2027` (`count_gemini_tool_events`) puts any completed tool step with a `query`, `Query`, `url`, `Url` or `AbsolutePath` parameter (`:2055`) into `web_search_queries`, so a `view_file` step would count. The error runs toward disclosing more searches than happened, never fewer. The `tool_use_counts["web_search"]` branch (`:647`, `:700`) matches only the codex harness (Astra, dropped); agy names its tool `search_web` (`:2031-2035`).
 
 **Impact:** A grade's `judge_searched` disclosure, which the page shows beside the score, can say the judge searched the web when it read a file, so the published disclosure overstates what the judge did.
 
@@ -180,7 +180,7 @@ in a Background is provenance, not a claim.
 
 *Why high not medium:* the fixture has to be found in real logs and the rule changes a published disclosure.
 
-**Touch points:** `scripts/grade.py:2027-2060`, `:1339-1341`, `:2231-2232`, `scripts/test_judge_web_search.py`, `docs/agents/JUDGES.md`.
+**Touch points:** `scripts/grade.py:2027-2060`, `:647`, `:700`, `:1340-1343`, `:2231-2232`, `scripts/test_judge_web_search.py`, `docs/agents/JUDGES.md`.
 
 ---
 
@@ -217,7 +217,7 @@ in a Background is provenance, not a claim.
 
 ### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`
 
-**Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent elsewhere that claims it releases the claim. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/pundits_verify_page.py build` takes `--drafts` (`:16-31`, `load_drafts` at `:341`), to be run with `data-pundits/logs/p6b/speaker_inference.jsonl` and the same `--grades` and `--quote-key` as before, then the pundits data pushed; 65 flagged recordings list first.
+**Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/pundits_verify_page.py build` takes `--drafts` (`:16-31`, `load_drafts` at `:341`), to be run with `data-pundits/logs/p6b/speaker_inference.jsonl` and the same `--grades` and `--quote-key` as before, then the pundits data pushed; 65 flagged recordings list first.
 
 **Impact:** Three recordings have extractions nobody verified, one person has none, and the labelling page does not show the drafts that were paid for.
 
@@ -229,7 +229,7 @@ in a Background is provenance, not a claim.
 
 ### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[difficulty: medium]`  `[filed: 2026-10-11]`
 
-**Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent elsewhere that claims it releases the claim. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
+**Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
 
 **Impact:** Until the re-grade, the pundits grading loop exits 1 on every cycle after the normalize, and four board scores rest on text in which a judge read "Tim [SUBJECT]" for Tim Walz.
 
@@ -370,7 +370,7 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ### VI-14. david-sacks and chamath-palihapitiya are on the predictions board only, and promoting them means a multi-hour grading run on prepaid credit  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks it up; spends about $50 to $60 of API credit]`
 
-**Background:** Filed by repo-0 on the operator's instruction of 2026-10-17 and deferred the same day. `membership.json` gives each `['predictions']` today. This item also carries the archived entry "Discovery will re-pollute the seven's curated alias lists" (`docs/BACKLOG-RESOLVED.md`, Board membership): its open clause, re-curate the alias blocks when one of the seven is promoted, is step (3) below, and its measurement (zero incremental blinding damage either way) is in the archive. The ledger entry, verbatim:
+**Background:** Only the leaders daemon clone, repo-0, can finish this: steps (1), (2) and (5) write owner paths of the leaders data repo and deploy the leaderboard. Filed by repo-0 on the operator's instruction of 2026-10-17 and deferred the same day. `membership.json` gives each `['predictions']` today. This item also carries the archived entry "Discovery will re-pollute the seven's curated alias lists" (`docs/BACKLOG-RESOLVED.md`, Board membership): its open clause, re-curate the alias blocks when one of the seven is promoted, is step (3) below, and its measurement (zero incremental blinding damage either way) is in the archive. The ledger entry, verbatim except for one refreshed line number:
 
 Filed 2026-10-18 by repo-0, on the
 operator's instruction of 2026-10-17, and deferred the same day: the work is a
@@ -416,7 +416,7 @@ blocks (the archived entry "Re-checked 2026-10-11: still WAITING", in
 choice, and the merge in `sources_to_manifest.py` re-adds the words on the
 next rebuild).
 (4) `grade.py`. `--fable-pool` must take a comma-separated pool list:
-`call_fable_pool` wants `served.account == pool` (`grade.py:1211`), so a list
+`call_fable_pool` wants `served.account == pool` (`grade.py:1215-1216`), so a list
 fails every call as `account_identity_mismatch` today. It needs a production
 opt-in: `fable_pool_refusal` (`grade.py:576`) refuses `--out` outside
 `data/experiments/`. At filing, repo-3 held the predictions precedent UNPUSHED:
@@ -592,7 +592,7 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 
 ---
 
-### VI-19. An unsupported dimension removes the whole recording, though the plan says it should still count toward the dimensions it supports  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: the pundits full grade, or a second recording with an unsupported dimension; moves the published pundits board, repo-3's lane]`
+### VI-19. An unsupported dimension removes the whole recording, though the plan says it should still count toward the dimensions it supports  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: the pundits full grade, or a second recording with an unsupported dimension]`
 
 **Background:** The re-aggregate and deploy in step 3 are the pundits daemon clone's, repo-3; the code change is any clone's. Found while asking why `asmongold/asmongold-tv-ks77-g` is missing from `results.json` despite four schema-valid grades. Three of its four grades mark `d1_steelmanning` `unsupported` (fable/blinded, gemini/blinded, gemini/open). `scripts/aggregate.py:1248` marks each such grade `_excluded = "unsupported_dimension"`, which removes the whole grade, and then `drop_partial_panels` (`:115`) drops the fourth, fully supported fable/open grade as an incomplete panel. The recording contributes to no dimension. `docs/PUNDITS-PLAN.md:241-246` ("Anchors and minimum evidence") says otherwise: a transcript with any unsupported dimension has no `overall`, still counts toward each dimension it supports, and ranking by overall uses only transcripts with all three supported. Re-running `aggregate.py --study pundits` on a scratch clone of data-pundits at `dced184` reproduces the committed result: 154 transcripts, the same one partial panel, and `grades_excluded_unsupported_dimension 3` (`:1696`), so the loss is counted rather than silent. The reporting half is done: `drop_partial_panels` names a cell removed earlier and why (`:164`), so the report reads "missing gemini/open (removed: unsupported_dimension)". `docs/PUNDITS-RELEASE-PLAN.md:198-201` asks the operator to choose one rule and delete the other sentence from the plan.
 
@@ -631,7 +631,7 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 
 ### VI-22. `grade.py --regrade-invalid` exists for leaders and is off, so 35 malformed leaders records stay as they are  `[difficulty: low]`  `[filed: 2026-10-11]`  `[BLOCKED: operator decides to turn it on; spends about 35 Fable calls and moves the published board]`
 
-**Background:** Counted 2026-10-11 in the shared leaders data: 35 records failed validation while still carrying an attempt at scores, 26 with `dimensions` and 9 in a judge-invented shape with `overall`; six more failed as refusals or non-answers and stay put by the refusal rule in `docs/agents/JUDGES.md`. `scripts/grade.py:446-473` implements `--regrade-invalid` as an opt-in: a malformed record is moved under `grades/_obsolete/` byte for byte and graded again. `scripts/grade_loop.sh:205` and `:218` do not pass the flag, and `scripts/test_leaders_regrade_invalid.py:150` pins that they do not. It is opt-in because default-on would make repo-0's daemon spend about 35 calls and move the published board on its next code pull. The archived entry "LEADERS HALF FIXED 2026-10-11 as an opt-in" (`docs/BACKLOG-RESOLVED.md`, Verbatim Pundits) holds the count and the proof.
+**Background:** The manual pass is the leaders daemon clone's, repo-0; the loop-flag route is a code change any clone can make. Counted 2026-10-11 in the shared leaders data: 35 records failed validation while still carrying an attempt at scores, 26 with `dimensions` and 9 in a judge-invented shape with `overall`; six more failed as refusals or non-answers and stay put by the refusal rule in `docs/agents/JUDGES.md`. `scripts/grade.py:446-473` implements `--regrade-invalid` as an opt-in: a malformed record is moved under `grades/_obsolete/` byte for byte and graded again. `scripts/grade_loop.sh:205` and `:218` do not pass the flag, and `scripts/test_leaders_regrade_invalid.py:150` pins that they do not. It is opt-in because default-on would make repo-0's daemon spend about 35 calls and move the published board on its next code pull. The archived entry "LEADERS HALF FIXED 2026-10-11 as an opt-in" (`docs/BACKLOG-RESOLVED.md`, Verbatim Pundits) holds the count and the proof.
 
 **Impact:** 35 leaders cells that could hold a score hold a malformed record, and the board is computed without them.
 

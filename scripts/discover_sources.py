@@ -90,7 +90,7 @@ def log(msg: str) -> None:
 # the leaders path kept firing yt-dlp searches with no sleep flag from EIGHT
 # worker threads at once. That configuration ran while the pundits P6 pilot hit
 # 202 IP blocks in 218 first-pass errors (the count is from BACKLOG.md at 1db54a2,
-# cut the same day when 0f77d06 withdrew the claim that the fetch pace caused
+# cut when 0f77d06 withdrew the claim that the fetch pace caused
 # them; the withdrawal is in docs/BACKLOG-RESOLVED.md, Shared fetcher), and this
 # machine was IP-blocked on YouTube the day it was noticed.
 #

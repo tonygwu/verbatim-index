@@ -8,7 +8,7 @@ no sleep flag, from EIGHT worker threads at once, while the pundits path ran
 three workers at 1.5 seconds.
 
 That configuration ran while the pundits P6 pilot produced 202 IP blocks in 218
-first-pass errors (the count is from BACKLOG.md at `1db54a2`, cut the same day when
+first-pass errors (the count is from BACKLOG.md at `1db54a2`, cut when
 `0f77d06` withdrew the claim that the fetch pace caused them; the withdrawal is in
 `docs/BACKLOG-RESOLVED.md`, Shared fetcher), and the machine this was found on was
 IP-blocked on YouTube at the time. The fix was written once and applied to one of
