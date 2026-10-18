@@ -409,6 +409,9 @@ const S = D.session;
 const CHECK = S.modes.includes("checklist") ? S.checklist : null;
 const FIELDS = CHECK ? CHECK.fields : [];
 const HAS = mode => S.modes.includes(mode);
+// A session with only the captions mode has no answer to complete: progress is the
+// recordings with corrections, and no recording is ever reported done.
+const CAPTIONS_ONLY = !CHECK && !HAS("speakers");
 const projectsOf = r => r.projects || S.projects;
 const projectOf = c => c.project || S.projects[0];
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -434,7 +437,7 @@ const section = r => !HAS_DRAFTS ? 0 : !r.ask ? 2 : (r.doubt||[]).length ? 0 : 1
 const recs = Object.values(REC).sort((a,b)=>section(a)-section(b) || (a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
 // A page with no recording-level questions is only quotes.
 const QUOTE_ONLY = !D.rows.length;
-let filter="todo", projectFilter="all", cur=recs.length?recs[0].key:null, focusQ=0;
+let filter=CAPTIONS_ONLY?"all":"todo", projectFilter="all", cur=recs.length?recs[0].key:null, focusQ=0;
 let labels={}, attrib={}, saver=null, writable=false;
 
 const answered = (f, v) => f.type==="bool" ? typeof v==="boolean" : f.type==="enum" ? f.options.some(o=>o.value===v)
@@ -448,8 +451,9 @@ const askDone = r => askLeft(r)===0;
 const openQuotes = r => HAS("speakers") ? r.quotes.filter(c=>!(attrib[c.qid]||{}).answer) : [];
 const quotesDone = r => !openQuotes(r).length &&
  (!r.quotes.length || !HAS("speakers") || (!spanPending[r.key] && !spanErrors[r.key]));
-const complete = r => askDone(r) && quotesDone(r);
+const complete = r => !CAPTIONS_ONLY && askDone(r) && quotesDone(r);
 function recState(r){
+ if(CAPTIONS_ONLY) return correctionAnswers[r.key]?.edits?.length ? "part" : "todo";
  if(complete(r)){
   const l=labels[r.key]||{};
   if(r.ask && !CHECK.accept_when_true.every(f=>l[f]===true)) return "rej";
@@ -473,14 +477,17 @@ function renderList(){
  // One group per person within each section, so a person's flagged recordings
  // are not pulled down into their confident ones.
  for(const r of vis)(groups[section(r)+"\u0000"+r.person] ||= []).push(r);
- for(const r of recs){const p=(per[r.person] ||= {n:0,ok:0,q:0,qa:0}); p.n++; if(r.ask&&recState(r)==="done") p.ok++; p.q+=r.quotes.length; p.qa+=r.quotes.filter(c=>(attrib[c.qid]||{}).answer).length;}
+ for(const r of recs){const p=(per[r.person] ||= {n:0,ok:0,q:0,qa:0,fixed:0}); p.n++; if(r.ask&&recState(r)==="done") p.ok++; p.q+=r.quotes.length; p.qa+=r.quotes.filter(c=>(attrib[c.qid]||{}).answer).length;
+  if(correctionAnswers[r.key]?.edits?.length) p.fixed++;}
  let h="", lastSec=null;
  for(const [gk,rs] of Object.entries(groups)){
   const person=rs[0].person, p=per[person], sec=section(rs[0]);
   if(HAS_DRAFTS && sec!==lastSec){lastSec=sec;
    const all=recs.filter(r=>section(r)===sec);
    h+=`<div class="sec" title="${esc(SECTION_HELP[sec])}">${SECTIONS[sec]} <small>· ${all.filter(complete).length} of ${all.length} checked</small></div>`;}
-  h+= QUOTE_ONLY
+  h+= CAPTIONS_ONLY
+   ? `<div class="grp"><b>${esc(person)}</b><span title="recordings with a saved caption correction">${p.fixed} of ${p.n} corrected</span></div>`
+   : QUOTE_ONLY
    ? `<div class="grp"><b>${esc(person)}</b><span class="${p.qa===p.q?"ok":""}" title="quotes with a saved answer">${p.qa} of ${p.q} quotes answered</span></div>`
    : `<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=CHECK.goal.count?"ok":""}" title="${esc(CHECK.goal.help)}">${p.ok} verified of ${p.n}${p.q?` · ${p.q} quotes`:""}</span></div>`;
   for(const r of rs){
@@ -489,6 +496,9 @@ function renderList(){
  }
  el("list").innerHTML = h || `<div class="item">Nothing here. ${filter==="todo"?"Everything has an answer.":""}</div>`;
  const done=recs.filter(complete).length, q=recs.reduce((n,r)=>n+r.quotes.length,0);
+ if(CAPTIONS_ONLY){const fixed=recs.filter(r=>correctionAnswers[r.key]?.edits?.length).length;
+  el("count").textContent=`${fixed} of ${recs.length} recordings have caption corrections`;
+  el("bar").style.width=(100*fixed/(recs.length||1)).toFixed(1)+"%"; return;}
  el("count").textContent=`${done} of ${recs.length} recordings checked${q?` · ${recs.reduce((n,r)=>n+r.quotes.filter(c=>(attrib[c.qid]||{}).answer).length,0)} of ${q} quotes`:""}`;
  el("bar").style.width=(100*done/(recs.length||1)).toFixed(1)+"%";}
 
@@ -554,7 +564,8 @@ function renderDetail(){
    ${extra}
    <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
   </div>`;
- el("status").textContent = complete(r) ? "All answered" : `${outstanding(r)} answer${outstanding(r)===1?"":"s"} left on this recording`;
+ el("status").textContent = CAPTIONS_ONLY ? "Captions: correct any errors you notice; there is nothing else to answer"
+  : complete(r) ? "All answered" : `${outstanding(r)} answer${outstanding(r)===1?"":"s"} left on this recording`;
  el("detail").querySelectorAll("button[data-f]").forEach(b=>b.onclick=()=>setField(labels, b.dataset.id, b.dataset.f, JSON.parse(b.dataset.v)));
  el("detail").querySelectorAll(".qitem").forEach(n=>n.onclick=()=>{focusQ=+n.dataset.q;});
  mountSpanEditors(r);
@@ -604,6 +615,7 @@ document.addEventListener("keydown", e=>{
 });
 el("list").addEventListener("click", e=>{const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);});
 el("list").addEventListener("keydown", e=>{if(e.key==="Enter"){const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);}});
+if(CAPTIONS_ONLY) for(const [id,f] of [["f-todo","todo"],["f-all","all"],["f-done","done"]]) el(id).setAttribute("aria-pressed", f===filter);
 for(const [id,f] of [["f-todo","todo"],["f-all","all"],["f-done","done"]]) el(id).onclick=()=>{filter=f; for(const b of ["f-todo","f-all","f-done"]) el(b).setAttribute("aria-pressed", b===id); renderList();};
 el("legend").innerHTML = `<span class="dot done" style="display:inline-block;vertical-align:-1px"></span> verified · <span class="dot rej" style="display:inline-block;vertical-align:-1px"></span> excluded or a misattributed quote · <span class="dot part" style="display:inline-block;vertical-align:-1px"></span> partly answered`;
 el("keyhelp").innerHTML = (QUOTE_ONLY || !CHECK

@@ -15,8 +15,10 @@ Synthetic data only, in temporary git checkouts. Proves:
   EXPORT    quotes reproduce the old import's quote_results.json; a two-project
             session refuses `export quotes` without --project and splits with it
   GUARD     building again into a session refuses, before writing anything, when the
-            new page would drop answered ids (unless --allow-off-page) or when a
-            transcript under saved ranges changed (always)
+            new page would drop answered ids (unless --allow-off-page), when a
+            transcript under saved ranges changed (always), when an answered quote
+            keeps its id but covers other words, and when the folder holds answers
+            but has not been migrated
   FLAGS     --mode picks the modes; checklist needs a project with one; --cap is
             refused for pundits; --source is refused for spans and corrections;
             --project must be one of the session's; migrate outside git refuses
@@ -41,6 +43,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import annotations as C  # noqa: E402
 from annotations_page import join_quotes, page_payload  # noqa: E402
 from annotations_spans import build_transcript, reconcile_quote_reviews, sidecar_path  # noqa: E402
+from annotations_page import page_data  # noqa: E402
 from test_annotations_select import make_data  # noqa: E402
 
 PASS, FAIL = [], []
@@ -160,13 +163,13 @@ def main() -> int:
         git(root, "checkout", "--", "leaders/human_answers.json")
         check("and verify never wrote the answers file", sha(s / "human_answers.json") == answers_sha)
 
-        def fails_with(label, path, mutate, expect):
+        def fails_with(label, path, mutate, *expect):
             original = path.read_bytes()
             path.write_text(mutate(path.read_text()))
             try:
                 code, out = run(["verify", "--session", str(s)])
                 failed = [c["check"] for c in json.loads(out)["checks"] if not c["ok"]]
-                check(f"verify fails on {label}", code == 1 and expect in failed, str(failed))
+                check(f"verify fails on {label}", code == 1 and all(e in failed for e in expect), str(failed))
             finally:
                 path.write_bytes(original)
 
@@ -178,7 +181,9 @@ def main() -> int:
             return mutate
         fails_with("an answer for a quote the page does not carry", s / "human_answers.json",
                    answers_with(lambda d: d["attribution"].update({"elsewhere:x:1": {"answer": "subject"}})),
-                   "every saved answer names an id the page carries")
+                   "every saved answer names an id the page carries",
+                   # The quotes export refuses an unknown quote; verify reports that as a failure.
+                   "export quotes reproduces quote_results.json")
         fails_with("a stored quote result the ranges contradict", s / "human_answers.json",
                    answers_with(lambda d: d["attribution"]["jane-roe:talk-1:7"].update({"answer": "other"})),
                    "a read returns the answers file unchanged (quote results already follow the ranges)")
@@ -255,7 +260,6 @@ def main() -> int:
             "token_count": side_doc["token_count"], "checked_by": "operator",
             "ranges": [{"start": 1, "end": 4, "speaker": "other", "origin": "human"}]}}}
         page = out_dir / "annotations.html"
-        from annotations_page import page_data
         answers = reconcile_quote_reviews(answers, page, page_data(page.read_text())["quote_rows"])
         (out_dir / "human_answers.json").write_text(json.dumps(answers, indent=1) + "\n")
         saved = sha(out_dir / "human_answers.json")
@@ -281,6 +285,39 @@ def main() -> int:
         code, out = build_again("--allow-off-page", "--name", "insights-only")
         check("with --allow-off-page the narrower build goes ahead and keeps the answers file",
               code == 0 and sha(out_dir / "human_answers.json") == saved, out)
+
+        print("\n[SHIFT]")
+        shift = lead / "shift"
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(shift)])
+        side_doc = json.loads(sidecar_path(shift / "annotations.html", "jane-roe/talk-1").read_text())
+        answers = {"labels": {}, "attribution": {}, "corrections": {}, "spans": {"jane-roe/talk-1": {
+            "schema_version": 1, "key": "jane-roe/talk-1", "text_sha256": side_doc["text_sha256"],
+            "token_count": side_doc["token_count"], "checked_by": "operator",
+            "ranges": [{"start": 0, "end": side_doc["token_count"], "speaker": "subject", "origin": "human"}]}}}
+        answers = reconcile_quote_reviews(answers, shift / "annotations.html",
+                                          page_data((shift / "annotations.html").read_text())["quote_rows"])
+        (shift / "human_answers.json").write_text(json.dumps(answers, indent=1) + "\n")
+        before = {f: (shift / f).read_bytes() for f in ("annotations.html", "quote_key.json", "manifest.json")}
+        g = lead / "grades" / "astra" / "jane-roe" / "talk-1__astra__blinded__r0.json"
+        g_orig = g.read_bytes()
+        doc = json.loads(g_orig)
+        ev = doc["grade"]["dimensions"]["d1_clarity"]["evidence"]
+        ev[1]["quote"] = "we will ship ten gigawatts by 2030 at [COMPANY] The host laughs here."
+        g.write_text(json.dumps(doc))
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(shift)])
+        check("an answered quote that keeps its id but covers other words refuses the build",
+              code != 0 and "would cover other words" in out, out)
+        check("and nothing was written", all((shift / f).read_bytes() == b for f, b in before.items()))
+        g.write_bytes(g_orig)
+        legacy_dir = lead / "unmigrated"
+        legacy_dir.mkdir()
+        (legacy_dir / "human_answers.json").write_text('{"labels": {}, "attribution": {}}\n')
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(legacy_dir)])
+        check("a folder with answers but no version-2 manifest is refused until it is migrated",
+              code != 0 and "migrate" in out and sorted(p.name for p in legacy_dir.iterdir()) == ["human_answers.json"], out)
 
         print("\n[FLAGS]")
         code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",

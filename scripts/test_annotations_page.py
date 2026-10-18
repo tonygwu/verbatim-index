@@ -80,13 +80,18 @@ setTimeout(() => {
   const list = nodes.list && nodes.list.innerHTML, detail = nodes.detail && nodes.detail.innerHTML;
   const projects = nodes.projects && !nodes.projects.hidden ? nodes.projects.innerHTML : "";
   const keyhelp = nodes.keyhelp && nodes.keyhelp.innerHTML, count = nodes.count && nodes.count.textContent;
+  const status = nodes.status && nodes.status.textContent;
   let picked = "";
   if (PICK && nodes.projects && nodes.projects.onclick) {
     nodes.projects.onclick({target: {closest: () => ({dataset: {project: PICK}})}});
     picked = nodes.list.innerHTML;
   }
+  if (FILTER && nodes["f-" + FILTER] && nodes["f-" + FILTER].onclick) {
+    nodes["f-" + FILTER].onclick();
+    picked = nodes.list.innerHTML;
+  }
   if (keydown) keydown({key: "y", target: {tagName: "BODY", closest: () => null}, preventDefault() {}});
-  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp, count, picked})), 20);
+  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp, count, picked, status})), 20);
 }, 20);
 """
 
@@ -100,7 +105,7 @@ def session(projects=("pundits",), modes=("checklist", "speakers", "captions")) 
 
 
 def run_page(rows: list[dict], saved: dict | None = None, sess: dict | None = None,
-             quote_rows: list[dict] | None = None, pick: str | None = None) -> dict:
+             quote_rows: list[dict] | None = None, pick: str | None = None, filt: str | None = None) -> dict:
     """The page's own script run by node on `rows`, starting from the `saved` answers; what it rendered and saved."""
     import annotations_page as V
     page = V.render_page({"rows": rows, "quote_rows": quote_rows or [], "transcript_index": {},
@@ -108,14 +113,14 @@ def run_page(rows: list[dict], saved: dict | None = None, sess: dict | None = No
     script = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
     # On stdin, not -e: a real page is about 1 MB, past the argument-length limit.
     head = (f"const SCRIPT = {json.dumps(script)};\nconst SAVED = {json.dumps(saved or {'labels': {}, 'attribution': {}})};\n"
-            f"const PICK = {json.dumps(pick)};\n")
+            f"const PICK = {json.dumps(pick)};\nconst FILTER = {json.dumps(filt)};\n")
     n = subprocess.run(["node", "-"], input=head + PAGE_HARNESS,
                        capture_output=True, text=True, timeout=60)
     if n.returncode != 0 or not n.stdout.strip():
         return {"list": "", "detail": "", "posts": [], "threw": n.stderr[-400:]}
     out = json.loads(n.stdout.strip().splitlines()[-1])
     return {k: out.get(k) or ("" if k != "posts" else []) for k in
-            ("list", "detail", "posts", "threw", "projects", "keyhelp", "count", "picked")}
+            ("list", "detail", "posts", "threw", "projects", "keyhelp", "count", "picked", "status")}
 
 
 def pundits_data(td: Path, transcripts: dict, roster: list[dict]) -> Path:
@@ -137,12 +142,12 @@ def pundits_data(td: Path, transcripts: dict, roster: list[dict]) -> Path:
     return root
 
 
-def build_pundits(root: Path, checklist: dict, drafts: Path | None = None) -> str:
+def build_pundits(root: Path, checklist: dict, drafts: Path | None = None, mode=None) -> str:
     import annotations as C
     (root.parent / "c.json").write_text(json.dumps(checklist))
     C.build(SimpleNamespace(project=["pundits"], data=str(root), out=str(root / "session"), name=None, keys=None,
                             reasons=None, cap=None, checklist=str(root.parent / "c.json"), grades=False,
-                            drafts=str(drafts) if drafts else None, mode=None, allow_off_page=False))
+                            drafts=str(drafts) if drafts else None, mode=mode, allow_off_page=False))
     return (root / "session" / "annotations.html").read_text()
 
 
@@ -356,6 +361,14 @@ def main() -> int:
         (td / "d.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
         page = build_pundits(root, cl, td / "d.jsonl")
         got = {r["key"]: r for r in page_data(page)["rows"]}
+        man = json.loads((root / "session" / "manifest.json").read_text())
+        check("a session that shows model drafts is not blind, and the drafts file is pinned",
+              man["blind"] is False and "d.jsonl" in man["inputs_sha256"], str((man["blind"], sorted(man["inputs_sha256"])[:3])))
+        try:
+            build_pundits(root, cl, mode=["speakers"])
+            check("a pundits session built from a checklist must keep the checklist mode", False, "built")
+        except SystemExit as exc:
+            check("a pundits session built from a checklist must keep the checklist mode", "keep the checklist" in str(exc), str(exc))
         check("the latest draft wins, and a confident one gives no reason to check first",
               got["p/conf"]["draft"]["confidence"] == "high" and got["p/conf"]["doubt"] == [], str(got["p/conf"].get("doubt")))
         check("a medium-confidence draft is flagged with needs_review's own words",
@@ -479,9 +492,15 @@ def main() -> int:
           'data-k="p/q"' in f["picked"] and 'data-k="p/i"' not in f["picked"] and 'data-k="p/i"' in f["list"],
           f"{f['threw']} {re.findall(r'data-k=\"([^\"]+)', f['picked'])}")
     cap = run_page([], sess=session(("insights",), ("captions",)), quote_rows=[{**qrow, "projects": ["insights"]}])
-    check("in a captions-only session quotes neither show nor hold a recording open",
+    check("a captions-only session shows no quotes and never claims a recording is done",
           cap["threw"] == "" and "QUOTE-I" not in cap["detail"] and "Correct the captions of this recording" in cap["detail"]
-          and cap["count"].startswith("1 of 1 recordings checked"), f"{cap['threw']} {cap['count']!r}")
+          and cap["count"] == "0 of 1 recordings have caption corrections" and 'data-k="p/q"' in cap["list"]
+          and "nothing else to answer" in cap["status"] and "0 of 1 corrected" in cap["list"]
+          and "quotes answered" not in cap["list"],
+          f"{cap['threw']} {cap['count']!r} {cap['status']!r} {cap['list'][:160]}")
+    capd = run_page([], sess=session(("insights",), ("captions",)), quote_rows=[{**qrow, "projects": ["insights"]}], filt="done")
+    check("and its Done filter lists nothing, because nothing in it can be done",
+          capd["threw"] == "" and "data-k=" not in capd["picked"] and "Nothing here" in capd["picked"], capd["picked"][:200])
     one = run_page([], sess=session(("insights",), ("speakers", "captions")), quote_rows=[{**qrow, "projects": ["insights"]}])
     check("with one project there is no filter and no tag", one["projects"] == "" and 'class="pchip"' not in one["list"],
           f"{one['projects']!r}")

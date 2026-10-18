@@ -97,7 +97,9 @@ second implementation of `Store` if labellers off this machine are ever needed.
 
 Modes default to speakers and captions, plus checklist for pundits; `--mode` picks
 them, for example `--mode captions` for a captions-only pass. A session without the
-speakers mode shows no quotes, and its quotes do not hold a recording open.
+speakers mode shows no quotes, and its quotes do not hold a recording open. A
+captions-only session has nothing to complete: its progress is the recordings with
+corrections, it opens on the All filter, and it never reports a recording done.
 
 The page saves to this machine only. The old Artifact `db` fallback is gone from
 new pages: its `put` sent every collection but attribution to the labels
@@ -177,8 +179,10 @@ that carries it.
   editor showed suggestions. The old answers are not rewritten; the manifest's
   `blind` is the truth, and `status` counts the mismatch.
 - **`build` into a session that already has answers refuses before writing anything**
-  when the new page would drop an answered recording or quote, or when a transcript
-  under saved ranges or corrections changed. Found by the 2026-10-18 review: a pundits
+  when the new page would drop an answered recording or quote, when a transcript
+  under saved ranges or corrections changed, or when an answered quote keeps its id
+  but covers other words (a judge's quote grew). A folder that holds answers but no
+  version-2 manifest is an older session: `migrate` it first. Found by the 2026-10-18 review: a pundits
   build without `--grades` into `logs/p6b` dropped all 40 quotes and the 21 quote-only
   recordings, stranding 6 quote results, 11 ranges and 1 correction, and a changed
   transcript let one later save turn a completed quote result to `stale`. The old

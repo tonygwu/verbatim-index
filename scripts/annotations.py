@@ -49,7 +49,7 @@ from annotations_page import (docs_from, join_quotes, load_drafts, draft_view, p
 from annotations_select import (DEFAULT_CAP, LEGACY_STUDY_PROJECT, MODES, PROJECTS,  # noqa: E402
                                 QUOTE_CAP_PER_RECORDING, git_revision, insights_quotes, predictions_quotes,
                                 project, recording_row, sha256_file, suspect_quotes)
-from annotations_spans import (build_transcript, import_spans, reconcile_quote_reviews,  # noqa: E402
+from annotations_spans import (build_transcript, import_spans, quote_review, reconcile_quote_reviews,  # noqa: E402
                                sidecar_path, validate_annotation)
 from annotations_store import (MANIFEST, SCHEMA_VERSION, Session, load_answers, write_manifest)  # noqa: E402
 from annotations_text import excerpts, name_forms  # noqa: E402
@@ -118,7 +118,7 @@ def grades_for(data: Path, slug: str, sid: str, inputs: dict) -> list[dict]:
 
 
 def guard_answers(answers_path: Path, rows: list, quote_rows: list, transcript_index: dict,
-                  allow_off_page: bool) -> None:
+                  allow_off_page: bool, sidecars: dict, old_page: Path) -> None:
     """Refuse a build that would strand answers already saved in this session.
 
     A build rewrites the page, the sidecars and the quote key. If the new page no
@@ -138,8 +138,30 @@ def guard_answers(answers_path: Path, rows: list, quote_rows: list, transcript_i
                    if k in transcript_index and (v.get("text_sha256"), v.get("token_count"))
                    != (transcript_index[k]["text_sha256"], transcript_index[k]["token_count"]))
     if moved:
-        raise SystemExit(f"REFUSING: the transcript text changed under saved annotations for {moved[:5]}; their word "
-                         "offsets would point at other words. Nothing was written.")
+        raise SystemExit(f"REFUSING: the transcript text changed under saved annotations for {sorted(set(moved))[:5]}; "
+                         "their word offsets would point at other words. Nothing was written.")
+    # An answered quote must keep its words: the same id over other words would carry
+    # the old answer to a quote nobody answered.
+    before = {}
+    if old_page.exists():
+        before = {c["qid"]: (c.get("quote_start"), c.get("quote_end"))
+                  for r in page_data(old_page.read_text()).get("quote_rows", []) for c in r.get("quotes", [])}
+    shifted = []
+    for r in quote_rows:
+        for c in r["quotes"]:
+            q = c["qid"]
+            if q not in answers["attribution"]:
+                continue
+            if q in before and before[q] != (c.get("quote_start"), c.get("quote_end")):
+                shifted.append(q)
+            elif r["key"] in answers["spans"] and "quote_start" in c:
+                result = quote_review(c, sidecars[r["key"]], answers["spans"][r["key"]])
+                old = answers["attribution"][q]
+                if (result["answer"], result["review_status"]) != (old.get("answer"), old.get("review_status")):
+                    shifted.append(q)
+    if shifted:
+        raise SystemExit(f"REFUSING: answered quotes {shifted[:5]} would cover other words or change their result on "
+                         "the new page. Nothing was written.")
     if off and not allow_off_page:
         raise SystemExit("REFUSING: the new page would not carry answers already saved in "
                          f"{answers_path}: {{{', '.join(f'{s}: {v[:3]}' for s, v in off.items())}}}. Build with the "
@@ -173,6 +195,9 @@ def build(args) -> int:
     SP.guard(study, data, out)
     refuse_public(out)
     roster = {p["slug"]: p for p in json.loads((data / "roster" / "final.json").read_text())["roster"]}
+    if (out / DEFAULT_FILES["answers"]).exists() and not (out / MANIFEST).exists():
+        raise SystemExit(f"REFUSING: {out} holds answers but no version-2 manifest, so it is a session built before "
+                         "this tool; adopt it with `annotations.py migrate` first, then build")
     previous = Session.open(out) if (out / MANIFEST).exists() else None
     files = dict(previous.manifest["files"]) if previous else dict(DEFAULT_FILES)
     name = args.name or (previous.name if previous else out.resolve().name)
@@ -294,7 +319,8 @@ def build(args) -> int:
         raise SystemExit(f"REFUSING: the checklist mode needs a project with a checklist; {projects} has none")
     if pundits and rows and "checklist" not in modes:
         raise SystemExit("REFUSING: a pundits session built from --checklist must keep the checklist mode")
-    guard_answers(out / files["answers"], rows, quote_rows, transcript_index, args.allow_off_page)
+    guard_answers(out / files["answers"], rows, quote_rows, transcript_index, args.allow_off_page, sidecars,
+                  out / files["page"])
     page_path = out / files["page"]
     for key, side in sidecars.items():
         write_atomic(sidecar_path(page_path, key), json.dumps(side, ensure_ascii=False))
