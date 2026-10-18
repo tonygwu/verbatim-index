@@ -830,8 +830,9 @@ def code_revision_of(*paths: Path) -> str:
 def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
     """Why a --fable-credit-pools run must not start, or None.
 
-    Credit records come from a different harness, so they go only into an
-    experiment folder, and only a stage pinned to Fable may spend the pools: an
+    Credit records come from a different harness, so they go into an experiment
+    folder, or into the production tree with --credit-production (extraction
+    only, VD-19), and only a stage pinned to Fable may spend the pools: an
     "auto" pick could land on a subscription and mix harnesses unannounced. An
     experiment folder is a predictions tree's `_experiments/`, or an `experiments/`
     folder with no predictions tree above it (the pundits data repo has no
@@ -856,13 +857,17 @@ def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
     if args.timeout > credit_run.MAX_TIMEOUT_S:
         return (f"--timeout {args.timeout} is over quotapick run's {credit_run.MAX_TIMEOUT_S}s limit; a longer "
                 f"call is cut off and still billed, so pass --timeout {credit_run.MAX_TIMEOUT_S} or less")
-    if getattr(args, "credit_production", False) and out.resolve() == (L.data_root() / "predictions").resolve():
-        return None
+    if getattr(args, "credit_production", False):
+        if "verify" in stages and args.verifier == "fable":
+            # VD-19 admits credit extraction, lead tests and priors; credit verification was never decided.
+            return "--credit-production covers Fable extraction only (VD-19); verify with another model, not --verifier fable"
+        if out.resolve() == (L.data_root() / "predictions").resolve():
+            return None
     parts = out.resolve().parts
     if not (any(parts[i:i + 2] == ("predictions", "_experiments") for i in range(len(parts) - 1))
             or ("experiments" in parts and "predictions" not in parts)):
         return (f"credit-pool records come from a different harness, so --out must be under predictions/_experiments/ "
-                f"or a data repo's experiments/, not {out}")
+                f"or a data repo's experiments/, or exactly the production tree with --credit-production, not {out}")
     return None
 
 

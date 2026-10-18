@@ -3,7 +3,8 @@
 
   REFUSE    --fable-credit-pools without a stage pinned to Fable, with a timeout over
             1800 s, or with --out anywhere but under predictions/_experiments/ or an
-            experiments/ folder outside any predictions tree is refused
+            experiments/ folder outside any predictions tree is refused; --credit-production
+            admits exactly the production tree, for extraction only (VD-19)
   ROUTE     a stage pinned to Fable gets a credit route without asking select_account,
             naming the pools as its account so a failure records them; any other pin
             still goes to the router
@@ -94,6 +95,16 @@ def main() -> int:
         check(f"{label} is refused", why is not None, str(why))
     why = X.credit_pools_refusal([], SimpleNamespace(**{**base, "credit_production": True}), prod)
     check("--credit-production with no pools is refused", why is not None and "needs --fable-credit-pools" in why, str(why))
+    for label, over in (("a Fable verify stage", {"stage": "verify", "extractor": "auto", "verifier": "fable"}),
+                        ("both stages with Astra extracting and Fable verifying",
+                         {"stage": "both", "extractor": "astra", "verifier": "fable"})):
+        why = X.credit_pools_refusal(["p"], SimpleNamespace(**{**base, **over, "credit_production": True}), prod)
+        check(f"--credit-production with {label} is refused", why is not None and "VD-19" in why, str(why))
+    check("Fable extracting and Gemini verifying into production is allowed", X.credit_pools_refusal(
+        ["p"], SimpleNamespace(**{**base, "stage": "both", "verifier": "gemini", "credit_production": True}), prod) is None)
+    parsed = X.build_parser().parse_args(["--fable-credit-pools", "p", "--credit-production"])
+    check("the --credit-production flag reaches args.credit_production", parsed.credit_production is True
+          and X.build_parser().parse_args([]).credit_production is False)
 
     print("\n[ROUTE]")
     r = X.Router.__new__(X.Router)

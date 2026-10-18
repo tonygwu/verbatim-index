@@ -239,8 +239,8 @@ the mix even.
   which is the operator's and repo-0's call. Contract v2 (pundits) does this
   always. Guarded by `scripts/test_leaders_regrade_invalid.py`.
 
-- **Fable on prepaid API credit is a DIFFERENT HARNESS, kept out of the
-  corpus (2026-10-18).** `grade.py --fable-pool POOL` and
+- **Fable on prepaid API credit is a DIFFERENT HARNESS; its leaderboard grades
+  are kept out of the corpus (2026-10-18).** `grade.py --fable-pool POOL` and
   `resolve_predictions.py --fable-pool POOL` send each Fable call through
   `quotapick run --only POOL` (`grade.call_fable_pool`), the only route to a
   credit pool. quotapick runs `claude -p --bare --tools "" --safe-mode
@@ -261,7 +261,10 @@ the mix even.
   come from the holds of calls still in flight while money remains, so re-run
   with `--workers 1` to drain. Whether this harness grades like the production
   one is what `data/experiments/fable-credit-drift-20261018/` measures (ledger
-  CI-11). Until that says so, do not pool these grades with the corpus.
+  CI-11; day 1: credit minus production -0.62 points, 95% CI -1.7 to +0.47, n 34).
+  Until the operator decides otherwise, do not pool these grades with the corpus.
+  Predictions differ: VD-19 (operator, 2026-10-18) lets Fable extraction, lead tests
+  and priors on credit reach the predictions board (docs/agents/PREDICTIONS-PIPELINE.md).
   Guarded by `scripts/test_fable_pool.py`.
 
 ## Experiments run, and what they showed

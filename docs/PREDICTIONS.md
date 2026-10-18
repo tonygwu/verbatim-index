@@ -73,7 +73,10 @@ the speaker's stated confidence. Each stage is resumable from its own meta.
 `extract_predictions.py` picks a harness per transcript from the quota router's
 measured headroom: `claude` accounts run Fable, `codex` runs Astra, the
 Antigravity pool runs Gemini. Nothing defaults: no account, an unknown provider
-or a degraded pick fails the job as `router_no_account`.
+or a degraded pick fails the job as `router_no_account`. With
+`--fable-credit-pools`, a stage pinned to Fable runs on prepaid API credit through
+`quotapick run` instead (`scripts/credit_run.py`), and since VD-19 (2026-10-18)
+`--credit-production` lets credit extractions into the production tree.
 
 The harness call functions are imported from `grade.py` unchanged. Raw model
 text is written under `_raw/` before it is parsed. The output is checked

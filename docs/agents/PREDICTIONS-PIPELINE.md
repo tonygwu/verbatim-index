@@ -38,7 +38,9 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   --fable-pool POOL` (or `--stage lead_test`) runs each Fable call through `quotapick run --only
   POOL`. It is a different harness from the production prior, recorded as `harness:
   fable_quotapick_run` with the pool as `account`. It refuses `--out` set to a run that
-  `scoring.json` reads, and refuses the Astra stages. The rules and the reason are in
+  `scoring.json` reads, and refuses the Astra stages. Since VD-19 (operator, 2026-10-18) a
+  credit prior or lead-test run in its own new folder may be named in `scoring.json`, so its
+  sidecars reach the board; a run the scores already read is still refused. The rules and the reason are in
   [JUDGES.md](JUDGES.md), "Fable on prepaid API credit". First use: the prior re-run in
   `data/predictions/_experiments/fable-prior-retest-20261018/` (2026-10-18).
 
