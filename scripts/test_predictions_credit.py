@@ -80,6 +80,20 @@ def main() -> int:
         ["p"], SimpleNamespace(**{**base, "stage": "both", "verifier": "gemini"}), exp) is None)
     check("the pundits data repo's experiments folder is allowed", X.credit_pools_refusal(
         ["p"], SimpleNamespace(**base), REPO / "data-pundits" / "experiments" / "x") is None)
+    prod = REPO / "data" / "predictions"
+    check("--credit-production admits the production tree itself", X.credit_pools_refusal(
+        ["p"], SimpleNamespace(**{**base, "credit_production": True}), prod) is None)
+    for label, over, out in (
+            ("--credit-production with a production leader folder", {"credit_production": True},
+             prod / "nate-silver"),
+            ("--credit-production with a folder outside predictions", {"credit_production": True},
+             REPO / "data" / "grades"),
+            ("--credit-production with an auto extractor", {"credit_production": True, "extractor": "auto"}, prod),
+            ("--credit-production with a timeout over 1800 s", {"credit_production": True, "timeout": 2400}, prod)):
+        why = X.credit_pools_refusal(["p"], SimpleNamespace(**{**base, **over}), out)
+        check(f"{label} is refused", why is not None, str(why))
+    why = X.credit_pools_refusal([], SimpleNamespace(**{**base, "credit_production": True}), prod)
+    check("--credit-production with no pools is refused", why is not None and "needs --fable-credit-pools" in why, str(why))
 
     print("\n[ROUTE]")
     r = X.Router.__new__(X.Router)

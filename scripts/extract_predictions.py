@@ -766,7 +766,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--fable-bin", default="claude")
     ap.add_argument("--fable-credit-pools", default="",
                     help="Comma-separated quotapick credit pools. A stage pinned to Fable runs on prepaid API credit "
-                         "through `quotapick run --only` these pools, a different harness; --out must be an experiment.")
+                         "through `quotapick run --only` these pools, a different harness; --out must be an experiment, "
+                         "or the production tree with --credit-production.")
+    ap.add_argument("--credit-production", action="store_true",
+                    help="with --fable-credit-pools, allow --out to be the production predictions tree itself "
+                         "(operator decision 2026-10-18, ledger VD-19); every other credit refusal still applies")
     ap.add_argument("--agy-bin", default=AGY_JUDGE_BIN)
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--gemini-model", default=GEMINI_MODEL)
@@ -832,7 +836,12 @@ def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
     experiment folder is a predictions tree's `_experiments/`, or an `experiments/`
     folder with no predictions tree above it (the pundits data repo has no
     predictions tree, and creating one would make data_sync build it an index).
+    `--credit-production` also admits the production tree itself, by the
+    operator's decision of 2026-10-18 (ledger VD-19); each record still names its
+    harness and pool, so the credit records stay separable.
     """
+    if getattr(args, "credit_production", False) and not pools:
+        return "--credit-production needs --fable-credit-pools"
     if not pools:
         return None
     import credit_run
@@ -847,6 +856,8 @@ def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
     if args.timeout > credit_run.MAX_TIMEOUT_S:
         return (f"--timeout {args.timeout} is over quotapick run's {credit_run.MAX_TIMEOUT_S}s limit; a longer "
                 f"call is cut off and still billed, so pass --timeout {credit_run.MAX_TIMEOUT_S} or less")
+    if getattr(args, "credit_production", False) and out.resolve() == (L.data_root() / "predictions").resolve():
+        return None
     parts = out.resolve().parts
     if not (any(parts[i:i + 2] == ("predictions", "_experiments") for i in range(len(parts) - 1))
             or ("experiments" in parts and "predictions" not in parts)):
