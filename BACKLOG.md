@@ -260,34 +260,22 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-24. `market_consensus.py` caches a 429 or 403 and replays it on every later read  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
-
-**Background:** `scripts/market_consensus.py:127-142` (`Cache.get_json`) writes every HTTP response to `predictions/_markets/<platform>/<sha>.json` whatever its status, and any later read raises `market_api_error: cached <status>` from the file without touching the network (`:134`); `--refresh-cache` is the only way out and it re-fetches every URL. The docstring at `:25-27` promises "Every HTTP response is cached ... so a rerun is free and reproducible". On 2026-10-18 the first consensus run over 25 people (data `predictions/_experiments/thin-supplement-20261018/market_consensus-1.log`, manifest `predictions/_runs/20261018T090006Z-consensus-fc6e8e7f.json`, 4 workers, 707 HTTP calls) failed 19 of 126 records: 14 Kalshi `too_many_requests`, 8 of them replayed from the cache within that same run (all the one `series_ticker=ECLIPSECOVER` URL, cached earlier in the same six-minute run) and 6 live; 2 Polymarket 403s; 3 Polymarket 400s (VI-25). The run's operator deleted the 8 cached 429/403 files by hand and re-ran with one worker, which recovered 14.
-
-**Impact:** a transient rate limit becomes a permanent failure for every record that shares the URL, within the run and across runs, until someone edits the cache by hand.
-
-**Fix:** do not write a 429, 403 or 5xx response into the cache (or treat a cached non-200 as a miss), default `--workers` to 1 for the Kalshi calls, and amend the docstring. Test: a fake fetcher that returns 429 once then 200 must give a result on the second read with no hand edit.
-
-**Touch points:** `scripts/market_consensus.py:25-27`, `:115-145`, `scripts/test_predictions_markets.py`.
-
----
-
 ### VI-25. Polymarket returns 400 for the 30-day `prices-history` window and 403 for some `public-search` queries, and the ladder stops at the first error  `[difficulty: high]`  `[filed: 2026-10-18]`
 
-**Background:** `scripts/market_consensus.py:349` is the 30-day step of a three-step window ladder (2 days, 30 days, then from the market's open) at `fidelity=60`; for that step Polymarket answers HTTP 400 `invalid filters: 'startTs' and 'endTs' interval is too long` (endTs minus startTs is 2,592,000 s), and the error aborts the ladder, so the daily step that may succeed is never tried. `:252` (`public-search`) gets an HTTP 403 Cloudflare page for some queries. Across the corpus 8 accepted records fail this way on every run that reaches them, each carrying a consensus block with `status: failed`: `prices-history` 400 for fa01d301325e4243, 2012463b3b01b93d, d13eb0f50e17ffea (this supplement), michael-saylor 9d2d817a08c94853 and bill-gates bfecb68972253ee1; `public-search` 403 for d4b463de73917226 and jensen-huang 22f49209e94ce62f and c023eff1328d99e3. Ledger VP-38 logged the same 400 on 2026-10-05. Logs: data `predictions/_experiments/thin-supplement-20261018/market_consensus-{1,2,3}.log`.
+**Background:** `scripts/market_consensus.py:387` is the 30-day step of a three-step window ladder (2 days, 30 days, then from the market's open) at `fidelity=60`; for that step Polymarket answers HTTP 400 `invalid filters: 'startTs' and 'endTs' interval is too long` (endTs minus startTs is 2,592,000 s), and the error aborts the ladder, so the daily step that may succeed is never tried. `:290` (`public-search`) gets an HTTP 403 Cloudflare page for some queries. Across the corpus 8 accepted records fail this way on every run that reaches them, each carrying a consensus block with `status: failed`: `prices-history` 400 for fa01d301325e4243, 2012463b3b01b93d, d13eb0f50e17ffea (this supplement), michael-saylor 9d2d817a08c94853 and bill-gates bfecb68972253ee1; `public-search` 403 for d4b463de73917226 and jensen-huang 22f49209e94ce62f and c023eff1328d99e3. Ledger VP-38 logged the same 400 on 2026-10-05. Logs: data `predictions/_experiments/thin-supplement-20261018/market_consensus-{1,2,3}.log`.
 
 **Impact:** eight accepted records can never get a market observation, and every consensus run counts them as failures.
 
 **Fix:**
 1. On a 400 from `prices-history`, fall through to the next ladder step instead of raising; record which step answered.
-2. On a 403 from `public-search`, retry once, then record `blocked_by_host` as a terminal status instead of `failed`; that status touches `prediction_record.schema.json`, `validate_predictions.py` and the page's rendering of a consensus block.
+2. On a 403 from `public-search`, retry once, then record `blocked_by_host` as a terminal status instead of `failed`; that status touches `prediction_record.schema.json`, `validate_predictions.py` and the page's rendering of a consensus block. VI-32 adds a Kalshi retry in `Cache.get_json`; build this retry on that one path, not a second one.
 3. Tests for both paths with a fake fetcher.
 
 *Risks and edge cases:* a daily-fidelity observation for an old market may be sparse; the cutoff rule (strictly before publication) must hold for every step.
 
 *Why high not medium:* a new terminal status crosses the schema, the validator and the site.
 
-**Touch points:** `scripts/market_consensus.py:245-260`, `:341-360`, `.agents/skills/prediction-extractor/prediction_record.schema.json`, `scripts/validate_predictions.py:205-225`, `scripts/build_predictions_site.py` (the consensus block), `scripts/test_predictions_markets.py`.
+**Touch points:** `scripts/market_consensus.py:283-298`, `:379-398`, `.agents/skills/prediction-extractor/prediction_record.schema.json`, `scripts/validate_predictions.py:205-225`, `scripts/build_predictions_site.py` (the consensus block), `scripts/test_predictions_markets.py`.
 
 ---
 
@@ -319,6 +307,62 @@ in a Background is provenance, not a claim and not a lane.
 **Fix:** keep each test's output in a per-run directory (for example `.gate/<utc>/<test>.log`, git-ignored) and print the failing test's last lines beside `FAILED <path>`; a Node test the same way.
 
 **Touch points:** `scripts/run_tests.sh`, `.gitignore`.
+
+---
+
+### VI-30. The market consensus run summary files every market API error as `cli_nonzero_exit`  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/market_consensus.py:69` defines the error label `market_api_error`, which every HTTP failure's error text starts with (`:163` for a cached non-200 replay, `:176`, `:179`), and `:666` and `:682` label each failed record with `L.classify_exception_detail(error)`. That function, `scripts/predictions_lib.py:147-149`, matches the detail against `ALL_ERROR_TYPES` (`:95-97`), which does not name `market_api_error`, so it falls through to the grade taxonomy's default. Verified in repo-1 at `87c42e3` on 2026-10-18:
+
+```
+.venv/bin/python -c "import sys; sys.path.insert(0,'scripts'); import predictions_lib as L
+print(L.classify_exception_detail('market_api_error: HTTP 429 for https://x'))
+print('market_api_error' in L.ALL_ERROR_TYPES)"
+cli_nonzero_exit
+False
+```
+
+All three 2026-10-18 consensus manifests carry the mislabel. Read as `json.load(f)["summary"]["error_taxonomy"]` (the files are pretty-printed, so the text below is not greppable): `predictions/_runs/20261018T090006Z-consensus-fc6e8e7f.json` gives `{'cli_nonzero_exit': 19}`, `20261018T090904Z-consensus-4d923755.json` `{'cli_nonzero_exit': 5}` and `20261018T111317Z-consensus-1af7da1c.json` `{'cli_nonzero_exit': 4}`, though all 28 failures were a Kalshi 429, a Polymarket 400 or a Polymarket 403 (VI-24, fixed by `87c42e3`; VI-25). Ledger VP-21 recorded the same label without noticing. Matcher failures are different: `:577-581` keeps the label the failure came with at the front (`schema_validation_failed`, `router_no_account`), so those file correctly; only a matcher exception with no label in its message, such as a bare `JSONDecodeError`, falls to `cli_nonzero_exit` the same way.
+
+**Impact:** each failed record's own error text still says `HTTP 429`, but the run summary's `error_taxonomy` cannot tell a rate limit from a model crash, so nothing in a manifest shows whether `87c42e3` made the 429s go away.
+
+**Fix:** `predictions_lib` cannot import `market_consensus` (the import runs the other way, `scripts/market_consensus.py:57`), so define `market_api_error` and `matcher_error` in `predictions_lib` beside `E_CREDIT_FAILED` (`scripts/predictions_lib.py:94`), add both to `ALL_ERROR_TYPES`, and have `market_consensus.py:69-70` import them. At `:581`, prefix a matcher exception whose message carries no taxonomy label with `matcher_error: `, so a bare `JSONDecodeError` files under its own label. Test: `classify_exception_detail("market_api_error: HTTP 429 ...")` returns `market_api_error`; a `process_file` run with a fetcher that returns 429 leaves `error_type: market_api_error` in `res["errors"]`; a matcher that raises a bare `ValueError` leaves `error_type: matcher_error`, and one that raises `schema_validation_failed: ...` still leaves `schema_validation_failed`.
+
+**Touch points:** `scripts/predictions_lib.py:94-97`, `scripts/market_consensus.py:69-70`, `:577-581`, `scripts/test_predictions_markets.py` or a new `scripts/test_market_consensus_taxonomy.py`.
+
+---
+
+### VI-31. A network error in a market fetch escapes `process_file`, fails the whole file with no error label, and loses every record already finished in it  `[difficulty: high]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/market_consensus.py:111-118` (`http_get`) catches only `urllib.error.HTTPError`. A `URLError`, a `TimeoutError`, a connection reset or an `http.client` error (`IncompleteRead`, `BadStatusLine`; neither is an `OSError`) is not a `RuntimeError`, so it passes `gather_candidates`'s handler at `:548`, the observation handler at `:587` and `process_file`'s handler at `:674`, up to `main`'s catch-all at `:752-753`, which records `{"status": "failed", "error": "<type>: ..."}` for the file with no `errors` list. `:760-763` builds `error_taxonomy` from `errors` only, so the failure is counted in `file_failures` (`:767`) and nowhere in the taxonomy. A second door: `Cache.get_json` writes the cache file at `:177` before it parses the body at `:180`, so a 200 whose body is not JSON is cached and replayed on every later read, and its `JSONDecodeError` escapes the same way. `process_file` writes the file once, at `:685`, after every record in it is done, so a network error on record 40 of 50 discards the 39 finished consensus blocks, including matcher calls that already spent model quota, and the next run redoes them.
+
+**Impact:** one dropped connection costs a whole file's work and shows in the summary as a bare file failure, not as a network error.
+
+**Fix:**
+1. In `Cache.get_json` (`:155-180`), catch `urllib.error.URLError`, `TimeoutError`, `OSError` and `http.client.HTTPException` around the fetcher call only, and raise `RuntimeError(f"{E_MARKET_HTTP}: <type>: <reason> for <url>")`, so every handler below sees one exception class. Nothing is cached for it.
+2. Parse the body before writing the cache file; a 200 that does not parse raises the same `market_api_error` and is not cached.
+3. Write the file after each record's consensus block is set (or every N records), through `L.write_prediction_file`, so finished work survives a later crash; keep the final write.
+4. In `main`'s catch-all (`:752-753`) add an `errors` entry with `error_type` from `L.classify_exception_detail`, so the taxonomy counts it (after VI-30 gives it a label).
+5. Tests: a fetcher that raises `URLError` leaves the record `failed` with `reason: None` and `error` starting `market_api_error:`, the file still holds the records finished before it, and the run summary's `error_taxonomy` names it; a fetcher that returns a non-JSON 200 leaves no cache file; a fetcher that raises midway through a two-record file leaves the first record's block on disk.
+6. Optional: re-raise `RefusedDataWrite` from the handlers at `:548` and `:587`, with a test that a cache writer raising it stops the run instead of filing a record error.
+
+*Risks and edge cases:* a per-record write multiplies writes by the records per file (up to a few dozen); `write_prediction_file` is atomic, so a reader in another clone never sees a prefix, and the index's `files_read` and `inputs_sha256` fingerprints (written by `aggregate_predictions.py`, not by this run) already move on the final write. Today a `RefusedDataWrite` raised by the cache write is a `RuntimeError` and is swallowed into a record error at `:548` and again at `:587` (the `observe_*` calls write the cache too); the new catch must sit around the fetcher call only, so it does not widen that.
+
+*Why high not medium:* it changes when a record file is written, and the choice between per-record and batched writes is a judgment about cost against lost work.
+
+**Touch points:** `scripts/market_consensus.py:111-118`, `:155-180`, `:548`, `:643-686`, `:752-753`, `scripts/test_predictions_markets.py` or `scripts/test_market_consensus_cache.py`.
+
+---
+
+### VI-32. The Kalshi lock serializes fetches but does not re-check the cache, back off, or retry, so one 429 still fails its record for the run  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** since `87c42e3` (VI-24) `scripts/market_consensus.py:155-180` (`Cache.get_json`) fetches Kalshi under a per-process `threading.Semaphore(1)` (`:169-172`) and raises on a transient status (`:175-176`). Three things the lock does not do: (a) it does not look at the cache again after it is taken, so three workers that asked for the same URL at once make three back-to-back Kalshi calls (the one-popular-URL pattern of the `ECLIPSECOVER` incident); (b) it adds no gap between calls and reads no `Retry-After`, so whether one serialized stream stays under Kalshi's limit at the 707-call scale of the first 2026-10-18 run is unproven (the one-worker reruns made 17 and 62 calls); (c) a 429 fails the record for this run and only the next run retries it (`:646-648`). The lock is also per process, so two concurrent runs each have their own. 408 is not in `transient_status` (`:121-130`), so a 408 would be cached and replayed like the original bug.
+
+**Impact:** a burst of identical Kalshi URLs still costs one call each, and a single 429 still costs the record a run.
+
+**Fix:** inside the lock, read the cache again before fetching. `http_get` (`:111-118`) returns only `(status, body)` and drops `exc.headers`, so first pass the `Retry-After` value through, as an optional third tuple element so the 2-tuple fake fetchers in `scripts/test_predictions_markets.py` and `scripts/test_market_consensus_cache.py` keep working. Then on a 429, sleep `min(Retry-After, 5)` seconds when the header is present, else 2 seconds, and retry exactly once before raising; the sleep runs inside the Kalshi lock on purpose (it is the one stream Kalshi sees), and the cap keeps a large `Retry-After` from stalling every worker. Add 408 to `transient_status`. Tests: six workers asking the same Kalshi URL make one fetch; a 429-then-200 fetcher gives a result within the same read (the existing `test_market_consensus_cache.py` check that the first 429 read raises changes to expect the retry); a `Retry-After: 600` sleeps 5 s at most (inject the sleep). Record in the docstring that the lock is per process. VI-25 step 2 adds its own retry for Polymarket; both should share one retry path in `get_json`.
+
+**Touch points:** `scripts/market_consensus.py:111-118`, `:121-130`, `:155-180`, `scripts/test_market_consensus_cache.py`, the fake fetchers in `scripts/test_predictions_markets.py`.
 
 ---
 
