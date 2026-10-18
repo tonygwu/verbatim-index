@@ -92,9 +92,15 @@ E_POLICY = "policy_release_mismatch"
 # grade.py's credit path uses the same exhaustion label, hence the dedupe below.
 E_CREDIT_EXHAUSTED = "credit_pool_exhausted"
 E_CREDIT_FAILED = "credit_run_failed"
+# market_consensus.py: an HTTP failure from a market host, and a matcher failure whose
+# message carried no label of its own (a labelled one keeps its label at the front).
+# Defined here, not there, because this module cannot import that one; until VI-30
+# (2026-10-18) neither was in ALL_ERROR_TYPES and every one filed as cli_nonzero_exit.
+E_MARKET_HTTP = "market_api_error"
+E_MATCHER = "matcher_error"
 ALL_ERROR_TYPES = tuple(dict.fromkeys(tuple(_GRADE_ERROR_TYPES) + (
     E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING, E_CACHE_STALE, E_POLICY,
-    E_CREDIT_EXHAUSTED, E_CREDIT_FAILED)))
+    E_CREDIT_EXHAUSTED, E_CREDIT_FAILED, E_MARKET_HTTP, E_MATCHER)))
 
 
 

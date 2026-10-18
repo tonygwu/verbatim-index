@@ -66,8 +66,8 @@ MAX_CANDIDATES_PER_PLATFORM = 8
 KALSHI_CATEGORIES = {"Science and Technology", "Companies", "Economics", "Financials", "Politics",
                      "World", "Crypto", "Climate and Weather", "Elections"}
 KALSHI_MAX_SERIES = 5
-E_MARKET_HTTP = "market_api_error"
-E_MATCHER = "matcher_error"
+E_MARKET_HTTP = L.E_MARKET_HTTP  # in predictions_lib, so the run summary's taxonomy knows them (VI-30)
+E_MATCHER = L.E_MATCHER
 
 STOP = set("""a an the and or of to in on at by for with from as is are was were be been being will would
 could should may might can this that these those it its their his her our we you they i he she them
@@ -577,8 +577,9 @@ def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_i
     except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
         # Keep the taxonomy label the failure came with at the front, so the run's
         # error_taxonomy files it as router_no_account or schema_validation_failed
-        # rather than as a generic crash; the stage is named in `reason`.
-        return {**base, "reason": E_MATCHER, "error": str(exc)[:600]}
+        # rather than as a generic crash; the stage is named in `reason`. One with no
+        # label (a bare JSONDecodeError) gets matcher_error in front (VI-30).
+        return {**base, "reason": E_MATCHER, "error": matcher_error_text(exc)}
     base["matcher"] = matcher_block(prov, telemetry, contract, run_id)
     try:
         for m in exacts + proxies:
@@ -598,6 +599,14 @@ def consensus_for_record(rec: dict, cache: Cache, matcher, contract: dict, run_i
            "proxy_matches": [strip_private(m) for m in proxies],
            "market_probability": primary["observation"]["probability_for_claim"] if status == "matched" else None}
     return out
+
+
+def matcher_error_text(exc: BaseException) -> str:
+    """The error text for a matcher failure: its own taxonomy label if it has one, else matcher_error."""
+    msg = str(exc)[:600]
+    if any(msg.startswith(e) for e in L.ALL_ERROR_TYPES):
+        return msg
+    return f"{E_MATCHER}: {type(exc).__name__}: {msg}"[:600]
 
 
 def matcher_block(prov: dict, telemetry: dict, contract: dict, run_id: str) -> dict:
@@ -674,7 +683,7 @@ def process_file(job: dict) -> dict:
         except (RouterUnavailable, RuntimeError) as exc:
             c = {"status": "failed", "reason": E_MATCHER, "cutoff": L.publication_cutoff(r), "market_probability": None,
                  "exact_match": None, "proxy_matches": [], "candidates_considered": 0, "candidates_dropped": [],
-                 "matcher": None, "searched_at_utc": L.utc_now(), "error": str(exc)[:600]}
+                 "matcher": None, "searched_at_utc": L.utc_now(), "error": matcher_error_text(exc)}
         r["consensus"] = c
         changed = True
         res["by_status"][c["status"]] = res["by_status"].get(c["status"], 0) + 1
