@@ -34,7 +34,8 @@ there. Add new material under the same headings.
 
 - **A count derived from the roster is not a count of the board, and since
   2026-09-18 they are different numbers.** The roster holds 58 and the leaders
-  board holds 51, since Nate Silver joined both on 2026-10-11. Adding seven predictions-only people broke FOUR separate
+  board holds 53: Nate Silver joined both on 2026-10-11, and david-sacks and
+  chamath-palihapitiya followed on 2026-10-18. Adding seven predictions-only people broke FOUR separate
   counts in the same way, and they were found by sweeping for the pattern rather
   than one at a time:
 
@@ -71,7 +72,7 @@ there. Add new material under the same headings.
 These change the published number. Each was measured before it was chosen, and
 the measurement is named so a later reader can re-run it rather than trust it.
 
-- **The roster is 58 people and the leaders board is 51, and
+- **The roster is 58 people and the leaders board is 53, and
   `longform_availability` means two different things.** The two numbers stopped
   being the same on 2026-09-18, when seven investors were appended at ranks 51 to
   57 for the PREDICTIONS board only. `membership.json` is what separates them.
@@ -79,6 +80,10 @@ the measurement is named so a later reader can re-run it rather than trust it.
   instruction, so a figure below that says "of 50" was measured on the board
   before he joined. He carries no `longform_availability`, like the seven; his
   discovery and curation are in `docs/ROSTER-ADD-NATE-SILVER-2026-10-11.md`.
+  On 2026-10-18 two of the seven, david-sacks and chamath-palihapitiya, were
+  promoted to the leaders board on operator instruction (board 53; record in
+  `docs/ROSTER-ADD-SACKS-PALIHAPITIYA-2026-10-18.md`), so a figure that says
+  "of 51" was measured before they joined.
   It was 40 until 2026-09-10, when C.C. Wei was withdrawn and eleven
   were added: Tobi Lütke, Michael Saylor, Eric Schmidt, Ilya Sutskever, Aaron
   Levie, Dylan Field, Amjad Masad, George Hotz, Greg Brockman, Vlad Tenev and

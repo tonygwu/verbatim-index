@@ -36,8 +36,12 @@ today, because `cc-wei` is in membership and not on the roster.
 P3 LANDED ON 2026-09-18, so the roster held 57 and the leaders board held 50.
 The board assertion was written to survive that and did. On 2026-10-11 Nate
 Silver joined BOTH boards at roster rank 58, so the roster holds 58, the leaders
-board 51 and this file 59 entries. He is not one of SEVEN, so every assertion
-below already treats him as an ordinary leaders-board member. Section [6] used to
+board 51 and this file 59 entries. He is not one of the seven, so every assertion
+below already treats him as an ordinary leaders-board member. On 2026-10-18
+david-sacks and chamath-palihapitiya were promoted to BOTH boards on operator
+instruction (BACKLOG VI-14, docs/ROSTER-ADD-SACKS-PALIHAPITIYA-2026-10-18.md), so
+the leaders board holds 53 and PREDICTIONS_ONLY names the five investors still
+on the predictions board alone. Section [6] used to
 SIMULATE the change by appending the seven; it appended nothing once they were
 really there, which made it a silent duplicate of section [5]. It now guards the
 change that has not happened yet instead, which is a roster entry arriving with
@@ -57,8 +61,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-SEVEN = ("cathie-wood", "marc-andreessen", "chamath-palihapitiya", "david-sacks",
-         "bill-gurley", "vinod-khosla", "tom-lee")
+# The five of the seven investors appended on 2026-09-18 who are still on the
+# predictions board alone. chamath-palihapitiya and david-sacks left this tuple
+# on 2026-10-18, when they joined the leaders board.
+PREDICTIONS_ONLY = ("cathie-wood", "marc-andreessen", "bill-gurley", "vinod-khosla", "tom-lee")
 
 passed = failed = 0
 
@@ -186,13 +192,13 @@ def main() -> int:
         extra = [s for s in M.slugs_on(shipped, "leaders") if s not in roster_slugs]
         check("NOBODY is on the leaders board who is not on the roster", not extra,
               f"extra {extra}; verbatim-index must not move")
-        want_leaders = [s for s in roster_slugs if s not in SEVEN]
-        check("the leaders board is exactly the roster MINUS the seven",
+        want_leaders = [s for s in roster_slugs if s not in PREDICTIONS_ONLY]
+        check("the leaders board is exactly the roster MINUS the predictions-only five",
               M.slugs_on(shipped, "leaders") == want_leaders,
               f"symmetric difference {set(M.slugs_on(shipped, 'leaders')) ^ set(want_leaders)}; "
               "a roster entry added or withdrawn is edited here in the same commit")
 
-        for s in SEVEN:
+        for s in PREDICTIONS_ONLY:
             check(f"{s} is a membership slug", s in shipped)
             if s in shipped:
                 check(f"  {s} is on predictions", M.on_board(shipped, s, "predictions"))
@@ -201,10 +207,10 @@ def main() -> int:
                       "verbatim-index must not move")
         check("cc-wei is present and empty", M.boards_for(shipped, "cc-wei") == [],
               f"got {M.boards_for(shipped, 'cc-wei')!r}")
-        check("the shipped file is exactly roster + seven + cc-wei",
-              set(shipped) == set(roster_slugs) | set(SEVEN) | {"cc-wei"},
+        check("the shipped file is exactly roster + predictions-only + cc-wei",
+              set(shipped) == set(roster_slugs) | set(PREDICTIONS_ONLY) | {"cc-wei"},
               f"symmetric difference "
-              f"{set(shipped) ^ (set(roster_slugs) | set(SEVEN) | {'cc-wei'})}")
+              f"{set(shipped) ^ (set(roster_slugs) | set(PREDICTIONS_ONLY) | {'cc-wei'})}")
 
         print("\n[6] the NEXT roster change cannot slip past containment")
         # THIS ARM USED TO SIMULATE P3 by appending the seven to the roster and
