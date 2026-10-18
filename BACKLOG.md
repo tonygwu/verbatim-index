@@ -260,7 +260,7 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-24. `market_consensus.py` caches a 429 or 403 and replays it on every later read  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-24. `market_consensus.py` caches a 429 or 403 and replays it on every later read  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
 
 **Background:** `scripts/market_consensus.py:127-142` (`Cache.get_json`) writes every HTTP response to `predictions/_markets/<platform>/<sha>.json` whatever its status, and any later read raises `market_api_error: cached <status>` from the file without touching the network (`:134`); `--refresh-cache` is the only way out and it re-fetches every URL. The docstring at `:25-27` promises "Every HTTP response is cached ... so a rerun is free and reproducible". On 2026-10-18 the first consensus run over 25 people (data `predictions/_experiments/thin-supplement-20261018/market_consensus-1.log`, manifest `predictions/_runs/20261018T090006Z-consensus-fc6e8e7f.json`, 4 workers, 707 HTTP calls) failed 19 of 126 records: 14 Kalshi `too_many_requests`, 8 of them replayed from the cache within that same run (all the one `series_ticker=ECLIPSECOVER` URL, cached earlier in the same six-minute run) and 6 live; 2 Polymarket 403s; 3 Polymarket 400s (VI-25). The run's operator deleted the 8 cached 429/403 files by hand and re-ran with one worker, which recovered 14.
 
