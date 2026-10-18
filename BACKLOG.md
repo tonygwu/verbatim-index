@@ -21,10 +21,10 @@ change to its file is an ordinary item.
 | Parameter | Value in this project |
 |---|---|
 | Item files | this file, `## Open items` below; shard into `backlog/<shard>.md` with a routing table in `backlog/README.md` when it passes a few dozen items |
-| ID scheme | `VI-<n>` (Verbatim Index), one counter for the file. Next ID = 1 + the highest `VI-` number in this file **and** its git history, because a deleted ID never returns: `{ grep -oE '^### VI-[0-9]+' BACKLOG.md; git log -p --all -- BACKLOG.md \| grep -oE '^\+### VI-[0-9]+'; } \| grep -oE '[0-9]+$' \| sort -n \| tail -1`. Ledger IDs (`VP-`, `VD-`, `CI-`) are a different series, in `docs/LEDGER-*.md` |
+| ID scheme | `VI-<n>` (Verbatim Index), one counter for the file. Next ID = 1 + the highest `VI-` number in this file **and** its git history, because a deleted ID never returns; the command is under this table. Ledger IDs (`VP-`, `VD-`, `CI-`) are a different series, in `docs/LEDGER-*.md` |
 | Difficulty ladder | `low`, `medium`, `high`, `xhigh`; `ultra/workflows` is split into normal items when filing. The skill's § 5 maps the running model to a row; claim at or below it |
 | Agent handle | `#<n>` from a `repo-<n>` clone directory (`repo-0` is `#0`). Commit subjects: `claim: VI-n (#<n>)`, `backlog: delete VI-n (#<n>)` |
-| Priority | file order within `## Open items`. Unblocked items come first, cheapest first; a new item goes at the end of the unblocked run unless it must be done sooner; `[BLOCKED: ...]` items sit last, so the picker never reads past an eligible item to reach them |
+| Priority | file order within `## Open items`: the first unclaimed, unblocked item in the file is the next one to take. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them; a new item goes at the end of the unblocked run unless it must be done sooner |
 | Validation gate | `bash scripts/run_tests.sh` from the clone root, the whole output kept, `failed: 0` required. Never pipe it through `tail -1`: the per-file `FAILED <path>` lines are the finding. `test_log_bloat.py` and the `LIVE DATA` checks in `test_render_integrity.py` read the leaders daemon's live checkout, so a red there is reported with its text, never retried until green (VI-12) |
 | Pre-push review | `adversarial-self-review` on `origin/main..HEAD` before every push, verdict `ship` required, two fix rounds at most |
 | Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Three kinds: an operator decision, a measurement or event that has not happened, or a clone that is the only one able to finish it (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; see AGENTS.md, "Clone roles"). Nobody claims a blocked item. Whoever lifts the block deletes the tag in its own commit; the daemon clone a tag names does that when it takes the item |
@@ -32,7 +32,13 @@ change to its file is an ordinary item.
 | Doc-gap routing | a standalone `low` item |
 | Scan logs / ledgers | `backlog/scan-logs/improve-code/<shard>.md` and `backlog/scan-logs/improve-data/<domain>.md`, tracked, created when those modes first run here |
 | Data read path (`improve-data`) | none named: `improve-data` stops |
-| Names in items | roster slugs, recording ids and the public figures the roster lists are the data's own keys and may appear; no email address, phone number, private person's handle or message text, ever |
+| Names in items | roster slugs, recording ids and public figures named in the roster or the transcripts are the data's own keys and may appear; no email address, phone number, private person's handle or message text, ever |
+
+The next ID, derived at write time after the pull, never earlier:
+
+```bash
+{ grep -oE '^### VI-[0-9]+' BACKLOG.md; git log -p --all -- BACKLOG.md | grep -oE '^\+### VI-[0-9]+'; } | grep -oE '[0-9]+$' | sort -n | tail -1
+```
 
 ## Item format
 
@@ -122,12 +128,12 @@ in a Background is provenance, not a claim.
 
 ### VI-5. `grade.call_fable_pool` and `credit_run.run` each check the served block, and two copies drift  `[difficulty: high]`  `[filed: 2026-10-18]`
 
-**Background:** Filed by repo-3. Both landed the same night from two concurrent sessions. `scripts/grade.py:1163` (`call_fable_pool`, repo-0) is the judge path: one pool, Fable at max effort, labels from grade.py's taxonomy, served checks at `:1211-1216`. `scripts/credit_run.py:96` (`run`, repo-3) is the general path for the pundits speaker drafts and `extract_predictions.py --fable-credit-pools`: a SET of pools for the router to choose among, any model and effort, its own labels, served checks in `check_response` (`:63-93`). They check the same `served` fields today. The ledger deferred this until the CI-11 drift experiment, which imported `grade.py` from repo-0's working tree, had finished; `docs/LEDGER-predictions.md` records CI-11 stopped after day 1, and on 2026-10-18 no process from `data/experiments/fable-credit-drift-20261018/` was running.
+**Background:** Filed by repo-3. Both landed the same night from two concurrent sessions. `scripts/grade.py:1163` (`call_fable_pool`, repo-0) is the judge path: one pool, Fable at max effort, labels from grade.py's taxonomy, served checks at `:1211-1216`. `scripts/credit_run.py:96` (`run`, repo-3) is the general path for the pundits speaker drafts and `extract_predictions.py --fable-credit-pools`: a SET of pools for the router to choose among, any model and effort, its own labels, served checks in `check_response` (`:63-93`). They check the same `served` fields today. The ledger deferred this until the CI-11 drift experiment, which imported `grade.py` from repo-0's working tree, had finished; `docs/LEDGER-corpus-integrity.md:23` records CI-11 stopped after day 1 with its day-2 arms cancelled, and on 2026-10-18 no process from `data/experiments/fable-credit-drift-20261018/` was running.
 
 **Impact:** The next change to one identity check (a new served field, a new quotapick outcome) silently leaves the other behind, and a credit grade can then pass one path's check and fail the other's for the same response.
 
 **Fix:**
-1. Make `call_fable_pool` call `credit_run.run(prompt, model=..., effort="max", pools=[pool], ...)` and map `PoolsExhausted` and `CreditRunError` onto grade.py's labels (`E_POOL_REFUSED`, `E_MODEL_MISMATCH`, `E_IDENTITY`, `E_CLI` at `scripts/grade.py:107-121`), so the telemetry block it returns (`:1223-1228`) is unchanged.
+1. Make `call_fable_pool` call `credit_run.run(prompt, model=..., effort="max", pools=[pool], ...)` and map `PoolsExhausted` and `CreditRunError` onto grade.py's labels (`E_CLI`, `E_MODEL_MISMATCH`, `E_IDENTITY`, `E_POOL_REFUSED` at `scripts/grade.py:81-123`), so the telemetry block it returns (`:1223-1228`) is unchanged.
 2. `scripts/test_fable_pool.py` and `scripts/test_credit_run.py` both stay green; add one check that a served-field mismatch produces the same label through both entry points, failing first against a stubbed `credit_run.run`.
 3. `docs/agents/JUDGES.md` names the one call path.
 
@@ -135,7 +141,7 @@ in a Background is provenance, not a claim.
 
 *Why high not medium:* two modules, two test files and a label mapping that decides what the run summary's taxonomy says about a refused credit call.
 
-**Touch points:** `scripts/grade.py:107-121`, `:1163-1228`, `scripts/credit_run.py:63-136`, `scripts/test_fable_pool.py`, `scripts/test_credit_run.py`, `docs/agents/JUDGES.md`.
+**Touch points:** `scripts/grade.py:81-123`, `:1163-1228`, `scripts/credit_run.py:63-136`, `scripts/test_fable_pool.py`, `scripts/test_credit_run.py`, `docs/agents/JUDGES.md`.
 
 ---
 
@@ -147,11 +153,11 @@ in a Background is provenance, not a claim.
 
 **Fix:**
 1. Decide between (a) refusing a Fable stage that names no accounts, at the cost that every caller must pass the flag, and (b) routing by measured quota the way `grade.py` does, at the cost that the stage gains the router. Recommended: (b), with the plain `default` account excluded unless named explicitly, because it matches the judge path and the operator's stated intent.
-2. Implement it at `:518` and `:561-569`, logging the chosen accounts at `:733` as today.
+2. Implement it in `scripts/resolve_predictions.py` at `:518` and `:561-569`, logging the chosen accounts at `:733` as today.
 3. A check in `scripts/test_predictions_driver.py` or a sibling: no flag, router stubbed, asserts the stage never runs on `default`, failing first.
 4. `docs/agents/PREDICTIONS-PIPELINE.md` names the rule.
 
-*Risks and edge cases:* `--fable-pool` (`:524`, `:590`) is a different path (API credit) and must still refuse the other stages. The `ambient` label at `:733` covers a call with no account; keep it honest.
+*Risks and edge cases:* `--fable-pool` (`resolve_predictions.py:524`, `:590`) is a different path (API credit) and must still refuse the other stages. The `ambient` label at `:733` covers a call with no account; keep it honest.
 
 *Why high not medium:* the choice between refusing and routing is a policy decision, and the router import brings `grade.py`'s failure handling with it.
 
@@ -436,7 +442,7 @@ pushed with `data_sync.py push --daemon`, and `adversarial-self-review` on the
 
 ### VI-15. VP-41, the thin-people predictions supplement, is extracted but not dated, resolved, scored or published  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: the owner asks to continue verbatim-predictions; spends credit and Codex quota]`
 
-**Background:** Filed by repo-3; paused 2026-10-18 when the expiring credit ran out. The ledger entry, verbatim:
+**Background:** Filed by repo-3; paused 2026-10-18 when the expiring credit ran out. The run folder is at data `6c64b2f6`, which is data `main`; a clone whose data checkout is behind it (repo-0's was at `3db9ba3e` on 2026-10-18) must `scripts/data_sync.py pull` before any command below runs. `scripts/deploy_predictions.sh:89` (`scores_asof_lag`, `scripts/data_clone_workflow.py:966`) is the refusal that waits on this item. The ledger entry, verbatim:
 
 Filed by repo-3. Ledger VP-41,
 decision VD-19. Everything is in data `6c64b2f6`, run folder
@@ -539,19 +545,19 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 
 ---
 
-### VI-17. Pundits grading cannot run on prepaid API credit under contract v2 without re-grading the whole pilot  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks (A), (B) or (C) once CI-11 has reported]`
+### VI-17. Pundits grading cannot run on prepaid API credit under contract v2 without re-grading the whole pilot  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks (A) or (B); CI-11 stopped after day 1, so its day-1 result is all that is coming]`
 
-**Background:** Filed by repo-3. `quotapick run` (the router's only way to spend a credit pool) runs Fable with tools removed, on an API key, with no sandbox wrapper. Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container` (`profiles/pundits.json:41-51`), `scripts/grade.py:998` refuses any other sandbox, and `judge_requests` is part of the hash that makes the contract ID. So a credit grade filed under today's contract ID would claim a sandbox it never ran in. If instead the contract is amended to name the credit harness, the contract ID changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as `stale_cache`, and `aggregate.py` refuses to mix contracts (`scripts/aggregate.py:1429`), so the whole pilot is graded again (about $380 by the 2026-10-18 estimate). That is more than pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's share into the pundits predictions scale-up, so a re-grade would run on the November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16). CI-11 (`data/experiments/fable-credit-drift-20261018/`) was to grade day 1 on d and day 2 on c; it stopped after day 1 (`docs/LEDGER-predictions.md`), with day 1 showing credit minus subscription -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman 0.939 (`results.md`).
+**Background:** Filed by repo-3. `quotapick run` (the router's only way to spend a credit pool) runs Fable with tools removed, on an API key, with no sandbox wrapper. Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container` (`profiles/pundits.json:41-51`), `scripts/grade.py:998` refuses any other sandbox, and `judge_requests` is part of the hash that makes the contract ID. So a credit grade filed under today's contract ID would claim a sandbox it never ran in. If instead the contract is amended to name the credit harness, the contract ID changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as `stale_cache`, and `aggregate.py` refuses to mix contracts (`scripts/aggregate.py:1429`), so the whole pilot is graded again (about $380 by the 2026-10-18 estimate). That is more than pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's share into the pundits predictions scale-up, so a re-grade would run on the November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16). CI-11 (`data/experiments/fable-credit-drift-20261018/`) was to grade day 1 on d and day 2 on c; the operator stopped it after day 1 and cancelled day 2 (`docs/LEDGER-corpus-integrity.md:23`), with day 1 showing credit minus subscription -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman 0.939 (`results.md`).
 
 **Impact:** The pundits full grade either stays on the subscription harness, or costs about $380 of credit and a contract change.
 
-**Fix:** Options: (A) keep pundits grading on the subscription harness, at no cost; (B) amend the contract to name the credit harness and re-grade on the November pools; (C) wait for CI-11's answer, then choose A or B. Recommended: C, because B needs the November pools either way, which stay open for weeks after CI-11 reports, and CI-11 says whether credit-served Fable scores match subscription-served ones before $380 is spent on that premise. If B: a contract v3 in `profiles/pundits.json`, the migration path for the 312 grades, and `docs/agents/PUNDITS.md`.
+**Fix:** Options: (A) keep pundits grading on the subscription harness, at no cost; (B) amend the contract to name the credit harness and re-grade on the November pools. The ledger recommended waiting for CI-11 before choosing; CI-11 is stopped, so its day-1 result (credit 0.62 points under subscription, the interval straddling zero, n 34) is the evidence the choice rests on unless the operator restarts it. If B: a contract v3 in `profiles/pundits.json`, the migration path for the 312 grades, and `docs/agents/PUNDITS.md`.
 
 *Risks and edge cases:* a contract change invalidates every pundits grade at once; the daemon must be stopped first.
 
 *Why xhigh not high:* a contract hash, $380 of credit and the whole pundits corpus.
 
-**Touch points:** `profiles/pundits.json:41-51`, `scripts/grade.py:576-610`, `:998`, `scripts/aggregate.py:1429`, `docs/agents/PUNDITS.md`, `docs/LEDGER-pundits.md`.
+**Touch points:** `profiles/pundits.json:41-51`, `scripts/grade.py:576-610`, `:998`, `scripts/aggregate.py:1429`, `docs/agents/PUNDITS.md`, `docs/PUNDITS-RELEASE-PLAN.md`.
 
 ---
 
@@ -599,9 +605,9 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 
 **Impact:** Until the re-grade, the pundits grading loop exits 1 on every cycle after the normalize, and four board scores rest on text in which a judge read "Tim [SUBJECT]" for Tim Walz.
 
-**Fix:** From the pundits daemon clone: run the normalize, then `grade.py --study pundits --force` on the eight cells, then aggregate; record the before-and-after scores in `docs/LEDGER-pundits.md`. One known residual stays: `mehdi-hasan/al-jazeera-english-bwb6x8` keeps "Mary Hassen", a caption corruption after a real given name; it is ungraded.
+**Fix:** From the pundits daemon clone: run the normalize, then `grade.py --study pundits --force` on the eight cells, then aggregate; record the before-and-after scores in `docs/PUNDITS-RELEASE-PLAN.md`, beside the step at `:49-51` that names this re-grade. One known residual stays: `mehdi-hasan/al-jazeera-english-bwb6x8` keeps "Mary Hassen", a caption corruption after a real given name; it is ungraded.
 
-**Touch points:** `data-pundits/transcripts_blind/` (the 14 files), `data-pundits/grades/{fable,gemini}/{ben-shapiro,matt-walsh}/` (the 8 cells), `docs/LEDGER-pundits.md`, `docs/PUNDITS-RELEASE-PLAN.md:49-51`.
+**Touch points:** `data-pundits/transcripts_blind/` (the 14 files), `data-pundits/grades/{fable,gemini}/{ben-shapiro,matt-walsh}/` (the 8 cells), `docs/PUNDITS-RELEASE-PLAN.md:49-51`.
 
 ---
 
@@ -629,8 +635,8 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 
 **Impact:** 35 leaders cells that could hold a score hold a malformed record, and the board is computed without them.
 
-**Fix:** When the operator says so: one manual pass from repo-0, `grade.py ... --modes blinded --regrade-invalid`, then aggregate and deploy; or add the flag to the loop's grade calls at `grade_loop.sh:205` and `:218` and change the pin at `test_leaders_regrade_invalid.py:150` in the same commit. Record the before-and-after board in `docs/LEDGER-leaders.md` or the deploy note.
+**Fix:** When the operator says so: one manual pass from repo-0, `grade.py ... --modes blinded --regrade-invalid`, then aggregate and deploy; or add the flag to the loop's grade calls at `grade_loop.sh:205` and `:218` and change the pin at `test_leaders_regrade_invalid.py:150` in the same commit. Record the before-and-after board as a `CI-n` row in `docs/LEDGER-corpus-integrity.md`, the ledger that holds the leaders grade-validity items.
 
-**Touch points:** `scripts/grade_loop.sh:205`, `:218`, `scripts/test_leaders_regrade_invalid.py:147-150`, `scripts/grade.py:446-473` (read only).
+**Touch points:** `scripts/grade_loop.sh:205`, `:218`, `scripts/test_leaders_regrade_invalid.py:147-150`, `scripts/grade.py:446-473` (read only), `docs/LEDGER-corpus-integrity.md`.
 
 ---
