@@ -298,31 +298,9 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-30. The market consensus run summary files every market API error as `cli_nonzero_exit`  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
-
-**Background:** `scripts/market_consensus.py:69` defines the error label `market_api_error`, which every HTTP failure's error text starts with (`:163` for a cached non-200 replay, `:176`, `:179`), and `:666` and `:682` label each failed record with `L.classify_exception_detail(error)`. That function, `scripts/predictions_lib.py:147-149`, matches the detail against `ALL_ERROR_TYPES` (`:95-97`), which does not name `market_api_error`, so it falls through to the grade taxonomy's default. Verified in repo-1 at `87c42e3` on 2026-10-18:
-
-```
-.venv/bin/python -c "import sys; sys.path.insert(0,'scripts'); import predictions_lib as L
-print(L.classify_exception_detail('market_api_error: HTTP 429 for https://x'))
-print('market_api_error' in L.ALL_ERROR_TYPES)"
-cli_nonzero_exit
-False
-```
-
-All three 2026-10-18 consensus manifests carry the mislabel. Read as `json.load(f)["summary"]["error_taxonomy"]` (the files are pretty-printed, so the text below is not greppable): `predictions/_runs/20261018T090006Z-consensus-fc6e8e7f.json` gives `{'cli_nonzero_exit': 19}`, `20261018T090904Z-consensus-4d923755.json` `{'cli_nonzero_exit': 5}` and `20261018T111317Z-consensus-1af7da1c.json` `{'cli_nonzero_exit': 4}`, though all 28 failures were a Kalshi 429, a Polymarket 400 or a Polymarket 403 (VI-24, fixed by `87c42e3`; VI-25). Ledger VP-21 recorded the same label without noticing. Matcher failures are different: `:577-581` keeps the label the failure came with at the front (`schema_validation_failed`, `router_no_account`), so those file correctly; only a matcher exception with no label in its message, such as a bare `JSONDecodeError`, falls to `cli_nonzero_exit` the same way.
-
-**Impact:** each failed record's own error text still says `HTTP 429`, but the run summary's `error_taxonomy` cannot tell a rate limit from a model crash, so nothing in a manifest shows whether `87c42e3` made the 429s go away.
-
-**Fix:** `predictions_lib` cannot import `market_consensus` (the import runs the other way, `scripts/market_consensus.py:57`), so define `market_api_error` and `matcher_error` in `predictions_lib` beside `E_CREDIT_FAILED` (`scripts/predictions_lib.py:94`), add both to `ALL_ERROR_TYPES`, and have `market_consensus.py:69-70` import them. At `:581`, prefix a matcher exception whose message carries no taxonomy label with `matcher_error: `, so a bare `JSONDecodeError` files under its own label. Test: `classify_exception_detail("market_api_error: HTTP 429 ...")` returns `market_api_error`; a `process_file` run with a fetcher that returns 429 leaves `error_type: market_api_error` in `res["errors"]`; a matcher that raises a bare `ValueError` leaves `error_type: matcher_error`, and one that raises `schema_validation_failed: ...` still leaves `schema_validation_failed`.
-
-**Touch points:** `scripts/predictions_lib.py:94-97`, `scripts/market_consensus.py:69-70`, `:577-581`, `scripts/test_predictions_markets.py` or a new `scripts/test_market_consensus_taxonomy.py`.
-
----
-
 ### VI-31. A network error in a market fetch escapes `process_file`, fails the whole file with no error label, and loses every record already finished in it  `[difficulty: high]`  `[filed: 2026-10-18]`
 
-**Background:** `scripts/market_consensus.py:111-118` (`http_get`) catches only `urllib.error.HTTPError`. A `URLError`, a `TimeoutError`, a connection reset or an `http.client` error (`IncompleteRead`, `BadStatusLine`; neither is an `OSError`) is not a `RuntimeError`, so it passes `gather_candidates`'s handler at `:548`, the observation handler at `:587` and `process_file`'s handler at `:674`, up to `main`'s catch-all at `:752-753`, which records `{"status": "failed", "error": "<type>: ..."}` for the file with no `errors` list. `:760-763` builds `error_taxonomy` from `errors` only, so the failure is counted in `file_failures` (`:767`) and nowhere in the taxonomy. A second door: `Cache.get_json` writes the cache file at `:177` before it parses the body at `:180`, so a 200 whose body is not JSON is cached and replayed on every later read, and its `JSONDecodeError` escapes the same way. `process_file` writes the file once, at `:685`, after every record in it is done, so a network error on record 40 of 50 discards the 39 finished consensus blocks, including matcher calls that already spent model quota, and the next run redoes them.
+**Background:** `scripts/market_consensus.py:111-118` (`http_get`) catches only `urllib.error.HTTPError`. A `URLError`, a `TimeoutError`, a connection reset or an `http.client` error (`IncompleteRead`, `BadStatusLine`; neither is an `OSError`) is not a `RuntimeError`, so it passes `gather_candidates`'s handler at `:548`, the observation handler at `:588` and `process_file`'s handler at `:683`, up to `main`'s catch-all at `:761-762`, which records `{"status": "failed", "error": "<type>: ..."}` for the file with no `errors` list. `:769-772` builds `error_taxonomy` from `errors` only, so the failure is counted in `file_failures` (`:776`) and nowhere in the taxonomy. A second door: `Cache.get_json` writes the cache file at `:177` before it parses the body at `:180`, so a 200 whose body is not JSON is cached and replayed on every later read, and its `JSONDecodeError` escapes the same way. `process_file` writes the file once, at `:694`, after every record in it is done, so a network error on record 40 of 50 discards the 39 finished consensus blocks, including matcher calls that already spent model quota, and the next run redoes them.
 
 **Impact:** one dropped connection costs a whole file's work and shows in the summary as a bare file failure, not as a network error.
 
@@ -330,21 +308,21 @@ All three 2026-10-18 consensus manifests carry the mislabel. Read as `json.load(
 1. In `Cache.get_json` (`:155-180`), catch `urllib.error.URLError`, `TimeoutError`, `OSError` and `http.client.HTTPException` around the fetcher call only, and raise `RuntimeError(f"{E_MARKET_HTTP}: <type>: <reason> for <url>")`, so every handler below sees one exception class. Nothing is cached for it.
 2. Parse the body before writing the cache file; a 200 that does not parse raises the same `market_api_error` and is not cached.
 3. Write the file after each record's consensus block is set (or every N records), through `L.write_prediction_file`, so finished work survives a later crash; keep the final write.
-4. In `main`'s catch-all (`:752-753`) add an `errors` entry with `error_type` from `L.classify_exception_detail`, so the taxonomy counts it (after VI-30 gives it a label).
+4. In `main`'s catch-all (`:761-762`) add an `errors` entry with `error_type` from `L.classify_exception_detail`, so the taxonomy counts it (after VI-30 gives it a label).
 5. Tests: a fetcher that raises `URLError` leaves the record `failed` with `reason: None` and `error` starting `market_api_error:`, the file still holds the records finished before it, and the run summary's `error_taxonomy` names it; a fetcher that returns a non-JSON 200 leaves no cache file; a fetcher that raises midway through a two-record file leaves the first record's block on disk.
-6. Optional: re-raise `RefusedDataWrite` from the handlers at `:548` and `:587`, with a test that a cache writer raising it stops the run instead of filing a record error.
+6. Optional: re-raise `RefusedDataWrite` from the handlers at `:548` and `:588`, with a test that a cache writer raising it stops the run instead of filing a record error.
 
-*Risks and edge cases:* a per-record write multiplies writes by the records per file (up to a few dozen); `write_prediction_file` is atomic, so a reader in another clone never sees a prefix, and the index's `files_read` and `inputs_sha256` fingerprints (written by `aggregate_predictions.py`, not by this run) already move on the final write. Today a `RefusedDataWrite` raised by the cache write is a `RuntimeError` and is swallowed into a record error at `:548` and again at `:587` (the `observe_*` calls write the cache too); the new catch must sit around the fetcher call only, so it does not widen that.
+*Risks and edge cases:* a per-record write multiplies writes by the records per file (up to a few dozen); `write_prediction_file` is atomic, so a reader in another clone never sees a prefix, and the index's `files_read` and `inputs_sha256` fingerprints (written by `aggregate_predictions.py`, not by this run) already move on the final write. Today a `RefusedDataWrite` raised by the cache write is a `RuntimeError` and is swallowed into a record error at `:548` and again at `:588` (the `observe_*` calls write the cache too); the new catch must sit around the fetcher call only, so it does not widen that.
 
 *Why high not medium:* it changes when a record file is written, and the choice between per-record and batched writes is a judgment about cost against lost work.
 
-**Touch points:** `scripts/market_consensus.py:111-118`, `:155-180`, `:548`, `:643-686`, `:752-753`, `scripts/test_predictions_markets.py` or `scripts/test_market_consensus_cache.py`.
+**Touch points:** `scripts/market_consensus.py:111-118`, `:155-180`, `:548`, `:652-695`, `:761-762`, `scripts/test_predictions_markets.py` or `scripts/test_market_consensus_cache.py`.
 
 ---
 
 ### VI-32. The Kalshi lock serializes fetches but does not re-check the cache, back off, or retry, so one 429 still fails its record for the run  `[difficulty: medium]`  `[filed: 2026-10-18]`
 
-**Background:** since `87c42e3` (VI-24) `scripts/market_consensus.py:155-180` (`Cache.get_json`) fetches Kalshi under a per-process `threading.Semaphore(1)` (`:169-172`) and raises on a transient status (`:175-176`). Three things the lock does not do: (a) it does not look at the cache again after it is taken, so three workers that asked for the same URL at once make three back-to-back Kalshi calls (the one-popular-URL pattern of the `ECLIPSECOVER` incident); (b) it adds no gap between calls and reads no `Retry-After`, so whether one serialized stream stays under Kalshi's limit at the 707-call scale of the first 2026-10-18 run is unproven (the one-worker reruns made 17 and 62 calls); (c) a 429 fails the record for this run and only the next run retries it (`:646-648`). The lock is also per process, so two concurrent runs each have their own. 408 is not in `transient_status` (`:121-130`), so a 408 would be cached and replayed like the original bug.
+**Background:** since `87c42e3` (VI-24) `scripts/market_consensus.py:155-180` (`Cache.get_json`) fetches Kalshi under a per-process `threading.Semaphore(1)` (`:169-172`) and raises on a transient status (`:175-176`). Three things the lock does not do: (a) it does not look at the cache again after it is taken, so three workers that asked for the same URL at once make three back-to-back Kalshi calls (the one-popular-URL pattern of the `ECLIPSECOVER` incident); (b) it adds no gap between calls and reads no `Retry-After`, so whether one serialized stream stays under Kalshi's limit at the 707-call scale of the first 2026-10-18 run is unproven (the one-worker reruns made 17 and 62 calls); (c) a 429 fails the record for this run and only the next run retries it (`:655-657`). The lock is also per process, so two concurrent runs each have their own. 408 is not in `transient_status` (`:121-130`), so a 408 would be cached and replayed like the original bug.
 
 **Impact:** a burst of identical Kalshi URLs still costs one call each, and a single 429 still costs the record a run.
 
@@ -363,6 +341,30 @@ All three 2026-10-18 consensus manifests carry the mislabel. Read as `json.load(
 **Fix:** make the skip loud and counted: have the runner treat a Node exit code of its own (77, the usual skip code, set by the test on the missing module) as `SKIPPED test_site_tooltip.js (jsdom not installed)` and print a `skipped: N` line beside `failed: N`, still exiting 0, so the gate's output says what did not run; or add jsdom as a dev dependency (`package.json`; the repo has none and the setup block has no `npm install`) and drop the skip. Either way the test reads `site/index.html` (`:15`), a built page that git does not track (`.gitignore`), so a fresh clone has no page and a clone's page is as stale as its last build: option 2 turns a fresh clone's gate red with ENOENT, and the first real run may fail for old reasons because the test has not run in the gate. Decide one, say why in the runner header, and add a check to `scripts/test_run_tests_sh.py` with a fake Node test that exits 77.
 
 **Touch points:** `scripts/test_site_tooltip.js:8-15`, `scripts/run_tests.sh:40`, `scripts/test_run_tests_sh.py`.
+
+---
+
+### VI-34. A matcher answer with no JSON files as `matcher_error`, while the other three stages file the same failure as `no_json_in_response`  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/market_consensus.py:568` calls `L.extract_json(text)` on the matcher's answer with no wrapper, so a `ValueError` ("no opening brace in response", `scripts/grade.py:886`) or a `json.JSONDecodeError` reaches the handler at `:577-582`, which since `f998861` (VI-30) prefixes an unlabelled message with `matcher_error: `. The other stages label that failure before it escapes: `scripts/extract_predictions.py:379-384` (`parse_model_output`) raises `no_json_in_response` or `json_parse_error`, `scripts/grade.py:2460-2464` picks between the two by the message, and `scripts/resolve_predictions.py:409-412` raises `no_json_in_response`. Today the corpus holds no matcher failure of this kind (the 8 failed consensus blocks in the data are all `market_api_error`), so the count is right by luck.
+
+**Impact:** a count of `no_json_in_response` across stages leaves out consensus runs, and a matcher that starts returning prose shows up under the label for "the matcher stage, with no label of its own".
+
+**Fix:** wrap the call at `:568` with grade.py's rule (`:2460-2464`), which picks by message, not by exception type: only "no opening brace" (`grade.py:886`) is `no_json_in_response`; every other `extract_json` failure, a `JSONDecodeError` (`:907`) or the `ValueError("unbalanced braces in response")` of a truncated answer (`:908`), is `json_parse_error`. Raise `RuntimeError(f"{label}: {exc}")` and `matcher_error_text` keeps the label. Do not copy `parse_model_output` (`extract_predictions.py:379-384`), which picks by type and mislabels a truncated answer (VI-35). Test in `scripts/test_market_consensus_taxonomy.py`: a matcher that returns prose files `no_json_in_response`; one that returns `{"a": 1,, }` and one that returns the truncated `{"a": 1, "b": [2, 3` both file `json_parse_error`; a matcher that raises a bare `ValueError` still files `matcher_error`.
+
+**Touch points:** `scripts/market_consensus.py:566-582`, `scripts/test_market_consensus_taxonomy.py`.
+
+---
+
+### VI-35. `extract_predictions.parse_model_output` never files `json_parse_error`: it catches `ValueError` before `json.JSONDecodeError`  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/extract_predictions.py:379-384` catches `ValueError` first and `json.JSONDecodeError` second. `json.JSONDecodeError` is a subclass of `ValueError`, so the second branch never runs: malformed JSON such as `{"a": 1,, }` raises `JSONDecodeError` from `L.extract_json` (`scripts/grade.py:907`) and is filed as `no_json_in_response`, the label for an answer with no JSON at all. A truncated answer, `{"a": 1, "b": [2, 3` (the output-cap case of VI-23), raises `ValueError("unbalanced braces in response")` at `grade.py:908` and is filed the same way, and swapping the two branches would not change that. `grade.py:2460-2464` picks the label by message instead: only "no opening brace" is `no_json_in_response`. `scripts/resolve_predictions.py:409-412` files every `extract_json` failure as `no_json_in_response` too, but it is left out of this item on purpose: it has its own error list (`:68-69`) and its own `classify` (`:335-347`), whose loop at `:344` knows a fixed set of labels and files any other as `other`, so a change there is a second classifier with its own test; file it separately if wanted. Found by the VI-30 review on 2026-10-18 with those inputs.
+
+**Impact:** an extraction run's `error_taxonomy` cannot tell a model that answered in prose from one that answered in broken JSON, which are different failures with different fixes (prompt against harness).
+
+**Fix:** in `parse_model_output`, pick the label by message as `grade.py:2462` does: "no opening brace" is `no_json_in_response`, anything else from `extract_json` is `json_parse_error`. Add checks to `scripts/test_predictions_driver.py`, the only test that calls `parse_model_output`: `no JSON here` files `no_json_in_response`; `{"a": 1,, }` and the truncated `{"a": 1, "b": [2, 3` both file `json_parse_error`; failing first.
+
+**Touch points:** `scripts/extract_predictions.py:379-384`, `scripts/test_predictions_driver.py`.
 
 ---
 
