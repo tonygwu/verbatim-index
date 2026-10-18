@@ -150,25 +150,6 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-5. `grade.call_fable_pool` and `credit_run.run` each check the served block, and two copies drift  `[difficulty: high]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
-
-**Background:** Filed by repo-3. Both landed the same night from two concurrent sessions. `scripts/grade.py:1163` (`call_fable_pool`, repo-0) is the judge path: one pool, Fable at max effort, labels from grade.py's taxonomy, served checks at `:1211-1216`. `scripts/credit_run.py:96` (`run`, repo-3) is the general path for the pundits speaker drafts and `extract_predictions.py --fable-credit-pools`: a SET of pools for the router to choose among, any model and effort, its own labels, served checks in `check_response` (`:63-93`). They check the same `served` fields today. The ledger deferred this until the CI-11 drift experiment, which imported `grade.py` from repo-0's working tree, had finished; `docs/LEDGER-corpus-integrity.md:23` records CI-11 stopped after day 1 with its day-2 arms cancelled, and on 2026-10-18 no process from `data/experiments/fable-credit-drift-20261018/` was running.
-
-**Impact:** The next change to one identity check (a new served field, a new quotapick outcome) silently leaves the other behind, and a credit grade can then pass one path's check and fail the other's for the same response.
-
-**Fix:**
-1. Make `call_fable_pool` call `credit_run.run(prompt, model=..., effort="max", pools=[pool], ...)` and map `PoolsExhausted` and `CreditRunError` onto grade.py's labels (`E_CLI`, `E_MODEL_MISMATCH`, `E_IDENTITY`, `E_POOL_REFUSED` at `scripts/grade.py:81-123`), so the telemetry block it returns (`:1223-1228`) is unchanged.
-2. `scripts/test_fable_pool.py` and `scripts/test_credit_run.py` both stay green; add one check that a served-field mismatch produces the same label through both entry points, failing first against a stubbed `credit_run.run`.
-3. `docs/agents/JUDGES.md` names the one call path.
-
-*Risks and edge cases:* `call_fable_pool` takes a `spent` tally and a `request_id` (`:1163-1165`); keep them. `FABLE_POOL_MAX_TIMEOUT` (`:1154`, `:1181`) must still refuse a longer timeout before any call. `grade_loop.sh` never passes `--fable-pool`, so production is untouched.
-
-*Why high not medium:* two modules, two test files and a label mapping that decides what the run summary's taxonomy says about a refused credit call.
-
-**Touch points:** `scripts/grade.py:81-123`, `:1163-1228`, `scripts/credit_run.py:63-136`, `scripts/test_fable_pool.py`, `scripts/test_credit_run.py`, `docs/agents/JUDGES.md`.
-
----
-
 ### VI-6. A Fable stage of `resolve_predictions.py` with no `--fable-accounts` runs on the default account  `[difficulty: high]`  `[filed: 2026-10-11]`
 
 **Background:** Filed by repo-0. `scripts/resolve_predictions.py:518` declares `--fable-accounts` with `default="default"`, and `:561-569` turns that into the account list for the `prior` and `lead_test` stages. `--stage lead_test` with no `--fable-accounts` ran its one call on `~/.claude` (`accounts=['default']` in `rebuild-20261011/lead_test-1.log`); it served `claude-fable-5-1` and cost $0.21. Nothing failed, but the operator has said account A has no Fable, and batch Fable work is meant to go to the accounts named for it. `scripts/grade.py:277` (`fable_accounts`) already routes by measured quota through `quota_router` when `FABLE_ACCOUNTS` is unset (`:2569`). The ledger deferred this to the next change to `resolve_predictions.py`.
