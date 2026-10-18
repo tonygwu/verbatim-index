@@ -298,7 +298,7 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-29. `run_tests.sh` discards every test's output, so an intermittent failure leaves no text  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-29. `run_tests.sh` discards every test's output, so an intermittent failure leaves no text  `[difficulty: low]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
 
 **Background:** `scripts/run_tests.sh:8` runs each test with `>/dev/null` and prints only `FAILED <path>`. On 2026-10-18 a full run in repo-1 printed `FAILED scripts/test_pundits_contract.py` and `failed: 1`; the same test then passed seven times on its own (`43/43 passed`) and a second full run printed `failed: 0`. Nothing of the failing check survived, and whether two gate runs overlapped in the clone is unknown. BACKLOG.md's own gate parameter says "the whole output kept".
 
