@@ -114,6 +114,87 @@ P1 itself is sound and nothing reads `membership.json` yet, so none of this move
 a published number today. Every entry below is P2's, and each one is a place the
 plan was right when it was written and the tree has moved since.
 
+- **Promote david-sacks and chamath-palihapitiya to the leaders board and grade
+  them with Fable on prepaid API credit.** Filed 2026-10-18 by repo-0, on the
+  operator's instruction of 2026-10-17, and deferred the same day: the work is a
+  multi-hour run and the operator chose to pick it up later. STATE FOUND, at
+  public `3b85ea3` and data `3db9ba3e`: `membership.json` gives each
+  `['predictions']`; roster ranks 53 and 54 carry `boards: ['predictions']` and a
+  `selection_rationale` that says revisit the company string BEFORE promotion;
+  the `aliases.json` blocks are the discovery-merged ones (David, Sacks, Craft,
+  Ventures; Chamath, Palihapitiya, Social, Capital) and the curated ones are at
+  data `cd7225a0`; `all.jsonl` holds 14 rows each; `transcripts_web/` holds 14
+  YouTube records for david-sacks and 14 YouTube plus 4 `web-*` records for
+  chamath-palihapitiya, the YouTube ones byte-for-byte the graded shelf's schema
+  (checked against a nate-silver shelf record: no key differs); nothing under
+  `transcripts/`, `transcripts_open/` or `grades/`. All three daemons stopped.
+  THE PLAN, following `docs/ROSTER-ADD-NATE-SILVER-2026-10-11.md` (ledger VP-39):
+  (1) `membership.json` first, both to `['leaders', 'predictions']`, then the
+  roster `boards`, a top-level note and the two rationales. Counts that move:
+  `scripts/test_membership.py` (`SEVEN`, "the roster MINUS the seven"),
+  `docs/agents/MAP.md` ("51 of the 58", "59 entries: the 49 ...", "the seven
+  investors with `predictions` alone"), `docs/agents/SCORING.md` ("board holds
+  51"), and whatever `scripts/test_agents_md_current_state.py` matches.
+  (2) Curate the shelf BY HAND before anything lands in `transcripts/`. The
+  precedent cut co-hosted and co-guest recordings because auto-captions carry no
+  speaker labels. Candidates to cut, from titles and `yt_description`:
+  david-sacks `all-in-podcast-kcmmoz` (a debate; the title names two other
+  guests), `all-in-podcast-lbb-rq` (All-In E2, co-hosted),
+  `american-moment-yjhavh` (gala excerpts, four speakers),
+  `orricktotalaccess-yxqyau` (a three-person panel per its description);
+  chamath-palihapitiya `khosla-ventures-tzpya9` and `waterloo-engineering-aoznmm`
+  (co-keynotes with vinod-khosla). That leaves about 10 and 12, both over the
+  rank floor of 5. The 4 chamath `web-*` records stay predictions-only, as the
+  Nate Silver supplement did. Copy the kept records into `transcripts/<slug>/`;
+  for each cut row write `<sid>.json.superseded` there, the marker
+  `fetch_transcripts.py:348` honours, so no fetcher pulls it onto the shelf; the
+  rows stay in `transcripts_web/` for predictions.
+  (3) `identity_screen.py` and `qa_transcripts.py` on the kept set, then blind
+  each transcript twice (empty alias list, current list) as the precedent did.
+  MEASURED 2026-10-18 over the YouTube records: lowercase "social" 72 and
+  "capital" 109 across chamath's 14; "craft" 13, "ventures" 7, "sacks" 13 across
+  sacks' 14. Decide the company strings, and whether to restore the curated alias
+  blocks ("Re-checked 2026-10-11: still WAITING" below asks for it on
+  promotion; measured incremental damage is zero either way, so it is a wording
+  choice, and the merge in `sources_to_manifest.py` re-adds the words on the
+  next rebuild).
+  (4) `grade.py`. `--fable-pool` must take a comma-separated pool list:
+  `call_fable_pool` wants `served.account == pool` (`grade.py:1211`), so a list
+  fails every call as `account_identity_mismatch` today. It needs a production
+  opt-in: `fable_pool_refusal` (`grade.py:576`) refuses `--out` outside
+  `data/experiments/`. At filing, repo-3 held the predictions precedent UNPUSHED:
+  `e267bef` adds `--credit-production` to `extract_predictions.py`, and `bcfaca8`
+  records VD-19 (credit records may reach the board) and that CI-11 stopped
+  after day 1; mirror that flag name, and check both have reached origin before
+  starting. Failing-then-passing checks in `scripts/test_fable_pool.py`. The
+  "Two code paths call `quotapick run`" item above wants `call_fable_pool` to go
+  through `credit_run.run`, which takes a pool SET already. Add a per-judge
+  harness count beside `judge_models` in `aggregate.py` (`aggregate.py:1443`)
+  so the mix is visible in `diagnostics`. Record in `docs/agents/JUDGES.md`
+  that pooling credit grades with the corpus is the operator's decision, with
+  the evidence (`data/experiments/fable-credit-drift-20261018/results.md`:
+  credit minus production -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman
+  0.939); that file today says "do not pool these grades with the corpus".
+  (5) Run `grade_loop.sh`'s stages by hand with its exact flags: QA, normalize
+  blinded and open; `grade.py --judges fable --fable-pool
+  anthropic_api_c,anthropic_api_e,anthropic_api_b,anthropic_api_a <opt-in>
+  --out data/grades --timeout 1800` (the pool maximum; production uses 2400,
+  and the four transcripts over 28k words may be cut off and still billed), 6
+  workers then `--workers 1` to drain `no_candidate`; `grade.py --judges
+  astra,gemini --timeout 2400`; aggregate, build_site, `wrong_person_screen.py`;
+  `deploy.sh --production-data data --data-revision`. Cost about $2 to $2.5 per
+  credit grade, so $50 to $60 for about 22 transcripts; pool d ($0.61) admits
+  nothing. repo-3's thin-supplement extraction
+  (`predictions/_experiments/thin-supplement-20261018/`) spends the same pools,
+  and CI-11's day-2 arm on pool c was dropped per `bcfaca8`, so no reserve
+  needs protecting. Their `fetched_at_utc` (2026-09-19) is before
+  `SEGMENT_SINCE_UTC`, so `speaker_turns.py` will not cover them; say so in the
+  record.
+  (6) Record it as the precedent was: a `docs/ROSTER-ADD-*.md`, a row in
+  `docs/LEDGER-predictions.md` (VP-41 is taken by repo-3's `bcfaca8`), data
+  pushed with `data_sync.py push --daemon`, and `adversarial-self-review` on the
+  `grade.py` change before its push. Comes back when the operator picks it up.
+
 - **RESOLVED 2026-10-11: the second and third observations came, both named,
   and the proven one is fixed.** Two later commits recorded red suite runs that
   nobody filed here:
