@@ -361,7 +361,7 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-39. The transcript annotation tool is split by study and named for pundits, so one recording cannot carry an insights and a predictions tag in one interface  `[difficulty: high]`  `[filed: 2026-10-18]`
+### VI-39. The transcript annotation tool is split by study and named for pundits, so one recording cannot carry an insights and a predictions tag in one interface  `[difficulty: high]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
 **Background:** Filed by repo-2 at the operator's request. The code and the two leaders-data sessions are any clone's work; the pundits session's migration is repo-3's lane, because the pundits data repo is owner-only, and is handed to repo-3 as a command. `scripts/speaker_audit_page.py:58` "STUDIES = (" builds a separate page per board, and `scripts/pundits_verify_page.py:389` "def build(args) -> int:" builds the pundits page; both are served by `scripts/pundits_verify_serve.py`. The shared page template hard-codes the pundits checklist (`scripts/pundits_verify_page.py:824` "const askDone"), the pundits venue list and a banner naming the pundits server. It also keeps an Artifact `db` fallback whose `put` sends every collection except attribution to the labels collection (`scripts/pundits_verify_page.py:1015` "doc(id.replace("), so a spans or corrections save there would overwrite a recording's labels.
 
