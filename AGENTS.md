@@ -59,7 +59,11 @@ document that still cites it by name:
 | Where things are | MAP, CORPUS, SITES, PREDICTIONS-PIPELINE, DATING and PUNDITS |
 
 Status and open work are not in this agreement. Deferred work is in
-`BACKLOG.md`, and the status of each workstream is in its `docs/LEDGER-*.md`.
+`BACKLOG.md`, which follows the `backlog-protocol` skill since 2026-10-18:
+`### VI-n.` items with difficulty, filed and blocked tags, claimed through that
+skill's `claim.py` before work and deleted on completion. The settled entries
+of the old ledger are in `docs/BACKLOG-RESOLVED.md`. The status of each
+workstream is in its `docs/LEDGER-*.md`.
 
 **Adding to the agreement.** Put new text in the file of its topic, under the
 heading it fits. Add to this file only a rule that every agent needs on every
@@ -178,7 +182,7 @@ fail, every one because `data/` is absent: `test_agents_md_current_state`,
 `test_predictions_shared`, `test_render_integrity` (its `LIVE DATA` check only)
 and `test_verify_router_refusal`. With a data link at data `main`, all pass
 except `test_log_bloat`, which reads repo-0's live checkout and fails while
-repo-0 is mid-rebuild (BACKLOG, Site rendering).
+repo-0 is mid-rebuild (BACKLOG.md VI-12).
 
 For experiments, follow `docs/DATA-CLONE-WORKFLOW.md` after setup.
 `data_clone_workflow.py new-run` creates a unique run with provenance.

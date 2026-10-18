@@ -1,1358 +1,636 @@
 # Backlog
 
-Work deliberately deferred, with the reason and the condition that brings it back.
-Newest first.
-
-## Judges
-
-- **Two code paths call `quotapick run`: `grade.call_fable_pool` and
-  `credit_run.run`.** Filed 2026-10-18 by repo-3. Both landed the same night
-  from two concurrent sessions. `grade.call_fable_pool` (repo-0) is the judge
-  path: one pool, Fable at max effort, labels from grade.py's taxonomy.
-  `credit_run.run` (repo-3) is the general path for the pundits speaker drafts
-  and `extract_predictions.py --fable-credit-pools`: a SET of pools for the
-  router to choose among, any model and effort, its own labels. They check the
-  same `served` fields today, and two copies of an identity check drift. Fix:
-  make `call_fable_pool` call `credit_run.run` with `pools=[pool]`, and map
-  `PoolsExhausted` and `CreditRunError` onto its labels, so `test_fable_pool.py`
-  and `test_credit_run.py` both stay green. Comes back when the CI-11 drift
-  experiment in `data/experiments/fable-credit-drift-20261018/` has finished,
-  because that run imports grade.py from repo-0's working tree.
-
-- **Gemini retries on the six longest transcripts.** Filed 2026-10-11 by repo-0
-  (overnight run). Six blinded transcripts of 32,912 to 38,858 words have never
-  had a Gemini grade, and every `grade_loop.sh` cycle calls Gemini up to 3 times
-  on each of them. Since 2026-09-06 three of them have failed in 142 cycles
-  each. The measurement and the six ids are in `docs/agents/JUDGES.md`, under
-  "Gemini's coverage gap is a RETRY BUDGET". Each of the six leaders has that
-  recording scored by Fable and Astra only. The options:
-  (a) Change nothing. Cost: about 18 long Gemini calls per cycle, every cycle,
-  for a chance per call that is close to zero (one 50,025-word transcript
-  succeeded once in 119 cycles).
-  (b) A per-transcript cap across runs. After N cycles of `empty_response`
-  with a denied tool, skip that (judge, transcript) and list it in the run
-  summary as skipped, with its count. Cost: a code change in `grade.py` and a
-  test, and the six stay at two judges unless the cap is reset by hand.
-  (c) A Gemini prompt that gives the transcript in parts, so the judge does not
-  reach for a tool. Cost: a new prompt, which changes the measured judge and
-  must be measured against the current one before it is used.
-  Recommendation: (b), because it stops the spend and keeps the record
-  honest; (c) only if two-judge coverage on these six becomes a problem.
-  Comes back when the operator picks one.
-
-- **A Fable stage without `--fable-accounts` runs on the default account.**
-  Filed 2026-10-11 by repo-0. `resolve_predictions.py --stage lead_test`
-  with no `--fable-accounts` ran its one call on `~/.claude`
-  (`accounts=['default']` in `rebuild-20261011/lead_test-1.log`); it served
-  `claude-fable-5-1` and cost $0.21. Nothing failed, but the operator has said
-  account A has no Fable, and batch Fable work is meant to go to the accounts
-  named for it. Option: refuse a Fable stage that names no accounts, or route
-  it by measured quota the way `grade.py` does when `FABLE_ACCOUNTS` is unset.
-  Cost: every caller must pass the flag, or the stage gains the router.
-  Comes back with the next change to `resolve_predictions.py`.
-
-## Speaker segmentation and caption text
-
-- **Re-checked 2026-10-11: still WAITING, at 15 corrections over 5 recordings
-  of the 50 over 10 it needs.** Counted with `pundits_text_corrections.py` over
-  every speaker-check answers file on this Mac: leaders 9 edits over 2
-  recordings, predictions 5 over 2, pundits 1 over 1. The entry below says the
-  first session saved 5, which is the predictions half only. The newest edit
-  is from 2026-09-28T05:07Z, and no later session exists in either data repo.
-  The "correct every error you notice" convention the condition depends on is
-  written nowhere except this entry, so it has never been in force. Put it in
-  `docs/PUNDITS-LABELLING-GUIDE.md` before the next session if this should
-  ever come back.
-
-- **Let the speaker-segmentation call also correct obvious caption errors.**
-  Filed 2026-09-28 at the operator's request. `scripts/speaker_segment_probe.py`
-  asks a model to split a whole transcript into speaker turns, and the first
-  speaker-check session (`predictions/_experiments/speaker-audit-20260927/` on
-  repo-3's private data branch) scores it against the operator's word ranges.
-  While labelling, the operator also used the page's "Correct text" and saved 5
-  corrections. The idea is to have the SAME call that finds the turns also return
-  caption corrections, rather than a second pass over the raw YouTube text: one
-  read of the recording serves both, and knowing who is speaking helps with the
-  commonest fixable error, a misheard name ("Grock" for "Grok").
-
-  Why it waits. There is too little ground truth to score it. Of the 5
-  corrections, at most 3 are recoverable from text: "Grock" to "Grok", "dial" to
-  "dial-up", perhaps "but definitely" to "but I definitely". The other 2 restore
-  words the captions DROPPED ("Wow." to "Wow. That's crazy."), which only the audio
-  holds, so no text-only model can be expected to make them. Segmentation itself
-  was adopted on 2026-09-28 as `scripts/speaker_turns.py`, pinned to Astra, check
-  only and for new transcripts only; the correction task would extend that call,
-  and its prompt is pinned by hash, so the extension is a new measured prompt.
-
-  Three constraints, whichever way it is built:
-  1. Corrections are OVERLAYS keyed to the original token offsets, in the shape
-     `pundits_text_corrections.py` already stores (`start`, `end`, `original`,
-     `replacement`). The original text stays the source of truth. The operator's
-     word ranges, the judges' evidence quotes and every published prediction's
-     `quote_char_start` point into it, and an in-place rewrite would break all
-     three.
-  2. Measure that the second job does not degrade the first. The 2026-09-28
-     segmentation-only runs are the baseline: same recordings, same scorer, turns
-     with and without the correction task.
-  3. Score corrections both ways: how many of the operator's text-recoverable
-     corrections a model finds, and how many of its own edits are wrong. The second
-     needs negatives, so it needs the convention below.
-
-  The condition that brings it back: at least 50 operator corrections across at
-  least 10 recordings, made under the convention that every caption error noticed
-  in a reviewed passage is corrected, so that a reviewed word left alone counts as
-  correct. Both numbers are a judgement, not a measurement: enough corrections that
-  one model finding 3 more than another is not noise, spread over enough
-  recordings that one speaker's accent or one caption track does not dominate.
-  Count them with `pundits_text_corrections.py` over the answers files.
-
-## Board membership (P1, P2 and most of P3 shipped 2026-09-18)
-
-Reviewed 2026-09-17 against `docs/plans/board-membership-2026-09-16.md`, at
-`240d472` with the whole suite green (`bash scripts/run_tests.sh` -> `failed: 0`).
-P1 itself is sound and nothing reads `membership.json` yet, so none of this moves
-a published number today. Every entry below is P2's, and each one is a place the
-plan was right when it was written and the tree has moved since.
-
-- **Promote david-sacks and chamath-palihapitiya to the leaders board and grade
-  them with Fable on prepaid API credit.** Filed 2026-10-18 by repo-0, on the
-  operator's instruction of 2026-10-17, and deferred the same day: the work is a
-  multi-hour run and the operator chose to pick it up later. STATE FOUND, at
-  public `3b85ea3` and data `3db9ba3e`: `membership.json` gives each
-  `['predictions']`; roster ranks 53 and 54 carry `boards: ['predictions']` and a
-  `selection_rationale` that says revisit the company string BEFORE promotion;
-  the `aliases.json` blocks are the discovery-merged ones (David, Sacks, Craft,
-  Ventures; Chamath, Palihapitiya, Social, Capital) and the curated ones are at
-  data `cd7225a0`; `all.jsonl` holds 14 rows each; `transcripts_web/` holds 14
-  YouTube records for david-sacks and 14 YouTube plus 4 `web-*` records for
-  chamath-palihapitiya, the YouTube ones byte-for-byte the graded shelf's schema
-  (checked against a nate-silver shelf record: no key differs); nothing under
-  `transcripts/`, `transcripts_open/` or `grades/`. All three daemons stopped.
-  THE PLAN, following `docs/ROSTER-ADD-NATE-SILVER-2026-10-11.md` (ledger VP-39):
-  (1) `membership.json` first, both to `['leaders', 'predictions']`, then the
-  roster `boards`, a top-level note and the two rationales. Counts that move:
-  `scripts/test_membership.py` (`SEVEN`, "the roster MINUS the seven"),
-  `docs/agents/MAP.md` ("51 of the 58", "59 entries: the 49 ...", "the seven
-  investors with `predictions` alone"), `docs/agents/SCORING.md` ("board holds
-  51"), and whatever `scripts/test_agents_md_current_state.py` matches.
-  (2) Curate the shelf BY HAND before anything lands in `transcripts/`. The
-  precedent cut co-hosted and co-guest recordings because auto-captions carry no
-  speaker labels. Candidates to cut, from titles and `yt_description`:
-  david-sacks `all-in-podcast-kcmmoz` (a debate; the title names two other
-  guests), `all-in-podcast-lbb-rq` (All-In E2, co-hosted),
-  `american-moment-yjhavh` (gala excerpts, four speakers),
-  `orricktotalaccess-yxqyau` (a three-person panel per its description);
-  chamath-palihapitiya `khosla-ventures-tzpya9` and `waterloo-engineering-aoznmm`
-  (co-keynotes with vinod-khosla). That leaves about 10 and 12, both over the
-  rank floor of 5. The 4 chamath `web-*` records stay predictions-only, as the
-  Nate Silver supplement did. Copy the kept records into `transcripts/<slug>/`;
-  for each cut row write `<sid>.json.superseded` there, the marker
-  `fetch_transcripts.py:348` honours, so no fetcher pulls it onto the shelf; the
-  rows stay in `transcripts_web/` for predictions.
-  (3) `identity_screen.py` and `qa_transcripts.py` on the kept set, then blind
-  each transcript twice (empty alias list, current list) as the precedent did.
-  MEASURED 2026-10-18 over the YouTube records: lowercase "social" 72 and
-  "capital" 109 across chamath's 14; "craft" 13, "ventures" 7, "sacks" 13 across
-  sacks' 14. Decide the company strings, and whether to restore the curated alias
-  blocks ("Re-checked 2026-10-11: still WAITING" below asks for it on
-  promotion; measured incremental damage is zero either way, so it is a wording
-  choice, and the merge in `sources_to_manifest.py` re-adds the words on the
-  next rebuild).
-  (4) `grade.py`. `--fable-pool` must take a comma-separated pool list:
-  `call_fable_pool` wants `served.account == pool` (`grade.py:1211`), so a list
-  fails every call as `account_identity_mismatch` today. It needs a production
-  opt-in: `fable_pool_refusal` (`grade.py:576`) refuses `--out` outside
-  `data/experiments/`. At filing, repo-3 held the predictions precedent UNPUSHED:
-  `e267bef` adds `--credit-production` to `extract_predictions.py`, and `bcfaca8`
-  records VD-19 (credit records may reach the board) and that CI-11 stopped
-  after day 1; mirror that flag name, and check both have reached origin before
-  starting. Failing-then-passing checks in `scripts/test_fable_pool.py`. The
-  "Two code paths call `quotapick run`" item above wants `call_fable_pool` to go
-  through `credit_run.run`, which takes a pool SET already. Add a per-judge
-  harness count beside `judge_models` in `aggregate.py` (`aggregate.py:1443`)
-  so the mix is visible in `diagnostics`. Record in `docs/agents/JUDGES.md`
-  that pooling credit grades with the corpus is the operator's decision, with
-  the evidence (`data/experiments/fable-credit-drift-20261018/results.md`:
-  credit minus production -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman
-  0.939); that file today says "do not pool these grades with the corpus".
-  (5) Run `grade_loop.sh`'s stages by hand with its exact flags: QA, normalize
-  blinded and open; `grade.py --judges fable --fable-pool
-  anthropic_api_c,anthropic_api_e,anthropic_api_b,anthropic_api_a <opt-in>
-  --out data/grades --timeout 1800` (the pool maximum; production uses 2400,
-  and the four transcripts over 28k words may be cut off and still billed), 6
-  workers then `--workers 1` to drain `no_candidate`; `grade.py --judges
-  astra,gemini --timeout 2400`; aggregate, build_site, `wrong_person_screen.py`;
-  `deploy.sh --production-data data --data-revision`. Cost about $2 to $2.5 per
-  credit grade, so $50 to $60 for about 22 transcripts; pool d ($0.61) admits
-  nothing. repo-3's thin-supplement extraction
-  (`predictions/_experiments/thin-supplement-20261018/`) spends the same pools,
-  and CI-11's day-2 arm on pool c was dropped per `bcfaca8`, so no reserve
-  needs protecting. Their `fetched_at_utc` (2026-09-19) is before
-  `SEGMENT_SINCE_UTC`, so `speaker_turns.py` will not cover them; say so in the
-  record.
-  (6) Record it as the precedent was: a `docs/ROSTER-ADD-*.md`, a row in
-  `docs/LEDGER-predictions.md` (VP-41 is taken by repo-3's `bcfaca8`), data
-  pushed with `data_sync.py push --daemon`, and `adversarial-self-review` on the
-  `grade.py` change before its push. Comes back when the operator picks it up.
-
-- **RESOLVED 2026-10-11: the second and third observations came, both named,
-  and the proven one is fixed.** Two later commits recorded red suite runs that
-  nobody filed here:
-
-  ```
-  b80ef3b 2026-09-26  test_run_marker.py "a plain kill removes the marker",
-                      load average about 470, the check allowed 5 seconds
-  d9f2321 2026-09-27  test_pundits_verify_serve.py failed once in a concurrent
-                      run and passed 24/24 alone; its output was not kept
-  ```
-
-  The entry below was wrong that `test_normalize_qa_race.py` is the suite's only
-  wall-clock assertion: `test_run_marker.py` predates it with a 5-second
-  `wait_for`, and it is a plausible cause of the original unnamed failure too.
-  FIXED there, test-first. A new STALLED case SIGSTOPs a loop, kills it, and
-  continues it 6 seconds later; with the old 5-second bound it failed, `38
-  passed, 2 failed`, and with the bound at 20 seconds it passes, `40 passed, 0
-  failed`. A wait returns the moment its condition holds, so a healthy run pays
-  nothing. The loop body now runs 120 seconds, far past any wait, so a loop
-  exiting by itself can never satisfy a check meant for a signal, and the
-  CLAIM case holds its loop on a release file instead of racing a 1.5-second
-  sleep. Mutation check: with the EXIT trap removed from `run_marker.sh`, EXIT,
-  TERM and STALLED all fail. `test_pundits_verify_serve.py` was first given
-  wider HTTP timeouts on a guess; the same night its failure was REPRODUCED and
-  it was not a timeout. Looping the file 60 times failed 3, every one a
-  connection reset at the oversized-body check: the server refused before
-  reading the body, so the socket closed with unread bytes and the kernel sent
-  a reset. A 1 MiB body was reset 30 times in 30. The server now reads and
-  discards a refused body up to `DRAIN_LIMIT` before answering; a new check
-  sends 4x the cap five times and wants five 400s, and it failed first. After
-  the fix, 60 runs, 0 failed. Then every test file that sleeps, times out,
-  opens a socket or starts a process, 19 files, ran 20 times each: 380 runs, 0
-  failed. A full suite ran beside the loop, adding load. If any of them goes
-  red again, keep the whole output.
-
-- **`bash scripts/run_tests.sh` returned `failed: 1` once and has not
-  reproduced in five attempts. The failing file's name was lost.** Filed
-  2026-09-17. One red run between two green ones, with nothing changed in
-  between but `BACKLOG.md` prose. Five subsequent full runs are green, including
-  one against a freshly rebased tree:
-
-  ```
-  --- run 1   failed: 0
-  --- run 2   failed: 0
-  --- run 3   failed: 0
-  (after git pull --rebase onto 2505df7)   failed: 0
-  ```
-
-  The runner DOES print `FAILED <path>` per file. The name was lost because the
-  caller piped it through `tail -1` and kept only the summary. That is the
-  operator error, not a runner defect, and the lesson is that this suite's
-  output must never be truncated to its last line.
-
-  RULED OUT, not by argument but by running it: `test_normalize_qa_race.py`,
-  which is the only test in the suite carrying a real wall-clock assertion. Five
-  timed runs at 3.43 to 3.53 seconds, all rc=0, and the check refuses to pass
-  vacuously below 1.0s rather than silently weakening. So the most plausible
-  candidate is not the cause.
-
-  NOT chased further, because this repo's own precedent says a failure that
-  repeats is not the same as a failure that is deterministic, and here it did
-  not even repeat. Chasing an unnamed one-off costs more than it returns.
-  The condition that brings it back: a SECOND observation. If `run_tests.sh`
-  reports a nonzero count again, capture the whole output, not the summary, and
-  file the named file here. A flake in the verification gate for the membership
-  change is worth naming precisely once it can be named at all.
-
-- **RESOLVED 2026-09-18 (62e79f5). The floor the plan proposes for `deploy.sh` refuses publication for ever on
-  the first cycle after P3.** Filed 2026-09-17. The plan says to derive the floor
-  as the roster size, "which `aggregate.py:1169` writes as
-  `len(leaders) + len(unranked) + len(unscored)`", and to compare it against the
-  count `deploy.sh` already prints. Those two numbers are not comparable.
-  `aggregate.py:1341-1347` writes `"leaders": scored`, so `leaders` holds only
-  the scored-and-ranked people, while `unranked` and `unscored` are disjoint
-  lists beside it. `deploy.sh:36-38` counts `status == "scored"`, which is
-  exactly `len(leaders)`. So the floor equals the count only while `unranked` and
-  `unscored` are both empty.
-
-  They do not stay empty. `leaders_out` is built by iterating the whole roster
-  (`aggregate.py:1109`), and a roster person with no grades is appended with
-  `status: "no_grades"`, which lands in `unscored`. P3 appends seven such people.
-  MEASURED on synthetic corpora built from `test_render_integrity.a_grade`,
-  three leaders graded, run through the real `scripts/aggregate.py`:
-
-  ```
-  A_baseline_all_graded        leaders=3 unranked=0 unscored=0 | deploy led=3 PLAN_FLOOR=3 -> ok
-  B_P3_seven_added_nograde     leaders=3 unranked=0 unscored=2 | deploy led=3 PLAN_FLOOR=5 -> REFUSE
-  C_one_under_rank_floor       leaders=2 unranked=1 unscored=0 | deploy led=2 PLAN_FLOOR=3 -> REFUSE
-  ```
-
-  Arm B is P3. Arm C is one leader falling under `MIN_TRANSCRIPTS_TO_RANK`, which
-  a withdrawal is enough to cause and which this repo has already done once, to
-  C.C. Wei. Either way the operator sees `REFUSING` on every deploy and, with
-  `PUBLISH_ON_COMPLETE=1`, `grade_loop.sh` exits 1 on a board it could otherwise
-  have published. That is the same shape the plan spent a paragraph keeping out
-  of `membership.py`, arriving one file further down.
-
-  NOT fixed here, because P2 is not implemented.
-
-  **DECIDED BY THE OPERATOR 2026-09-17: the floor is derived from the PREVIOUS
-  PUBLISHED COUNT, not from the roster and not from the membership board.** The
-  two derivations offered alongside it were rejected with their costs understood.
-  Counting the membership leaders board is the tightest guard and still refuses
-  when a real leader legitimately drops under `MIN_TRANSCRIPTS_TO_RANK`, which is
-  arm C above. `len(leaders) + len(unranked)` survives that but is blind to slow
-  erosion. The previous published count is the only one of the three that catches
-  a board eroding 50 -> 40 over weeks, and the operator took its costs
-  deliberately: it needs state that `deploy.sh` does not keep, a first-run
-  bootstrap, and a tolerance that is itself a typed number.
-
-  **THE CONSTRAINT THAT DECIDES WHERE THE STATE LIVES, and it is not in the
-  plan.** `AGENTS.md:127` records that `deploy.sh` stays READ-ONLY ON DATA, and
-  the only write to `PRODUCTION_DATA` in the script is the `--refresh` aggregate
-  at `scripts/deploy.sh:18`. So the previous published count may NOT be written
-  into the data repository, which is the obvious place and the wrong one. It has
-  to live where `deploy.sh` already writes, or be read without being written.
-  Three candidates, in the order I would try them:
-
-  1. `site/published.json`, written beside `site/index.html`, which `deploy.sh`
-     already writes, and committed to the PUBLIC repo so every clone sees the
-     same number through git. Records the count, the `results.json` digest and
-     `published_at_utc`. Breaks no documented rule. Its failure mode is a deploy
-     from a clone that has not pulled, reading a stale count; `--data-revision`
-     already pins the data side and code staleness is an existing hazard.
-  2. Read the live site over the network and count the rows. No state at all and
-     it cannot drift, because it IS the published board. Costs a network
-     dependency and HTML parsing inside a publication guard, which is a poor
-     place for either.
-  3. Extend `site/og.meta.json`, which already records the rows that were drawn
-     (`scripts/test_og_card_rows.py`). Cheapest diff, but it overloads a social-
-     card sidecar with a publication guard, and the two will be edited by
-     different people for different reasons.
-
-  **The tolerance is a typed number and there is no way to derive it**, so put it
-  in ONE place, name it, and print it on every deploy whether or not it fires. A
-  guard whose threshold is invisible until it refuses is one an operator
-  bypasses. The plan's own reasoning applies: too tight and `grade_loop.sh:237`
-  prints AGGREGATE FAILED every cycle while the site serves the last good build.
-
-  **The first run has no previous count.** Bootstrap must be explicit and loud,
-  not a silent pass. An absent `site/published.json` should print that it is
-  bootstrapping and name the count it is recording, so the one deploy that cannot
-  be guarded says so rather than looking guarded.
-
-  Change `test_data_clone_workflow.py:177-178` in the same commit whatever the
-  derivation: its fixture writes `{"leaders": [], "diagnostics": {...}}` with no
-  `unranked` or `unscored` key at all, so a floor reading those keys raises
-  `KeyError` there rather than failing the assertion the plan expects. Under the
-  decided derivation that fixture also needs a previous-count file, or the
-  zero-leader deploy it asserts will take the bootstrap path and pass for the
-  wrong reason.
-
-
-### How the four above were resolved, 2026-09-18
-
-All four were filed by the P1 review and all four are now addressed. Evidence in
-`docs/MEMBERSHIP-P2-AUDIT.md` and in each commit.
-
-- **The deploy floor** is the PREVIOUS PUBLISHED COUNT, decided by the operator
-  on 2026-09-17 over the two cheaper derivations. `scripts/publication_floor.py`,
-  state in `site/published.json` because `deploy.sh` stays read-only on data.
-  The baseline was seeded from the live board's own row count, not assumed:
-  50 rows, ranks 1 to 50, LeCun first and Benioff last. 38 checks.
-- **The test inventory** was re-derived rather than trusted. MEASURED: 7 files
-  failed once the aggregate reader landed, and 6 of them inherit one seam through
-  `test_render_integrity.run_aggregate`; only `test_site_ci.py` shells out
-  directly. Three `build_site` fixtures gained the `leader_slug` the plan's own
-  rule requires.
-- **The stale citations** were re-derived at the top of the work and recorded in
-  the audit. Two things the plan does not carry: `roster_n` lives inside
-  `build_method()`, not `main()`, so membership has to be passed down; and the
-  word count now reads `transcripts_blind`, not `transcripts`.
-- **The fingerprint gap** is closed by `SITE_REPO_INPUTS`, declared per site.
-  MEASURED before the fix: retyping every board name in `membership.json` left
-  the fingerprint byte-identical. Only `leaderboard` names it, because
-  `build_predictions_site.py` does not read membership, and one arm asserts that
-  non-coverage deliberately.
-
-**Still open from that review:** nothing. The two LOW findings were fixed the day
-they were filed (50aeaac).
-
-- **SETTLED, re-checked 2026-10-11: nothing to do, and the code matches the
-  decision.** `aggregate.py` builds `by_slug` from the whole roster, appends a
-  person with no grades as `no_grades`, applies membership to the grades only,
-  and writes `unscored`. None of the three readers reads `unscored`.
-  `deploy.sh` counts `leaders` with status `scored`, `build_site.py` iterates
-  `leaders`, and `coverage_table.py` reads `leaders + unranked` and filters the
-  roster by membership. repo-0's committed `results.json` at data `65de79c7`
-  holds 50 scored, no unranked, and exactly the seven investors in `unscored`,
-  all `no_grades`, with 0 off-board grades.
-
-- **`aggregate.py` applies membership to the GRADES only, never to the roster
-  iteration. DECIDED BY THE OPERATOR 2026-09-17.** Filed 2026-09-17. The plan
-  specifies the grade filter at `usable = grades` and says nothing about the
-  roster loop at `aggregate.py:1109`, which iterates every roster person and
-  appends one with no grades as `status: "no_grades"`. The review could not tell
-  from the plan which behaviour was intended, because filtering the roster too
-  would have made the plan's original floor work.
-
-  The operator chose NOT to filter the roster. So from P3 the seven investors
-  appear in the leaders `results.json` under `unscored` with `status:
-  "no_grades"`, visible in diagnostics and absent from the page. The reason is
-  that `results.json` stays a faithful record of what the roster held, and
-  membership decides only what is RENDERED. That reading is consistent with the
-  plan's decisive rule, which is about reads and writes rather than about what
-  the record may mention.
-
-  Two consequences to carry into P2, neither of them blocking:
-
-  - `unscored` becomes non-empty for the first time. Anything that treats an
-    empty `unscored` as normal will see seven entries. `results.json` is read by
-    `deploy.sh`, `coverage_table.py` and `build_site.py`; check each before the
-    P3 commit, not after.
-  - This is WHY the floor could not be derived from the roster sum. The two
-    decisions are linked and were taken together: the roster sum stays 57 after
-    P3 while the published count stays 50, so the previous-published-count
-    derivation above is doing the work the roster sum cannot.
-
-  Nothing to do until P2 wires the aggregate reader. Recorded so the next pass
-  does not re-open a settled question.
-
-- **RESOLVED 2026-09-18 (239f934, 5549f15). The plan's P2 test inventory counts `aggregate.py` invocations and never
-  counts `build_site.py` invocations, and `build_site.py` is one of the three
-  readers.** Filed 2026-09-17. Three leaders-mode test files run `build_site.py`
-  directly against rosters whose slugs `membership.json` does not know:
-
-  ```
-  scripts/test_render_integrity.py:352   live roster padded with pad-0..pad-6
-  scripts/test_site_social_and_exclusions.py:109   synthetic roster
-  scripts/test_site_evidence_split.py:104          synthetic roster
-  ```
-
-  The last two did not exist when the plan was written: `7b77b20` (2026-09-16)
-  and `4e954ba` (2026-09-17) added them. Worse for the word-count reader, both
-  write their blinded-transcript fixtures as `{"word_count": N}` and nothing
-  else, with no `leader_slug` in the record at all:
-
-  ```
-  scripts/test_site_evidence_split.py:89           (d / f"src{t}.json").write_text(json.dumps({"word_count": 1000}))
-  scripts/test_site_social_and_exclusions.py:86    ... WORDS_PER_GRADED
-  scripts/test_site_social_and_exclusions.py:94    ... WORDS_PER_UNGRADED
-  ```
-
-  The plan's rule is "every lookup takes the slug from a record, never a path
-  component", so those three write sites must gain a `leader_slug` before the
-  word-count gate can read one. Taking it from `p.parent.name` instead would
-  break the rule quietly, which is why this is recorded rather than left to be
-  discovered mid-implementation.
-
-  Re-derived at the same time: the leaders-mode `aggregate.py` inventory is now
-  **ten call sites across six files**, not "eleven across five".
-  `test_site_evidence_split.py:94` and `test_site_social_and_exclusions.py:99`
-  are new, and both go through `ri.run_aggregate`, so the plan's chosen seam
-  (put the fixture inside `run_aggregate` at `test_render_integrity.py:148`)
-  still covers them for free. Two invocations are direct and need their own
-  patch: `test_site_ci.py:109`, which the plan names, and
-  `test_venue_calibration.py:408`, which it does not. The second is harmless,
-  because it runs against the real `data/roster/final.json` and the real
-  `data/grades`, but it is an argv the implementer will otherwise miss.
-
-- **RESOLVED 2026-09-18 (899493b). Every `file:line` in the plan's P2 section is stale, and one of them now
-  names a different directory.** Filed 2026-09-17. The plan's own revision note
-  says "only `build_site.py` moved". That was true at `b8a8a73`. Re-derived at
-  `240d472`:
-
-  ```
-  plan says                              actually now
-  aggregate.py:740  grade_files_read     :866      (+126)
-  aggregate.py:831  usable = grades      :957      (+126)
-  aggregate.py:839  accounted = ...      :965      (+126)
-  grade.py:2063  paths = sorted(...)     :2116     (+53)
-  grade.py:2064  if not paths            :2117
-  grade.py:2092  fable_accounts()        :2145
-  build_site.py:815  roster_n            :1045     (+230)
-  build_site.py:1079 tdir = .../"transcripts"  :1326, and the directory is now
-                                          "transcripts_blind"
-  build_site.py:1025 study dispatch       :1267
-  build_site.py:778  SHOW_PREDICTIONS_LINK :1008
-  grade_loop.sh:211  AGGREGATE FAILED     :237
-  grade_loop.sh:283  COMPLETE             :305
-  ```
-
-  Every anchor still exists and every ordering the plan depends on still holds:
-  the transcript list is loaded before `fable_accounts()`, `usable = grades` is
-  upstream of calibration, and the bare `except Exception: pass` is still there
-  at `build_site.py:1334-1335` swallowing the parse in the word-count loop. The
-  `transcripts_blind` change matters on its own, because the plan's "measured
-  no-op" argument was computed over `data/transcripts` (720 shelf files) and the
-  page now counts `data/transcripts_blind` (664 derived files, 50 slugs, every
-  record carrying `leader_slug`). The conclusion is unchanged, the arithmetic
-  behind it is not, and it must be recomputed rather than quoted.
-
-  One wording trap worth naming while it is cheap. "Read `leader_slug` and decide
-  membership OUTSIDE the `try`" cannot be followed literally: the parse that
-  yields `leader_slug` is the thing the `try` guards. The implementable shape is
-  to narrow the except to `(json.JSONDecodeError, OSError)`, parse inside it, and
-  put the membership decision after it in the loop body.
-
-- **RESOLVED 2026-09-18 (38e0c04). After P2, `membership.json` is a render input that the deploy fingerprint
-  cannot see.** Filed 2026-09-17. `check_publication_unchanged` in
-  `scripts/deploy_source.sh:32-40` compares `data_clone_workflow.fingerprint()`
-  before and after the render, and that function hashes only paths under the
-  production DATA source (`SITE_SHELVES`, `data_clone_workflow.py:297-325`).
-  `membership.json` lives at the public repo root, so an edit to it between
-  `PUBLICATION_BEFORE` and `check_publication_unchanged` changes the rendered
-  page and the guard still prints `content sha256` and passes. The same hole
-  already exists for every script in `scripts/`, so this is not new in kind; it
-  is new in that a one-line config edit now moves the board. Deferred because the
-  fix is a separate decision (fingerprint the code revision, or add the public
-  repo's tracked inputs to the shelf list) and it should not be bolted onto P2.
-  Bring it back the day `membership.json` is read by `build_site.py`.
-
-- **Three of the 67 checks in `scripts/test_membership.py` cannot fail.
-  RESOLVED 2026-09-17, same day, in the commit below.** Filed
-  2026-09-17. `raises(..., naming="leader")` asserts that the message contains
-  the substring `leader`, and every one of those messages also echoes the
-  whitelist `['leaders', 'predictions']`, so the assertion is satisfied by the
-  word `leaders` whatever the message says about the offending board. The three
-  are at `scripts/test_membership.py:115`, `:150` and `:152`. MEASURED by
-  mutation: rewriting both messages to name no board at all leaves them green.
-
-  ```
-  M10: the error messages STOP naming the offending board/slug
-    PASS      ... and says so, naming 'leader'     (x3)
-    FAIL      ... and says so, naming 'sam-altman'
-  66 passed, 1 failed
-  ```
-
-  The parent assertions, that the call raises at all, are real and do
-  discriminate. Nine other mutations were caught, three of them reproducing the
-  commit message's own numbers exactly: `boards_for` as `data.get(slug, [])`
-  fails 2, dropping the board whitelist fails 2, anchoring `DEFAULT_PATH` to the
-  working directory fails 1.
-
-  THE FIX was the assertion, not the message: the three now assert the REPR
-  `'leader'`, which the whitelist echo does not contain, rather than the bare
-  substring, which it always does.
-
-  ```
-  .venv/bin/python -c "print('leader' in str(['leaders','predictions']), \
-                             repr('leader') in str(['leaders','predictions']))"
-  True False
-  ```
-
-  Re-run of the same mutation against the repaired test, which was green before
-  the fix and is red after it:
-
-  ```
-  MUTATION: the board-name messages stop naming the rejected board
-    FAIL      ... and says so, naming "'leader'"   (x3)
-  66 passed, 3 failed
-  ```
-
-- **`membership.load()` accepts a duplicated slug key and keeps the last one.
-  RESOLVED 2026-09-17, same day, in the commit below.** Filed 2026-09-17. `json.loads` silently collapses duplicate object keys, and
-  `load()` validates the parsed dict, so a hand edit that leaves
-  `"sam-altman"` in the file twice loses the first entry without a word.
-  MEASURED: duplicating `"sam-altman"` with an empty board list in the shipped
-  file gives `64 passed, 3 failed` — caught, but only by the section [5]
-  cross-check against `data/roster/final.json`, not by `load()`. So the shipped
-  file is protected and a fixture built inside a reader's test is not. Fixed
-  rather than deferred, because P2 adds the first readers that could be handed
-  such a fixture and the repair is one hook: `_no_duplicate_slugs` is passed as
-  `object_pairs_hook` and raises on the second sighting of a key, and the
-  `ValueError` it raises is wrapped as a `RuntimeError` naming the path.
-  `json.JSONDecodeError` is caught first, since it is itself a `ValueError`.
-  Proof, the hook removed and restored:
-
-  ```
-  MUTATION: drop the duplicate-slug hook
-    FAIL  a SLUG declared twice raises rather than keeping the last
-          -- returned {'sam-altman': ['predictions']} instead of raising
-  67 passed, 1 failed
-  ```
-
-- **Checked and clean, recorded so the next pass does not re-derive it.** Filed
-  2026-09-17.
-  `cc-wei` really is unreachable by any reader: 14 `.json.superseded` and zero
-  live `*.json` on the shelf, `data/transcripts_blind/cc-wei` and
-  `data/transcripts_open/cc-wei` present and empty, 44 `.orphaned` and zero
-  `*.json` under `data/grades/{astra,fable,gemini}/cc-wei`, and no
-  `data/predictions/cc-wei` at all. `aggregate.py` and `deploy.sh` both glob
-  `*.json`, so the entry is insurance, exactly as the plan says.
-  `membership.json`'s 58 are exactly `roster + seven + cc-wei`, and its key order
-  matches the roster's, which is what makes the list-equality assertion in
-  section [5] load-bearing rather than decorative.
-  Nothing at the repo root sweeps it: the Worker serves `./site` only
-  (`wrangler.toml`), `SITE_SHELVES` paths are all relative to the data source,
-  and `.gitignore` does not name it. Nothing imports it
-  (`grep -rn "import membership" scripts/` is empty outside `membership.py` and
-  its test), so P1 cannot move a published number.
-  `leaders_baseline.py` needs **no** change at P2, contrary to the plan's terse
-  "Add `leaders_baseline.py`": it runs every stage inside
-  `shutil.copytree(a.code, code, symlinks=True)`, which copies the tracked
-  `membership.json` along with `scripts/`, and `membership.py` resolves its
-  default from its own `__file__`. Passing an explicit `--membership` pointing at
-  the live repo would break the copy isolation the baseline exists to provide.
-  `check_exclusions()` (`build_site.py:986`) is a P3 tripwire the plan does not
-  name: it `sys.exit`s when a person is both seated on the roster and listed in
-  `dropped_for_no_transcripts`. None of the seven is in that list today, so P3 is
-  safe, but a later edit that puts one there kills the leaders render rather than
-  warning.
-
-- **RESOLVED, re-checked 2026-10-11: both bring-back conditions are closed.**
-  `predictions/scores.json` is tracked, and was already tracked when this was
-  filed: it was added in data `ba86d83b` on 2026-09-16, so "UNTRACKED" below
-  was wrong. It is a derived file regenerated by `data_sync.py push`, and the
-  predictions deploy requires a clean tracked `predictions` path at exactly
-  origin/main, so a deploy cannot run without it. The zero-record question was
-  decided by `MIN_PREDICTIONS_TO_LIST = 4` in `build_predictions_site.py`
-  (702614d, 2026-09-27), which applies with or without scores. A scratch render
-  said People 50 without `--scores` and 49 with. The difference is one person
-  with nothing past due, and a clean deploy always has scores. The seven
-  investors now hold 15 to 50 accepted records each.
-
-- **The predictions page claims 57 people when `scores.json` is absent, and the
-  seven have no records.** Filed 2026-09-18. `aggregate_predictions.py:147` unions
-  roster slugs with any slug that has records, so P3 putting the seven on the
-  roster puts them in the predictions index empty. MEASURED, to a scratch path so
-  production was untouched:
-
-  ```
-  live data/predictions/index.json   50 leaders
-  a fresh aggregate_predictions run  57 leaders
-  the seven: on_roster True, accepted 0, transcripts_with_accepted 0
-
-  page built WITHOUT --scores   "Forward-looking claims that 57 technology leaders"
-  page built WITH    --scores   "Forward-looking claims that 45 technology leaders"
-  the live published page today  45 technology leaders
-  ```
-
-  Today's production is SAFE: `data/predictions/scores.json` exists,
-  `deploy_predictions.sh` passes it, and the past-due floor filters the seven out.
-  `build_predictions_site.person_rows` only filters when scores are supplied, and
-  `scores.json` is UNTRACKED, so a clone without it publishes a masthead claiming
-  57 people while seven of them contribute nothing.
-
-  NOT fixed, because the obvious fix is not neutral. Skipping any row with zero
-  accepted predictions would also hide five leaders already on the board who sit
-  at zero (`fei-fei-li`, `ilya-sutskever`, `jack-dorsey`, `sergey-brin`,
-  `tobi-lutke`), and what the board says about its own coverage is a publication
-  decision rather than a bug. The condition that brings it back: before any
-  predictions deploy, either confirm `scores.json` is under the production
-  checkout, or decide whether a zero-record person should be a row at all.
-  Full context in `docs/MEMBERSHIP-P4-STATUS.md`.
-
-- **RESOLVED 2026-10-11: measured from the records, recorded on every run, and
-  a run can now be priced before it spends.** Counted over
-  `data/predictions/*/*.jsonl` at data `bc03047c`: 1115 accepted records, 489
-  with a `matcher` block (Astra 405, Fable 84), 610 ended at `no_candidates`
-  with no call. So the first P4 run did spend, and nothing recorded how much.
-  Every run summary now carries `matcher_calls` (attempted, by harness; a pick
-  the router refuses is not counted), and `--matcher none` searches the
-  markets, reports `would_call_matcher`, makes no model call and writes no
-  record. The default is unchanged. Guarded by
-  `scripts/test_market_consensus_cost.py`, 13 checks; against the parent it
-  fails 4 and then crashes on the argument. The plan's two claims and its stale
-  line numbers are corrected, and `docs/PREDICTIONS.md` stage 3 says the stage
-  spends.
-
-- **`market_consensus.py` is not quota-free, and the plan says it is.** Filed
-  2026-09-18. `docs/plans/board-membership-2026-09-16.md` states it is
-  "public-API only, no model calls". `scripts/market_consensus.py:53` imports
-  `agy_profiles` from `grade`, and `:605` takes
-  `--matcher {auto,fable,astra,gemini}` with `auto` as the default, beside
-  `--fable-bin`, `--agy-bin` and `--astra-model`. The market lookups may well be
-  public-API; the MATCHER is a model and it is on by default. Anyone planning P4
-  under a no-spend constraint will read the plan and get this wrong.
-
-  NOT fixed here because the fix is a measurement, not an edit: run it once with
-  the matcher pinned off and record what it actually costs. Until then treat the
-  stage as spending. The condition that brings it back is the first P4 run.
-
-- **RESOLVED, re-checked 2026-10-11: dated, and down to one flagged row.**
-  Statement dates can now carry a range: `STATEMENT_DATE_HEADER.json` has
-  `override_range`, and `test_statement_range.py` passes. Four of the five
-  recordings below carry exact sourced dates, `sourced_override`:
-  jeff-bezos/src-pnsjkt 1998-02-26, bill-gates/thurrott-com--sfi3q 1996-03-12,
-  bill-gates/microsoftces2005-5vjge2 2005-01-05 and
-  bill-gates/carnegie-mellon-qatar-sgrx7x 2009-04-18. The fifth,
-  vlad-tenev/cnbc-events-bgjbuj, keeps its upload date and does not matter: it
-  holds 1 record and 0 accepted, so the dating scope excludes it. In
-  `scores.json` at data `4cd18a45`, the rows flagged `deadline_before_statement`
-  or `deadline_incoherent` fell from 13 across 6 leaders on 2026-09-29 to 1,
-  `arvind-krishna` prediction d7c413366d077633, and none is under the rank
-  floor. The VP-16 row in `docs/LEDGER-predictions.md` is updated to match.
-
-- **VP-16 is now blocked on a representation question, not on research.** Filed
-  2026-09-18. `scripts/statement_date_evidence.py` finds the real year for five
-  of the affected recordings, each verified against its own title:
-
-  ```
-  jeff-bezos  src-pnsjkt         2019 -> 1998   "Jeff Bezos - March 1998, earliest long speech"
-  bill-gates  thurrott-com       2023 -> 1996   "Microsoft PDC 1996 Keynote with Bill Gates"
-  bill-gates  ...ces2005-5vjge2  2013 -> 2005   "CES 2005 - Microsoft Keynote - Bill Gates"
-  bill-gates  carnegie-mellon    2012 -> 2009   "Bill Gates - Keynote Address- ICTD 2009"
-  vlad-tenev  cnbc-events        2022 -> 2021   "Watch CNBC's 2021 D50 Summit Interview"
-  ```
-
-  It was NOT applied, and the reason is worth reading before anyone tries.
-  `source.statement_date` is a FULL ISO DATE, today carrying the upload date with
-  `statement_date_basis: "youtube_upload_date"`. The evidence gives a YEAR:
-
-  ```
-  carnegie-mellon-qatar   kind=year   '2009'
-  microsoftces2005-5vjge2 kind=year   '2005'
-  thurrott-com--sfi3q     kind=year   '1996'
-  src-pnsjkt              kind=year   '1998'
-  cnbc-events-bgjbuj      kind=year   '2021'
-  ```
-
-  Writing `1996-01-01` would invent a day and a month. That is not cosmetic:
-  `phase2_resolvability.py:179` adds a horizon span FROM the statement date, so a
-  fabricated January shifts every relative deadline by up to a year, and the
-  whole point of VP-16 is that a wrong statement date flips whether a prediction
-  came true. Using the true year with a wrong day trades one wrong answer for a
-  quieter one.
-
-  So the repair needs a DECISION rather than more research: either
-  `statement_date` gains a companion precision field, or the resolver learns to
-  take a year-only statement date, or each of the five gets its exact date found
-  by hand. The first two are schema changes and that rail was not granted for
-  this run.
-
-  The condition that brings it back: the operator picks one of those three. The
-  evidence is already gathered and reproducible with
-  `.venv/bin/python scripts/statement_date_evidence.py --only bill-gates,jeff-bezos,andy-jassy,lisa-su,vlad-tenev,arvind-krishna`.
-
-- **Re-checked 2026-10-11: still WAITING, but the predicted merge has already
-  happened.** All seven investors are still `predictions` only in
-  `membership.json`, so the bring-back condition is unmet. Data
-  `sources/aliases.json` changed between the curated blocks at `cd7225a0` and
-  the manifest rebuild at `f13cd3e4` (2026-09-19). For example,
-  chamath-palihapitiya gained `Capital`, `Palihapitiya` and `Social`, and
-  david-sacks gained `Craft`, `David`, `Sacks` and `Ventures`, exactly as
-  predicted below, at no measured blinding cost. Re-curate the blocks when one
-  of the seven is promoted.
-
-- **Discovery will re-pollute the seven's curated alias lists, and it costs
-  nothing.** Filed 2026-09-18. `discover_sources.aliases_for()` honours
-  `GENERIC_COMPANY_WORDS`, but that set holds `cloud`, `labs`, `technologies` and
-  the like, not `capital`, `social`, `craft` or `ventures`. So the 2026-09-18
-  discovery run wrote these into `discovered.json`, and the next
-  `sources_to_manifest.py` will merge them into the hand-curated blocks:
-
-  ```
-  chamath-palihapitiya  would add  Capital, Palihapitiya, Social
-  david-sacks           would add  Craft, David, Sacks, Ventures
-  vinod-khosla          would add  Khosla, Ventures
-  tom-lee               would add  Lee, Tom
-  ```
-
-  MEASURED, and this is why it is filed rather than fixed: the merge adds ZERO
-  incremental blinding damage for all seven. Every one of those words is already
-  redacted by the NAME and COMPANY paths, so the curated list and the merged list
-  remove exactly the same words from a probe paragraph:
-
-  ```
-  chamath-palihapitiya  curated ['social','capital']  merged ['social','capital']  added []
-  david-sacks           curated ['craft','ventures','sacks']  merged same  added []
-  tom-lee               curated ['lee']  merged ['lee']  added []
-  ```
-
-  So the curation was never buying a smaller blast radius; it was buying a list
-  that says what it means. Widening `GENERIC_COMPANY_WORDS` to cover these is NOT
-  the fix, because that set is shared with the leaders blinder and changing it
-  re-blinds a corpus under 2,260 grades.
-
-  The condition that brings it back: promoting any of the seven to the leaders
-  board, at which point the whole company-string question reopens and is already
-  recorded against each person in `data/roster/final.json`.
-
-## Grader validation
-
-- **`validate_grader.py` says it "mirrors aggregate.py's own gates" and no
-  longer does.** Filed 2026-10-11. It was last changed on 2026-09-06, and
-  `load()` has drifted from `aggregate.py` in four ways since then. (1) It
-  drops a GRADE whose own subject share is under `MIN_SUBJECT_SHARE`, while
-  `aggregate.filter_unscorable` drops a whole RECORDING when the judges' mean
-  share is under the cutoff or any judge says 0, the rule `docs/agents/SCORING.md`
-  records with its measured cost. (2) It skips `_raw/` and not `_obsolete/`.
-  (3) It applies no board membership. (4) It swallows any unreadable grade or
-  transcript file (`except Exception: continue` and `pass`) and reports
-  nothing. No test covers it and no loop runs it, so nothing published reads
-  it today, but its V1-V5 figures are quoted as grader validation. The
-  condition that brings it back: the next time its numbers are quoted or
-  re-run. Then make `load()` call aggregate's own loaders and filters rather
-  than restating them, which is the drift this entry records.
-
-## Site rendering
-
-- **`test_log_bloat.py` reads repo-0's LIVE production checkout, so it goes red
-  while repo-0 is mid-rebuild.** Filed 2026-10-11. Its market-cache section
-  takes `production_path(REPO)`, the shared `verbatim-index/data` the daemons
-  write, not this clone's `data` link. At 04:00 PDT the suite at `c323fb8`
-  reported `FAILED scripts/test_log_bloat.py`: "9 of 1124 accepted records
-  lack consensus status, cutoff or searched_at_utc". All 9 are in the shared
-  checkout, jack-dorsey 8 and bill-gurley 1, all `not_searched`, beside
-  repo-0's uncommitted `_experiments/rebuild-20261011/`. This clone's data
-  checkout has none, and the check passed here earlier the same night, 13/13.
-  It is the same class as the render check above: a suite verdict that
-  depends on data another agent is writing. NOT changed, because a
-  provenance check on production data is the point of that section. The
-  condition that brings it back: a second red from it that is not a rebuild
-  in progress. Then split it into a fixture proof and a named LIVE DATA check,
-  as `test_render_integrity.py` was.
-
-  **Update 2026-10-11, repo-0: this red was a TRUE POSITIVE.** The 9 records
-  are the VP-5 remainder that repo-0 integrated in data `a8212d25`, and the
-  integration skipped `market_consensus.py`, which the 2026-10-10 rebuild had
-  run. They were committed and deployed without market provenance, so the red
-  would have stayed after the rebuild finished. Fixed by running
-  `market_consensus.py --leaders jack-dorsey,bill-gurley --router-exclude
-  claude,claude_e`: 9 attempted, 9 `no_match`, 0 errors, 5 Fable matcher calls.
-  The test then printed `13 passed, 0 failed`. The check did its job. The
-  integration step (`integrate.py` in an experiment folder) is where the gap
-  is: anything that adds accepted records must run market consensus before
-  commit.
-
-- **RESOLVED 2026-10-11: the derived-number proof runs on a fixture, and the
-  live render is its own named data check.** The bring-back condition was met:
-  the same data-caused red was recorded again in 9aad5a6 (2026-09-17), e7f056e
-  (2026-09-19) and f6ea3f8 (2026-09-20, another session), each time filed as a
-  code failure. `test_the_method_section_counts_the_roster` now aggregates the
-  file's own synthetic corpus and renders it against two roster sizes, reading
-  nothing under `data/`. Mutation check: with `roster_n = 4` typed into
-  `build_site.py`, "a roster of 11 renders as 11" and "the two renders
-  disagree" both fail, `22/25 passed`. The live render is
-  `test_this_clones_data_renders`, every check prefixed `LIVE DATA:` and its
-  message saying to pull before blaming code; it also asserts the page's count
-  equals the roster people on the leaders board in `membership.json`, 50 today.
-
-- **`test_the_method_section_counts_the_roster` renders against whichever data
-  checkout the clone is linked to, so the suite's verdict is clone-dependent.**
-  Filed 2026-09-17. The check in `scripts/test_render_integrity.py` reads
-  `REPO/data/results.json`, `results_audit.json`, `logs/calibration.json` and
-  `roster/final.json`, which is each clone's OWN private data link rather than
-  a fixture. It proves a real property: the page's "A roster of N" is derived
-  from the roster and is not a literal, shown by rendering the same results
-  against two rosters of different sizes.
-
-  What it cost here: repo-1's private roster still carried the Amjad Masad
-  exclusion-list contradiction that repo-0 fixed in production on 2026-09-16 at
-  data `b55217a9`. `bash scripts/run_tests.sh` therefore reported
-  `FAILED scripts/test_render_integrity.py` in this clone while the published
-  board was correct and every other clone was green. The message named the real
-  problem, `REFUSING: seated on the roster and named on the exclusion list at
-  once: Amjad Masad`, so the canary worked; it was filed under a code test.
-  Fixed by taking the production file, not by changing the test.
-
-  NOT changed, deliberately, and this is the decision to revisit. Two readings,
-  and they disagree. A render from self-contradicting inputs SHOULD fail, so a
-  stale clone failing is arguably correct. Against that, a suite whose result
-  depends on private data is not reproducible across clones, and this repo
-  already holds `leaders_baseline.py` and `test_site_social_and_exclusions.py`
-  as proof that the same property can be proven on a fixture with no data link
-  at all. Bring it back the next time a clone goes red for a data reason: if
-  that happens twice, move the derived-number proof onto a fixture and keep the
-  live render as a separately named data-staleness check, so the two failures
-  stop sharing one line.
-
-## Shared fetcher
-
-- **WITHDRAWN 2026-09-17: "`fetch_loop.sh` runs 10.8x over the documented
-  request ceiling."** Filed earlier the same day and wrong in its conclusion. It
-  read the loop's `PACE=2 WORKERS=6` as a trap that caused the P6 pilot block.
-  Two things contradict it. The loop's own comment says the pace is deliberate:
-  "Fetch fast, trip early, ask for a new IP." And the measurement taken after
-  filing: at one request every 6 seconds on one worker, four IPs still blocked
-  after 60, 14, 14 and 9 fetches. The caption endpoint enforces a per-IP volume
-  budget, so pace does not decide when a block arrives, and a fast pace simply
-  finds the block sooner. Nothing to fix in the loop. `pacing_warning()` in
-  `fetch_transcripts.py` now says the same thing and no longer claims the pace
-  caused a block.
-
-## Verbatim Predictions
-
-- **Finish VP-41: score and publish the thin-people supplement, paused
-  2026-10-18 when the expiring credit ran out.** Filed by repo-3. Ledger VP-41,
-  decision VD-19. Everything is in data `6c64b2f6`, run folder
-  `data/predictions/_experiments/thin-supplement-20261018/`: read its `README.md`
-  first, then `summary.json` (re-derive it with
-  `.venv/bin/python data/predictions/_experiments/thin-supplement-20261018/_driver/summarize.py`).
-  State, attempted / succeeded / failed:
-
-  - **Extracted and verified, unscored (65 accepted).** 26 transcripts, Fable on
-    pool c, Gemini verify, 129 candidates: pat-gelsinger 36, reed-hastings 15,
-    larry-ellison 6, evan-spiegel 4, dario-amodei 3, patrick-collison 1,
-    dylan-field 0. All 129 records name `served.model claude-fable-5-1`, effort
-    max, `pool_kind credit`. The records are in the production tree and their
-    transcripts in `data/transcripts_web/<slug>/`.
-  - **Placed, not extracted (17).** amjad-masad 2, aravind-srinivas 5,
-    greg-brockman 2, tim-cook 6 and larry-ellison 1 failed
-    `credit_pool_exhausted`; pat-gelsinger `web-fool-com-335b172e` failed
-    `schema_validation_failed` (read its raw answer under
-    `data/predictions/_raw/extract/fable/pat-gelsinger/` first). Re-run one
-    person with `_driver/retry.py <slug>` (it takes finished transcripts as
-    cached), after setting `POOLS` in `_driver/pipeline.py` to pools that have
-    money (`quotapick credits --json`). Without credit, run the same
-    `extract_predictions.py` command with `--fable-credit-pools` and
-    `--credit-production` removed, which is the ordinary production harness.
-  - **Fetched only (46), not placed or extracted.** alexandr-wang 1,
-    brian-armstrong 2, demis-hassabis 5, jeff-bezos 6, lip-bu-tan 4,
-    michael-dell 6, palmer-luckey 3, sam-altman 5, tim-sweeney 6, tobi-lutke 2,
-    tom-lee 6. Each passed the URL and text duplicate checks on 2026-10-18. To
-    extract one person: copy each `by_slug/<slug>/transcripts/<slug>/<sid>.json`
-    named in `by_slug/<slug>/kept.txt` into `data/transcripts_web/<slug>/` (never
-    over an existing file), list those paths in `by_slug/<slug>/extract_list.txt`,
-    and run `_driver/retry.py <slug>`. Re-run the text check first if that
-    person's corpus grew since.
-  - **Nothing usable:** clem-delangue (changelog.com robots.txt), sergey-brin
-    (page too short to fetch), george-hotz.
-
-  **Finishing steps, in order.** VP-40 is the worked example
-  (`data/predictions/_experiments/nate-silver-supplement-20261012/NOTES.md`).
-  Read docs/agents/PREDICTIONS-PIPELINE.md and DATING.md first.
-  1. Dating: `scripts/date_recordings.py --run-dir
-     data/predictions/_experiments/dating-thin-supplement-<date> --ids <file of
-     slug/sid with accepted records> --run --router-exclude <your session's
-     account>` (daters astra and fable_web, subscription quota). Promote with
-     `scripts/promote_dating_run.py --against dating-run-20261001 --against
-     dating-astra-20261003`, then re-extract each re-dated recording with the
-     pair that extracted it (Fable extract, Gemini verify).
-  2. `scripts/resolve_predictions.py --out <the run folder> --as-of <UTC date
-     of the commit that will carry the scores>`, stages `lead_test`, `resolve`
-     (Astra with web tools, Codex quota), `prior`, `early`; then market
-     consensus and year summaries, scoped to the people above. The stage refuses
-     an `--ids` file that names a record it will not run, so pass only eligible,
-     past-due ids. 4 reed-hastings priors from pool d are already in the run
-     folder (as_of 2026-10-18); redo them if dating moves their statement dates.
-  3. Add the run folder to `runs` in `data/predictions/scoring.json`, move
-     `as_of` to the commit's UTC date, push with `scripts/data_sync.py push`,
-     deploy with `scripts/deploy_predictions.sh` (VD-10 standing
-     authorization), and send the owner the per-person before-and-after diff.
-
-  **Until this is done, the next predictions deploy from ANY clone must first
-  score these records:** `deploy_predictions.sh` refuses when `as_of` is older
-  than the newest commit that added predictions data (`scores_asof_lag`).
-
-  **More sources, for a second pass.** Runners-up cut by the 6-source cap are in
-  each `findings/<slug>.json` summary: reed-hastings 4 more Netflix earnings
-  calls (Q2 2010, Q3 2014, Q3 2016, Q4 2017), tim-cook 4, larry-ellison 4,
-  tom-lee 2 plus about 30 CNBC Closing Bell episodes. Every sub-agent ran out of
-  the session's shared web-search budget early, so spread discovery agents
-  across sessions. Briefs must ask for a generic User-Agent: one agent sent the
-  owner's email to SEC EDGAR.
-
-  **Credit.** Pool c's 10/20 grant and pool d are spent. Pool c's org holds a
-  second grant, $100 granted 2026-10-17, expiring 2026-11-20, $93.71 left at
-  2026-10-18T05:51Z after in-flight calls took $6.29 and then about $1 more. It
-  is NOT in quotapick, whose balance for c was set to $0; record it with
-  `quotapick credits grant` when the owner wants it spent. Pools a ($182.03,
-  expires 2026-11-16), b ($125.47, 2026-11-11) and e ($2.46, 2026-11-10) were
-  not charged. Comes back when the owner asks to continue verbatim-predictions.
-
-- **`index.json` counts credit extractions as plain `fable`.** Filed 2026-10-18 by
-  repo-3, from the adversarial review of `--credit-production` (e267bef).
-  `aggregate_predictions.py` keys the extraction-harness breakdown on the record's
-  `harness`, which stays `fable` for a credit call so the different-family rule in
-  verify still holds. So `data/predictions/index.json` cannot tell subscription Fable
-  from `quotapick run` Fable: on a copy of the pundits pilot, the 182 reviewed credit
-  records (of 184; 2 have verification `not_run`) came out as one row,
-  `extraction_harness: "fable"`. A second count has the same fault:
-  `coverage.by_harness.extract`, which `summarise_meta` builds from each meta's
-  `extract.harness`, read `{"fable": 280}` for the pilot's 280 credit transcripts.
-  Meta files carry no telemetry, so split that one on `router_account_id`, which
-  starts with `credit:` for a credit run (260 of the 280). VD-19 says nobody has measured
-  whether the two harnesses extract alike, so the split is worth seeing. Fix: split
-  the record breakdown on `extraction.telemetry.harness` and the transcript count as
-  above. Cost: the derived `index.json`
-  bytes change, so `data_sync.py push` regenerates it on the next push. Comes back
-  with the next change to `aggregate_predictions.py`, or when anyone compares the two
-  harnesses.
-
-## Verbatim Pundits
-
-- **Pundits predictions scale-up: three follow-ups.** Filed 2026-10-18 by repo-3.
-  The scale-up finished 257 of 261 recordings (pundits data 089ac14,
-  `experiments/predictions-pilot-20261018/README.md`).
-  1. Re-verify `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and
-     `jordan-b-peterson-rkt9up`: Gemini returned `empty_response` after a denied
-     `RunCommand` on every pass. It costs Gemini quota only. `bret-weinstein-bmwp9g`
-     cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5`
-     three times, and credit_run refuses a mixed-model answer. Why is not known.
-  2. Install the speaker-check page with the model drafts: rebuild
-     `data-pundits/logs/p6b/speaker_check.html` with `pundits_verify_page.py build`
-     and `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` plus the same
-     `--grades` and `--quote-key` as before, then push the pundits data. 65 flagged
-     recordings list first.
-  3. Review nits from 2026-10-18 round 4: `main()`'s call to `code_revision_of` has
-     no test (dropping `skill` passes), and `speaker_audit_page.py` and
-     `speaker_segment_probe.py` still record HEAD without a `+dirty` mark.
-
-- **Pundits grading on prepaid API credit waits on the operator.** Filed
-  2026-10-18 by repo-3. `quotapick run` (the router's only way to spend a credit
-  pool) runs Fable with tools removed, on an API key, with no sandbox wrapper.
-  Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container`, and
-  `judge_requests` is part of the hash that makes the contract ID. So a credit
-  grade filed under today's contract ID would claim a sandbox it never ran in.
-  If instead the contract is amended to name the credit harness, the contract ID
-  changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as
-  `stale_cache`, and `aggregate.py` refuses to mix contracts, so the whole pilot
-  is graded again (about $380 by the 2026-10-18 estimate). That is more than
-  pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's
-  share into the pundits predictions scale-up, so a re-grade would run on the
-  November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16).
-  CI-11 (the Fable drift experiment in `data/experiments/fable-credit-drift-20261018/`)
-  grades day 1 on d and day 2 on c, so its answer arrives after d expires and
-  close to c's expiry. Options: (A) keep pundits grading on the subscription
-  harness, at no cost; (B) amend the contract and re-grade on the November pools;
-  (C) wait for CI-11's answer, then choose A or B. Recommend C: B needs the
-  November pools either way, which stay open for weeks after CI-11 reports, and
-  CI-11 says whether credit-served Fable scores match subscription-served ones
-  before $380 is spent on that premise. Comes back when CI-11 has results.
-
-- **Speaker drafts from the two harnesses share one file.** Filed 2026-10-18 by
-  repo-3, from the round-2 review. `pundits_speaker_infer.py infer` writes
-  subscription drafts and `--credit-pools` drafts to the same
-  `speaker_inference.jsonl`, and `merge` writes `checked_by:
-  model:claude-fable-5-1` for both. Each draft's `telemetry.harness` does say
-  "quotapick run" for a credit draft, so nothing is lost, but `merge` hides it.
-  All 218 P6b drafts are credit drafts today. Fix: `merge` names the harness in
-  `checked_by` or a field of its own. Quota-free.
-
-- **`extract_predictions.py` takes no `--study`.** Filed 2026-10-18 by repo-3.
-  Nothing stops a pundits run from writing into the leaders data repo: the
-  pundits prediction pilot of 2026-10-18 was written to the leaders
-  `predictions/_experiments/` and then moved by hand to the pundits data repo's
-  `experiments/predictions-pilot-20261018/`. Fix: `study_profile.add_study_arg` and `study_profile.guard(args.study,
-  out)`, as the speaker script does, with a test that a pundits run into a leaders
-  path refuses. Quota-free.
-
-- **RESOLVED 2026-10-12, same night, with option (a): when the published inputs differ
-  from HEAD the footer says "plus uncommitted changes" and revision.json records
-  `data_uncommitted`. Option (b) stays the operator's call. The pundits page names the
-  HEAD data commit while it renders the daemon's uncommitted output.** Filed 2026-10-12, from an independent review of that
-  night's commits. Owner mode (`deploy_pundits.sh`) renders results.json and grades
-  as they sit in repo-3's data checkout, which the grading loop writes without
-  committing. The footer and `verbatim:data-revision` meta say "data revision X of
-  <X's commit date>", so a page built from grades added after X names a commit that
-  does not reproduce it. `revision.json` does carry `content_sha256`, the input
-  fingerprint, so the deploy guard is not fooled; only the reader-facing stamp is.
-  Options: (a) the deploy states "plus uncommitted grades" when
-  `git status --porcelain` shows the published inputs dirty, and records it in
-  `revision.json` (cheap, honest, needs one test); (b) refuse a deploy with dirty
-  inputs, so the daemon commits and pushes before publishing (strongest, but it
-  changes repo-3's routine and needs the operator). Recommend (a). Quota-free.
-
-- **RESOLVED 2026-10-12, same night: the fixture now carries calibration_params, one
-  test runs the rescaled path (-12/+12 where raw gives -6/+6), and a missing key or
-  missing params refuses. G-judge-lean's calibrated path is untested, and a key miss
-  falls back to raw scores silently.** Filed 2026-10-12, same review. `test_pundits_gates.py` gives
-  `calibration_params: {}`, so `apply_calibration` returns every raw score. If the
-  key `pundits_gates.py` rebuilds (`judge|served_model|shared|dim`) stopped matching
-  the one aggregate writes, every judge-lean test would still pass and production
-  would quietly compare raw scores. The keys match on the pilot today. Fix: a
-  fixture with real `calibration_params` (one judge rescaled), an expected
-  calibrated estimate, and a refusal when a used key is missing. Quota-free.
-
-- **`judge_searched` can count a local file read as a web search.** Filed
-  2026-10-12, same review; plausible, not seen in data. `grade.py`'s
-  `count_gemini_tool_events` puts any completed tool step with a `query`, `Url` or
-  `AbsolutePath` parameter into `web_search_queries`, so a `view_file` step would
-  count. The error runs toward disclosing more searches than happened, never fewer.
-  The `tool_use_counts["web_search"]` branch matches only codex (Astra, dropped);
-  agy names its tool `search_web`. Fix: record the tool name per step in grade.py
-  and count only search tools; needs a recorded agy transcript with a file step as
-  the fixture. Quota-free.
-
-- **A grade_loop.sh render can still replace site-pundits/index.html between the
-  deploy's render and its upload.** Filed 2026-10-12. Since that night the
-  post-publish confirm fails loudly when it happens (the live page lacks the data
-  revision's meta tag), so it is reported, not silent. Removing the race needs the
-  deploy to render into its own directory and upload that, or the loop to stop
-  rendering while a deploy runs. Quota-free.
-
-- **The pundits page has no evidence drawer; do it after the P7 quote audit, not
-  before.** Filed 2026-10-12. The leaders page shows, per person, each judge's
-  reasoning and evidence quotes for every graded transcript. The pundits page
-  lists each board recording with its link, venue and score (since 2026-10-12),
-  but not what the judges wrote. The data is in `results_audit.json`. NOT done,
-  deliberately: the quotes would appear credited to a named political commentator,
-  and attribution is not yet measured. 89 judge quotes credited to the subject do
-  not place in the transcript (entry below), and the P7 quote audit (300 quotes,
-  G-attribution-quotes) has not run. Publishing the drawer first would put
-  possibly misattributed words beside a person's name. Size: a port of
-  `build_site.py`'s drawer into `build_study_site.py`, plus the quote filter that
-  the audit decides.
-
-- **RESOLVED 2026-10-12, same night: `aggregate.era_covariate()` (`diagnostics.era_covariate`) fits
-  upload date within person; on the pilot, +0.63 points a year, 95% interval -2.77 to 3.49.
-  Plan P5's era covariate is not implemented.** Filed 2026-10-12. P5 "Sampling
-  rules": "The board reports era as a covariate, and a sensitivity analysis
-  excludes archival subjects." The archival sensitivity exists since 2026-10-12
-  (`diagnostics.archival_excluded`; on the pilot it moves no score). Era does not:
-  nothing fits recording year. It needs a definition first (upload year from
-  `yt_upload_date`, or years before the subject's last recording), then a fit
-  shaped like `venue_effects()`: an additive person + era model, reported and not
-  applied. Quota-free.
-
-- **An unsupported dimension removes the whole recording, though the plan says
-  it should still count toward the dimensions it supports.** Filed 2026-10-11,
-  found while asking why `asmongold/asmongold-tv-ks77-g` is missing from
-  `results.json` despite four schema-valid grades. Three of its four grades
-  mark `d1_steelmanning` `unsupported` (fable/blinded, gemini/blinded,
-  gemini/open). `aggregate.py` marks each such grade `_excluded =
-  "unsupported_dimension"`, which removes the whole grade, and then
-  `drop_partial_panels` drops the fourth, fully supported fable/open grade as
-  an incomplete panel. The recording contributes to no dimension. The plan
-  says otherwise: `docs/PUNDITS-PLAN.md`, "Anchors and minimum evidence", has
-  "A transcript with any unsupported dimension has no `overall`. It still
-  counts toward each dimension it supports. Ranking by overall uses only
-  transcripts with all three dimensions supported." Re-running today's
-  `aggregate.py --study pundits` on a scratch clone of data-pundits at
-  `dced184` reproduces the committed result: 154 transcripts, the same one
-  partial panel, and `grades_excluded_unsupported_dimension 3`, so the loss is
-  counted rather than silent. The panel report's reason, "incomplete panel:
-  missing fable/blinded, gemini/blinded, gemini/open", never says the cells
-  were removed for an unsupported dimension.
-  Size today: 3 grades, 1 recording. NOT fixed, because the change moves the
-  published pundits board and pundits scoring is repo-3's lane. Per-dimension
-  counting also has to decide what a partial panel means per dimension: here
-  d1 has one supported cell out of four, while d2 and d3 have all four. The
-  condition that brings it back: the pundits full grade, or a second recording
-  with an unsupported dimension. The reporting half is DONE the same night:
-  `drop_partial_panels` now names a cell removed earlier and why, so the
-  report reads "missing gemini/open (removed: unsupported_dimension)".
-  Re-aggregating a scratch clone of data-pundits with the old and new code
-  gives results identical apart from that text.
-
-- **FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings (8 blinded
-  grades).** `blind_study()` now leaves a surname, or a caption corruption of
-  any part of the name, alone when a DIFFERENT person's given name stands right
-  before it. The given name must be on `scripts/given_names.txt`, a frozen copy
-  of `/usr/share/dict/propernames` (sha256 recorded in the file), and must not
-  be the subject's own given name in any form, by prefix, spelling or consonant
-  skeleton, nor a word-like entry such as "Will", "The" or "Sir". A bare title
-  ("Governor Walsh") is still redacted. Leaders `blind()` is untouched:
-  664 of 664 leaders files blind identically under the old and new module.
-  MEASURED over the whole pundits corpus by re-blinding all 367 files with
-  both versions (the old one reproduces every file on disk, 367 of 367): 14
-  files change, keeping Tim Walz 16 times, Marco Rubio 4, Josh Shapiro 2,
-  Jimmy Kimmel 2, Jim Mattis 2, Jeff Walz 2, Alan Cullison 2, and Harvey
-  Weinstein, Victor Davis Hanson, James Comey, Narendra Modi and one unknown
-  "Tony Tima". The first version accepted any capitalised word and leaked the
-  subject 40 times ("Love Megan", "Camille Foster" for Kmele, "Uh Asmond");
-  `test_pundits_blinding.py` now holds those as cases, and a mutation back to
-  that rule fails 4 of 28. ONE KNOWN RESIDUAL: Mehdi Hasan introduces himself
-  as "I'm Mary Hassen" in the captions of
-  `mehdi-hasan/al-jazeera-english-bwb6x8`, and "Mary" is a real given name, so
-  that one surname is now left in. It is ungraded.
-  For repo-3 after pulling: the next pundits normalize rewrites those 14
-  blinded files. Four are graded, `ben-shapiro/ben-shapiro-ahi_t9`,
-  `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and
-  `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each, and `grade.py`
-  will report those 8 as `stale_cache` and exit 1 until they are re-graded
-  with `--force`.
-
-- **The blinder turned two OTHER people's names into [SUBJECT].** Filed 2026-09-19,
-  found while building the quote check. Tim Walz became "Tim [SUBJECT]" 8 times in
-  `matt-walsh/matt-walsh-9bcva6` (Walz fuzzy-matches Walsh), and Josh Shapiro became
-  "Josh [SUBJECT]" twice in a Ben Shapiro recording (an exact surname). A judge then
-  reads "[SUBJECT] is a bad guy ... a total creep" as the subject describing himself.
-  Small: 10 occurrences in 2 recordings. Fixing it means re-blinding those two and
-  re-grading them, because their input hash moves. The leaders board measured blinder
-  defects of this kind as not moving scores; do it before the full grade, with a
-  failing-then-passing case for a first name followed by the subject's surname.
-
-- **RE-MEASURED AND PARTLY FIXED 2026-10-11; one decision left for the
-  operator.** Three matcher misses are fixed in `pundits_verify_page.py`, each
-  test-first in `test_pundits_verify_page.py`. First, `[AFFILIATION]` is now a
-  placeholder, standing for up to five words. Second, `_norm()` strips quote
-  marks at word edges and treats curly apostrophes as straight, so a judge's
-  'Oh, you love war.' matches the captions' "Oh, you love war.". Third, an
-  empty quote is counted as `empty`, not as a quote the matcher missed.
-  Re-run of `suspect_quotes()` over the 312 live grades:
-
-  ```
-  against transcripts/       located 3159  not_located 128  empty 3   (was 3153 / 137)
-  against transcripts_open/  located 3198  not_located  89  empty 3   (was 3192 /  98)
-  ```
-
-  The 137 depended on the folder: the judges read the normalized text, where
-  loops are collapsed. Of the 89 left against `transcripts_open`, 84 share at
-  least 80% of their three-word sequences with the transcript, and 5 share 73
-  to 77%. All 5 were read in context, and every one is a judge tidying the
-  captions, never a paraphrase. Two dropped a filler ("uh", "yeah"), one
-  joined a caption-split number ("71,9 54" to "71,954") across both modes, and
-  one corrected a caption typo ("healthare"). 86 of the 89 are Gemini. A
-  matcher that also skipped fillers and immediate repeats would place 29 of
-  the 89. That is not done, because it makes "located" fuzzier and the
-  remaining 60 differ in more varied ways. THE DECISION LEFT: does a quote with
-  fillers removed or a caption error corrected count as verbatim under the
-  rubric? If it does, these are matcher misses. If not, they are rubric
-  violations by the judge, and so mostly Gemini's.
-
-- **137 judge quotes credited to the subject do not appear in the transcript.** Filed
-  2026-09-19. Of 3,290 subject quotes, `pundits_verify_page.locate` found 3,153; 137 (4%)
-  it could not place even allowing for [SUBJECT] tokens and "..." elisions. Some are
-  paraphrase, which the rubric forbids ("verbatim from the transcript"); some may be
-  matcher misses. Not yet read one by one. The quote cap and the minimum-subject-quotes
-  rule both assume quotes are real.
-
-
-- **The 25-word quote cap is uneven. RESOLVED 2026-09-16 by moving the PENALTY,
-  not the number.** Filed 2026-09-16, measured the same day, decided by the
-  operator during the P9 top-up run.
-
-  The cap limits how much of the transcript a judge may paste back as evidence.
-  The judge always read the whole transcript. Until now one over-long quote
-  appended a validation error, which invalidated the whole record and threw away
-  the score, the reasoning and both other dimensions.
-
-  Measure the incidence any time with:
-
-  ```
-  .venv/bin/python scripts/filter_incidence.py --logs data-pundits/logs/p8a2 \
-      data-pundits/logs/p8a --obsolete data-pundits/grades/_obsolete \
-      --match "exceeds 25 words" --attempted 50
-  ```
-
-  Across eight P8a2 rounds it rejected **24** grades:
-
-  ```
-  by judge   fable 5 (5.0%)   gemini 19 (19.0%)     ratio 3.8x, flagged SKEWED
-  by cell    gemini/blinded 12, gemini/open 7, fable/open 4, fable/blinded 1
-  ```
-
-  The P9 top-up then showed WHERE it bites. All four rejections in its first 69
-  calls landed on `d3_good_faith`, for both judges and two different people. D3
-  asks whether a person applies one standard, answers the question asked, and
-  concedes when warranted. None of that is showable in one sentence, because it
-  takes a back-and-forth to demonstrate a shift of position. D1 and D2 are
-  showable in a single claim. So the penalty selected D3 grades for quote
-  brevity, on the dimension carrying 0.30 of the overall score. The audit put
-  that selection at +1.07 points (se 0.77, n=24).
-
-  **THE FIX, and why it cost no re-grade.** `grading_contract.quote_overruns()`
-  now records each over-long quote with its dimension, word count, speaker and a
-  head of the text, and `validate_v2` no longer rejects for it. `grade.py` writes
-  them to the record as `quote_cap_overruns`, and `aggregate.quote_cap_report()`
-  publishes the incidence by judge and by dimension, so the cap still reports
-  what it cut. The number 25 stays in `profiles/pundits.json`, `RUBRIC.md` and
-  the schema, all of which are hashed; only the consequence moved, and it lives
-  in code no hash covers. VERIFIED: `contract_id` is still `3844dd2693acd471`,
-  so the 267 grades already collected stay poolable. Guarded by
-  `scripts/test_quote_cap_handling.py`, 24 checks, verified failing first.
-
-  **Known cost, stated rather than hidden:** the corpus now mixes two regimes.
-  Grades collected before this change survived reject-and-regrade, so their D3
-  quotes are selected for brevity; grades after it are not. `quote_cap` in
-  diagnostics is how a later reader tells the two apart.
-
-  CLOSED 2026-10-11, the condition below is not met. Of 312 live grades, 49
-  were collected after this change and 6 recorded an overrun, at 26, 26, 26,
-  26, 30 and 31 words. The overruns are one to six words, not large, so the
-  cap stays at 25 and no re-grade is needed. The sample is small; re-count it
-  with the `filter_incidence.py` line above after the full grade.
-  Still open: raising the number itself to 40 would move the contract to
-  `7aa8f163de1f0b2e` and re-grade everything. Not done, and not needed unless
-  the recorded overruns turn out to be large rather than one or two words.
-
-- **LEADERS HALF FIXED 2026-10-11 as an opt-in: `grade.py --regrade-invalid`.
-  Turning it on is the operator's call.** Counted in the shared leaders data:
-  35 records failed validation while still carrying an attempt at scores, 26
-  with `dimensions` and 9 in a judge-invented shape with `overall`. Six more
-  failed validation as refusals or non-answers ({reason, status}, {error},
-  {limitation}), and those stay put by the refusal rule in
-  `docs/agents/JUDGES.md`. With the flag, a malformed record is moved under
-  `grades/_obsolete/` byte for byte and graded again, and the queue's depth
-  ordering and its "not yet on disk" count include it. Without the flag nothing
-  changes, which keeps the leaders-reuse check in `test_pundits_contract.py`
-  green. `grade_loop.sh` does not pass the flag, and a test pins that. It is
-  opt-in rather than default because default-on would make repo-0's daemon
-  spend about 35 calls and move the published board on its next code pull.
-  `aggregate.py`, `coverage_table.py` and now `wrong_person_screen.py` all skip
-  `_obsolete/`. Guarded by `scripts/test_leaders_regrade_invalid.py`: 6 of 12
-  failed before, 16/16 after. The note below that names
-  `test_profile_leaders_identity.py` is stale; no such file ever existed. The
-  plan's identity check was built as `scripts/leaders_identity_compare.py`
-  over two `scripts/leaders_baseline.py` runs, and leaders `blind()` identity
-  was also checked directly, 664 of 664, in the other-person entry above.
-  TO TURN IT ON: one manual pass from repo-0, `grade.py ... --modes blinded
-  --regrade-invalid`, or add the flag to `grade_loop.sh`'s grade call.
-
-- **A grade record that failed validation counts as a cache hit. FIXED for
-  pundits (v2) 2026-09-16; LEADERS (v1) still has it.** Filed 2026-09-16.
-  `_v2_stored()` in `scripts/grade.py` returned `cached` whenever the stored
-  record's identity matched (study, contract, prompt, input, mode, judge, model,
-  run). It never asked whether the stored record was a usable grade, so a record
-  with `validation_errors` was skipped forever on re-runs and the cell could only
-  be repaired with `--force`. Found live: 6 Gemini cells that failed the 25-word
-  quote cap in P8a were reported `CACHED` when scheduled again, which would have
-  left six permanent holes in a two-judge panel. It now treats a record with
-  validation errors, or with no scored dimensions, as absent, moves it to
-  `_obsolete/` and says so. Guarded by the check "a stored grade that failed validation is not reused as a cache hit" (no function of the name `check_invalid_record_is_not_reused` exists; corrected 2026-10-11) in
-  `scripts/test_pundits_contract.py`.
-  (An earlier version of this entry named the function `reuse_or_none()`, which
-  has never existed in this repo. I invented it while writing a test and then
-  quoted my own invention back here as if it were the code. Check the name
-  against `grep` before filing, not against memory.)
-  **Still open: leaders (v1) uses a plain `dest.exists()` check and has the same
-  hazard.** Its fix is the same shape but it is not the same code path, and any
-  change there must keep `test_profile_leaders_identity.py` at 0 differences.
-
-- **RESOLVED 2026-10-11, by a different rule than the one proposed below.**
-  `blind_study()` now redacts a HANDLE in any case in the subject's own
-  recordings; affiliations ("Twitch") keep the capitalised-only rule. The
-  corpus-spread signal was measured and answers the wrong question: lowercase
-  "destiny" has spread 0.65 over the pundits corpus, but about 13 of the 30
-  uses outside Steven Bonnell's recordings are other pundits naming him, and
-  17 are "manifest destiny" or "the destiny of America". Blinding acts only on
-  the owner's recordings, and there 16 of 16 lowercase uses are the person
-  ("promo code destiny", lowercase auto-captions). Destiny is the only
-  single-word handle on the roster that is a dictionary word. Re-blinding all
-  367 pundits files changes exactly one, `steven-bonnell/destiny-bklnf_`, 16
-  substitutions, 0 grades, so nothing goes stale. `test_pundits_blinding.py`
-  asserted the old behaviour; that check now asserts the new one and failed
-  first.
-
-- **Blind lowercase uses of handles that are ordinary words.** Filed 2026-09-15.
-  `blind_study()` redacts a handle that is an ordinary English word only where it is
-  capitalised, so "Destiny" goes and "destiny" stays. Captions write names in
-  lowercase often: `steven-bonnell/destiny-bklnf_` kept "destiny" 16 times in its
-  blinded copy, including a sponsor URL "slash destiny". That recording is excluded
-  as not political, and none of the 20 P8a picks leaks, so P8a is unaffected. Fix it
-  before the P8 full grade: for a handle, the corpus-spread signal used by
-  `scripts/build_blind_wordlist.py` can decide when a lowercase use means the person.
-  Needs a failing-then-passing test and a re-blind of any affected transcripts.
-
-- **RESOLVED to the target of 12, re-checked 2026-10-11; the entry below is
-  stale.** Of the 89 verified pilot recordings, 78 hold all four valid grades
-  (2 judges x 2 modes, no refusal, no validation error), which is 312 cells
-  ok and 44 missing. The 11 left are 10 Ben Shapiro recordings and
-  `asmongold-tv-2vktfl`, and both people are already at 12, as data `bd7edf2`
-  records ("P9 top-up ... target of 12"). `results.json` counts 77, not 78,
-  because `asmongold-tv-ks77-g` marks `d1_steelmanning` unsupported in three of
-  its four grades; see the next entry. The full 39-person roster is a separate job:
-  `logs/p6b/report.json` says `INCONCLUSIVE | 207 recordings await human
-  verification`, and none of the 29 newer people is graded.
-
-- **Grade the rest of the verified pilot recordings.** Filed 2026-09-15,
-  re-counted 2026-09-16.
-  The P6 pilot verified **89** recordings across 10 people, not 93, and the panel
-  is **two** judges, not three, so both figures in the first version of this entry
-  were wrong. Counted from `data-pundits/logs/pilot/report.json`:
-
-  ```
-  ana-kasparian 6   asmongold 13   ben-shapiro 22   charlie-kirk 5   coleman-hughes 7
-  ezra-klein 7   hasan-piker 8   matt-walsh 8   sam-seder 7   steven-bonnell 6
-  ```
-
-  P8a graded 20 and P8a2 tops up to 5 each, which is 50. The remaining **39**
-  cost about **156 calls** (39 × 2 judges × 2 modes). Schedule them with
-  `schedule.py build --target-per-person 12 --graded ... --verified ...`, which
-  counts what is already complete rather than adding a fixed number; 12 is the
-  P5 target. Note the pool is very uneven: Ben Shapiro has 22 verified and
-  Charlie Kirk has 5, so a target of 12 leaves a reported shortfall for most
-  people and the equal-format-weighting question (option c in
-  `docs/PUNDITS-PLAN.md`) has to be settled against that imbalance, not assumed
-  away.
+Deferred work, one item per heading, in the format the `backlog-protocol`
+skill reads and `/run-backlog`, `/improve-code` and `/improve-data` work from.
+Items are independent: claim one, finish it, delete it. The protocol itself
+(claims, IDs, the difficulty ladder, deletion on completion, the pre-push
+review) is that skill; this file holds the parameters that are specific to
+this project, and the items.
+
+Until 2026-10-18 this file was a prose ledger: each entry held the reason a
+piece of work was deferred and the condition that would bring it back, and
+settled entries stayed in place as the record. The settled, withdrawn and
+resolved entries are archived verbatim in
+[docs/BACKLOG-RESOLVED.md](docs/BACKLOG-RESOLVED.md). An entry whose
+bring-back condition still holds is an item below with a `[BLOCKED: ...]` tag
+naming that condition; an entry deferred only to ride along with the next
+change to its file is an ordinary item.
+
+## Protocol parameters
+
+| Parameter | Value in this project |
+|---|---|
+| Item files | this file, `## Open items` below; shard into `backlog/<shard>.md` with a routing table in `backlog/README.md` when it passes a few dozen items |
+| ID scheme | `VI-<n>` (Verbatim Index), one counter for the file. Next ID = 1 + the highest `VI-` number in this file **and** its git history, because a deleted ID never returns: `{ grep -oE '^### VI-[0-9]+' BACKLOG.md; git log -p --all -- BACKLOG.md \| grep -oE '^\+### VI-[0-9]+'; } \| grep -oE '[0-9]+$' \| sort -n \| tail -1`. Ledger IDs (`VP-`, `VD-`, `CI-`) are a different series, in `docs/LEDGER-*.md` |
+| Difficulty ladder | `low`, `medium`, `high`, `xhigh`; `ultra/workflows` is split into normal items when filing. The skill's § 5 maps the running model to a row; claim at or below it |
+| Agent handle | `#<n>` from a `repo-<n>` clone directory (`repo-0` is `#0`). Commit subjects: `claim: VI-n (#<n>)`, `backlog: delete VI-n (#<n>)` |
+| Priority | file order within `## Open items`. Unblocked items come first, cheapest first; a new item goes at the end of the unblocked run unless it must be done sooner; `[BLOCKED: ...]` items sit last, so the picker never reads past an eligible item to reach them |
+| Validation gate | `bash scripts/run_tests.sh` from the clone root, the whole output kept, `failed: 0` required. Never pipe it through `tail -1`: the per-file `FAILED <path>` lines are the finding. `test_log_bloat.py` and the `LIVE DATA` checks in `test_render_integrity.py` read the leaders daemon's live checkout, so a red there is reported with its text, never retried until green (VI-12) |
+| Pre-push review | `adversarial-self-review` on `origin/main..HEAD` before every push, verdict `ship` required, two fix rounds at most |
+| Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Three kinds: an operator decision, a measurement or event that has not happened, or a clone that is the only one able to finish it (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; see AGENTS.md, "Clone roles"). Nobody claims a blocked item. Whoever lifts the block deletes the tag in its own commit; the daemon clone a tag names does that when it takes the item |
+| Completion | delete the item; git history is the record. A decision or measurement worth keeping goes in the `docs/agents/` file of its topic, under "Rules that exist because something broke" or "Experiments run", never back into this file |
+| Doc-gap routing | a standalone `low` item |
+| Scan logs / ledgers | `backlog/scan-logs/improve-code/<shard>.md` and `backlog/scan-logs/improve-data/<domain>.md`, tracked, created when those modes first run here |
+| Data read path (`improve-data`) | none named: `improve-data` stops |
+| Names in items | roster slugs, recording ids and the public figures the roster lists are the data's own keys and may appear; no email address, phone number, private person's handle or message text, ever |
+
+## Item format
+
+The skill's § 3, repeated here so a filing agent has it in front of it:
+
+```markdown
+### VI-<n>. <one-line problem statement>  `[difficulty: <level>]`  `[filed: YYYY-MM-DD]`  `[BLOCKED: <what lifts it>]`?
+
+**Background:** what the code or data does today and where; at least one `file:line`. For a doc item, the stale sentence verbatim.
+
+**Impact:** the concrete consequence.
+
+*Root cause:* optional.
+
+**Fix:** `low`/`medium`: one paragraph. `high`+: numbered steps tied to files, tests included.
+
+*Risks and edge cases:* required for `high`+.
+
+*Why <level> not <level-1>:* required for `high`+.
+
+**Touch points:** every `file:line` the fix will modify, tests included.
+
+---
+```
+
+The `filed:` date is the UTC calendar date the item was first written down,
+kept from the ledger entry it came from, and never updated. "Filed by repo-N"
+in a Background is provenance, not a claim.
+
+## Open items
+
+### VI-1. `extract_predictions.py` takes no `--study`, so a pundits run can write into the leaders data repo  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-3. `scripts/extract_predictions.py:747-781` declares every argument and none is `--study`; `--out` defaults to `data/predictions` (`:749`), `--transcripts` to `data/transcripts_open` (`:747`) and `--roster` to `data/roster/final.json` (`:748`), all leaders paths. The speaker script has the guard this needs: `scripts/pundits_speaker_infer.py:337` calls `study_profile.add_study_arg` and `:344` calls `SP.guard(args.study, str(root))` (`scripts/study_profile.py:95` and `:146`). The pundits prediction pilot of 2026-10-18 was written to the leaders `predictions/_experiments/` and moved by hand to the pundits data repo's `experiments/predictions-pilot-20261018/`. `docs/agents/PUNDITS.md:178` tells a pundits extraction to pass every path by hand for this reason.
+
+**Impact:** Nothing stops a pundits run from writing pundits records under the leaders data checkout, where `data_sync.py push` and the leaders predictions aggregate treat them as leaders data.
+
+**Fix:** Add `study_profile.add_study_arg` to the parser and `study_profile.guard(args.study, <out>, <transcripts>, <roster>)` in `main()` before any write, the way the speaker script does. A new check, in `scripts/test_predictions_credit.py` or a new `scripts/test_extract_predictions_study.py`, runs `--study pundits` with a leaders `--out` and asserts the refusal, failing first. Update `docs/agents/PUNDITS.md:178`, which says the extractor has no `--study` yet. Quota-free.
+
+**Touch points:** `scripts/extract_predictions.py:747-781` (parser), `:875` (`main`), `scripts/study_profile.py:95`, `:146` (read only), `scripts/test_predictions_credit.py` or a new test file, `docs/agents/PUNDITS.md:178`.
+
+---
+
+### VI-2. `pundits_speaker_infer.py merge` writes `checked_by: model:<model>` for both harnesses, so the merged store hides which drafts ran on credit  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-3, from the round-2 review of the credit runs. `infer` writes subscription drafts and `--credit-pools` drafts (`scripts/pundits_speaker_infer.py:331`) to the same `speaker_inference.jsonl`, and `merge_drafts` (`:297`) writes `"checked_by": f"model:{model}"` (`:315`) for both. Each draft's `telemetry` block (`:215`) does name the harness, `quotapick run` for a credit draft, so nothing is lost in the drafts file; the merged human store cannot tell them apart. All 218 P6b drafts are credit drafts today.
+
+**Impact:** A reader of the merged store, or of a page built from it, cannot say which harness drafted a row, and VD-19 records that nobody has measured whether the two harnesses draft alike.
+
+**Fix:** `merge_drafts` names the harness beside the model in `checked_by` (for example `model:claude-fable-5-1 (quotapick run)`) or in a field of its own, read from each draft's `telemetry.harness`, and refuses a draft with no harness rather than defaulting one. A check in `scripts/test_pundits_speaker_infer.py` merges one subscription draft and one credit draft and asserts the two rows differ, failing first. Quota-free.
+
+**Touch points:** `scripts/pundits_speaker_infer.py:297-315`, its docstring at `:18-23`, `scripts/test_pundits_speaker_infer.py`.
+
+---
+
+### VI-3. `extract_predictions.main()`'s `code_revision_of` call is untested, and two speaker scripts record HEAD without a `+dirty` mark  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-3 as the review nits of 2026-10-18 round 4. `scripts/extract_predictions.py:890` passes `L.REPO / "scripts"` and the skill directory to `code_revision_of` (`:813`), which appends `+dirty` when either path holds uncommitted changes. `scripts/test_predictions_credit.py:295` and `:305` test the function, but nothing tests the call, so dropping `skill` from it passes the suite. `scripts/speaker_audit_page.py:225-226` (`git_revision`, used at `:286`) and `scripts/speaker_segment_probe.py:176` record `git rev-parse HEAD` as `code_revision` with no dirty mark at all.
+
+**Impact:** A speaker audit or probe run from an edited tree records a revision that did not produce it, the defect `code_revision_of`'s own docstring records (8 pundits pilot metas named one commit and ran another's code), and a regression in what `main()` hashes passes the suite.
+
+**Fix:** (1) A check that drives the run-record builder in `extract_predictions.py` with a stubbed `code_revision_of` and asserts it receives both the scripts directory and the skill directory. (2) The two speaker scripts append `+dirty` when `git status --porcelain` on their own paths is non-empty, the way `code_revision_of` does; one check per script in `scripts/test_speaker_audit_page.py` and `scripts/test_speaker_segment_probe.py`, each failing first against a scratch repository with an edited file. Quota-free.
+
+**Touch points:** `scripts/extract_predictions.py:813-830`, `:890`, `scripts/test_predictions_credit.py:295-305`, `scripts/speaker_audit_page.py:225-226`, `:286`, `scripts/speaker_segment_probe.py:176`, `scripts/test_speaker_audit_page.py`, `scripts/test_speaker_segment_probe.py`.
+
+---
+
+### VI-4. `index.json` counts credit extractions as plain `fable`, so it cannot tell the two Fable harnesses apart  `[difficulty: high]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-3, from the adversarial review of `--credit-production` (e267bef). `scripts/aggregate_predictions.py:99-118` (`acceptance_by_harness_pair`) keys the extraction-harness breakdown on the record's `extraction.harness`, which stays `fable` for a credit call so that the different-family rule in verify still holds; the harness that actually ran is in `extraction.telemetry.harness` (`quotapick run`). On a copy of the pundits pilot, the 182 reviewed credit records (of 184; 2 have verification `not_run`) came out as one row, `extraction_harness: "fable"`. A second count has the same fault: `coverage.by_harness.extract`, which `summarise_meta` (`:130-138`) builds from each meta's `extract.harness`, read `{"fable": 280}` for the pilot's 280 credit transcripts. Meta files carry no telemetry, but their `router_account_id` starts with `credit:` for a credit run (260 of the 280).
+
+**Impact:** `data/predictions/index.json` cannot show how many extractions ran on prepaid credit against how many on the subscription harness, and VD-19 says nobody has measured whether the two extract alike, so the one derived file that could show the mix hides it.
+
+**Fix:**
+1. In `acceptance_by_harness_pair`, key the extraction side on `extraction.telemetry.harness` when it is present and on `extraction.harness` otherwise, and name the credit rows distinctly (for example `fable (quotapick run)`); keep the raise at `:115` for a reviewed record with no harness.
+2. In `summarise_meta`, split `by_harness.extract` on whether `router_account_id` starts with `credit:`.
+3. A check in `scripts/test_predictions_aggregate.py` builds one subscription and one credit record and one meta of each kind, and asserts two rows and two counts, failing first.
+4. Regenerate `index.json` with `scripts/data_sync.py push` on the next data push (it is a derived file; its bytes change); `scripts/test_derived_determinism.py` must stay green.
+
+*Risks and edge cases:* `test_predictions_policy.py`, `test_predictions_index_roster.py` and `test_predictions_site_policy.py` read `index.json` fixtures and may pin the old row shape. `build_predictions_site.py` may read `verifier_acceptance_by_harness_pair`; if it does, the page copy that names harnesses needs the new label.
+
+*Why high not medium:* the naming of the harness key is a judgment call that `docs/agents/PREDICTIONS-PIPELINE.md` and the site copy will quote, and the derived file is read by four test files and the site builder.
+
+**Touch points:** `scripts/aggregate_predictions.py:99-118`, `:130-138`, `scripts/test_predictions_aggregate.py`, `scripts/build_predictions_site.py` (if it reads the pair table), `docs/agents/PREDICTIONS-PIPELINE.md` (the index.json description).
+
+---
+
+### VI-5. `grade.call_fable_pool` and `credit_run.run` each check the served block, and two copies drift  `[difficulty: high]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-3. Both landed the same night from two concurrent sessions. `scripts/grade.py:1163` (`call_fable_pool`, repo-0) is the judge path: one pool, Fable at max effort, labels from grade.py's taxonomy, served checks at `:1211-1216`. `scripts/credit_run.py:96` (`run`, repo-3) is the general path for the pundits speaker drafts and `extract_predictions.py --fable-credit-pools`: a SET of pools for the router to choose among, any model and effort, its own labels, served checks in `check_response` (`:63-93`). They check the same `served` fields today. The ledger deferred this until the CI-11 drift experiment, which imported `grade.py` from repo-0's working tree, had finished; `docs/LEDGER-predictions.md` records CI-11 stopped after day 1, and on 2026-10-18 no process from `data/experiments/fable-credit-drift-20261018/` was running.
+
+**Impact:** The next change to one identity check (a new served field, a new quotapick outcome) silently leaves the other behind, and a credit grade can then pass one path's check and fail the other's for the same response.
+
+**Fix:**
+1. Make `call_fable_pool` call `credit_run.run(prompt, model=..., effort="max", pools=[pool], ...)` and map `PoolsExhausted` and `CreditRunError` onto grade.py's labels (`E_POOL_REFUSED`, `E_MODEL_MISMATCH`, `E_IDENTITY`, `E_CLI` at `scripts/grade.py:107-121`), so the telemetry block it returns (`:1223-1228`) is unchanged.
+2. `scripts/test_fable_pool.py` and `scripts/test_credit_run.py` both stay green; add one check that a served-field mismatch produces the same label through both entry points, failing first against a stubbed `credit_run.run`.
+3. `docs/agents/JUDGES.md` names the one call path.
+
+*Risks and edge cases:* `call_fable_pool` takes a `spent` tally and a `request_id` (`:1163-1165`); keep them. `FABLE_POOL_MAX_TIMEOUT` (`:1152`, `:1181`) must still refuse a longer timeout before any call. `grade_loop.sh` never passes `--fable-pool`, so production is untouched.
+
+*Why high not medium:* two modules, two test files and a label mapping that decides what the run summary's taxonomy says about a refused credit call.
+
+**Touch points:** `scripts/grade.py:107-121`, `:1163-1228`, `scripts/credit_run.py:63-136`, `scripts/test_fable_pool.py`, `scripts/test_credit_run.py`, `docs/agents/JUDGES.md`.
+
+---
+
+### VI-6. A Fable stage of `resolve_predictions.py` with no `--fable-accounts` runs on the default account  `[difficulty: high]`  `[filed: 2026-10-11]`
+
+**Background:** Filed by repo-0. `scripts/resolve_predictions.py:518` declares `--fable-accounts` with `default="default"`, and `:561-569` turns that into the account list for the `prior` and `lead_test` stages. `--stage lead_test` with no `--fable-accounts` ran its one call on `~/.claude` (`accounts=['default']` in `rebuild-20261011/lead_test-1.log`); it served `claude-fable-5-1` and cost $0.21. Nothing failed, but the operator has said account A has no Fable, and batch Fable work is meant to go to the accounts named for it. `scripts/grade.py:277` (`fable_accounts`) already routes by measured quota through `quota_router` when `FABLE_ACCOUNTS` is unset (`:2569`). The ledger deferred this to the next change to `resolve_predictions.py`.
+
+**Impact:** A Fable stage started without the flag spends the operator's interactive account's quota, on the one account the operator has said should not carry batch Fable work, and nothing in the run summary says so.
+
+**Fix:**
+1. Decide between (a) refusing a Fable stage that names no accounts, at the cost that every caller must pass the flag, and (b) routing by measured quota the way `grade.py` does, at the cost that the stage gains the router. Recommended: (b), with the plain `default` account excluded unless named explicitly, because it matches the judge path and the operator's stated intent.
+2. Implement it at `:518` and `:561-569`, logging the chosen accounts at `:733` as today.
+3. A check in `scripts/test_predictions_driver.py` or a sibling: no flag, router stubbed, asserts the stage never runs on `default`, failing first.
+4. `docs/agents/PREDICTIONS-PIPELINE.md` names the rule.
+
+*Risks and edge cases:* `--fable-pool` (`:524`, `:590`) is a different path (API credit) and must still refuse the other stages. The `ambient` label at `:733` covers a call with no account; keep it honest.
+
+*Why high not medium:* the choice between refusing and routing is a policy decision, and the router import brings `grade.py`'s failure handling with it.
+
+**Touch points:** `scripts/resolve_predictions.py:518-524`, `:561-569`, `:733`, `scripts/grade.py:245-305` (read only), `scripts/test_predictions_driver.py`, `docs/agents/PREDICTIONS-PIPELINE.md`.
+
+---
+
+### VI-7. `judge_searched` can count a local file read as a web search  `[difficulty: high]`  `[filed: 2026-10-12]`
+
+**Background:** Filed from the independent review of the 2026-10-12 pundits commits; plausible, not seen in data. `scripts/grade.py:2027` (`count_gemini_tool_events`) puts any completed tool step with a `query`, `Query`, `url`, `Url` or `AbsolutePath` parameter (`:2055`) into `web_search_queries`, so a `view_file` step would count. The error runs toward disclosing more searches than happened, never fewer. The `tool_use_counts["web_search"]` branch (`:1339`) matches only the codex harness (Astra, dropped); agy names its tool `search_web` (`:2031-2035`).
+
+**Impact:** A grade's `judge_searched` disclosure, which the page shows beside the score, can say the judge searched the web when it read a file, so the published disclosure overstates what the judge did.
+
+**Fix:**
+1. Record the tool name per step in `count_gemini_tool_events` and count only search tools (`search_web` and any name agy documents for web search) toward `web_search_queries`; keep every other step in `tool_use_counts` by name.
+2. A fixture in `scripts/test_judge_web_search.py`: a recorded agy transcript with one `view_file` step and one `search_web` step, asserting one search, failing first. The fixture must come from a real agy transcript (the per-grade stderr logs under the data repo's `logs/` hold them), not a hand-written guess at the event shape.
+3. `docs/agents/JUDGES.md` says what counts as a search.
+
+*Risks and edge cases:* a transcript with a tool name agy has since renamed would then count zero searches; the check must fail loud on an unknown tool name with a `query` parameter rather than drop it.
+
+*Why high not medium:* the fixture has to be found in real logs and the rule changes a published disclosure.
+
+**Touch points:** `scripts/grade.py:2027-2060`, `:1339-1341`, `:2231-2232`, `scripts/test_judge_web_search.py`, `docs/agents/JUDGES.md`.
+
+---
+
+### VI-8. A `grade_loop.sh` render can replace `site-pundits/index.html` between the deploy's render and its upload  `[difficulty: high]`  `[filed: 2026-10-12]`
+
+**Background:** `scripts/deploy_pundits.sh:60` renders into `SITE_DIR`, `:137` uploads it with `npx wrangler deploy`, and the loop's own render (`scripts/grade_loop.sh:244-252`, `$SITE_DIR/index.html`) can run between the two. Since 2026-10-12 the post-publish confirm (`deploy_pundits.sh:138-143`) fails loudly when it happens: the live page lacks the data revision's meta tag. So it is reported, not silent.
+
+**Impact:** A deploy that loses the race publishes a page with no revision stamp, then fails its own confirm, and the operator must run it again while the loop keeps rendering.
+
+**Fix:**
+1. Either the deploy renders into a directory of its own (a temporary copy of `site-pundits/` with its `wrangler.pundits.toml` pointed at it) and uploads that, or the loop takes a lock the deploy also takes so the loop skips its render while a deploy runs. Recommended: the private render directory, because it needs no change to the loop's routine.
+2. A check in a `scripts/test_deploy_pundits*.py` file that writes a different `index.html` into `site-pundits/` after the render step and asserts the uploaded page is the rendered one, with wrangler stubbed, failing first.
+3. The leaders deploy (`scripts/deploy.sh`, `scripts/deploy_source.sh:57-67`) has the same shape; say in `docs/agents/SITES.md` whether it is covered.
+
+*Risks and edge cases:* `revision.json` and its `_headers` rule (`deploy_pundits.sh:117-123`) must land in the same directory the upload reads. The dry run (`:134`) must keep rendering into the visible directory so the operator can read it.
+
+*Why high not medium:* it changes the publication path of a live site and touches the deploy guard's assumptions about where the rendered page is.
+
+**Touch points:** `scripts/deploy_pundits.sh:60`, `:107-143`, `wrangler.pundits.toml`, `scripts/grade_loop.sh:244-252`, a new `scripts/test_deploy_pundits_render_dir.py`, `docs/agents/SITES.md`.
+
+---
+
+### VI-9. The labelling guide does not state the "correct every caption error you notice" convention VI-13 depends on  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** VI-13 brings back the caption-correction work once 50 operator corrections exist across 10 recordings, made under the convention that every caption error noticed in a reviewed passage is corrected, so that a reviewed word left alone counts as correct. The 2026-10-11 re-check found that convention "written nowhere except this entry, so it has never been in force", and asked for it to go into `docs/PUNDITS-LABELLING-GUIDE.md` before the next session. That guide's "Rules for every label" section (`docs/PUNDITS-LABELLING-GUIDE.md:11-27`) has no rule about the page's "Correct text" field.
+
+**Impact:** Until the convention is written where a labelling session reads it, no session's corrections can count toward VI-13's threshold, and the count (15 over 5 recordings on 2026-10-11) cannot grow.
+
+**Fix:** Add one rule to "Rules for every label": in a reviewed passage, correct every caption error you notice with the page's "Correct text" field, so that a word left alone counts as correct; name the counter, `.venv/bin/python scripts/pundits_text_corrections.py` over the answers files.
+
+**Touch points:** `docs/PUNDITS-LABELLING-GUIDE.md:11-27`.
+
+---
+
+### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
+
+**Background:** The ledger entry, verbatim:
+
+Filed 2026-10-11 by repo-0
+(overnight run). Six blinded transcripts of 32,912 to 38,858 words have never
+had a Gemini grade, and every `grade_loop.sh` cycle calls Gemini up to 3 times
+on each of them. Since 2026-09-06 three of them have failed in 142 cycles
+each. The measurement and the six ids are in `docs/agents/JUDGES.md`, under
+"Gemini's coverage gap is a RETRY BUDGET". Each of the six leaders has that
+recording scored by Fable and Astra only. The options:
+(a) Change nothing. Cost: about 18 long Gemini calls per cycle, every cycle,
+for a chance per call that is close to zero (one 50,025-word transcript
+succeeded once in 119 cycles).
+(b) A per-transcript cap across runs. After N cycles of `empty_response`
+with a denied tool, skip that (judge, transcript) and list it in the run
+summary as skipped, with its count. Cost: a code change in `grade.py` and a
+test, and the six stay at two judges unless the cap is reset by hand.
+(c) A Gemini prompt that gives the transcript in parts, so the judge does not
+reach for a tool. Cost: a new prompt, which changes the measured judge and
+must be measured against the current one before it is used.
+Recommendation: (b), because it stops the spend and keeps the record
+honest; (c) only if two-judge coverage on these six becomes a problem.
+Comes back when the operator picks one.
+
+`scripts/grade.py:2062` (`call_gemini`) stops after two empty retries (`:2142-2143`); the cap is per run, and the measurement is `docs/agents/JUDGES.md:413-452`.
+
+**Impact:** About 18 long Gemini calls per cycle, every cycle, for a chance per call that is close to zero.
+
+**Fix:** Option (b), when the operator picks it: a per-(judge, transcript) cap across runs in `grade.py`, after N cycles of `empty_response` with a denied tool, skipping that pair and listing it in the run summary as skipped with its count; a test that fails first; and the cap and its reset recorded in `docs/agents/JUDGES.md`. Option (c) is a new measured prompt and a separate item.
+
+*Risks and edge cases:* the skip list must live where every clone's run can read it (the data repo's `logs/`), be reset by hand, and never hide the six from the coverage table.
+
+*Why high not medium:* a cross-run state file in a daemon's path and a change to what the run summary says a judge did.
+
+**Touch points:** `scripts/grade.py:2062-2151`, the run summary writer, a new test file, `docs/agents/JUDGES.md:413-452`.
+
+---
+
+### VI-11. `validate_grader.py` says it "mirrors aggregate.py's own gates" and no longer does  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: its V1-V5 figures are next quoted or re-run]`
+
+**Background:** `scripts/validate_grader.py` was last changed on 2026-09-06, and its `load()` (`:88`) has drifted from `aggregate.py` in four ways since. (1) It drops a GRADE whose own subject share is under its `MIN_SUBJECT_SHARE` (`:37`, which is 15 while `scripts/aggregate.py:112` is 10), while `aggregate.filter_unscorable` (`aggregate.py:172`) drops a whole RECORDING when the judges' mean share is under the cutoff or any judge says 0, the rule `docs/agents/SCORING.md` records with its measured cost. (2) It skips `_raw/` (`:92`) and not `_obsolete/`, which `aggregate.load_grades` skips (`aggregate.py:232`). (3) It applies no board membership (`aggregate.py:1204-1206`, `:1396`). (4) It swallows any unreadable grade or transcript file (`except Exception` at `:96` and `:249`) and reports nothing. No test covers it and no loop runs it, so nothing published reads it today, but its V1-V5 figures are quoted as grader validation.
+
+**Impact:** The next time its numbers are quoted they describe a different corpus than the board: a different share cutoff, obsolete grades included, off-board people included, unreadable files silently dropped.
+
+**Fix:**
+1. Make `load()` call `aggregate.load_grades`, `aggregate.filter_unscorable` and the membership reader rather than restating them, and raise on an unreadable file.
+2. A test that builds a small corpus with one obsolete grade, one under-share recording and one off-board person, and asserts the validator's counts equal the aggregate's, failing first.
+3. Re-run V1-V5 and record the new figures where the old ones are quoted (`docs/agents/MAP.md`, grader validation).
+
+*Risks and edge cases:* the V1-V5 figures move; quote them with the date and the commit.
+
+*Why high not medium:* three loaders to replace and published figures to re-derive.
+
+**Touch points:** `scripts/validate_grader.py:37`, `:88-110`, `:249`, `scripts/aggregate.py:172`, `:227-232`, `:1204-1206` (read only), a new `scripts/test_validate_grader.py`, `docs/agents/MAP.md`.
+
+---
+
+### VI-12. `test_log_bloat.py` reads the leaders daemon's live checkout, so the suite goes red in every clone while repo-0 is mid-rebuild  `[difficulty: medium]`  `[filed: 2026-10-11]`  `[BLOCKED: a second red from it that is not a rebuild in progress]`
+
+**Background:** The market-cache section of `scripts/test_log_bloat.py` takes `production_path(REPO)` (`:58-60`), the shared `verbatim-index/data` the daemons write, not the clone's own `data` link, and asserts every accepted prediction carries market provenance (`:162-164`). At 04:00 PDT on 2026-10-11 the suite at `c323fb8` reported `FAILED scripts/test_log_bloat.py`: "9 of 1124 accepted records lack consensus status, cutoff or searched_at_utc", all in the shared checkout beside repo-0's uncommitted `_experiments/rebuild-20261011/`. That red was a TRUE POSITIVE: the 9 records were the VP-5 remainder that repo-0 integrated in data `a8212d25`, and the integration skipped `market_consensus.py`. Fixed by running `market_consensus.py --leaders jack-dorsey,bill-gurley --router-exclude claude,claude_e`: 9 attempted, 9 `no_match`, 0 errors, 5 Fable matcher calls; the test then printed `13 passed, 0 failed`. The gap is in the integration step: anything that adds accepted records must run market consensus before commit. `AGENTS.md` ("Setup in a fresh clone") names this test as the one that fails while repo-0 is mid-rebuild.
+
+**Impact:** A suite verdict that depends on data another agent is writing; so far every red was a real defect, so nothing is changed until one is not.
+
+**Fix:** When the condition is met, split the section into a fixture proof and a named `LIVE DATA:` check, as `scripts/test_render_integrity.py` was split on 2026-10-11 (archived entry "RESOLVED 2026-10-11: the derived-number proof runs on a fixture", `docs/BACKLOG-RESOLVED.md`, Site rendering). Until then, a red from this file is reported with its text.
+
+**Touch points:** `scripts/test_log_bloat.py:58-60`, `:135-164`, `AGENTS.md` (the fresh-clone paragraph).
+
+---
+
+### VI-13. The speaker-segmentation call does not correct obvious caption errors, and there is too little ground truth to measure an attempt  `[difficulty: xhigh]`  `[filed: 2026-09-28]`  `[BLOCKED: at least 50 operator caption corrections across at least 10 recordings, made under the VI-9 convention]`
+
+**Background:** Re-checked 2026-10-11: still waiting, at 15 corrections over 5 recordings of the 50 over 10 it needs. Counted with `scripts/pundits_text_corrections.py` over every speaker-check answers file on this Mac: leaders 9 edits over 2 recordings, predictions 5 over 2, pundits 1 over 1. The newest edit is from 2026-09-28T05:07Z, and no later session exists in either data repo. The ledger entry, verbatim:
+
+Filed 2026-09-28 at the operator's request. `scripts/speaker_segment_probe.py`
+asks a model to split a whole transcript into speaker turns, and the first
+speaker-check session (`predictions/_experiments/speaker-audit-20260927/` on
+repo-3's private data branch) scores it against the operator's word ranges.
+While labelling, the operator also used the page's "Correct text" and saved 5
+corrections. The idea is to have the SAME call that finds the turns also return
+caption corrections, rather than a second pass over the raw YouTube text: one
+read of the recording serves both, and knowing who is speaking helps with the
+commonest fixable error, a misheard name ("Grock" for "Grok").
+
+Why it waits. There is too little ground truth to score it. Of the 5
+corrections, at most 3 are recoverable from text: "Grock" to "Grok", "dial" to
+"dial-up", perhaps "but definitely" to "but I definitely". The other 2 restore
+words the captions DROPPED ("Wow." to "Wow. That's crazy."), which only the audio
+holds, so no text-only model can be expected to make them. Segmentation itself
+was adopted on 2026-09-28 as `scripts/speaker_turns.py`, pinned to Astra, check
+only and for new transcripts only; the correction task would extend that call,
+and its prompt is pinned by hash, so the extension is a new measured prompt.
+
+Three constraints, whichever way it is built:
+1. Corrections are OVERLAYS keyed to the original token offsets, in the shape
+   `pundits_text_corrections.py` already stores (`start`, `end`, `original`,
+   `replacement`). The original text stays the source of truth. The operator's
+   word ranges, the judges' evidence quotes and every published prediction's
+   `quote_char_start` point into it, and an in-place rewrite would break all
+   three.
+2. Measure that the second job does not degrade the first. The 2026-09-28
+   segmentation-only runs are the baseline: same recordings, same scorer, turns
+   with and without the correction task.
+3. Score corrections both ways: how many of the operator's text-recoverable
+   corrections a model finds, and how many of its own edits are wrong. The second
+   needs negatives, so it needs the convention below.
+
+The condition that brings it back: at least 50 operator corrections across at
+least 10 recordings, made under the convention that every caption error noticed
+in a reviewed passage is corrected, so that a reviewed word left alone counts as
+correct. Both numbers are a judgement, not a measurement: enough corrections that
+one model finding 3 more than another is not noise, spread over enough
+recordings that one speaker's accent or one caption track does not dominate.
+Count them with `pundits_text_corrections.py` over the answers files.
+
+Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter (`gpt-6-astra`, `SEGMENT_SINCE_UTC = 2026-09-28`), `scripts/speaker_segment_probe.py` scores a run, and `scripts/pundits_text_corrections.py:17-72` holds the overlay shape and the counter.
+
+**Impact:** The commonest fixable caption error, a misheard name, stays in every transcript the judges read, and the operator's corrections are the only repair.
+
+**Fix:** When the threshold is met: (1) a new measured prompt beside `speaker_turns.PROMPT` that returns turns and corrections in the overlay shape; (2) the probe scores turns with and without the correction task against the 2026-09-28 baselines, and scores corrections both ways; (3) adopt only if turns do not degrade. Each a failing-first test.
+
+*Risks and edge cases:* the three constraints in the entry above; the prompt hash moves, so adoption is a new measured segmenter.
+
+*Why xhigh not high:* prompt design, a two-sided measurement and a schema that every published quote offset depends on.
+
+**Touch points:** `scripts/speaker_turns.py:65-66` and `PROMPT`, `scripts/speaker_segment_probe.py`, `scripts/pundits_text_corrections.py:17-72`, their tests, `docs/agents/PUNDITS.md`.
+
+---
+
+### VI-14. david-sacks and chamath-palihapitiya are on the predictions board only, and promoting them means a multi-hour grading run on prepaid credit  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks it up; spends about $50 to $60 of API credit]`
+
+**Background:** Filed by repo-0 on the operator's instruction of 2026-10-17 and deferred the same day. `membership.json` gives each `['predictions']` today. This item also carries the archived entry "Discovery will re-pollute the seven's curated alias lists" (`docs/BACKLOG-RESOLVED.md`, Board membership): its open clause, re-curate the alias blocks when one of the seven is promoted, is step (3) below, and its measurement (zero incremental blinding damage either way) is in the archive. The ledger entry, verbatim:
+
+Filed 2026-10-18 by repo-0, on the
+operator's instruction of 2026-10-17, and deferred the same day: the work is a
+multi-hour run and the operator chose to pick it up later. STATE FOUND, at
+public `3b85ea3` and data `3db9ba3e`: `membership.json` gives each
+`['predictions']`; roster ranks 53 and 54 carry `boards: ['predictions']` and a
+`selection_rationale` that says revisit the company string BEFORE promotion;
+the `aliases.json` blocks are the discovery-merged ones (David, Sacks, Craft,
+Ventures; Chamath, Palihapitiya, Social, Capital) and the curated ones are at
+data `cd7225a0`; `all.jsonl` holds 14 rows each; `transcripts_web/` holds 14
+YouTube records for david-sacks and 14 YouTube plus 4 `web-*` records for
+chamath-palihapitiya, the YouTube ones byte-for-byte the graded shelf's schema
+(checked against a nate-silver shelf record: no key differs); nothing under
+`transcripts/`, `transcripts_open/` or `grades/`. All three daemons stopped.
+THE PLAN, following `docs/ROSTER-ADD-NATE-SILVER-2026-10-11.md` (ledger VP-39):
+(1) `membership.json` first, both to `['leaders', 'predictions']`, then the
+roster `boards`, a top-level note and the two rationales. Counts that move:
+`scripts/test_membership.py` (`SEVEN`, "the roster MINUS the seven"),
+`docs/agents/MAP.md` ("51 of the 58", "59 entries: the 49 ...", "the seven
+investors with `predictions` alone"), `docs/agents/SCORING.md` ("board holds
+51"), and whatever `scripts/test_agents_md_current_state.py` matches.
+(2) Curate the shelf BY HAND before anything lands in `transcripts/`. The
+precedent cut co-hosted and co-guest recordings because auto-captions carry no
+speaker labels. Candidates to cut, from titles and `yt_description`:
+david-sacks `all-in-podcast-kcmmoz` (a debate; the title names two other
+guests), `all-in-podcast-lbb-rq` (All-In E2, co-hosted),
+`american-moment-yjhavh` (gala excerpts, four speakers),
+`orricktotalaccess-yxqyau` (a three-person panel per its description);
+chamath-palihapitiya `khosla-ventures-tzpya9` and `waterloo-engineering-aoznmm`
+(co-keynotes with vinod-khosla). That leaves about 10 and 12, both over the
+rank floor of 5. The 4 chamath `web-*` records stay predictions-only, as the
+Nate Silver supplement did. Copy the kept records into `transcripts/<slug>/`;
+for each cut row write `<sid>.json.superseded` there, the marker
+`fetch_transcripts.py:348` honours, so no fetcher pulls it onto the shelf; the
+rows stay in `transcripts_web/` for predictions.
+(3) `identity_screen.py` and `qa_transcripts.py` on the kept set, then blind
+each transcript twice (empty alias list, current list) as the precedent did.
+MEASURED 2026-10-18 over the YouTube records: lowercase "social" 72 and
+"capital" 109 across chamath's 14; "craft" 13, "ventures" 7, "sacks" 13 across
+sacks' 14. Decide the company strings, and whether to restore the curated alias
+blocks (the archived entry "Re-checked 2026-10-11: still WAITING", in
+`docs/BACKLOG-RESOLVED.md`, asks for it on promotion; measured incremental damage is zero either way, so it is a wording
+choice, and the merge in `sources_to_manifest.py` re-adds the words on the
+next rebuild).
+(4) `grade.py`. `--fable-pool` must take a comma-separated pool list:
+`call_fable_pool` wants `served.account == pool` (`grade.py:1211`), so a list
+fails every call as `account_identity_mismatch` today. It needs a production
+opt-in: `fable_pool_refusal` (`grade.py:576`) refuses `--out` outside
+`data/experiments/`. At filing, repo-3 held the predictions precedent UNPUSHED:
+`e267bef` adds `--credit-production` to `extract_predictions.py`, and `bcfaca8`
+records VD-19 (credit records may reach the board) and that CI-11 stopped
+after day 1; mirror that flag name, and check both have reached origin before
+starting. Failing-then-passing checks in `scripts/test_fable_pool.py`. VI-5
+wants `call_fable_pool` to go through `credit_run.run`, which takes a pool SET
+already. Add a per-judge
+harness count beside `judge_models` in `aggregate.py` (`aggregate.py:1443`)
+so the mix is visible in `diagnostics`. Record in `docs/agents/JUDGES.md`
+that pooling credit grades with the corpus is the operator's decision, with
+the evidence (`data/experiments/fable-credit-drift-20261018/results.md`:
+credit minus production -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman
+0.939); that file today says "do not pool these grades with the corpus".
+(5) Run `grade_loop.sh`'s stages by hand with its exact flags: QA, normalize
+blinded and open; `grade.py --judges fable --fable-pool
+anthropic_api_c,anthropic_api_e,anthropic_api_b,anthropic_api_a <opt-in>
+--out data/grades --timeout 1800` (the pool maximum; production uses 2400,
+and the four transcripts over 28k words may be cut off and still billed), 6
+workers then `--workers 1` to drain `no_candidate`; `grade.py --judges
+astra,gemini --timeout 2400`; aggregate, build_site, `wrong_person_screen.py`;
+`deploy.sh --production-data data --data-revision`. Cost about $2 to $2.5 per
+credit grade, so $50 to $60 for about 22 transcripts; pool d ($0.61) admits
+nothing. repo-3's thin-supplement extraction
+(`predictions/_experiments/thin-supplement-20261018/`) spends the same pools,
+and CI-11's day-2 arm on pool c was dropped per `bcfaca8`, so no reserve
+needs protecting. Their `fetched_at_utc` (2026-09-19) is before
+`SEGMENT_SINCE_UTC`, so `speaker_turns.py` will not cover them; say so in the
+record.
+(6) Record it as the precedent was: a `docs/ROSTER-ADD-*.md`, a row in
+`docs/LEDGER-predictions.md` (VP-41 is taken by repo-3's `bcfaca8`), data
+pushed with `data_sync.py push --daemon`, and `adversarial-self-review` on the
+`grade.py` change before its push. Comes back when the operator picks it up.
+
+**Impact:** Two people the operator wants on the leaders board are not on it, and every count that names "the seven investors" (`scripts/test_membership.py:60`, `:189-195`; `docs/agents/MAP.md:54`, `:63`; `docs/agents/SCORING.md:37`) moves when they are.
+
+**Fix:** the six numbered steps above, in order; the `grade.py` change in step (4) overlaps VI-5 and should land after it.
+
+*Risks and edge cases:* in the entry above (co-hosted recordings, the pool timeout against four transcripts over 28k words, the `speaker_turns.py` coverage gap, the pooling decision that `docs/agents/JUDGES.md` must record).
+
+*Why xhigh not high:* it spends credit, moves the published board and changes a grading harness's production gate in one run.
+
+**Touch points:** `membership.json`, `data/roster/final.json`, `data/sources/aliases.json`, `scripts/test_membership.py:60`, `:189-195`, `docs/agents/MAP.md:54`, `:63`, `docs/agents/SCORING.md:37`, `scripts/test_agents_md_current_state.py`, `scripts/fetch_transcripts.py:348`, `scripts/grade.py:576`, `:1211-1216`, `:2575`, `scripts/test_fable_pool.py`, `scripts/aggregate.py:1443-1447`, `:1747`, `docs/agents/JUDGES.md`, a new `docs/ROSTER-ADD-*.md`, `docs/LEDGER-predictions.md`.
+
+---
+
+### VI-15. VP-41, the thin-people predictions supplement, is extracted but not dated, resolved, scored or published  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: the owner asks to continue verbatim-predictions; spends credit and Codex quota]`
+
+**Background:** Filed by repo-3; paused 2026-10-18 when the expiring credit ran out. The ledger entry, verbatim:
+
+Filed by repo-3. Ledger VP-41,
+decision VD-19. Everything is in data `6c64b2f6`, run folder
+`data/predictions/_experiments/thin-supplement-20261018/`: read its `README.md`
+first, then `summary.json` (re-derive it with
+`.venv/bin/python data/predictions/_experiments/thin-supplement-20261018/_driver/summarize.py`).
+State, attempted / succeeded / failed:
+
+- **Extracted and verified, unscored (65 accepted).** 26 transcripts, Fable on
+  pool c, Gemini verify, 129 candidates: pat-gelsinger 36, reed-hastings 15,
+  larry-ellison 6, evan-spiegel 4, dario-amodei 3, patrick-collison 1,
+  dylan-field 0. All 129 records name `served.model claude-fable-5-1`, effort
+  max, `pool_kind credit`. The records are in the production tree and their
+  transcripts in `data/transcripts_web/<slug>/`.
+- **Placed, not extracted (17).** amjad-masad 2, aravind-srinivas 5,
+  greg-brockman 2, tim-cook 6 and larry-ellison 1 failed
+  `credit_pool_exhausted`; pat-gelsinger `web-fool-com-335b172e` failed
+  `schema_validation_failed` (read its raw answer under
+  `data/predictions/_raw/extract/fable/pat-gelsinger/` first). Re-run one
+  person with `_driver/retry.py <slug>` (it takes finished transcripts as
+  cached), after setting `POOLS` in `_driver/pipeline.py` to pools that have
+  money (`quotapick credits --json`). Without credit, run the same
+  `extract_predictions.py` command with `--fable-credit-pools` and
+  `--credit-production` removed, which is the ordinary production harness.
+- **Fetched only (46), not placed or extracted.** alexandr-wang 1,
+  brian-armstrong 2, demis-hassabis 5, jeff-bezos 6, lip-bu-tan 4,
+  michael-dell 6, palmer-luckey 3, sam-altman 5, tim-sweeney 6, tobi-lutke 2,
+  tom-lee 6. Each passed the URL and text duplicate checks on 2026-10-18. To
+  extract one person: copy each `by_slug/<slug>/transcripts/<slug>/<sid>.json`
+  named in `by_slug/<slug>/kept.txt` into `data/transcripts_web/<slug>/` (never
+  over an existing file), list those paths in `by_slug/<slug>/extract_list.txt`,
+  and run `_driver/retry.py <slug>`. Re-run the text check first if that
+  person's corpus grew since.
+- **Nothing usable:** clem-delangue (changelog.com robots.txt), sergey-brin
+  (page too short to fetch), george-hotz.
+
+**Finishing steps, in order.** VP-40 is the worked example
+(`data/predictions/_experiments/nate-silver-supplement-20261012/NOTES.md`).
+Read docs/agents/PREDICTIONS-PIPELINE.md and DATING.md first.
+1. Dating: `scripts/date_recordings.py --run-dir
+   data/predictions/_experiments/dating-thin-supplement-<date> --ids <file of
+   slug/sid with accepted records> --run --router-exclude <your session's
+   account>` (daters astra and fable_web, subscription quota). Promote with
+   `scripts/promote_dating_run.py --against dating-run-20261001 --against
+   dating-astra-20261003`, then re-extract each re-dated recording with the
+   pair that extracted it (Fable extract, Gemini verify).
+2. `scripts/resolve_predictions.py --out <the run folder> --as-of <UTC date
+   of the commit that will carry the scores>`, stages `lead_test`, `resolve`
+   (Astra with web tools, Codex quota), `prior`, `early`; then market
+   consensus and year summaries, scoped to the people above. The stage refuses
+   an `--ids` file that names a record it will not run, so pass only eligible,
+   past-due ids. 4 reed-hastings priors from pool d are already in the run
+   folder (as_of 2026-10-18); redo them if dating moves their statement dates.
+3. Add the run folder to `runs` in `data/predictions/scoring.json`, move
+   `as_of` to the commit's UTC date, push with `scripts/data_sync.py push`,
+   deploy with `scripts/deploy_predictions.sh` (VD-10 standing
+   authorization), and send the owner the per-person before-and-after diff.
+
+**Until this is done, the next predictions deploy from ANY clone must first
+score these records:** `deploy_predictions.sh` refuses when `as_of` is older
+than the newest commit that added predictions data (`scores_asof_lag`).
+
+**More sources, for a second pass.** Runners-up cut by the 6-source cap are in
+each `findings/<slug>.json` summary: reed-hastings 4 more Netflix earnings
+calls (Q2 2010, Q3 2014, Q3 2016, Q4 2017), tim-cook 4, larry-ellison 4,
+tom-lee 2 plus about 30 CNBC Closing Bell episodes. Every sub-agent ran out of
+the session's shared web-search budget early, so spread discovery agents
+across sessions. Briefs must ask for a generic User-Agent: one agent sent the
+owner's email to SEC EDGAR.
+
+**Credit.** Pool c's 10/20 grant and pool d are spent. Pool c's org holds a
+second grant, $100 granted 2026-10-17, expiring 2026-11-20, $93.71 left at
+2026-10-18T05:51Z after in-flight calls took $6.29 and then about $1 more. It
+is NOT in quotapick, whose balance for c was set to $0; record it with
+`quotapick credits grant` when the owner wants it spent. Pools a ($182.03,
+expires 2026-11-16), b ($125.47, 2026-11-11) and e ($2.46, 2026-11-10) were
+not charged. Comes back when the owner asks to continue verbatim-predictions.
+
+**Impact:** 65 accepted records sit unscored in the production tree, and `scripts/deploy_predictions.sh` refuses every predictions deploy from any clone until they are scored (`scores_asof_lag`).
+
+**Fix:** the finishing steps above, in order, by any push-role clone (the records are shared paths); dating and resolution spend subscription and Codex quota, extraction of the 17 and 46 spends credit.
+
+*Risks and edge cases:* in the entry above; re-dating moves statement dates and so the 4 reed-hastings priors.
+
+*Why xhigh not high:* five pipeline stages, three quota pools and a public deploy, with judgment at each hand-off.
+
+**Touch points:** `data/predictions/_experiments/thin-supplement-20261018/` (the run folder and its `_driver/`), `data/predictions/scoring.json`, `scripts/date_recordings.py`, `scripts/promote_dating_run.py`, `scripts/resolve_predictions.py`, `scripts/market_consensus.py`, `scripts/deploy_predictions.sh`, `docs/LEDGER-predictions.md` (VP-41).
+
+---
+
+### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[BLOCKED: repo-3 only (pundits data owner paths); spends Gemini quota]`
+
+**Background:** Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/pundits_verify_page.py build` takes `--drafts` (`:16-31`, `load_drafts` at `:341`), to be run with `data-pundits/logs/p6b/speaker_inference.jsonl` and the same `--grades` and `--quote-key` as before, then the pundits data pushed; 65 flagged recordings list first.
+
+**Impact:** Three recordings have extractions nobody verified, one person has none, and the labelling page does not show the drafts that were paid for.
+
+**Fix:** From the pundits daemon clone: re-run verify on the three (Gemini quota only); record the `bret-weinstein-bmwp9g` refusal with its raw answers in the run's README rather than retrying blind; rebuild `data-pundits/logs/p6b/speaker_check.html` with `--drafts` and push with `data_sync.py push --daemon`. The review nits that came with this entry are VI-3.
+
+**Touch points:** `data-pundits/experiments/predictions-pilot-20261018/` (README and the three records), `data-pundits/logs/p6b/speaker_check.html`, `scripts/pundits_verify_page.py:16-31` (read only).
+
+---
+
+### VI-17. Pundits grading cannot run on prepaid API credit under contract v2 without re-grading the whole pilot  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks (A), (B) or (C) once CI-11 has reported]`
+
+**Background:** Filed by repo-3. `quotapick run` (the router's only way to spend a credit pool) runs Fable with tools removed, on an API key, with no sandbox wrapper. Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container` (`profiles/pundits.json:41-51`), `scripts/grade.py:998` refuses any other sandbox, and `judge_requests` is part of the hash that makes the contract ID. So a credit grade filed under today's contract ID would claim a sandbox it never ran in. If instead the contract is amended to name the credit harness, the contract ID changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as `stale_cache`, and `aggregate.py` refuses to mix contracts (`scripts/aggregate.py:1429`), so the whole pilot is graded again (about $380 by the 2026-10-18 estimate). That is more than pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's share into the pundits predictions scale-up, so a re-grade would run on the November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16). CI-11 (`data/experiments/fable-credit-drift-20261018/`) was to grade day 1 on d and day 2 on c; it stopped after day 1 (`docs/LEDGER-predictions.md`), with day 1 showing credit minus subscription -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman 0.939 (`results.md`).
+
+**Impact:** The pundits full grade either stays on the subscription harness, or costs about $380 of credit and a contract change.
+
+**Fix:** Options: (A) keep pundits grading on the subscription harness, at no cost; (B) amend the contract to name the credit harness and re-grade on the November pools; (C) wait for CI-11's answer, then choose A or B. Recommended: C, because B needs the November pools either way, which stay open for weeks after CI-11 reports, and CI-11 says whether credit-served Fable scores match subscription-served ones before $380 is spent on that premise. If B: a contract v3 in `profiles/pundits.json`, the migration path for the 312 grades, and `docs/agents/PUNDITS.md`.
+
+*Risks and edge cases:* a contract change invalidates every pundits grade at once; the daemon must be stopped first.
+
+*Why xhigh not high:* a contract hash, $380 of credit and the whole pundits corpus.
+
+**Touch points:** `profiles/pundits.json:41-51`, `scripts/grade.py:576-610`, `:998`, `scripts/aggregate.py:1429`, `docs/agents/PUNDITS.md`, `docs/LEDGER-pundits.md`.
+
+---
+
+### VI-18. The pundits page has no evidence drawer  `[difficulty: high]`  `[filed: 2026-10-12]`  `[BLOCKED: the P7 quote audit (300 quotes, G-attribution-quotes) has run and decided the quote filter]`
+
+**Background:** The leaders page shows, per person, each judge's reasoning and evidence quotes for every graded transcript (`scripts/build_site.py:474-600`, the drawer). The pundits page (`scripts/build_study_site.py:429`, `render`) lists each board recording with its link, venue and score since 2026-10-12, but not what the judges wrote; the data is in `results_audit.json`. Not done, deliberately: the quotes would appear credited to a named political commentator, and attribution is not yet measured. VI-21 holds 89 judge quotes credited to the subject that do not place in the transcript, and the P7 quote audit has not run. Publishing the drawer first would put possibly misattributed words beside a person's name.
+
+**Impact:** A reader of the pundits page cannot see the evidence behind a score.
+
+**Fix:**
+1. Port `build_site.py`'s drawer into `build_study_site.py`, reading the pundits `results_audit.json`.
+2. Apply the quote filter the P7 audit decides (VI-21's outcome) before any quote is rendered.
+3. Tests as for the leaders drawer; `docs/agents/SITES.md` records the page size and shape.
+
+*Risks and edge cases:* the page size limit in `docs/agents/SITES.md`; the leaders drawer is loaded from a separate audit file per person for that reason.
+
+*Why high not medium:* a port across two site builders plus a filter whose rule is a measurement result.
+
+**Touch points:** `scripts/build_study_site.py:429`, `scripts/build_site.py:474-600` (read only), the pundits site tests, `docs/agents/SITES.md`.
+
+---
+
+### VI-19. An unsupported dimension removes the whole recording, though the plan says it should still count toward the dimensions it supports  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: the pundits full grade, or a second recording with an unsupported dimension; moves the published pundits board, repo-3's lane]`
+
+**Background:** Found while asking why `asmongold/asmongold-tv-ks77-g` is missing from `results.json` despite four schema-valid grades. Three of its four grades mark `d1_steelmanning` `unsupported` (fable/blinded, gemini/blinded, gemini/open). `scripts/aggregate.py:1248` marks each such grade `_excluded = "unsupported_dimension"`, which removes the whole grade, and then `drop_partial_panels` (`:115`) drops the fourth, fully supported fable/open grade as an incomplete panel. The recording contributes to no dimension. `docs/PUNDITS-PLAN.md:241-246` ("Anchors and minimum evidence") says otherwise: a transcript with any unsupported dimension has no `overall`, still counts toward each dimension it supports, and ranking by overall uses only transcripts with all three supported. Re-running `aggregate.py --study pundits` on a scratch clone of data-pundits at `dced184` reproduces the committed result: 154 transcripts, the same one partial panel, and `grades_excluded_unsupported_dimension 3` (`:1696`), so the loss is counted rather than silent. The reporting half is done: `drop_partial_panels` names a cell removed earlier and why (`:164`), so the report reads "missing gemini/open (removed: unsupported_dimension)". `docs/PUNDITS-RELEASE-PLAN.md:198-201` asks the operator to choose one rule and delete the other sentence from the plan.
+
+**Impact:** Size today: 3 grades, 1 recording. Per-dimension counting also has to decide what a partial panel means per dimension: here d1 has one supported cell out of four, while d2 and d3 have all four.
+
+**Fix:**
+1. Decide the rule (plan text or code) and delete the other sentence from `docs/PUNDITS-PLAN.md`.
+2. If the plan wins: `aggregate.py` keeps a grade with an unsupported dimension for the dimensions it supports, gives the transcript no `overall`, and `drop_partial_panels` works per dimension; a fixture test with the asmongold shape, failing first.
+3. Re-aggregate on a scratch clone and diff against the committed result before the daemon clone deploys.
+
+*Risks and edge cases:* a per-dimension panel rule changes every pundits score's denominator, not just this recording's.
+
+*Why high not medium:* a scoring rule with a plan decision attached.
+
+**Touch points:** `scripts/aggregate.py:115-164`, `:1248`, `:1696`, its pundits tests, `docs/PUNDITS-PLAN.md:241-246`, `docs/PUNDITS-RELEASE-PLAN.md:198-201`, `docs/agents/SCORING.md`.
+
+---
+
+### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[difficulty: medium]`  `[filed: 2026-10-11]`  `[BLOCKED: repo-3 only (pundits daemon, judge quota, about 8 calls)]`
+
+**Background:** `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
+
+**Impact:** Until the re-grade, the pundits grading loop exits 1 on every cycle after the normalize, and four board scores rest on text in which a judge read "Tim [SUBJECT]" for Tim Walz.
+
+**Fix:** From the pundits daemon clone: run the normalize, then `grade.py --study pundits --force` on the eight cells, then aggregate; record the before-and-after scores in `docs/LEDGER-pundits.md`. One known residual stays: `mehdi-hasan/al-jazeera-english-bwb6x8` keeps "Mary Hassen", a caption corruption after a real given name; it is ungraded.
+
+**Touch points:** `data-pundits/transcripts_blind/` (the 14 files), `data-pundits/grades/{fable,gemini}/{ben-shapiro,matt-walsh}/` (the 8 cells), `docs/LEDGER-pundits.md`, `docs/PUNDITS-RELEASE-PLAN.md:49-51`.
+
+---
+
+### VI-21. 89 judge quotes credited to the subject do not place in the open transcript, and nobody has said whether a tidied quote counts as verbatim  `[difficulty: high]`  `[filed: 2026-09-19]`  `[BLOCKED: operator decides whether a quote with fillers removed or a caption error corrected is verbatim under the rubric]`
+
+**Background:** Of 3,290 subject quotes in the 312 live pundits grades, `pundits_verify_page.locate` (`scripts/pundits_verify_page.py:191`) first failed to place 137. Re-measured 2026-10-11 after three matcher fixes (`[AFFILIATION]` as a placeholder for up to five words, `_norm` at `:181` stripping edge quote marks and curly apostrophes, an empty quote counted as `empty`): against `transcripts_open/`, located 3,198, not located 89, empty 3 (`suspect_quotes` at `:238`; the full re-measurement is the archived entry "RE-MEASURED AND PARTLY FIXED 2026-10-11", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits). Of the 89, 84 share at least 80% of their three-word sequences with the transcript and 5 share 73 to 77%; all 5 were read in context, and every one is a judge tidying the captions, never a paraphrase (a dropped filler, a joined caption-split number, a corrected typo). 86 of the 89 are Gemini. A matcher that also skipped fillers and immediate repeats would place 29 of the 89; not done, because it makes "located" fuzzier and the remaining 60 differ in more varied ways.
+
+**Impact:** The quote cap and the minimum-subject-quotes rule both assume quotes are real; 89 of them are either matcher misses or rubric violations, mostly Gemini's, and the pundits evidence drawer (VI-18) waits on the answer.
+
+**Fix:**
+1. The operator decides. If tidied quotes are verbatim: extend the matcher (fillers, immediate repeats) with a failing-first case in `scripts/test_pundits_verify_page.py`, re-measure, and read the remainder one by one. If not: count them as rubric violations per judge, report the rate in `aggregate.quote_cap_report()`'s neighbourhood, and say so in `docs/agents/PUNDITS.md`.
+2. Either way, the 60 that no matcher rule places are read one by one and classified.
+
+*Risks and edge cases:* a fuzzier matcher hides real paraphrase; a stricter rubric penalises Gemini 86 to 3.
+
+*Why high not medium:* a rubric interpretation with a per-judge consequence.
+
+**Touch points:** `scripts/pundits_verify_page.py:181-238`, `scripts/test_pundits_verify_page.py`, `scripts/aggregate.py` (the quote report), `docs/agents/PUNDITS.md`.
+
+---
+
+### VI-22. `grade.py --regrade-invalid` exists for leaders and is off, so 35 malformed leaders records stay as they are  `[difficulty: low]`  `[filed: 2026-10-11]`  `[BLOCKED: operator decides to turn it on; spends about 35 Fable calls and moves the published board]`
+
+**Background:** Counted 2026-10-11 in the shared leaders data: 35 records failed validation while still carrying an attempt at scores, 26 with `dimensions` and 9 in a judge-invented shape with `overall`; six more failed as refusals or non-answers and stay put by the refusal rule in `docs/agents/JUDGES.md`. `scripts/grade.py:446-473` implements `--regrade-invalid` as an opt-in: a malformed record is moved under `grades/_obsolete/` byte for byte and graded again. `scripts/grade_loop.sh:205` and `:218` do not pass the flag, and `scripts/test_leaders_regrade_invalid.py:150` pins that they do not. It is opt-in because default-on would make repo-0's daemon spend about 35 calls and move the published board on its next code pull. The archived entry "LEADERS HALF FIXED 2026-10-11 as an opt-in" (`docs/BACKLOG-RESOLVED.md`, Verbatim Pundits) holds the count and the proof.
+
+**Impact:** 35 leaders cells that could hold a score hold a malformed record, and the board is computed without them.
+
+**Fix:** When the operator says so: one manual pass from repo-0, `grade.py ... --modes blinded --regrade-invalid`, then aggregate and deploy; or add the flag to the loop's grade calls at `grade_loop.sh:205` and `:218` and change the pin at `test_leaders_regrade_invalid.py:150` in the same commit. Record the before-and-after board in `docs/LEDGER-leaders.md` or the deploy note.
+
+**Touch points:** `scripts/grade_loop.sh:205`, `:218`, `scripts/test_leaders_regrade_invalid.py:147-150`, `scripts/grade.py:446-473` (read only).
+
+---

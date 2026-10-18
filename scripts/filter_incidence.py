@@ -14,7 +14,8 @@ uniform tax on the corpus, which it is not.
 
 This measures. It does not change the cap. The cap is hashed into contract_id
 through RUBRIC.md and judge_output.schema.json, so moving it makes every grade
-already collected incompatible; that decision is recorded in BACKLOG.md.
+already collected incompatible; that decision is recorded in
+docs/BACKLOG-RESOLVED.md ("The 25-word quote cap is uneven").
 
   .venv/bin/python scripts/filter_incidence.py --study pundits \
       --logs data-pundits/logs/p8a2 data-pundits/logs/p8a \

@@ -48,7 +48,7 @@ operator", with its cost.
 - **8 blinded grades are stale.** The blinder fix of 2026-10-11 (`8691906`) changes the
   blinded text of 4 graded recordings, so `grade.py` reports them as `stale_cache`. repo-3
   re-grades them with `--force`: two Ben Shapiro and two Matt Walsh recordings, about 8
-  calls. See BACKLOG, "Verbatim Pundits".
+  calls. See BACKLOG.md VI-20.
 - **The open score's interval and the resample count** are in the code since `31dffd9` and
   appear on the next pundits aggregate.
 - **The next pundits deploy needs a `results.json` from the 2026-10-12 code** (the loop's next
@@ -186,7 +186,7 @@ flag below exists in the scripts as of 2026-10-12.
 4. **Disclosure of lean-split figures.** The lean labels are private, and every P10 lean gate
    is a figure split by lean. With few people, such a figure next to public per-person facts
    can reveal who is in which group. On the pilot, the one lost recording is Asmongold's, and
-   BACKLOG names it; a lean-split loss table would then name his lean.
+   BACKLOG.md VI-19 names it; a lean-split loss table would then name his lean.
    - (a) Publish the group figures, as the plan intends. Cost: a reader may infer some leans.
    - (b) Publish verdicts only, and withhold the estimates, intervals and lean-group tables.
      Cost: a reader cannot check a verdict's size.
@@ -197,7 +197,7 @@ flag below exists in the scripts as of 2026-10-12.
 5. **A contradiction inside P5.** "Anchors and minimum evidence" says a recording with an
    unsupported dimension still counts toward the dimensions it supports. "Complete cells" says
    a recording needs every dimension supported. The code follows "Complete cells", and that
-   costs one pilot recording today (`asmongold-tv-ks77-g`, BACKLOG). Choose one rule and
+   costs one pilot recording today (`asmongold-tv-ks77-g`, BACKLOG.md VI-19). Choose one rule and
    delete the other sentence from the plan. The page's Method section states the rule the
    code follows ("that recording is left out of the score", since 2026-10-12); if you choose
    the other rule, change that sentence in `profiles/pundits.site.json` and its test in
@@ -296,7 +296,7 @@ failing-then-passing test:
   would have compared raw scores in silence;
 - the footer named the HEAD data commit while the page rendered uncommitted output; it now
   says "plus uncommitted changes" when that is so.
-One is filed in BACKLOG ("Verbatim Pundits"): a file read can count as a web search.
+One is filed as BACKLOG.md VI-7: a file read can count as a web search.
 
 **A second review, of the fixes themselves**, found 11 more defects, none severe, and all
 were fixed with failing-then-passing tests. The four that mattered most:

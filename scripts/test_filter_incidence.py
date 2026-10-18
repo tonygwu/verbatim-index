@@ -13,7 +13,8 @@ diagnostic, so the cap read as an even 8% tax when it was not one.
 
 This is the measurement, not a change to the cap. The cap itself is hashed into
 contract_id (RUBRIC.md and judge_output.schema.json), so moving it re-grades the
-whole corpus; that decision is separate and is recorded in BACKLOG.md.
+whole corpus; that decision is separate and is recorded in
+docs/BACKLOG-RESOLVED.md ("The 25-word quote cap is uneven").
 
   COUNT     every rejected record is counted once, from records and logs together
   GROUPS    incidence is broken down by judge, by mode and by person

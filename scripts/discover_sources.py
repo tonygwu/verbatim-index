@@ -88,9 +88,10 @@ def log(msg: str) -> None:
 
 # Pacing. 9925c0e paced `discover_pundits.py` and left THIS file untouched, so
 # the leaders path kept firing yt-dlp searches with no sleep flag from EIGHT
-# worker threads at once. That is the configuration BACKLOG.md blames for the
-# pundits P6 pilot's 202 IP blocks in 218 first-pass errors, and this machine was
-# IP-blocked on YouTube the day it was noticed.
+# worker threads at once. That configuration ran while the pundits P6 pilot hit
+# 202 IP blocks in 218 first-pass errors (docs/BACKLOG-RESOLVED.md, Shared fetcher,
+# holds the record and the withdrawal of the claim that the fetch pace caused
+# them), and this machine was IP-blocked on YouTube the day it was noticed.
 #
 # `--sleep-requests` is the flag that covers data extraction, which is what a
 # flat-playlist search is. `--sleep-interval` covers media downloads and does not
