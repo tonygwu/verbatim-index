@@ -327,6 +327,11 @@ def stage_audit(job: dict, stage: str, inputs: dict, prompts: list[str]) -> dict
             "harness": pin,
             "astra_model": args.astra_model if pin in ("auto", "astra") else None,
             "gemini_model": args.gemini_model if pin in ("auto", "gemini") else None,
+            # A credit answer is another harness with the same family name, so a run
+            # without the pools never takes it as cached, nor the other way round.
+            # Only when set, so every audit written without credit keeps its hash.
+            **({"fable_harness": "quotapick run"} if pin == "fable" and getattr(args, "fable_credit_pools", "")
+               else {}),
         },
     }
 
@@ -445,15 +450,18 @@ def extract_one(job: dict) -> dict:
         return {**base, "status": "dry_run", "prompt_chars": len(prompt), "workdir": str(workdir)}
 
     save_inputs(job, "extract", slug, sid, inputs, [prompt], audit)
+    # Bound before the pick, as in verify, so a failure records the route it was
+    # sent on: for a credit route that is the pools (review 2026-10-18).
+    route = None
     try:
         route = job["router"].pick(None if args.extractor == "auto" else args.extractor, None)
         response_path = job["out"] / "_raw" / "responses" / slug / f"{sid}__extract__{job['run_id']}.json"
         text, telemetry, account = call_harness(route, prompt, args.timeout, workdir, args, response_path)
     except subprocess.TimeoutExpired:
         detail = f"{E_TIMEOUT}: no answer within {args.timeout}s"
-        return _extract_failed(meta, meta_path, base, detail, t0, args)
+        return _extract_failed(meta, meta_path, base, detail, t0, args, route=route)
     except (RuntimeError, OSError) as exc:
-        return _extract_failed(meta, meta_path, base, str(exc), t0, args)
+        return _extract_failed(meta, meta_path, base, str(exc), t0, args, route=route)
 
     raw_path = job["out"] / "_raw" / "extract" / route["harness"] / slug / f"{sid}__{route['harness']}__{job['run_id']}.txt"
     L.write_prediction_file(raw_path, text)
@@ -793,8 +801,13 @@ def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
         return None
     import credit_run
     stages = ["extract", "verify"] if args.stage == "both" else [args.stage]
-    if not any((args.extractor if s == "extract" else args.verifier) == "fable" for s in stages):
+    pins = [args.extractor if s == "extract" else args.verifier for s in stages]
+    if "fable" not in pins:
         return "--fable-credit-pools needs a stage pinned to Fable (--extractor fable or --verifier fable)"
+    if "auto" in pins:
+        # The other stage's "auto" pick goes to the router unrestricted, so it can
+        # land on a Fable subscription in the same run.
+        return "--fable-credit-pools needs every stage that runs pinned, not auto: pin the other stage too"
     if args.timeout > credit_run.MAX_TIMEOUT_S:
         return (f"--timeout {args.timeout} is over quotapick run's {credit_run.MAX_TIMEOUT_S}s limit; a longer "
                 f"call is cut off and still billed, so pass --timeout {credit_run.MAX_TIMEOUT_S} or less")

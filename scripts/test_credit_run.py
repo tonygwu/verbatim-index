@@ -9,7 +9,9 @@
             exit 2 and any other non-zero exit are each refused with their label
   DONE      no_candidate, and exhausted once every named pool was tried, raise
             PoolsExhausted; exhausted with a pool left untried is a plain failure
-  SPENT     a billed failure still reports its cost; a timeout names none and reports none
+  SPENT     a billed failure still reports its cost; a call retried on a second pool
+            reports both attempts, not only the last (quotapick's own cost_usd); a
+            timeout names none and reports none
   WHY       a failure's message carries each attempt, the router's reason and its warnings
   RAW       the full response is written to disk before any check runs
   LIMITS    a timeout over 1800 s and a comma inside one pool name are refused before any call
@@ -46,7 +48,8 @@ def good(**over) -> dict:
               "model_requested": MODEL, "models_seen": [MODEL], "effort": "max", "auth": "api_key"}
     resp = {"run_contract": 1, "ok": True, "outcome": "ok", "text": "ANSWER", "served": served,
             "usage": {"input_tokens": 10, "output_tokens": 900, "output_tokens_details": {"thinking_tokens": 700}},
-            "cost_usd": 1.25, "attempts": [{"account": "anthropic_api_e", "outcome": "ok", "duration_ms": 4000}],
+            "cost_usd": 1.25,
+            "attempts": [{"account": "anthropic_api_e", "outcome": "ok", "duration_ms": 4000, "cost_usd": 1.25}],
             "request_id": "rid"}
     for k, v in over.items():
         if k.startswith("served_"):
@@ -157,31 +160,43 @@ def main() -> int:
         print("\n[SPENT]")
         seen = []
         try:
-            call(tmp, good(ok=False, outcome="wrong_model", cost_usd=4.5), spent=seen.append)
+            call(tmp, good(ok=False, outcome="wrong_model", cost_usd=4.5,
+                           attempts=[{"account": "anthropic_api_e", "outcome": "wrong_model", "cost_usd": 4.5}]),
+                 spent=seen.append)
         except C.CreditRunError:
             pass
         check("a billed failure still reports its cost", seen == [4.5], str(seen))
         seen = []
         try:
-            call(tmp, good(ok=False, outcome="timeout", cost_usd=None), spent=seen.append)
+            call(tmp, good(ok=False, outcome="timeout", cost_usd=None,
+                           attempts=[{"account": "anthropic_api_e", "outcome": "timeout", "cost_usd": None}]),
+                 spent=seen.append)
         except C.CreditRunError:
             pass
         check("a timeout names no cost and reports none", seen == [], str(seen))
-        tel = call(tmp, good(attempts=[{"account": "anthropic_api_e", "outcome": "ok", "duration_ms": 4000},
-                                       {"account": "anthropic_api_b", "outcome": "ok"}]))[1]
+        seen = []
+        tel = call(tmp, good(cost_usd=1.2, attempts=[
+            {"account": "anthropic_api_e", "outcome": "transient", "duration_ms": 900, "cost_usd": 1.0},
+            {"account": "anthropic_api_b", "outcome": "ok", "duration_ms": 4000, "cost_usd": 1.2}],
+            served_account="anthropic_api_b"), spent=seen.append)[1]
+        check("a call retried on a second pool reports both attempts' cost, not only the last",
+              seen == [2.2] and tel["cost_usd"] == 2.2 and tel["cost_usd_final_attempt"] == 1.2, f"{seen} {tel}")
+        tel = call(tmp, good(attempts=[{"account": "anthropic_api_e", "outcome": "transient", "duration_ms": 4000,
+                                        "cost_usd": 0.1},
+                                       {"account": "anthropic_api_e", "outcome": "ok", "cost_usd": 1.25}]))[1]
         check("duration_ms is None, not a partial sum, when an attempt gives no duration",
               tel["duration_ms"] is None and tel["attempts"] == 2, str(tel))
 
         print("\n[WHY]")
         ok, detail = raises(tmp, good(ok=False, outcome="transient", cost_usd=0.2,
                                       attempts=[{"account": "anthropic_api_e", "outcome": "transient",
-                                                 "detail": "overloaded_error"}],
+                                                 "detail": "overloaded_error", "cost_usd": 0.2}],
                                       decision={"reason": "anthropic_api_e wins"}, warnings=["pool b unpriced"]),
                             "CreditRunError", "outcome_transient")
         check("the message names the attempt, its detail, the router's reason and the warnings",
               ok and all(x in detail for x in ("anthropic_api_e: transient overloaded_error",
                                                "router: anthropic_api_e wins", "warnings: pool b unpriced",
-                                               "cost_usd 0.2")), detail)
+                                               "billed_usd 0.2")), detail)
 
         print("\n[LIMITS]")
         for label, kwargs in (("a timeout over 1800 s", {"timeout_s": 1801}),

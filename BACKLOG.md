@@ -800,13 +800,27 @@ they were filed (50aeaac).
   If instead the contract is amended to name the credit harness, the contract ID
   changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as
   `stale_cache`, and `aggregate.py` refuses to mix contracts, so the whole pilot
-  is graded again (about $380 by the 2026-10-18 estimate). Options: (A) keep
-  pundits grading on the subscription harness, at no cost; (B) amend the contract
-  and re-grade; (C) decide after the CI-11 drift experiment in
-  `data/experiments/fable-credit-drift-20261018/` shows whether credit-served
-  Fable scores match subscription-served ones. Recommend C, because B spends
-  $380 to answer a question CI-11 answers for free. Comes back when CI-11 has
-  results.
+  is graded again (about $380 by the 2026-10-18 estimate). That is more than
+  pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's
+  share into the pundits predictions scale-up, so a re-grade would run on the
+  November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16).
+  CI-11 (the Fable drift experiment in `data/experiments/fable-credit-drift-20261018/`)
+  grades day 1 on d and day 2 on c, so its answer arrives after d expires and
+  close to c's expiry. Options: (A) keep pundits grading on the subscription
+  harness, at no cost; (B) amend the contract and re-grade on the November pools;
+  (C) wait for CI-11's answer, then choose A or B. Recommend C: B needs the
+  November pools either way, which stay open for weeks after CI-11 reports, and
+  CI-11 says whether credit-served Fable scores match subscription-served ones
+  before $380 is spent on that premise. Comes back when CI-11 has results.
+
+- **Speaker drafts from the two harnesses share one file.** Filed 2026-10-18 by
+  repo-3, from the round-2 review. `pundits_speaker_infer.py infer` writes
+  subscription drafts and `--credit-pools` drafts to the same
+  `speaker_inference.jsonl`, and `merge` writes `checked_by:
+  model:claude-fable-5-1` for both. Each draft's `telemetry.harness` does say
+  "quotapick run" for a credit draft, so nothing is lost, but `merge` hides it.
+  All 218 P6b drafts are credit drafts today. Fix: `merge` names the harness in
+  `checked_by` or a field of its own. Quota-free.
 
 - **`extract_predictions.py` takes no `--study`.** Filed 2026-10-18 by repo-3.
   Nothing stops a pundits run from writing into the leaders data repo: the

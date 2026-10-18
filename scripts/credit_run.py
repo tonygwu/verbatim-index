@@ -15,9 +15,11 @@ because it spends whatever quota would expire first, credit or not. With
 `--only`, a call never leaves the named pools, and the router picks among them.
 
 Every field the caller asked for is checked against the response's `served`
-block, which quotapick fills from the CLI's own stream, never from the request.
-`spent` receives every cost the response names, a failed call's included. A
-timeout names none: quotapick books an estimate in its own ledger instead.
+block. quotapick reads the served model from the CLI's own stream; `effort` is
+the --effort flag it passed, so that check proves the flag, not the model's use.
+`spent` receives the sum of every attempt's cost, a failed call's included: the
+response's own top-level cost_usd is the LAST attempt's only. An attempt that
+timed out names no cost; quotapick books an estimate in its own ledger instead.
 """
 from __future__ import annotations
 
@@ -34,7 +36,10 @@ MAX_ATTEMPTS = 3
 
 
 class PoolsExhausted(RuntimeError):
-    """Every named pool is empty, or none may take this call. Nothing was spent."""
+    """No named pool may take this call: each is empty, or held by calls in flight,
+    or unpriced. The last attempt spent nothing; an earlier one may have, and its
+    cost reached `spent`. Running holds can cause this while money remains, so
+    a run that ends here may be re-run with one worker to use up the rest."""
 
 
 class CreditRunError(RuntimeError):
@@ -48,8 +53,8 @@ def request_for(prompt: str, *, model: str, effort: str, timeout_s: int, expecte
     # One attempt per named pool, up to quotapick's ceiling, so an empty pool hands
     # the call to the next one: quotapick retries exhaustion, auth, transient and
     # wrong-model failures elsewhere and never a timeout. Exhaustion and auth cost
-    # nothing. A wrong-model or transient attempt may be billed, and its cost is in
-    # the response's cost_usd, which covers every attempt.
+    # nothing. A wrong-model or transient attempt may be billed; its cost is in its
+    # own attempts[] entry, and billed_usd sums them.
     return {"model": model, "effort": effort, "prompt": prompt, "timeout_s": timeout_s,
             "expected_cost_usd": expected_cost_usd, "max_attempts": min(MAX_ATTEMPTS, len(pools)),
             "client": client, "request_id": request_id}
@@ -68,7 +73,7 @@ def check_response(resp: dict, *, model: str, effort: str, pools: list[str]) -> 
     if outcome == "no_candidate" or (outcome == "exhausted" and set(pools) <= tried):
         raise PoolsExhausted(f"{outcome}: {_why(resp)}")
     if outcome != "ok" or resp.get("ok") is not True:
-        raise CreditRunError(f"outcome_{outcome}: cost_usd {resp.get('cost_usd')!r}; {_why(resp)}")
+        raise CreditRunError(f"outcome_{outcome}: billed_usd {billed_usd(resp)!r}; {_why(resp)}")
     served = resp.get("served") or {}
     seen = served.get("models_seen") or []
     if served.get("model") != model or not seen or any(m != model for m in seen):
@@ -111,14 +116,15 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
     if proc.returncode != 0:
         raise CreditRunError(f"cli_exit_{proc.returncode}: {(proc.stderr or proc.stdout).strip()[:400]}")
     resp = json.loads(proc.stdout)
-    if spent is not None and isinstance(resp.get("cost_usd"), (int, float)):
-        spent(resp["cost_usd"])
+    billed = billed_usd(resp)
+    if spent is not None and billed is not None:
+        spent(billed)
     served = check_response(resp, model=model, effort=effort, pools=pools)
     usage = resp.get("usage") or {}
     durations = [a.get("duration_ms") for a in resp.get("attempts") or []]
     return resp.get("text") or "", {
         "harness": "quotapick run", "credit_pool": served["account"], "served": served,
-        "cost_usd": resp.get("cost_usd"), "request_id": resp.get("request_id"),
+        "cost_usd": billed, "cost_usd_final_attempt": resp.get("cost_usd"), "request_id": resp.get("request_id"),
         "attempts": len(durations),
         "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
         "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
@@ -127,6 +133,16 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
         # None, not a partial sum, when any attempt does not say how long it took.
         "duration_ms": sum(durations) if durations and all(isinstance(d, int) for d in durations) else None,
     }
+
+
+def billed_usd(resp: dict) -> float | None:
+    """What every attempt of this call cost, summed; None when no attempt names a cost.
+
+    quotapick's top-level cost_usd is only the final attempt's (run.py: `cost_usd =
+    final.cost_usd`), so a call retried on a second pool would under-count.
+    """
+    costs = [a["cost_usd"] for a in resp.get("attempts") or [] if isinstance(a.get("cost_usd"), (int, float))]
+    return sum(costs) if costs else None
 
 
 def _why(resp: dict) -> str:

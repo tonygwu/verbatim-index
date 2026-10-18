@@ -11,6 +11,10 @@
             for the different-family rule, takes the pool as its account, and carries
             "quotapick run" in its telemetry
   TAXONOMY  exhaustion and every other credit failure have their own labels
+  FAILED    an extraction that fails on credit records the pools it was sent to, through
+            extract_one itself, not only the helper
+  CACHE     a credit answer and a subscription answer have different cache audits, and an
+            audit written without credit is unchanged
 
 No quota: credit_run.run is replaced by a stub.
 
@@ -60,9 +64,15 @@ def main() -> int:
             ("an _experiments folder outside predictions", {}, REPO / "data" / "_experiments" / "x"),
             ("an experiments folder inside a predictions tree", {},
              REPO / "data" / "predictions" / "nate-silver" / "experiments" / "x"),
-            ("a folder with no experiment marker at all", {}, REPO / "data-pundits" / "logs" / "x")):
+            ("a folder with no experiment marker at all", {}, REPO / "data-pundits" / "logs" / "x"),
+            ("an auto extractor in a run whose verify stage is pinned to Fable",
+             {"stage": "both", "extractor": "auto", "verifier": "fable"}, exp),
+            ("an auto verifier in a run whose extract stage is pinned to Fable",
+             {"stage": "both", "extractor": "fable", "verifier": "auto"}, exp)):
         why = X.credit_pools_refusal(["p"], SimpleNamespace(**{**base, **over}), out)
         check(f"{label} is refused", why is not None, str(why))
+    check("both stages pinned, Fable extracting and Gemini verifying, is allowed", X.credit_pools_refusal(
+        ["p"], SimpleNamespace(**{**base, "stage": "both", "verifier": "gemini"}), exp) is None)
     check("the pundits data repo's experiments folder is allowed", X.credit_pools_refusal(
         ["p"], SimpleNamespace(**base), REPO / "data-pundits" / "experiments" / "x") is None)
 
@@ -121,6 +131,55 @@ def main() -> int:
             credit_run.run = real
         check(f"{type(exc).__name__} is labelled {label}", got == label, str(got))
     check("the taxonomy lists each label once", len(L.ALL_ERROR_TYPES) == len(set(L.ALL_ERROR_TYPES)))
+
+    print("\n[FAILED]")
+    import tempfile
+    patched = {(X, n): getattr(X, n) for n in ("read_meta", "write_meta", "read_transcript", "stage_audit",
+                                               "save_inputs", "paths_for")}
+    patched |= {(L, n): getattr(L, n) for n in ("build_extraction_prompt", "transcript_id_from_path")}
+    patched[(credit_run, "run")] = credit_run.run
+    written = {}
+    try:
+        X.read_meta = lambda p: {"extract": {}, "verify": {"status": "not_run"}}
+        X.write_meta = lambda p, m: written.update(m)
+        X.read_transcript = lambda *a: {"text": "t", "leader_slug": "s", "source_id": "i"}
+        L.build_extraction_prompt = lambda *a, **k: "PROMPT"
+        X.stage_audit = lambda *a, **k: {}
+        X.save_inputs = lambda *a, **k: None
+        X.paths_for = lambda out, slug, sid: (out / "a.jsonl", out / "m.json")
+        L.transcript_id_from_path = lambda p: "slug/sid"
+
+        def boom(*a, **k):
+            raise credit_run.PoolsExhausted("no_candidate: attempts [no attempts recorded]")
+        credit_run.run = boom
+        rt = X.Router.__new__(X.Router)
+        rt.credit_pools, rt.accounts, rt.exclude_ids = ["anthropic_api_d", "anthropic_api_c"], [], []
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            job = {"args": SimpleNamespace(dry_run=False, force=False, extractor="fable", timeout=1800),
+                   "path": str(td / "x.json"), "out": td, "run_id": "run1", "exclusions": {},
+                   "contract": {"contract_id": "c"}, "roster": {}, "spec": None, "schema_text": "",
+                   "header_template": None, "workroot": td / "work", "router": rt}
+            res = X.extract_one(job)
+    finally:
+        for (mod, name), fn in patched.items():
+            setattr(mod, name, fn)
+    ext = written.get("extract", {})
+    check("an extraction that fails on credit records the pools it was sent to, and its label",
+          ext.get("account") == "credit:anthropic_api_d,anthropic_api_c" and ext.get("harness") == "fable"
+          and ext.get("error_type") == L.E_CREDIT_EXHAUSTED and res.get("account") == ext.get("account"), str(ext))
+
+    print("\n[CACHE]")
+    job = {"args": SimpleNamespace(extractor="fable", verifier="auto", astra_model="a", gemini_model="g",
+                                   fable_credit_pools="anthropic_api_d,anthropic_api_c"),
+           "release": {"release": "r"}, "code_revision": "c", "input_data_revision": "d"}
+    credit = X.stage_audit(job, "extract", {"x": 1}, ["P"])
+    job["args"].fable_credit_pools = ""
+    sub = X.stage_audit(job, "extract", {"x": 1}, ["P"])
+    check("a credit answer's cache audit differs from a subscription answer's",
+          credit != sub and credit["model_request"]["fable_harness"] == "quotapick run", f"{credit} {sub}")
+    check("an audit written without credit has no new key, so existing caches still match",
+          sub["model_request"] == {"harness": "fable", "astra_model": None, "gemini_model": None}, str(sub))
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

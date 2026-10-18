@@ -160,7 +160,8 @@ there. Add new material under the same headings.
   `logs/p6b/_raw/speaker_inference/<slug>/<sid>.<n>.json` (the first run of 2026-10-18 wrote
   `<sid>.json`, which counts as attempt 1). Re-running retries only rows with an error. Once the
   named pools are out, no further call is made and the remaining rows are left to do; any error or
-  skipped row exits 1. `review --set
+  skipped row exits 1. "Out" can also mean calls in flight hold the last of the money, so re-run
+  with `--workers 1` to spend the rest. `review --set
   p6b` writes `speaker_review_queue.json`: calibration against the operator's labels, and the
   rows a person should still check. A P6b label has no `main_speaker`, because the guide stopped
   asking on 2026-09-15, so review and calibration compare only the fields a person labelled. A

@@ -51,8 +51,11 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   pool and its `extraction.telemetry` names `harness: "quotapick run"` and `credit_pool`. It
   refuses `--out` outside an experiment folder (a predictions tree's `_experiments/`, or an
   `experiments/` folder with no predictions tree above it), `--timeout` over 1800, and a run where
-  no stage is pinned to Fable. Failures are `credit_pool_exhausted` (nothing spent; the pools are
-  done) and `credit_run_failed: <label>`. Proof: `scripts/test_predictions_credit.py`,
+  no stage is pinned to Fable. Failures are `credit_pool_exhausted` (no named pool would admit the call: each is
+  empty, or held by calls in flight, or unpriced; re-run with `--workers 1` to spend what holds
+  left) and `credit_run_failed: <label>`. A credit answer's cache audit names `fable_harness:
+  "quotapick run"`, so a run without the pools never takes it as cached. With the pools named,
+  every stage that runs must be pinned; `auto` is refused. Proof: `scripts/test_predictions_credit.py`,
   `scripts/test_credit_run.py`. First use: the pundits prediction pilot, now in the pundits
   data repo at `experiments/predictions-pilot-20261018/` (2026-10-18).
 
