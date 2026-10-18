@@ -5,6 +5,20 @@ Newest first.
 
 ## Judges
 
+- **Two code paths call `quotapick run`: `grade.call_fable_pool` and
+  `credit_run.run`.** Filed 2026-10-18 by repo-3. Both landed the same night
+  from two concurrent sessions. `grade.call_fable_pool` (repo-0) is the judge
+  path: one pool, Fable at max effort, labels from grade.py's taxonomy.
+  `credit_run.run` (repo-3) is the general path for the pundits speaker drafts
+  and `extract_predictions.py --fable-credit-pools`: a SET of pools for the
+  router to choose among, any model and effort, its own labels. They check the
+  same `served` fields today, and two copies of an identity check drift. Fix:
+  make `call_fable_pool` call `credit_run.run` with `pools=[pool]`, and map
+  `PoolsExhausted` and `CreditRunError` onto its labels, so `test_fable_pool.py`
+  and `test_credit_run.py` both stay green. Comes back when the CI-11 drift
+  experiment in `data/experiments/fable-credit-drift-20261018/` has finished,
+  because that run imports grade.py from repo-0's working tree.
+
 - **Gemini retries on the six longest transcripts.** Filed 2026-10-11 by repo-0
   (overnight run). Six blinded transcripts of 32,912 to 38,858 words have never
   had a Gemini grade, and every `grade_loop.sh` cycle calls Gemini up to 3 times

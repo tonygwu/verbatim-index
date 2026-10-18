@@ -119,6 +119,33 @@ def main() -> int:
     check("presence agreement counts every compared row", cal["subject_present"] == {"agree": 3, "of": 3}, str(cal))
     check("venue agreement counts only rows where the subject is present", cal["venue"] == {"agree": 1, "of": 2}, str(cal))
 
+    print("\n[UNLABELLED]")
+    # P6b labels carry no main_speaker: the guide stopped asking on 2026-09-15.
+    p6b_human = {"subject_present": True, "venue": "conversation", "political_content": True, "checked_by": "operator"}
+    check("a field the person never labelled is not a disagreement",
+          not any("main_speaker" in w for w in S.needs_review({**d, "main_speaker": False}, p6b_human)),
+          str(S.needs_review({**d, "main_speaker": False}, p6b_human)))
+    check("a labelled field still disagrees", any("venue" in w for w in S.needs_review({**d, "venue": "solo"}, p6b_human)))
+    try:
+        cal6 = S.calibration({"a": d, "b": {**d, "subject_present": False}}, {"a": p6b_human, "b": p6b_human})
+        check("calibration counts main_speaker only where a person labelled it",
+              cal6["main_speaker"] == {"agree": 0, "of": 0} and cal6["subject_present"] == {"agree": 1, "of": 2}
+              and cal6["high_confidence"] == {"rows": 2, "all_three_agree": 1}, str(cal6))
+    except KeyError as exc:
+        check("calibration counts main_speaker only where a person labelled it", False, f"KeyError {exc}")
+
+    print("\n[SETS]")
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "human_checklist.json").write_text(json.dumps({"z/last-first": {}, "a/second": {}, "m/third": {}}))
+        check("a P6b row is its position in the checklist file, from 1",
+              S.load_keys(root, "p6b") == {1: "z/last-first", 2: "a/second", 3: "m/third"}, str(S.load_keys(root, "p6b")))
+        (root / "checklist_table_keys.json").write_text(json.dumps({"7": "p/x", "2": "p/y"}))
+        check("a pilot row comes from its own key table", S.load_keys(root, "pilot") == {7: "p/x", 2: "p/y"})
+    check("both sets name a root and a manifest that exist in the code's own layout",
+          all(set(v) == {"root", "manifest"} for v in S.SETS.values()) and set(S.SETS) == {"pilot", "p6b"})
+
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
         print("failed: " + "; ".join(FAIL))

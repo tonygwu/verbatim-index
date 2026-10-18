@@ -87,8 +87,14 @@ E_UNGROUNDED = "quote_not_grounded"
 E_TRANSCRIPT_MISSING = "transcript_missing"
 E_CACHE_STALE = "cache_stale"
 E_POLICY = "policy_release_mismatch"
-ALL_ERROR_TYPES = tuple(_GRADE_ERROR_TYPES) + (
-    E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING, E_CACHE_STALE, E_POLICY)
+# A Fable call on API credit (credit_run.py). Exhausted costs nothing and means
+# the named pools are done; failed carries credit_run's own label after it.
+# grade.py's credit path uses the same exhaustion label, hence the dedupe below.
+E_CREDIT_EXHAUSTED = "credit_pool_exhausted"
+E_CREDIT_FAILED = "credit_run_failed"
+ALL_ERROR_TYPES = tuple(dict.fromkeys(tuple(_GRADE_ERROR_TYPES) + (
+    E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING, E_CACHE_STALE, E_POLICY,
+    E_CREDIT_EXHAUSTED, E_CREDIT_FAILED)))
 
 
 

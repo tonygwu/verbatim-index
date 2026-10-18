@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""One model call on prepaid Anthropic API credit, through `quotapick run`.
+
+Max plans grant monthly API credit that expires unused. `quotapick run`
+(tonygwu/llm-quota-router, the installed CLI; the library pinned in
+requirements.txt is v0.1.7 and has no `run`) spends it: one tool-less
+`claude -p --bare --tools "" --safe-mode --strict-mcp-config
+--no-session-persistence --max-budget-usd` call from an empty directory with the
+pool's API key. That is a different harness from the subscription argv in
+grade.fable_command, so every answer this returns names it in telemetry.
+
+The pools must be named. Measured 2026-10-18: with no `--only`, run sent a Fable
+call to the claude_e SUBSCRIPTION ("claude_e wins ... pool deadline in 11.4h"),
+because it spends whatever quota would expire first, credit or not. With
+`--only`, a call never leaves the named pools, and the router picks among them.
+
+Every field the caller asked for is checked against the response's `served`
+block, which quotapick fills from the CLI's own stream, never from the request.
+A billed failure still reports its cost to `spent`: a timed-out call is billed.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+#: The longest call `quotapick run` accepts. A longer --timeout is refused,
+#: never clamped: a call cut off at the limit is still billed.
+MAX_TIMEOUT_S = 1800
+
+#: Outcomes that mean the named pools are done. Neither costs anything, and a
+#: driver should stop dispatching rather than fail every remaining job.
+DONE_OUTCOMES = ("exhausted", "no_candidate")
+
+
+class PoolsExhausted(RuntimeError):
+    """The named pools are empty, or none may take this call. Nothing was spent."""
+
+
+class CreditRunError(RuntimeError):
+    """The call failed or was not served as asked. The message starts with a label."""
+
+
+def request_for(prompt: str, *, model: str, effort: str, timeout_s: int, expected_cost_usd: float,
+                request_id: str, client: str = "verbatim-index") -> dict:
+    if timeout_s > MAX_TIMEOUT_S:
+        raise ValueError(f"quotapick run accepts at most {MAX_TIMEOUT_S}s, not {timeout_s}s")
+    # One attempt: a retry on a second pool would bill twice for one answer, and
+    # the caller's own retry policy decides whether a failure is worth another try.
+    return {"model": model, "effort": effort, "prompt": prompt, "timeout_s": timeout_s,
+            "expected_cost_usd": expected_cost_usd, "max_attempts": 1,
+            "client": client, "request_id": request_id}
+
+
+def check_response(resp: dict, *, model: str, effort: str, pools: list[str]) -> dict:
+    """The served block, after every field is checked. Raises with a label otherwise."""
+    if resp.get("run_contract") != 1:
+        raise CreditRunError(f"run_contract: {resp.get('run_contract')!r}, this module reads 1")
+    outcome = resp.get("outcome")
+    if outcome in DONE_OUTCOMES:
+        raise PoolsExhausted(f"{outcome}: {_attempts(resp)}")
+    if outcome != "ok" or resp.get("ok") is not True:
+        raise CreditRunError(f"outcome_{outcome}: {_attempts(resp)}")
+    served = resp.get("served") or {}
+    seen = served.get("models_seen") or []
+    if served.get("model") != model or not seen or any(m != model for m in seen):
+        raise CreditRunError(f"model_mismatch: served {served.get('model')!r}, models seen {seen}, requested {model!r}")
+    wrong = {}
+    if served.get("effort") != effort:
+        wrong["effort"] = served.get("effort")
+    if served.get("pool_kind") != "credit":
+        wrong["pool_kind"] = served.get("pool_kind")
+    if served.get("auth") != "api_key":
+        wrong["auth"] = served.get("auth")
+    if served.get("account") not in pools:
+        wrong["account"] = served.get("account")
+    if wrong:
+        raise CreditRunError(f"not_served_as_asked: got {wrong}; wanted effort {effort!r}, a credit pool "
+                             f"on an API key, one of {pools}")
+    return served
+
+
+def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: int, expected_cost_usd: float,
+        request_id: str, raw_path: Path | None = None, spent=None, binary: str = "quotapick") -> tuple[str, dict]:
+    """(answer text, telemetry). Raises PoolsExhausted or CreditRunError."""
+    if not pools or any("," in p or not p.strip() for p in pools):
+        raise ValueError(f"name each credit pool separately, got {pools!r}")
+    req = request_for(prompt, model=model, effort=effort, timeout_s=timeout_s,
+                      expected_cost_usd=expected_cost_usd, request_id=request_id)
+    # The child's own timeout ends the call; this one only catches a wedged router.
+    proc = subprocess.run([binary, "run", "--only", ",".join(pools)], input=json.dumps(req),
+                          capture_output=True, text=True, timeout=timeout_s + 300)
+    if raw_path is not None:
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        from atomicio import write_atomic
+        write_atomic(raw_path, json.dumps({"returncode": proc.returncode, "stdout": proc.stdout,
+                                           "stderr": proc.stderr}, ensure_ascii=False) + "\n")
+    if proc.returncode == 2:
+        raise CreditRunError(f"refused: quotapick refused before spending: {(proc.stderr or proc.stdout).strip()[:400]}")
+    if proc.returncode != 0:
+        raise CreditRunError(f"cli_exit_{proc.returncode}: {(proc.stderr or proc.stdout).strip()[:400]}")
+    resp = json.loads(proc.stdout)
+    if spent is not None and isinstance(resp.get("cost_usd"), (int, float)):
+        spent(resp["cost_usd"])
+    served = check_response(resp, model=model, effort=effort, pools=pools)
+    usage = resp.get("usage") or {}
+    return resp.get("text") or "", {
+        "harness": "quotapick run", "credit_pool": served["account"], "served": served,
+        "cost_usd": resp.get("cost_usd"), "request_id": resp.get("request_id"),
+        "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
+        "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+        "thinking_tokens": (usage.get("output_tokens_details") or {}).get("thinking_tokens"),
+        "duration_ms": sum(a.get("duration_ms") or 0 for a in resp.get("attempts") or []),
+    }
+
+
+def _attempts(resp: dict) -> str:
+    return "; ".join(f"{a.get('account')}: {a.get('outcome')} {a.get('detail', '')}".strip()
+                     for a in resp.get("attempts") or [])[:400] or "no attempts recorded"

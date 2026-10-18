@@ -42,6 +42,18 @@ sys.path.insert(0, str(REPO / "scripts"))
 from pundits_pilot import VENUES  # noqa: E402
 
 PILOT = "data-pundits/logs/pilot"
+#: Each recording set's files. The pilot's checklist maps row numbers to keys in
+#: its own file; P6b's checklist is keyed by recording, and a row is its
+#: 1-based position in that file, which is the order the review page shows.
+SETS = {
+    "pilot": {"root": PILOT, "manifest": "data-pundits/sources/pilot_manifest.jsonl"},
+    "p6b": {"root": "data-pundits/logs/p6b", "manifest": "data-pundits/sources/p6b_manifest.jsonl"},
+}
+#: A draft through `quotapick run` (credit_run.py) is a different harness from
+#: draft_command: tools absent, no session, an API key. The pilot's 28 Fable
+#: drafts used about the transcript's length in input and a short answer; this
+#: is what the router must see a pool cover before it admits the call.
+CREDIT_EXPECTED_COST_USD = 3.0
 MODELS = {"fable": "claude-fable-5-1", "sonnet": "claude-sonnet-5"}
 CONFIDENCE = ("high", "medium", "low")
 _lock = threading.Lock()
@@ -149,6 +161,23 @@ def call_model(prompt: str, model_key: str, config_dir: str | None, timeout: int
                                          "duration_ms": payload.get("duration_ms"), "config_dir": config_dir or "default"}
 
 
+def load_keys(root: Path, which: str) -> dict[int, str]:
+    """Row number -> recording key for one recording set."""
+    if which == "pilot":
+        return {int(n): k for n, k in json.loads((root / "checklist_table_keys.json").read_text()).items()}
+    # A dict keeps file order, so row n is the n-th recording on the review page.
+    return {n: k for n, k in enumerate(json.loads((root / "human_checklist.json").read_text()), start=1)}
+
+
+def call_credit(prompt: str, key: str, which: str, pools: list[str], raw_dir: Path, spent) -> tuple[str, dict]:
+    """One Fable draft on API credit. Same prompt and parse; the harness is quotapick's."""
+    import credit_run
+    slug, sid = key.split("/", 1)
+    return credit_run.run(prompt, model=MODELS["fable"], effort="max", pools=pools,
+                          timeout_s=credit_run.MAX_TIMEOUT_S, expected_cost_usd=CREDIT_EXPECTED_COST_USD,
+                          request_id=f"speaker-{which}-{key}", raw_path=raw_dir / slug / f"{sid}.json", spent=spent)
+
+
 def needs_review(draft: dict, human: dict | None) -> list[str]:
     why = []
     if draft.get("error"):
@@ -160,7 +189,10 @@ def needs_review(draft: dict, human: dict | None) -> list[str]:
     elif not draft["main_speaker"]:
         why.append("model says the subject is not the main speaker")
     if human:
-        for f in ("subject_present", "main_speaker", "venue"):
+        # Only what a person labelled. The guide stopped asking about main
+        # speaker on 2026-09-15, so a P6b label has no such field, and a missing
+        # field is not a disagreement.
+        for f in (f for f in ("subject_present", "main_speaker", "venue") if f in human):
             if human.get(f) != draft[f] and not (f == "venue" and not human.get("subject_present")):
                 why.append(f"disagrees with the operator on {f}: operator {human.get(f)!r}, model {draft[f]!r}")
     return why
@@ -170,12 +202,15 @@ def calibration(drafts: dict, human: dict) -> dict:
     both = [k for k in drafts if k in human and not drafts[k].get("error")]
     out = {"rows_compared": len(both)}
     for f in ("subject_present", "main_speaker", "venue"):
-        rows = [k for k in both if f != "venue" or human[k]["subject_present"]]
+        # A field counts only on rows where a person labelled it (P6b labels
+        # carry no main_speaker), and venue only where the subject is present.
+        rows = [k for k in both if f in human[k] and (f != "venue" or human[k]["subject_present"])]
         agree = sum(human[k][f] == drafts[k][f] for k in rows)
         out[f] = {"agree": agree, "of": len(rows)}
     high = [k for k in both if drafts[k]["confidence"] == "high"]
+    # "all three" means every one of the three a person labelled on that row.
     out["high_confidence"] = {"rows": len(high), "all_three_agree": sum(
-        all(human[k][f] == drafts[k][f] for f in ("subject_present", "main_speaker")) and
+        all(human[k][f] == drafts[k][f] for f in ("subject_present", "main_speaker") if f in human[k]) and
         (not human[k]["subject_present"] or human[k]["venue"] == drafts[k]["venue"]) for k in high)}
     return out
 
@@ -214,16 +249,24 @@ def main() -> int:
     i.add_argument("--rows", default=None, help="Comma-separated checklist row numbers; default all.")
     i.add_argument("--config-dirs", default="",
                    help="Comma-separated CLAUDE_CONFIG_DIRs to rotate over; empty means the default account.")
+    i.add_argument("--credit-pools", default="",
+                   help="Comma-separated quotapick credit pools; each Fable draft runs through `quotapick run "
+                        "--only` these pools on prepaid API credit instead of a subscription account.")
     r = sub.add_parser("review")
     mg = sub.add_parser("merge", help="Write labels_merged.json: human labels plus model drafts for unlabelled rows.")
     for x in (i, r, mg):
         SP.add_study_arg(x)
         x.add_argument("--model", choices=sorted(MODELS), default="fable",
                        help="Drafts from different models are kept in separate files and never mixed.")
+        x.add_argument("--set", dest="which", choices=sorted(SETS), default="pilot",
+                       help="Which recordings: the 104-row pilot, or the P6b checklist of the other 29 people.")
     args = ap.parse_args()
-    root = REPO / PILOT
+    root = REPO / SETS[args.which]["root"]
     SP.guard(args.study, str(root))
-    keys = {int(n): k for n, k in json.loads((root / "checklist_table_keys.json").read_text()).items()}
+    keys = load_keys(root, args.which)
+    pools = [p.strip() for p in getattr(args, "credit_pools", "").split(",") if p.strip()]
+    if pools and (args.model != "fable" or args.config_dirs):
+        ap.error("--credit-pools runs Fable on API credit; it takes neither --model sonnet nor --config-dirs")
     suffix = "" if args.model == "fable" else f"_{args.model}"
     drafts_path = root / f"speaker_inference{suffix}.jsonl"
     drafts = {}
@@ -237,27 +280,50 @@ def main() -> int:
 
     if args.cmd == "infer":
         roster = {p["slug"]: p for p in json.loads((REPO / "data-pundits/roster/final.json").read_text())["roster"]}
-        manifest = {f"{x['leader_slug']}/{x['source_id']}": x for x in
-                    map(json.loads, (REPO / "data-pundits/sources/pilot_manifest.jsonl").read_text().splitlines()) if x}
+        manifest = {}
+        for x in map(json.loads, filter(str.strip, (REPO / SETS[args.which]["manifest"]).read_text().splitlines())):
+            # The P6b manifest lists a recording once per discovery stratum; the
+            # first entry is the one the checklist was built from.
+            manifest.setdefault(f"{x['leader_slug']}/{x['source_id']}", x)
         rows = sorted(keys) if not args.rows else [int(x) for x in args.rows.split(",")]
+        unknown = [n for n in rows if n not in keys]
+        if unknown:
+            ap.error(f"--rows names rows the {args.which} checklist does not have: {unknown}")
         todo = [n for n in rows if keys[n] not in drafts or drafts[keys[n]].get("error")]
-        print(f"{len(rows)} rows requested, {len(rows) - len(todo)} already drafted, {len(todo)} to call", flush=True)
+        print(f"{len(rows)} rows requested, {len(rows) - len(todo)} already drafted, {len(todo)} to call"
+              + (f", on credit pools {pools}" if pools else ""), flush=True)
         tally: Counter = Counter()
+        cost = {"usd": 0.0}
+        exhausted = threading.Event()
+
+        def spent(usd: float) -> None:
+            with _lock:
+                cost["usd"] += usd
 
         def one(n: int) -> None:
             key = keys[n]
+            if exhausted.is_set():
+                # Not written: a row never attempted stays to-do for the next run.
+                with _lock:
+                    tally["skipped:pools_exhausted"] += 1
+                return
             slug, sid = key.split("/", 1)
             rec = json.loads((REPO / "data-pundits/transcripts" / slug / f"{sid}.json").read_text())
             entry = {"row": n, "key": key, "model": MODELS[args.model]}
             dirs = [d.strip() for d in args.config_dirs.split(",")] if args.config_dirs else [""]
+            prompt = build_prompt(roster[slug], manifest[key], rec)
             try:
-                text, tel = call_model(build_prompt(roster[slug], manifest[key], rec), args.model,
-                                       os.path.expanduser(dirs[n % len(dirs)]) or None)
+                if pools:
+                    text, tel = call_credit(prompt, key, args.which, pools, root / "_raw" / "speaker_inference", spent)
+                else:
+                    text, tel = call_model(prompt, args.model, os.path.expanduser(dirs[n % len(dirs)]) or None)
                 entry |= parse_answer(text) | {"telemetry": tel}
                 outcome = "drafted"
             except Exception as exc:  # noqa: BLE001 -- recorded with its type, and counted
+                if type(exc).__name__ == "PoolsExhausted":
+                    exhausted.set()
                 entry["error"] = f"{type(exc).__name__}: {exc}"[:500]
-                outcome = "error:" + type(exc).__name__
+                outcome = "error:" + type(exc).__name__ + ":" + str(exc).split(":", 1)[0][:40]
             with _lock:
                 tally[outcome] += 1
                 with open(drafts_path, "a") as fh:
@@ -266,8 +332,8 @@ def main() -> int:
 
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             list(ex.map(one, todo))
-        print(json.dumps({"attempted": len(todo), "outcomes": dict(tally)}, indent=1))
-        return 1 if any(k.startswith("error") for k in tally) else 0
+        print(json.dumps({"attempted": len(todo), "outcomes": dict(tally), "cost_usd": round(cost["usd"], 4)}, indent=1))
+        return 1 if any(k.startswith(("error", "skipped")) for k in tally) else 0
 
     if args.cmd == "merge":
         merged, rep = merge_drafts(drafts, human, MODELS[args.model])

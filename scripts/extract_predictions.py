@@ -166,7 +166,8 @@ def gemini_reachable(accounts: list[tuple], exclude_ids: list[str], pins: list[s
 class Router:
     """One quota-router pick per job, with a reservation so concurrent workers spread."""
 
-    def __init__(self, exclude_ids: list[str], allow_degraded: bool, gemini: GeminiRotation | None):
+    def __init__(self, exclude_ids: list[str], allow_degraded: bool, gemini: GeminiRotation | None,
+                 credit_pools: list[str] | None = None):
         from quota_router import select_account
         from quota_router.config import load_config
         self._select = select_account
@@ -177,10 +178,15 @@ class Router:
         # None when the run cannot reach Gemini (see gemini_reachable); a pick
         # that lands there anyway is refused as router_no_account.
         self.gemini = gemini
+        # With --fable-credit-pools, a pinned Fable stage runs on API credit
+        # through `quotapick run`, which picks the pool; select_account never sees it.
+        self.credit_pools = list(credit_pools or [])
         self._n = 0
         self._lock = threading.Lock()
 
     def pick(self, pin: str | None, exclude_harness: str | None) -> dict:
+        if pin == "fable" and self.credit_pools:
+            return {"harness": "fable", "account_id": None, "config_dir": None, "credit_pools": self.credit_pools}
         only = accounts_of_harness(self.accounts, pin) if pin else None
         exclude = list(self.exclude_ids)
         if exclude_harness:
@@ -211,6 +217,8 @@ def call_harness(route: dict, prompt: str, timeout: int, workdir: Path, args,
     h = route["harness"]
     if raw_response_path is not None:
         raw_response_path = L.guard_data_path(raw_response_path)
+    if h == "fable" and route.get("credit_pools"):
+        return call_fable_credit(route["credit_pools"], prompt, timeout, raw_response_path)
     if h == "fable":
         text, tel = call_fable(prompt, route["config_dir"], timeout, binary=args.fable_bin, workdir=str(workdir),
                                raw_response_path=raw_response_path)
@@ -229,6 +237,34 @@ def call_harness(route: dict, prompt: str, timeout: int, workdir: Path, args,
                                 expected_identity=route["expected_identity"])
         return text, tel, tel.get("profile_identity")
     raise RuntimeError(f"{E_CLI}: unknown harness {h}")
+
+
+FABLE_MODEL = "claude-fable-5-1"
+#: What the router must see a pool cover before it admits one extraction. The
+#: router admits a pool only if its balance covers this times its margin (1.5).
+CREDIT_EXPECTED_COST_USD = 5.0
+
+
+def call_fable_credit(pools: list[str], prompt: str, timeout: int,
+                      raw_response_path: Path | None) -> tuple[str, dict, str | None]:
+    """Fable on API credit. A different harness from call_fable: tools absent, no session, an API key.
+
+    The record's harness stays "fable" (the model family, which is what the
+    different-family rule in verify compares). Its telemetry names the harness
+    as "quotapick run" and the pool that served it, and its account is that pool.
+    """
+    import credit_run
+    try:
+        text, tel = credit_run.run(prompt, model=FABLE_MODEL, effort="max", pools=pools, timeout_s=timeout,
+                                   expected_cost_usd=CREDIT_EXPECTED_COST_USD,
+                                   request_id=raw_response_path.stem if raw_response_path else secrets.token_hex(8),
+                                   raw_path=raw_response_path)
+    except credit_run.PoolsExhausted as exc:
+        raise RuntimeError(f"{L.E_CREDIT_EXHAUSTED}: {exc}") from exc
+    except credit_run.CreditRunError as exc:
+        raise RuntimeError(f"{L.E_CREDIT_FAILED}: {exc}") from exc
+    # normalise_provenance reads a Fable answer's served model from judge_model.
+    return text, {**tel, "requested_model": FABLE_MODEL, "judge_model": tel["served"]["model"]}, tel["credit_pool"]
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +733,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--allow-degraded", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="build prompts into the workdir; no calls, no writes under --out")
     ap.add_argument("--fable-bin", default="claude")
+    ap.add_argument("--fable-credit-pools", default="",
+                    help="Comma-separated quotapick credit pools. A stage pinned to Fable runs on prepaid API credit "
+                         "through `quotapick run --only` these pools, a different harness; --out must be an experiment.")
     ap.add_argument("--agy-bin", default=AGY_JUDGE_BIN)
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--gemini-model", default=GEMINI_MODEL)
@@ -735,6 +774,27 @@ def resolve_date_checks(arg: str | None, extra_roots: list[Path]) -> tuple[Path 
     return path, L.load_statement_date_checks(path, roots)
 
 
+def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
+    """Why a --fable-credit-pools run must not start, or None.
+
+    Credit records come from a different harness, so they go only into an
+    experiment folder, and only a stage pinned to Fable may spend the pools: an
+    "auto" pick could land on a subscription and mix harnesses unannounced.
+    """
+    if not pools:
+        return None
+    import credit_run
+    stages = ["extract", "verify"] if args.stage == "both" else [args.stage]
+    if not any((args.extractor if s == "extract" else args.verifier) == "fable" for s in stages):
+        return "--fable-credit-pools needs a stage pinned to Fable (--extractor fable or --verifier fable)"
+    if args.timeout > credit_run.MAX_TIMEOUT_S:
+        return (f"--timeout {args.timeout} is over quotapick run's {credit_run.MAX_TIMEOUT_S}s limit; a longer "
+                f"call is cut off and still billed, so pass --timeout {credit_run.MAX_TIMEOUT_S} or less")
+    if "_experiments" not in out.resolve().parts:
+        return f"credit-pool records come from a different harness, so --out must be under predictions/_experiments/, not {out}"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if Path(args.fable_bin).name == "cl":
@@ -743,6 +803,10 @@ def main(argv: list[str] | None = None) -> int:
     if not ok:
         raise SystemExit(f"REFUSING: {why}")
     out = L.guard_data_path(args.out)  # raises before any call if --out is elsewhere under data/
+    credit_pools = [p.strip() for p in args.fable_credit_pools.split(",") if p.strip()]
+    refusal = credit_pools_refusal(credit_pools, args, out)
+    if refusal:
+        raise SystemExit(f"REFUSING: {refusal}")
     skill = Path(args.skill_dir)
     release = L.load_policy_release(skill)  # reject an unreviewed contract pair before any routing or call
     header_template = L.load_header_template(skill)  # the template the release just pinned
@@ -798,7 +862,7 @@ def main(argv: list[str] | None = None) -> int:
 
     router = None
     if not args.dry_run:
-        router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, None)
+        router = Router([x for x in args.router_exclude.split(",") if x], args.allow_degraded, None, credit_pools)
         pins = [args.extractor if s == "extract" else args.verifier for s in stages]
         if gemini_reachable(router.accounts, router.exclude_ids, pins):
             router.gemini = gemini_rotation_preflight(args.agy_bin)
