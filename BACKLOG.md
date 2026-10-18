@@ -872,15 +872,99 @@ they were filed (50aeaac).
 
 ## Verbatim Predictions
 
+- **Finish VP-41: score and publish the thin-people supplement, paused
+  2026-10-18 when the expiring credit ran out.** Filed by repo-3. Ledger VP-41,
+  decision VD-19. Everything is in data `6c64b2f6`, run folder
+  `data/predictions/_experiments/thin-supplement-20261018/`: read its `README.md`
+  first, then `summary.json` (re-derive it with
+  `.venv/bin/python data/predictions/_experiments/thin-supplement-20261018/_driver/summarize.py`).
+  State, attempted / succeeded / failed:
+
+  - **Extracted and verified, unscored (65 accepted).** 26 transcripts, Fable on
+    pool c, Gemini verify, 129 candidates: pat-gelsinger 36, reed-hastings 15,
+    larry-ellison 6, evan-spiegel 4, dario-amodei 3, patrick-collison 1,
+    dylan-field 0. All 129 records name `served.model claude-fable-5-1`, effort
+    max, `pool_kind credit`. The records are in the production tree and their
+    transcripts in `data/transcripts_web/<slug>/`.
+  - **Placed, not extracted (17).** amjad-masad 2, aravind-srinivas 5,
+    greg-brockman 2, tim-cook 6 and larry-ellison 1 failed
+    `credit_pool_exhausted`; pat-gelsinger `web-fool-com-335b172e` failed
+    `schema_validation_failed` (read its raw answer under
+    `data/predictions/_raw/extract/fable/pat-gelsinger/` first). Re-run one
+    person with `_driver/retry.py <slug>` (it takes finished transcripts as
+    cached), after setting `POOLS` in `_driver/pipeline.py` to pools that have
+    money (`quotapick credits --json`). Without credit, run the same
+    `extract_predictions.py` command with `--fable-credit-pools` and
+    `--credit-production` removed, which is the ordinary production harness.
+  - **Fetched only (46), not placed or extracted.** alexandr-wang 1,
+    brian-armstrong 2, demis-hassabis 5, jeff-bezos 6, lip-bu-tan 4,
+    michael-dell 6, palmer-luckey 3, sam-altman 5, tim-sweeney 6, tobi-lutke 2,
+    tom-lee 6. Each passed the URL and text duplicate checks on 2026-10-18. To
+    extract one person: copy each `by_slug/<slug>/transcripts/<slug>/<sid>.json`
+    named in `by_slug/<slug>/kept.txt` into `data/transcripts_web/<slug>/` (never
+    over an existing file), list those paths in `by_slug/<slug>/extract_list.txt`,
+    and run `_driver/retry.py <slug>`. Re-run the text check first if that
+    person's corpus grew since.
+  - **Nothing usable:** clem-delangue (changelog.com robots.txt), sergey-brin
+    (page too short to fetch), george-hotz.
+
+  **Finishing steps, in order.** VP-40 is the worked example
+  (`data/predictions/_experiments/nate-silver-supplement-20261012/NOTES.md`).
+  Read docs/agents/PREDICTIONS-PIPELINE.md and DATING.md first.
+  1. Dating: `scripts/date_recordings.py --run-dir
+     data/predictions/_experiments/dating-thin-supplement-<date> --ids <file of
+     slug/sid with accepted records> --run --router-exclude <your session's
+     account>` (daters astra and fable_web, subscription quota). Promote with
+     `scripts/promote_dating_run.py --against dating-run-20261001 --against
+     dating-astra-20261003`, then re-extract each re-dated recording with the
+     pair that extracted it (Fable extract, Gemini verify).
+  2. `scripts/resolve_predictions.py --out <the run folder> --as-of <UTC date
+     of the commit that will carry the scores>`, stages `lead_test`, `resolve`
+     (Astra with web tools, Codex quota), `prior`, `early`; then market
+     consensus and year summaries, scoped to the people above. The stage refuses
+     an `--ids` file that names a record it will not run, so pass only eligible,
+     past-due ids. 4 reed-hastings priors from pool d are already in the run
+     folder (as_of 2026-10-18); redo them if dating moves their statement dates.
+  3. Add the run folder to `runs` in `data/predictions/scoring.json`, move
+     `as_of` to the commit's UTC date, push with `scripts/data_sync.py push`,
+     deploy with `scripts/deploy_predictions.sh` (VD-10 standing
+     authorization), and send the owner the per-person before-and-after diff.
+
+  **Until this is done, the next predictions deploy from ANY clone must first
+  score these records:** `deploy_predictions.sh` refuses when `as_of` is older
+  than the newest commit that added predictions data (`scores_asof_lag`).
+
+  **More sources, for a second pass.** Runners-up cut by the 6-source cap are in
+  each `findings/<slug>.json` summary: reed-hastings 4 more Netflix earnings
+  calls (Q2 2010, Q3 2014, Q3 2016, Q4 2017), tim-cook 4, larry-ellison 4,
+  tom-lee 2 plus about 30 CNBC Closing Bell episodes. Every sub-agent ran out of
+  the session's shared web-search budget early, so spread discovery agents
+  across sessions. Briefs must ask for a generic User-Agent: one agent sent the
+  owner's email to SEC EDGAR.
+
+  **Credit.** Pool c's 10/20 grant and pool d are spent. Pool c's org holds a
+  second grant, $100 granted 2026-10-17, expiring 2026-11-20, $93.71 left at
+  2026-10-18T05:51Z after in-flight calls took $6.29 and then about $1 more. It
+  is NOT in quotapick, whose balance for c was set to $0; record it with
+  `quotapick credits grant` when the owner wants it spent. Pools a ($182.03,
+  expires 2026-11-16), b ($125.47, 2026-11-11) and e ($2.46, 2026-11-10) were
+  not charged. Comes back when the owner asks to continue verbatim-predictions.
+
 - **`index.json` counts credit extractions as plain `fable`.** Filed 2026-10-18 by
   repo-3, from the adversarial review of `--credit-production` (e267bef).
   `aggregate_predictions.py` keys the extraction-harness breakdown on the record's
   `harness`, which stays `fable` for a credit call so the different-family rule in
   verify still holds. So `data/predictions/index.json` cannot tell subscription Fable
-  from `quotapick run` Fable: on a copy of the pundits pilot, all 184 credit records
-  came out as one row, `extraction_harness: "fable"`. VD-19 says nobody has measured
+  from `quotapick run` Fable: on a copy of the pundits pilot, the 182 reviewed credit
+  records (of 184; 2 have verification `not_run`) came out as one row,
+  `extraction_harness: "fable"`. A second count has the same fault:
+  `coverage.by_harness.extract`, which `summarise_meta` builds from each meta's
+  `extract.harness`, read `{"fable": 280}` for the pilot's 280 credit transcripts.
+  Meta files carry no telemetry, so split that one on `router_account_id`, which
+  starts with `credit:` for a credit run (260 of the 280). VD-19 says nobody has measured
   whether the two harnesses extract alike, so the split is worth seeing. Fix: split
-  the breakdown on `extraction.telemetry.harness`. Cost: the derived `index.json`
+  the record breakdown on `extraction.telemetry.harness` and the transcript count as
+  above. Cost: the derived `index.json`
   bytes change, so `data_sync.py push` regenerates it on the next push. Comes back
   with the next change to `aggregate_predictions.py`, or when anyone compares the two
   harnesses.
