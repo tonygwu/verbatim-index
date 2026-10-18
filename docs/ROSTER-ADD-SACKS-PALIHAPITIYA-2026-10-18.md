@@ -11,9 +11,9 @@ Prepared in repo-2 under the one-committer protocol the Nate Silver precedent
 used (`docs/ROSTER-ADD-NATE-SILVER-2026-10-11.md`): the owner paths were
 prepared in repo-2's contributor data clone and applied into the daemon
 checkout, with repo-0's session's written agreement to write nothing there
-meanwhile. Grading runs from repo-2 on prepaid API credit (Fable) and on the
-Astra and Gemini subscriptions, and the grade files are applied into the daemon
-checkout afterwards (see Outcome, which is pending until they land).
+meanwhile. Grading ran from repo-2 on prepaid API credit (Fable) and on the
+Astra and Gemini subscriptions, and the grade files were applied into the
+daemon checkout, from which repo-0 aggregated, pushed and deployed (Outcome).
 
 ## Decisions taken while adding them
 
@@ -139,10 +139,41 @@ additions, 0 survive.
 `speaker_turns.py` does not cover these transcripts: their `fetched_at_utc`
 (2026-09-19) is before `SEGMENT_SINCE_UTC` (2026-09-28).
 
-## Outcome
+## Outcome (2026-10-18)
 
-PENDING at the time this record was committed with the code (review finding: the
-agreement cites this file, so it lands with it). Grading was in flight from repo-2
-on 2026-10-18 at 09:06 PDT; the counts per judge with their error taxonomy, the
-credit spent, each person's rank and score, and the data and public revisions
-are filled in by the commit that closes VI-14.
+**Grading.** Fable on credit pools a and b: 697 jobs attempted across two runs
+(677 cached), 20 billed calls, $41.63 (pool a $154.08 to $123.49, pool b $16.83
+to $5.78; median elapsed 406 s). The first run ended 691 ok / 6
+`cli_nonzero_exit`: those six were my own doing, a `pkill -f 'quotapick run'`
+meant for a mistakenly launched open pass (it would have graded 174 jobs across
+52 leaders, because production runs with `OPEN_PER_LEADER=0`; killed 20 s in,
+no open grade written) that also cut six blinded calls; the second run graded
+them 697/697/0. Every Fable record names `harness: "quotapick run"` and its
+pool; the raw response of the first grade was read in full: served
+`anthropic_api_b`, `claude-fable-5-1` for every model seen, effort max, credit,
+API key. Astra and Gemini: 1394 attempted / 1387 ok / 6 `empty_response`, all
+six on other leaders' long-standing Gemini gaps that the idempotent pass
+retried; plus 1 `schema_validation_failed` (chamath-palihapitiya/axios-mci6v9,
+Gemini: an evidence quote of 26 words against the cap of 25), which
+`aggregate.py` excludes, so Chamath has 9 valid Gemini grades. Gemini identity
+verified per record (`served_model_verified`, `profile_identity_verified`).
+
+**Board.** Aggregated with `grade_loop.sh`'s invocation: 53 scored, 2,359 grade
+files read, 2,278 used, 42 excluded for validation errors;
+`diagnostics.judge_harness`: fable production 702 + quotapick run 20, astra
+906, gemini 650. David Sacks: rank 25 of 53, overall 60.6, 95% interval 56.1 to
+65.3, 10 transcripts, high confidence. Chamath Palihapitiya: rank 51 of 53,
+overall 48.2, 95% interval 45.9 to 50.8, 10 transcripts, high confidence. Nate
+Silver moved from 69.6 to 69.5 as the calibration pool grew. Of the 20 Fable
+credit grades, 17 were served on `anthropic_api_a` and 3 on `anthropic_api_b`;
+repo-0 asserted on every one that the judge model requested, served and seen
+is `claude-fable-5-1` at effort max on an API key. `wrong_person_screen.py`:
+0 flagged (6 of the 20 in review with no flag). `speaker_turns.py check`: 13
+segmented transcripts, neither person among them, 0 disagreements.
+
+**Deployed** by repo-0 from the daemon checkout on 2026-10-18 at 16:43Z: data
+`82a7ec7e` (grades commit `dfe19609` on top of the shelf commit `8d875341`),
+Cloudflare version `5feed364-4805-4a4d-bf11-64005e4deba2`; the live page says
+"53 technology leaders" and lists both. The masthead still says "technology
+leaders", as it did after Nate Silver; changing it is a separate publication
+decision.
