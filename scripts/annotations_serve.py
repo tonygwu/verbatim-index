@@ -225,6 +225,16 @@ def build_server(sessions: list[Session], port: int, stores: list[Store] | None 
     files = [s.answers.resolve() for s in sessions]
     if len(set(files)) != len(files):
         raise SystemExit("REFUSING: two sessions share one answers file")
+    seen: dict[str, str] = {}
+    for s in sessions:
+        for key in s.manifest["recordings"]:
+            if key in seen:
+                # Two pages over one transcript collect two independent sets of word
+                # ranges; that is allowed (old sessions overlap new ones), never silent.
+                print(f"WARNING: recording {key} is in both {seen[key]} and {s.name}; a range saved in one is "
+                      "not seen by the other", file=sys.stderr)
+            else:
+                seen[key] = s.name
     stores = stores or [FileStore(s.answers) for s in sessions]
     mounts = {s.name: Mounted(s, st) for s, st in zip(sessions, stores)}
     httpd = ThreadingHTTPServer((HOST, port), make_handler(mounts))

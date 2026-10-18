@@ -44,12 +44,12 @@ def main():
         (root/'grades'/'fable'/'p'/'a__fable__open__r0.json').write_text(json.dumps(grade))
         git(root,'init','-q'); git(root,'remote','add','origin','git@example.invalid:t/verbatim-pundits-data.git')
         git(root,'add','-A'); git(root,'-c','user.email=t@t','-c','user.name=t','commit','-qm','x')
-        C.build(SimpleNamespace(project=['pundits'],data=str(root),out=str(root/'p6'),name=None,keys=None,reasons=None,cap=6,
-                                checklist=str(root.parent/'checklist.json'),grades=True,drafts=None))
+        C.build(SimpleNamespace(project=['pundits'],data=str(root),out=str(root/'p6'),name=None,keys=None,reasons=None,cap=None,
+                                checklist=str(root.parent/'checklist.json'),grades=True,drafts=None,mode=None,allow_off_page=False))
         answers=root/'p6'/'human_answers.json'
         lead=Path(td)/'leaders'; lead.mkdir(); make_data(lead)
         C.build(SimpleNamespace(project=['insights','predictions'],data=str(lead),out=str(lead/'both'),name=None,
-                                keys='jane-roe/talk-1',reasons=None,cap=6,checklist=None,grades=False,drafts=None))
+                                keys='jane-roe/talk-1',reasons=None,cap=6,checklist=None,grades=False,drafts=None,mode=None,allow_off_page=False))
         httpd=build_server([Session.open(root/'p6'),Session.open(lead/'both')],0)
         threading.Thread(target=httpd.serve_forever,daemon=True).start()
         try:
@@ -212,7 +212,7 @@ def main():
                 assert not errors, errors
                 page.screenshot(path='/tmp/annotations-two-projects.png',full_page=True)
                 browser.close()
-            print('PASS: landing page lists both sessions; real drag, disjoint spans, caption markers skipped, automatic quote results, correction save/reload/restore, stable speaker anchors, incomplete vs unsure, full transcript and mobile layout; a two-project recording shows both tags and quotes, filters by project, has no checklist, and saves a blind (not assisted) range; synthetic data only.')
+            print('PASS: landing page lists both sessions; real drag, disjoint spans, caption markers skipped, automatic quote results, correction save/reload/restore, stable speaker anchors, incomplete vs unsure, full transcript and mobile layout; a two-project recording shows both tags and quotes, keeps its row under a project filter, has no checklist, and saves a blind (not assisted) range; synthetic data only.')
         finally:
             httpd.shutdown();httpd.server_close()
 

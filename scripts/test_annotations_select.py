@@ -90,7 +90,7 @@ def run(root: Path, projects, cap=2):
     projects = [projects] if isinstance(projects, str) else projects
     out = root / "session" / "-".join(projects)
     C.build(SimpleNamespace(project=projects, data=str(root), keys="jane-roe/talk-1", out=str(out), name=None,
-                            reasons=None, cap=cap, checklist=None, grades=False, drafts=None))
+                            reasons=None, cap=cap, checklist=None, grades=False, drafts=None, mode=None, allow_off_page=False))
     page = (out / "annotations.html").read_text()
     key = json.loads((out / "quote_key.json").read_text())
     return out / "annotations.html", page, key, page_data(page)

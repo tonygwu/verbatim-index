@@ -6,12 +6,20 @@ Synthetic data only, in temporary git checkouts. Proves:
   MIGRATE   an old-format session (speaker_check.html, quote_key.json, a version-1
             manifest) is adopted by writing manifest.json and nothing else; a second
             run does nothing; with no version-1 manifest, --project is required
-  VERIFY    passes on the adopted session; fails on a wrong answers sha256 and on a
-            speaker range the transcript cannot hold; never writes the answers file
+  VERIFY    passes on the adopted session; fails on a wrong answers sha256, a speaker
+            range the transcript cannot hold, an answer for an id the page lacks, a
+            quote result the ranges contradict, a sidecar whose hash moved, and an
+            export file that no longer matches; never writes the answers file
   REBUILD   renders the page again and changes nothing but the page; sidecars and
             answers are byte-identical, and verify still passes
   EXPORT    quotes reproduce the old import's quote_results.json; a two-project
             session refuses `export quotes` without --project and splits with it
+  GUARD     building again into a session refuses, before writing anything, when the
+            new page would drop answered ids (unless --allow-off-page) or when a
+            transcript under saved ranges changed (always)
+  FLAGS     --mode picks the modes; checklist needs a project with one; --cap is
+            refused for pundits; --source is refused for spans and corrections;
+            --project must be one of the session's; migrate outside git refuses
   PUBLIC    a session written into this public repository is refused
 
   .venv/bin/python scripts/test_annotations_cli.py
@@ -152,6 +160,37 @@ def main() -> int:
         git(root, "checkout", "--", "leaders/human_answers.json")
         check("and verify never wrote the answers file", sha(s / "human_answers.json") == answers_sha)
 
+        def fails_with(label, path, mutate, expect):
+            original = path.read_bytes()
+            path.write_text(mutate(path.read_text()))
+            try:
+                code, out = run(["verify", "--session", str(s)])
+                failed = [c["check"] for c in json.loads(out)["checks"] if not c["ok"]]
+                check(f"verify fails on {label}", code == 1 and expect in failed, str(failed))
+            finally:
+                path.write_bytes(original)
+
+        def answers_with(change):
+            def mutate(text):
+                d = json.loads(text)
+                change(d)
+                return json.dumps(d, indent=1)
+            return mutate
+        fails_with("an answer for a quote the page does not carry", s / "human_answers.json",
+                   answers_with(lambda d: d["attribution"].update({"elsewhere:x:1": {"answer": "subject"}})),
+                   "every saved answer names an id the page carries")
+        fails_with("a stored quote result the ranges contradict", s / "human_answers.json",
+                   answers_with(lambda d: d["attribution"]["jane-roe:talk-1:7"].update({"answer": "other"})),
+                   "a read returns the answers file unchanged (quote results already follow the ranges)")
+        side_path = sidecar_path(s / "speaker_check.html", "jane-roe/talk-1")
+        fails_with("a sidecar whose transcript hash moved", side_path,
+                   lambda t: json.dumps({**json.loads(t), "text_sha256": "0" * 64}),
+                   "every recording's sidecar matches the page's transcript hash and token count")
+        fails_with("an export file that no longer matches", s / "quote_results.json",
+                   lambda t: json.dumps({**json.loads(t), "tally": {}}),
+                   "export quotes reproduces quote_results.json")
+        check("and after all four the answers file is still byte-identical", sha(s / "human_answers.json") == answers_sha)
+
         print("\n[REBUILD]")
         code, out = run(["rebuild", "--session", str(s)])
         changed = git(root, "status", "--porcelain").split()
@@ -182,6 +221,12 @@ def main() -> int:
             (bare / "manifest.json").read_text())["projects"] == ["predictions"], out)
 
     with tempfile.TemporaryDirectory() as td:
+        loose = Path(td) / "loose"
+        loose.mkdir()
+        code, out = run(["migrate", "--session", str(loose), "--project", "insights"])
+        check("migrate outside a git checkout refuses cleanly", code != 0 and "not inside a git checkout" in out, out)
+
+    with tempfile.TemporaryDirectory() as td:
         lead = Path(td)
         make_data(lead)
         print("\n[EXPORT]")
@@ -189,7 +234,7 @@ def main() -> int:
         with contextlib.redirect_stdout(io.StringIO()):
             C.build(SimpleNamespace(project=["insights", "predictions"], data=str(lead), keys="jane-roe/talk-1",
                                     out=str(out_dir), name=None, reasons=None, cap=6, checklist=None,
-                                    grades=False, drafts=None))
+                                    grades=False, drafts=None, mode=None, allow_off_page=False))
         code, out = run(["verify", "--session", str(out_dir)])
         check("a freshly built two-project session verifies", code == 0 and json.loads(out)["ok"],
               str([c for c in json.loads(out)["checks"] if not c["ok"]]) if code == 0 or out.startswith("{") else out)
@@ -200,6 +245,61 @@ def main() -> int:
         got = json.loads((lead / "q.json").read_text())
         check("with --project it exports that project's quotes only",
               code == 0 and got["unanswered"] == ["p1"], str(got["unanswered"]))
+
+        print("\n[GUARD]")
+        built = {f: (out_dir / f).read_bytes() for f in ("annotations.html", "quote_key.json", "manifest.json")}
+        side = sidecar_path(out_dir / "annotations.html", "jane-roe/talk-1")
+        side_doc = json.loads(side.read_text())
+        answers = {"labels": {}, "attribution": {}, "corrections": {}, "spans": {"jane-roe/talk-1": {
+            "schema_version": 1, "key": "jane-roe/talk-1", "text_sha256": side_doc["text_sha256"],
+            "token_count": side_doc["token_count"], "checked_by": "operator",
+            "ranges": [{"start": 1, "end": 4, "speaker": "other", "origin": "human"}]}}}
+        page = out_dir / "annotations.html"
+        from annotations_page import page_data
+        answers = reconcile_quote_reviews(answers, page, page_data(page.read_text())["quote_rows"])
+        (out_dir / "human_answers.json").write_text(json.dumps(answers, indent=1) + "\n")
+        saved = sha(out_dir / "human_answers.json")
+
+        def build_again(*extra):
+            return run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                        "--out", str(out_dir), *extra])
+        code, out = build_again()
+        check("building again without predictions refuses: its answered quote would leave the page",
+              code != 0 and "would not carry answers already saved" in out and "p1" in out, out)
+        check("and nothing was written", all((out_dir / f).read_bytes() == b for f, b in built.items())
+              and sha(out_dir / "human_answers.json") == saved)
+        rec = lead / "transcripts_open" / "jane-roe" / "talk-1.json"
+        original = rec.read_bytes()
+        rec.write_text(json.dumps({**json.loads(original), "text": json.loads(original)["text"] + " Coda."}))
+        code, out = run(["build", "--project", "insights", "--project", "predictions", "--data", str(lead), "--keys",
+                         "jane-roe/talk-1", "--out", str(out_dir), "--allow-off-page"])
+        check("a changed transcript under saved ranges refuses, even with --allow-off-page",
+              code != 0 and "transcript text changed" in out, out)
+        check("and nothing was written", all((out_dir / f).read_bytes() == b for f, b in built.items())
+              and json.loads(side.read_text()) == side_doc)
+        rec.write_bytes(original)
+        code, out = build_again("--allow-off-page", "--name", "insights-only")
+        check("with --allow-off-page the narrower build goes ahead and keeps the answers file",
+              code == 0 and sha(out_dir / "human_answers.json") == saved, out)
+
+        print("\n[FLAGS]")
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(lead / "captions"), "--mode", "captions"])
+        check("--mode captions builds a captions-only session",
+              code == 0 and json.loads((lead / "captions" / "manifest.json").read_text())["modes"] == ["captions"], out)
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(lead / "cl"), "--mode", "checklist"])
+        check("the checklist mode needs a project with a checklist", code != 0 and "checklist" in out, out)
+        code, out = run(["build", "--project", "pundits", "--data", str(lead), "--checklist", "x.json",
+                         "--out", str(lead / "pc"), "--cap", "3"])
+        check("--cap is refused for pundits", code != 0 and "--cap" in out, out)
+        code, out = run(["export", "spans", "--session", str(out_dir), "--out", str(lead / "s.json"),
+                         "--source", str(out_dir / "human_answers.json")])
+        check("--source is refused for spans", code != 0 and "--source applies to labels and quotes" in out, out)
+        code, out = run(["export", "quotes", "--session", str(lead / "captions"), "--out", str(lead / "q2.json"),
+                         "--project", "pundits"])
+        check("export quotes --project must name one of the session's projects",
+              code != 0 and "not 'pundits'" in out and not (lead / "q2.json").exists(), out)
 
         print("\n[PUBLIC]")
         target = REPO / "annotations-refused-session"

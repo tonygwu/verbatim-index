@@ -79,9 +79,14 @@ try { new Function(SCRIPT)(); } catch (e) { threw = String(e && e.stack || e).sp
 setTimeout(() => {
   const list = nodes.list && nodes.list.innerHTML, detail = nodes.detail && nodes.detail.innerHTML;
   const projects = nodes.projects && !nodes.projects.hidden ? nodes.projects.innerHTML : "";
-  const keyhelp = nodes.keyhelp && nodes.keyhelp.innerHTML;
+  const keyhelp = nodes.keyhelp && nodes.keyhelp.innerHTML, count = nodes.count && nodes.count.textContent;
+  let picked = "";
+  if (PICK && nodes.projects && nodes.projects.onclick) {
+    nodes.projects.onclick({target: {closest: () => ({dataset: {project: PICK}})}});
+    picked = nodes.list.innerHTML;
+  }
   if (keydown) keydown({key: "y", target: {tagName: "BODY", closest: () => null}, preventDefault() {}});
-  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp})), 20);
+  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp, count, picked})), 20);
 }, 20);
 """
 
@@ -95,20 +100,22 @@ def session(projects=("pundits",), modes=("checklist", "speakers", "captions")) 
 
 
 def run_page(rows: list[dict], saved: dict | None = None, sess: dict | None = None,
-             quote_rows: list[dict] | None = None) -> dict:
+             quote_rows: list[dict] | None = None, pick: str | None = None) -> dict:
     """The page's own script run by node on `rows`, starting from the `saved` answers; what it rendered and saved."""
     import annotations_page as V
     page = V.render_page({"rows": rows, "quote_rows": quote_rows or [], "transcript_index": {},
                           "session": sess or session()}, "t", "s")
     script = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
     # On stdin, not -e: a real page is about 1 MB, past the argument-length limit.
-    head = f"const SCRIPT = {json.dumps(script)};\nconst SAVED = {json.dumps(saved or {'labels': {}, 'attribution': {}})};\n"
+    head = (f"const SCRIPT = {json.dumps(script)};\nconst SAVED = {json.dumps(saved or {'labels': {}, 'attribution': {}})};\n"
+            f"const PICK = {json.dumps(pick)};\n")
     n = subprocess.run(["node", "-"], input=head + PAGE_HARNESS,
                        capture_output=True, text=True, timeout=60)
     if n.returncode != 0 or not n.stdout.strip():
         return {"list": "", "detail": "", "posts": [], "threw": n.stderr[-400:]}
     out = json.loads(n.stdout.strip().splitlines()[-1])
-    return {k: out.get(k) or ("" if k != "posts" else []) for k in ("list", "detail", "posts", "threw", "projects", "keyhelp")}
+    return {k: out.get(k) or ("" if k != "posts" else []) for k in
+            ("list", "detail", "posts", "threw", "projects", "keyhelp", "count", "picked")}
 
 
 def pundits_data(td: Path, transcripts: dict, roster: list[dict]) -> Path:
@@ -134,8 +141,8 @@ def build_pundits(root: Path, checklist: dict, drafts: Path | None = None) -> st
     import annotations as C
     (root.parent / "c.json").write_text(json.dumps(checklist))
     C.build(SimpleNamespace(project=["pundits"], data=str(root), out=str(root / "session"), name=None, keys=None,
-                            reasons=None, cap=6, checklist=str(root.parent / "c.json"), grades=False,
-                            drafts=str(drafts) if drafts else None))
+                            reasons=None, cap=None, checklist=str(root.parent / "c.json"), grades=False,
+                            drafts=str(drafts) if drafts else None, mode=None, allow_off_page=False))
     return (root / "session" / "annotations.html").read_text()
 
 
@@ -282,7 +289,7 @@ def main() -> int:
         try:
             import annotations as C
             C.build(SimpleNamespace(project=["pundits", "insights"], data=str(root), out=str(root / "s2"), name=None,
-                                    keys=None, reasons=None, cap=6, checklist=str(td / "c.json"), grades=False, drafts=None))
+                                    keys=None, reasons=None, cap=None, checklist=str(td / "c.json"), grades=False, drafts=None, mode=None, allow_off_page=False))
             check("a session mixing two studies stops the build", False, "built")
         except SystemExit as exc:
             check("a session mixing two studies stops the build", "span studies" in str(exc), str(exc))
@@ -465,6 +472,16 @@ def main() -> int:
     check("with two projects the page offers a project filter",
           'data-project="all"' in m["projects"] and 'data-project="insights"' in m["projects"]
           and 'data-project="predictions"' in m["projects"], m["projects"])
+    only_i = {**qrow, "key": "p/i", "sid": "i", "person": "Bo Brand", "projects": ["insights"],
+              "quotes": [{**qrow["quotes"][0], "qid": "p:i:3"}]}
+    f = run_page([], sess=two, quote_rows=[qrow, only_i], pick="predictions")
+    check("the project filter keeps a recording of that project and hides one that is not",
+          'data-k="p/q"' in f["picked"] and 'data-k="p/i"' not in f["picked"] and 'data-k="p/i"' in f["list"],
+          f"{f['threw']} {re.findall(r'data-k=\"([^\"]+)', f['picked'])}")
+    cap = run_page([], sess=session(("insights",), ("captions",)), quote_rows=[{**qrow, "projects": ["insights"]}])
+    check("in a captions-only session quotes neither show nor hold a recording open",
+          cap["threw"] == "" and "QUOTE-I" not in cap["detail"] and "Correct the captions of this recording" in cap["detail"]
+          and cap["count"].startswith("1 of 1 recordings checked"), f"{cap['threw']} {cap['count']!r}")
     one = run_page([], sess=session(("insights",), ("speakers", "captions")), quote_rows=[{**qrow, "projects": ["insights"]}])
     check("with one project there is no filter and no tag", one["projects"] == "" and 'class="pchip"' not in one["list"],
           f"{one['projects']!r}")

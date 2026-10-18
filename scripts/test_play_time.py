@@ -152,7 +152,7 @@ def leaders_times(root: Path) -> dict:
                    check=True)
     out = root / "session"
     C.build(SimpleNamespace(project=["insights"], data=str(root), keys="jane-roe/talk-1", out=str(out), name=None,
-                            reasons=None, cap=6, checklist=None, grades=False, drafts=None))
+                            reasons=None, cap=6, checklist=None, grades=False, drafts=None, mode=None, allow_off_page=False))
     data = page_data((out / "annotations.html").read_text())
     return {c["text"].split()[0]: c["t"] for c in data["quote_rows"][0]["quotes"]}
 

@@ -444,8 +444,10 @@ const answered = (f, v) => f.type==="bool" ? typeof v==="boolean" : f.type==="en
 const askLeft = r => {if(!r.ask) return 0; const l=labels[r.key]||{};
  return FIELDS.filter(f=>f.required && !answered(f, l[f.name])).length;};
 const askDone = r => askLeft(r)===0;
-const quotesDone = r => r.quotes.every(c=>!!(attrib[c.qid]||{}).answer) &&
- (!r.quotes.length || (!spanPending[r.key] && !spanErrors[r.key]));
+// Quote results count only where the session has the speakers mode that makes them.
+const openQuotes = r => HAS("speakers") ? r.quotes.filter(c=>!(attrib[c.qid]||{}).answer) : [];
+const quotesDone = r => !openQuotes(r).length &&
+ (!r.quotes.length || !HAS("speakers") || (!spanPending[r.key] && !spanErrors[r.key]));
 const complete = r => askDone(r) && quotesDone(r);
 function recState(r){
  if(complete(r)){
@@ -454,7 +456,7 @@ function recState(r){
   if(r.quotes.some(c=>["other","both"].includes((attrib[c.qid]||{}).answer))) return "rej";
   return "done";}
  return (labels[r.key]||spanAnswers[r.key]?.ranges.length||r.quotes.some(c=>(attrib[c.qid]||{}).answer)) ? "part" : "todo";}
-const outstanding = r => askLeft(r) + r.quotes.filter(c=>!(attrib[c.qid]||{}).answer).length;
+const outstanding = r => askLeft(r) + openQuotes(r).length;
 
 function fmtT(s){if(s==null)return "";const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0");}
 function fmtDate(d){return d&&d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`:"unknown";}

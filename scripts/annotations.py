@@ -46,9 +46,9 @@ import study_profile as SP  # noqa: E402
 from annotations_corrections import export_corrections, validate_corrections  # noqa: E402
 from annotations_page import (docs_from, join_quotes, load_drafts, draft_view, page_data, page_ids,  # noqa: E402
                               render_page, to_labels)
-from annotations_select import (DEFAULT_CAP, LEGACY_STUDY_PROJECT, MODES, PROJECTS, git_revision,  # noqa: E402
-                                insights_quotes, predictions_quotes, project, recording_row, sha256_file,
-                                suspect_quotes)
+from annotations_select import (DEFAULT_CAP, LEGACY_STUDY_PROJECT, MODES, PROJECTS,  # noqa: E402
+                                QUOTE_CAP_PER_RECORDING, git_revision, insights_quotes, predictions_quotes,
+                                project, recording_row, sha256_file, suspect_quotes)
 from annotations_spans import (build_transcript, import_spans, reconcile_quote_reviews,  # noqa: E402
                                sidecar_path, validate_annotation)
 from annotations_store import (MANIFEST, SCHEMA_VERSION, Session, load_answers, write_manifest)  # noqa: E402
@@ -117,6 +117,36 @@ def grades_for(data: Path, slug: str, sid: str, inputs: dict) -> list[dict]:
     return out
 
 
+def guard_answers(answers_path: Path, rows: list, quote_rows: list, transcript_index: dict,
+                  allow_off_page: bool) -> None:
+    """Refuse a build that would strand answers already saved in this session.
+
+    A build rewrites the page, the sidecars and the quote key. If the new page no
+    longer carries an answered recording or quote, its answers can no longer be
+    changed or exported; if a recording's text changed, its saved ranges and
+    corrections point at words that are no longer there. Either way the answers file
+    itself is untouched, but only git could bring the session back, so the build stops
+    before writing anything. `--allow-off-page` accepts the first case on purpose (a
+    recording dropped from the checklist); nothing accepts the second.
+    """
+    if not answers_path.exists():
+        return
+    answers = load_answers(answers_path)
+    ids = page_ids({"rows": rows, "quote_rows": quote_rows, "transcript_index": transcript_index})
+    off = {s: sorted(set(answers[s]) - ids[s]) for s in answers if set(answers[s]) - ids[s]}
+    moved = sorted(k for s in ("spans", "corrections") for k, v in answers[s].items()
+                   if k in transcript_index and (v.get("text_sha256"), v.get("token_count"))
+                   != (transcript_index[k]["text_sha256"], transcript_index[k]["token_count"]))
+    if moved:
+        raise SystemExit(f"REFUSING: the transcript text changed under saved annotations for {moved[:5]}; their word "
+                         "offsets would point at other words. Nothing was written.")
+    if off and not allow_off_page:
+        raise SystemExit("REFUSING: the new page would not carry answers already saved in "
+                         f"{answers_path}: {{{', '.join(f'{s}: {v[:3]}' for s, v in off.items())}}}. Build with the "
+                         "same projects and flags as before (a pundits session needs --grades to keep its quotes), "
+                         "or pass --allow-off-page to keep those answers in the file without a page. Nothing was written.")
+
+
 def build(args) -> int:
     data, out = Path(args.data), Path(args.out)
     projects = list(dict.fromkeys(args.project))
@@ -131,13 +161,17 @@ def build(args) -> int:
     if len(tdirs) != 1:
         raise SystemExit(f"REFUSING: {projects} read different transcript directories {sorted(tdirs)}")
     tdir = tdirs.pop()
-    SP.guard(study, data, out)
-    refuse_public(out)
     pundits = "pundits" in projects
+    if pundits and args.cap is not None:
+        raise SystemExit(f"REFUSING: pundits quotes are capped at {QUOTE_CAP_PER_RECORDING} per recording by their "
+                         "selector; --cap applies to insights and predictions")
+    cap = DEFAULT_CAP if args.cap is None else args.cap
     if pundits and (args.keys or not args.checklist):
         raise SystemExit("REFUSING: a pundits session takes its recordings from --checklist, not --keys")
     if not pundits and (args.checklist or args.grades or args.drafts or not args.keys):
         raise SystemExit("REFUSING: --keys names the recordings; --checklist, --grades and --drafts are pundits-only")
+    SP.guard(study, data, out)
+    refuse_public(out)
     roster = {p["slug"]: p for p in json.loads((data / "roster" / "final.json").read_text())["roster"]}
     previous = Session.open(out) if (out / MANIFEST).exists() else None
     files = dict(previous.manifest["files"]) if previous else dict(DEFAULT_FILES)
@@ -208,7 +242,7 @@ def build(args) -> int:
                     if not grades:
                         reports[p] = {"skipped": "no valid blinded grade"}
                         continue
-                    got, kmap, rep = insights_quotes(key, raw, grades, name_forms(roster[slug]), args.cap, duration)
+                    got, kmap, rep = insights_quotes(key, raw, grades, name_forms(roster[slug]), cap, duration)
                 else:
                     ppath = data / "predictions" / slug / f"{sid}.jsonl"
                     if not ppath.exists():
@@ -216,7 +250,7 @@ def build(args) -> int:
                         continue
                     inputs[str(ppath.relative_to(data))] = sha256_file(ppath)
                     records = [json.loads(line) for line in ppath.read_text().splitlines() if line.strip()]
-                    got, kmap, rep = predictions_quotes(key, raw, records, args.cap, duration)
+                    got, kmap, rep = predictions_quotes(key, raw, records, cap, duration)
                 reports[p] = rep
                 clash = set(kmap) & set(key_map)
                 if clash:
@@ -232,7 +266,7 @@ def build(args) -> int:
             quote_rows.append(row)
             recordings[key] = {"projects": tags, "quotes": {p: sum(c["project"] == p for c in cards) for p in tags},
                                "reports": reports, "reason_selected": reasons.get(key)}
-    transcript_index = {}
+    transcript_index, sidecars = {}, {}
     for key in sorted(recordings):
         slug, sid = key.split("/", 1)
         raw = json.loads((data / tdir / slug / f"{sid}.json").read_text()).get("text") or ""
@@ -244,17 +278,33 @@ def build(args) -> int:
         # Insights and predictions pass no grades, so the editor shows no model
         # suggestion: a blind review. Pundits with --grades shows them: assisted.
         side = build_transcript(key, raw, graded)
-        page_path = out / files["page"]
-        write_atomic(sidecar_path(page_path, key), json.dumps(side, ensure_ascii=False))
+        sidecars[key] = side
         transcript_index[key] = {"text_sha256": side["text_sha256"], "token_count": side["token_count"]}
         recordings[key].update(transcript_dir=tdir, **transcript_index[key],
                                suggestions=len(side["suggestions"]))
-    modes = [m for m in MODES if m != "checklist" or (pundits and rows)]
+    if pundits and args.grades:
+        for path in sorted((data / "grades").glob("*/*/*__r0.json")):
+            if not {"_obsolete", "_raw"} & set(path.parts):
+                inputs[str(path.relative_to(data))] = sha256_file(path)
+    if args.drafts:
+        inputs[Path(args.drafts).name] = sha256_file(Path(args.drafts))
+    default_modes = [m for m in MODES if m != "checklist" or (pundits and rows)]
+    modes = [m for m in MODES if m in args.mode] if args.mode else default_modes
+    if "checklist" in modes and not (pundits and rows):
+        raise SystemExit(f"REFUSING: the checklist mode needs a project with a checklist; {projects} has none")
+    if pundits and rows and "checklist" not in modes:
+        raise SystemExit("REFUSING: a pundits session built from --checklist must keep the checklist mode")
+    guard_answers(out / files["answers"], rows, quote_rows, transcript_index, args.allow_off_page)
+    page_path = out / files["page"]
+    for key, side in sidecars.items():
+        write_atomic(sidecar_path(page_path, key), json.dumps(side, ensure_ascii=False))
     manifest = {
         "schema_version": SCHEMA_VERSION, "tool": "annotations", "name": name, "projects": projects,
-        "modes": modes, "blind": not any(r["suggestions"] for r in recordings.values()),
+        "modes": modes,
+        # Blind means the person saw no model output: no suggestion and no draft.
+        "blind": not any(r["suggestions"] for r in recordings.values()) and not args.drafts,
         "transcript_dir": tdir, "files": files, "recordings": recordings,
-        "cap_per_recording": None if pundits else args.cap,
+        "cap_per_recording": QUOTE_CAP_PER_RECORDING if pundits else cap,
         "data_revision": git_revision(data), "code_revision": git_revision(REPO), "inputs_sha256": inputs,
         "built_with": {"checklist": bool(args.checklist), "grades": bool(args.grades), "drafts": bool(args.drafts)},
     }
@@ -277,6 +327,8 @@ def build(args) -> int:
 def migrate(args) -> int:
     """Adopt a session built before this tool. Writes manifest.json and nothing else."""
     root = Path(args.session)
+    if toplevel(root.resolve()) is None:
+        raise SystemExit(f"REFUSING: {root} is not inside a git checkout; migrate records the data revision it adopted")
     path = root / MANIFEST
     old = json.loads(path.read_text()) if path.exists() else None
     if old and old.get("schema_version") == SCHEMA_VERSION:
@@ -367,6 +419,8 @@ def export_result(session: Session, kind: str, project_name: str | None = None, 
     if kind == "quotes":
         full = json.loads(session.file("quote_key").read_text())
         key_map = full
+        if project_name and project_name not in session.projects:
+            raise SystemExit(f"REFUSING: session {session.name} has projects {session.projects}, not {project_name!r}")
         if project_name:
             single = session.projects[0] if len(session.projects) == 1 else None
 
@@ -452,7 +506,12 @@ def verify(args) -> int:
                                       if reviewed["attribution"][q] != answers["attribution"].get(q))[:5])
     for kind, name in (session.manifest["files"].get("exports") or {}).items():
         disk = json.loads((session.root / name).read_text())
-        got = export_result(session, kind) if kind != "corrections" else _corrections_in_memory(session)
+        try:
+            got = export_result(session, kind) if kind != "corrections" else _corrections_in_memory(session)
+        except (SystemExit, ValueError) as exc:
+            # An export that refuses is a failed check, not a missing report.
+            check(f"export {kind} reproduces {name}", False, f"the export refused: {exc}")
+            continue
         if kind == "labels":
             got = got["labels"]
         check(f"export {kind} reproduces {name}", got == disk,
@@ -536,6 +595,11 @@ def rebuild(args) -> int:
 def export(args) -> int:
     session = Session.open(args.session)
     out = Path(args.out)
+    if args.source and args.kind in ("spans", "corrections"):
+        raise SystemExit(f"REFUSING: export {args.kind} reads the session's own answers file; --source applies to "
+                         "labels and quotes only")
+    if args.project and args.kind != "quotes":
+        raise SystemExit("REFUSING: --project applies to export quotes only")
     if args.kind == "spans":
         res = import_spans(session.answers, session.page, out)
         print(f"wrote {out}: {len(res['recordings'])} recordings with human word ranges")
@@ -575,8 +639,9 @@ def status(args) -> int:
             print(f"  checklist: {len(answers['labels'])} of {len(data.get('rows', []))} recordings answered")
         marked_blind = sum(1 for v in answers["spans"].values() if v.get("assisted") and session.manifest["blind"])
         if marked_blind:
-            print(f"  note: {marked_blind} speaker annotations say assisted on a blind session "
-                  "(saved before 2026-10-18, when the page marked every save assisted)")
+            print(f"  note: {marked_blind} speaker annotations say assisted on a blind session. A page built "
+                  "before 2026-10-18 marks every save assisted until `rebuild` renders it again; the manifest's "
+                  "`blind` is the truth")
     return 0
 
 
@@ -607,7 +672,12 @@ def main(argv=None) -> int:
     b.add_argument("--name", help="the session's name in `serve` (default: the directory's name)")
     b.add_argument("--keys", help="insights/predictions: comma-separated slug/source_id recordings")
     b.add_argument("--reasons", help="insights/predictions: JSON {key: why it was chosen}, kept in the manifest")
-    b.add_argument("--cap", type=int, default=DEFAULT_CAP, help=f"quotes per recording and project (default {DEFAULT_CAP})")
+    b.add_argument("--cap", type=int, default=None,
+                   help=f"insights/predictions: quotes per recording and project (default {DEFAULT_CAP})")
+    b.add_argument("--mode", action="append", choices=MODES,
+                   help="the modes the page shows (repeat; default: speakers and captions, plus checklist for pundits)")
+    b.add_argument("--allow-off-page", action="store_true",
+                   help="build even when answers already saved name recordings or quotes the new page drops")
     b.add_argument("--checklist", help="pundits: the checklist of recordings (human_checklist.json)")
     b.add_argument("--grades", action="store_true", help="pundits: flag suspect judge quotes and show the judges' "
                    "located evidence as suggestions (assisted, not blind)")

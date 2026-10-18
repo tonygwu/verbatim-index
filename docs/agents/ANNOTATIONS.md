@@ -95,6 +95,10 @@ carries it to the private data repository. Decided with the operator on
 and every range is pinned to a git revision; a remote store such as Supabase is a
 second implementation of `Store` if labellers off this machine are ever needed.
 
+Modes default to speakers and captions, plus checklist for pundits; `--mode` picks
+them, for example `--mode captions` for a captions-only pass. A session without the
+speakers mode shows no quotes, and its quotes do not hold a recording open.
+
 The page saves to this machine only. The old Artifact `db` fallback is gone from
 new pages: its `put` sent every collection but attribution to the labels
 collection, so a speaker-range save there would have overwritten a recording's
@@ -111,7 +115,7 @@ All through `.venv/bin/python scripts/annotations.py`:
 
 | Command | Does | Writes |
 |---|---|---|
-| `build --data D --project P [--project P] (--keys K,K \| --checklist F) --out DIR` | a session from a data checkout; pundits adds `--grades` (suggestions and suspect quotes, so assisted) and `--drafts` (model drafts) | page, sidecars, quote key, manifest; never the answers |
+| `build --data D --project P [--project P] (--keys K,K \| --checklist F) --out DIR [--mode M ...]` | a session from a data checkout; pundits adds `--grades` (suggestions and suspect quotes, so assisted) and `--drafts` (model drafts); `--cap` (insights, predictions; default 6) caps quotes per recording and project, while pundits keeps its selector's fixed 4 | page, sidecars, quote key, manifest; never the answers |
 | `serve --session DIR [--session DIR ...] [--port 5001]` | serves each session at `/s/<name>/` on 127.0.0.1; `/` lists them | the answers file, one save at a time |
 | `migrate --session DIR [--project P]` | adopts a session built before this tool | `manifest.json` only |
 | `verify --session DIR [--expect-answers-sha256 H] [--data D]` | a JSON report; exit 1 on any failed check | nothing |
@@ -138,7 +142,7 @@ and `test_play_time.py`.
 
 ## The sessions on disk
 
-| Session | Data repo, path | Project | Answers sha256 at migration | Contents |
+| Session | Data repo, path | Project | Answers sha256 on 2026-10-18 | Contents |
 |---|---|---|---|---|
 | `leaders` | leaders data, `predictions/_experiments/speaker-audit-20260927/leaders` | insights | `4a505bc4…3853` | 5 recordings, 30 quote results, 37 ranges, 2 corrected recordings |
 | `predictions` | leaders data, `predictions/_experiments/speaker-audit-20260927/predictions` | predictions | `e7cb1c41…b27c` | 5 recordings, 9 quote results, 22 ranges, 2 corrected recordings |
@@ -172,8 +176,16 @@ that carries it.
   the blind insights and predictions sessions. New saves set it only when the
   editor showed suggestions. The old answers are not rewritten; the manifest's
   `blind` is the truth, and `status` counts the mismatch.
-- **A rebuilt pundits page needs the same `--grades`**, or the quote checks and
-  suggestions disappear from it.
+- **`build` into a session that already has answers refuses before writing anything**
+  when the new page would drop an answered recording or quote, or when a transcript
+  under saved ranges or corrections changed. Found by the 2026-10-18 review: a pundits
+  build without `--grades` into `logs/p6b` dropped all 40 quotes and the 21 quote-only
+  recordings, stranding 6 quote results, 11 ranges and 1 correction, and a changed
+  transcript let one later save turn a completed quote result to `stale`. The old
+  builders had the same hazard. Build again with the same projects and flags;
+  `--allow-off-page` keeps answers for a recording deliberately dropped from the
+  checklist, and nothing overrides a changed transcript. `rebuild` never re-selects
+  quotes, so it is always safe.
 
 ## Known limits
 
@@ -185,3 +197,11 @@ that carries it.
 - Only one person per machine can annotate, because the server binds to
   loopback. Two independent labellers (the P7 rule) need two machines or a remote
   `Store`.
+- `predictions` is the leaders study's predictions board. The pundits predictions
+  pilot (`experiments/predictions-pilot-20261018/` in the pundits data) has no
+  project yet; adding one is a new row in `PROJECTS`.
+- A flagged pundits recording with no `video_id` now stops the build, as insights
+  and predictions always did, because the page cannot link it to listen to. None
+  exists in the data of 2026-10-18.
+- Two sessions served together may hold the same recording; `serve` warns, and a
+  range saved in one is not seen by the other. Prefer one session per recording.

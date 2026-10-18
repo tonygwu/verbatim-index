@@ -255,6 +255,18 @@ def main() -> int:
     finally:
         h3.shutdown()
         h3.server_close()
+    import contextlib
+    import io
+    overlap = write_session(td / "three", session_data(["p/a"], []) | {"transcript_index": {"p/a": {}}},
+                            modes=("speakers",), projects=("insights",), name="three")
+    base_one = write_session(td / "four", session_data(["p/a"], []) | {"transcript_index": {"p/a": {}}},
+                             modes=("speakers",), projects=("predictions",), name="four")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        h4 = S.build_server([base_one, overlap], 0)
+    h4.server_close()
+    check("two sessions over one recording start, but say so: a range saved in one is not seen by the other",
+          "recording p/a is in both four and three" in err.getvalue(), err.getvalue())
     for label, pair in (("two sessions with one name", [shrunk, write_session(td / "dup", session_data(["p/a"], []))]),
                         ("two sessions with one answers file", [shrunk, type(shrunk)(shrunk.root, {**shrunk.manifest, "name": "x"})])):
         try:
