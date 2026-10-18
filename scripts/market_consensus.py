@@ -22,9 +22,15 @@ those stages, from this script, and never re-runs them. For each record:
                proxies only, or no date), failed (an API or model error).
 
 Only an exact match may set market_probability. Proxies are context. The
-speaker's confidence.probability is never touched. Every HTTP response is
-cached under <predictions>/_markets so a rerun is free and reproducible;
---refresh-cache bypasses. no_match is the normal result.
+speaker's confidence.probability is never touched. Every HTTP answer is cached
+under <predictions>/_markets so a rerun is free and reproducible; a transient
+status (429, 403, any 5xx) is not an answer, so it is never cached and a
+cached one left by an older run is fetched again (VI-24, 2026-10-18: a run
+replayed its own Kalshi 429 eight times). A 403 that does not go away, such as
+Polymarket's on public-search (VI-25), costs one call per run. Kalshi calls run
+one at a time whatever --workers says, because Kalshi is the host that
+rate-limits; --workers still defaults to 3 for everything else.
+--refresh-cache bypasses the cache. no_match is the normal result.
 
   .venv/bin/python scripts/market_consensus.py
   .venv/bin/python scripts/market_consensus.py --leaders sam-altman --dry-run
@@ -112,8 +118,29 @@ def http_get(url: str, timeout: int = 30) -> tuple[int, str]:
         return exc.code, exc.read().decode("utf-8", "replace")
 
 
+def transient_status(status: int) -> bool:
+    """A rate limit, a host block or a server error: never an answer about the market.
+
+    Such a response is never cached, and one cached by an older run counts as a miss. A 4xx
+    request error (400 "interval is too long", 404) IS cached: the request is what is wrong,
+    and repeating it is a wasted call (VI-24, 2026-10-18). Not every transient status goes
+    away: Polymarket's per-query 403 on public-search came back on every run of 2026-10-18,
+    so each such query costs one call per run until VI-25 gives it a final status of its own.
+    """
+    return status in (429, 403) or 500 <= status <= 599
+
+
+# Hosts whose fetches run one at a time whatever --workers says. Kalshi answered
+# `too_many_requests` to 14 of a 4-worker run's calls on 2026-10-18; Polymarket did not.
+SERIAL_PLATFORMS = ("kalshi",)
+
+
 class Cache:
-    """<root>/<platform>/<sha256(url)>.json holding url, fetched_at_utc, status, body."""
+    """<root>/<platform>/<sha256(url)>.json holding url, fetched_at_utc, status, body.
+
+    A transient status is never written and never replayed (transient_status); every other
+    status is, so a rerun is free and reproducible and a wrong request is not repeated.
+    """
 
     def __init__(self, root: Path, fetcher=http_get, refresh: bool = False, write=None):
         self.root = root
@@ -123,19 +150,30 @@ class Cache:
         self.calls = 0
         self.hits = 0
         self._lock = threading.Lock()
+        self._serial = {p: threading.Semaphore(1) for p in SERIAL_PLATFORMS}
 
     def get_json(self, platform: str, url: str):
         path = self.root / platform / (hashlib.sha256(url.encode()).hexdigest() + ".json")
         if path.exists() and not self.refresh:
             d = json.loads(path.read_text())
-            with self._lock:
-                self.hits += 1
-            if d["status"] != 200:
-                raise RuntimeError(f"{E_MARKET_HTTP}: cached {d['status']} for {url}")
-            return json.loads(d["body"])
+            if not transient_status(d["status"]):
+                with self._lock:
+                    self.hits += 1
+                if d["status"] != 200:
+                    raise RuntimeError(f"{E_MARKET_HTTP}: cached {d['status']} for {url}")
+                return json.loads(d["body"])
+            # A cached outage from an older run (the 2026-10-18 cache held 6 x 429 and 2 x 403):
+            # fetched again, and the file is replaced only by a non-transient answer.
         with self._lock:
             self.calls += 1
-        status, body = self.fetcher(url)
+        gate = self._serial.get(platform)
+        if gate is not None:
+            with gate:
+                status, body = self.fetcher(url)
+        else:
+            status, body = self.fetcher(url)
+        if transient_status(status):
+            raise RuntimeError(f"{E_MARKET_HTTP}: HTTP {status} for {url}: {body[:200]}")
         self.write(path, json.dumps({"url": url, "fetched_at_utc": L.utc_now(), "status": status, "body": body}))
         if status != 200:
             raise RuntimeError(f"{E_MARKET_HTTP}: HTTP {status} for {url}: {body[:200]}")

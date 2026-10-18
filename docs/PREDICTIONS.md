@@ -120,8 +120,10 @@ recorded as `date` and staleness may reach 24 hours. A record with no date is
 
 Only an exact match with an observation sets `market_probability`. Proxies are
 stored as context and shown as links without a number. `no_match` is the
-normal result. Every HTTP response is cached under `_markets/` so a rerun is
-free and reproducible.
+normal result. Every HTTP answer is cached under `_markets/` so a rerun is
+free and reproducible; a transient status (429, 403, any 5xx) is never cached
+and a cached one from an older run is fetched again, and the Kalshi calls run
+one at a time whatever `--workers` says (VI-24, 2026-10-18).
 
 The stage SPENDS model quota: one matcher call per accepted record that finds
 at least one candidate market. Counted from the records on 2026-10-11, 489 of
