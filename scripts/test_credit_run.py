@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """credit_run.py spends API credit only as asked, and refuses an answer served any other way.
 
-  ARGV      the call is `quotapick run --only <pools>`, one attempt, the request on stdin
+  ARGV      the call is `quotapick run --only <pools>`, one attempt per named pool up to
+            quotapick's three, the request on stdin
   OK        a response served as asked returns its text and names harness and pool
   REFUSE    a wrong model, a second model in models_seen, another effort, a subscription,
             OAuth, a pool outside the named set, run_contract 2, a non-ok outcome,
             exit 2 and any other non-zero exit are each refused with their label
-  DONE      exhausted and no_candidate raise PoolsExhausted, not a plain failure
-  SPENT     a billed failure still reports its cost
+  DONE      no_candidate, and exhausted once every named pool was tried, raise
+            PoolsExhausted; exhausted with a pool left untried is a plain failure
+  SPENT     a billed failure still reports its cost; a timeout names none and reports none
+  WHY       a failure's message carries each attempt, the router's reason and its warnings
   RAW       the full response is written to disk before any check runs
   LIMITS    a timeout over 1800 s and a comma inside one pool name are refused before any call
 
@@ -93,9 +96,12 @@ def main() -> int:
         argv = (tmp / "argv").read_text().split("\n")[:-1]
         req = json.loads((tmp / "stdin").read_text())
         check("argv is `run --only <pools joined by commas>`", argv == ["run", "--only", ",".join(POOLS)], str(argv))
-        check("one attempt, the asked model and effort, timeout and expected cost in the request",
-              req["max_attempts"] == 1 and req["model"] == MODEL and req["effort"] == "max"
+        check("one attempt per named pool, the asked model and effort, timeout and expected cost in the request",
+              req["max_attempts"] == 2 and req["model"] == MODEL and req["effort"] == "max"
               and req["timeout_s"] == 1800 and req["expected_cost_usd"] == 3 and req["prompt"] == "PROMPT", str(req))
+        caps = [C.request_for("P", model=MODEL, effort="max", timeout_s=60, expected_cost_usd=1, request_id="r",
+                              pools=[f"p{i}" for i in range(n)])["max_attempts"] for n in (1, 3, 5)]
+        check("one pool gets one attempt, and five get quotapick's ceiling of three", caps == [1, 3, 3], str(caps))
 
         print("\n[OK]")
         check("the answer text comes back", text == "ANSWER")
@@ -137,17 +143,45 @@ def main() -> int:
             check(f"{label} is refused as {prefix}", ok, detail)
 
         print("\n[DONE]")
-        for outcome in ("exhausted", "no_candidate"):
-            ok, detail = raises(tmp, good(ok=False, outcome=outcome, cost_usd=0), "PoolsExhausted", outcome)
-            check(f"{outcome} raises PoolsExhausted", ok, detail)
+        both = [{"account": p, "outcome": "exhausted"} for p in POOLS]
+        ok, detail = raises(tmp, good(ok=False, outcome="exhausted", cost_usd=0, attempts=both),
+                            "PoolsExhausted", "exhausted")
+        check("exhausted after every named pool was tried raises PoolsExhausted", ok, detail)
+        ok, detail = raises(tmp, good(ok=False, outcome="no_candidate", cost_usd=0, attempts=[]),
+                            "PoolsExhausted", "no_candidate")
+        check("no_candidate raises PoolsExhausted", ok, detail)
+        ok, detail = raises(tmp, good(ok=False, outcome="exhausted", cost_usd=0, attempts=both[:1]),
+                            "CreditRunError", "outcome_exhausted")
+        check("exhausted with a named pool left untried is a plain failure, not the end of the pools", ok, detail)
 
         print("\n[SPENT]")
         seen = []
         try:
-            call(tmp, good(ok=False, outcome="timeout", cost_usd=4.5), spent=seen.append)
+            call(tmp, good(ok=False, outcome="wrong_model", cost_usd=4.5), spent=seen.append)
         except C.CreditRunError:
             pass
-        check("a billed timeout still reports its cost", seen == [4.5], str(seen))
+        check("a billed failure still reports its cost", seen == [4.5], str(seen))
+        seen = []
+        try:
+            call(tmp, good(ok=False, outcome="timeout", cost_usd=None), spent=seen.append)
+        except C.CreditRunError:
+            pass
+        check("a timeout names no cost and reports none", seen == [], str(seen))
+        tel = call(tmp, good(attempts=[{"account": "anthropic_api_e", "outcome": "ok", "duration_ms": 4000},
+                                       {"account": "anthropic_api_b", "outcome": "ok"}]))[1]
+        check("duration_ms is None, not a partial sum, when an attempt gives no duration",
+              tel["duration_ms"] is None and tel["attempts"] == 2, str(tel))
+
+        print("\n[WHY]")
+        ok, detail = raises(tmp, good(ok=False, outcome="transient", cost_usd=0.2,
+                                      attempts=[{"account": "anthropic_api_e", "outcome": "transient",
+                                                 "detail": "overloaded_error"}],
+                                      decision={"reason": "anthropic_api_e wins"}, warnings=["pool b unpriced"]),
+                            "CreditRunError", "outcome_transient")
+        check("the message names the attempt, its detail, the router's reason and the warnings",
+              ok and all(x in detail for x in ("anthropic_api_e: transient overloaded_error",
+                                               "router: anthropic_api_e wins", "warnings: pool b unpriced",
+                                               "cost_usd 0.2")), detail)
 
         print("\n[LIMITS]")
         for label, kwargs in (("a timeout over 1800 s", {"timeout_s": 1801}),

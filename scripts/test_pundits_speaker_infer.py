@@ -10,6 +10,12 @@ Pundits plan, P6.
              a confident present-and-main draft with no human label is not
   VENUE      a venue disagreement on a row the operator marked absent is ignored
   CALIBRATE  agreement is counted per field, venue only where the subject is present
+  UNLABELLED a field the operator did not label is neither queued nor counted
+  SETS       a P6b row is its position in the checklist file; a pilot row is its key table's
+  CREDIT     a credit draft asks for Fable at effort max, and each attempt keeps its own raw
+             file and request id, counting a legacy `<sid>.json` as attempt 1
+  DRIVER     an answer that does not parse keeps its telemetry; once one call finds the pools
+             exhausted, later rows are skipped and written nowhere; any error or skip exits 1
 
 No quota.
 
@@ -143,8 +149,70 @@ def main() -> int:
               S.load_keys(root, "p6b") == {1: "z/last-first", 2: "a/second", 3: "m/third"}, str(S.load_keys(root, "p6b")))
         (root / "checklist_table_keys.json").write_text(json.dumps({"7": "p/x", "2": "p/y"}))
         check("a pilot row comes from its own key table", S.load_keys(root, "pilot") == {7: "p/x", 2: "p/y"})
-    check("both sets name a root and a manifest that exist in the code's own layout",
+    check("the two sets, and only those, each name a root and a manifest",
           all(set(v) == {"root", "manifest"} for v in S.SETS.values()) and set(S.SETS) == {"pilot", "p6b"})
+
+    print("\n[CREDIT]")
+    import credit_run
+    calls = []
+    real_run = credit_run.run
+    credit_run.run = lambda prompt, **kw: calls.append(kw) or ("TEXT", {"harness": "quotapick run"})
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp)
+            pools = ["anthropic_api_e", "anthropic_api_b"]
+            S.call_credit("P", "andrew-yang/podcast-abc", "p6b", pools, raw, None)
+            kw = calls[-1]
+            check("a credit draft asks for Fable at effort max on the named pools, at most 1800 s",
+                  kw["model"] == "claude-fable-5-1" and kw["effort"] == "max" and kw["pools"] == pools
+                  and kw["timeout_s"] == 1800 and kw["expected_cost_usd"] == S.CREDIT_EXPECTED_COST_USD, str(kw))
+            check("the first attempt is numbered 1 in its raw file and its request id",
+                  kw["raw_path"] == raw / "andrew-yang" / "podcast-abc.1.json"
+                  and kw["request_id"] == "speaker-p6b-andrew-yang/podcast-abc-1", str(kw))
+            d = raw / "andrew-yang"
+            d.mkdir()
+            (d / "podcast-abc.json").write_text("{}")
+            (d / "podcast-abcd.4.json").write_text("{}")
+            (d / "podcast-abc.notes.json").write_text("{}")
+            check("a legacy `<sid>.json` counts as attempt 1, and another recording's files count for nothing",
+                  S.next_attempt(raw, "andrew-yang/podcast-abc") == 2, str(S.next_attempt(raw, "andrew-yang/podcast-abc")))
+            (d / "podcast-abc.2.json").write_text("{}")
+            (d / "podcast-abc.3.json").write_text("{}")
+            S.call_credit("P", "andrew-yang/podcast-abc", "p6b", pools, raw, None)
+            check("a retry never reuses a kept file", calls[-1]["raw_path"].name == "podcast-abc.4.json"
+                  and calls[-1]["request_id"].endswith("-4"), str(calls[-1]))
+    finally:
+        credit_run.run = real_run
+
+    print("\n[DRIVER]")
+    tel = {"harness": "quotapick run", "credit_pool": "anthropic_api_e", "cost_usd": 0.4}
+    entry, outcome = S.draft_row(5, "p/x", "fable", lambda: ("not json at all", tel))
+    check("an answer that does not parse keeps its telemetry, so its cost and pool are on record",
+          outcome.startswith("error:") and entry.get("telemetry") == tel and "error" in entry, f"{outcome} {entry}")
+    entry, outcome = S.draft_row(5, "p/x", "fable", lambda: (json.dumps(GOOD), tel))
+    check("a good answer is drafted with its telemetry", outcome == "drafted" and entry["telemetry"] == tel
+          and entry["venue"] == GOOD["venue"], f"{outcome} {entry}")
+
+    def boom():
+        raise credit_run.PoolsExhausted("no_candidate: attempts []")
+    entry, outcome = S.draft_row(5, "p/x", "fable", boom)
+    check("an exhausted call is labelled PoolsExhausted", outcome.startswith("error:PoolsExhausted:"), outcome)
+
+    made, written = [], []
+
+    def draft(n):
+        made.append(n)
+        if n == 2:
+            return {"row": n, "key": f"p/{n}", "error": "PoolsExhausted: x"}, "error:PoolsExhausted:no_candidate"
+        return {"row": n, "key": f"p/{n}"}, "drafted"
+    tally = S.run_rows([1, 2, 3, 4], draft, written.append, workers=1)
+    check("after the pools run out no further call is made, and the skipped rows are written nowhere",
+          made == [1, 2] and [e["row"] for e in written] == [1, 2]
+          and tally == {"drafted": 1, "error:PoolsExhausted:no_candidate": 1, "skipped:pools_exhausted": 2}, f"{made} {tally}")
+    check("a run with a failed row exits 1", S.exit_code(tally) == 1)
+    check("a run with a skipped row and no failure exits 1, so a partial run never reads as done",
+          S.exit_code({"drafted": 3, "skipped:pools_exhausted": 1}) == 1)
+    check("a run where every row was drafted exits 0", S.exit_code(S.run_rows([1, 3], draft, [].append, 2)) == 0)
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

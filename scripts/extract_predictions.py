@@ -186,7 +186,10 @@ class Router:
 
     def pick(self, pin: str | None, exclude_harness: str | None) -> dict:
         if pin == "fable" and self.credit_pools:
-            return {"harness": "fable", "account_id": None, "config_dir": None, "credit_pools": self.credit_pools}
+            # account_id names the pools, so a failure before any pool served still
+            # records where the call was sent; the served pool is the record's account.
+            return {"harness": "fable", "account_id": "credit:" + ",".join(self.credit_pools), "config_dir": None,
+                    "credit_pools": self.credit_pools}
         only = accounts_of_harness(self.accounts, pin) if pin else None
         exclude = list(self.exclude_ids)
         if exclude_harness:
@@ -240,9 +243,11 @@ def call_harness(route: dict, prompt: str, timeout: int, workdir: Path, args,
 
 
 FABLE_MODEL = "claude-fable-5-1"
-#: What the router must see a pool cover before it admits one extraction. The
-#: router admits a pool only if its balance covers this times its margin (1.5).
-CREDIT_EXPECTED_COST_USD = 5.0
+#: What quotapick holds for one extraction while it runs, and what a pool must
+#: cover, times its admission margin (1.5), before it is admitted. It does not cap
+#: the call: quotapick passes the pool's own per-call cap. The 20 pundits pilot
+#: extractions of 2026-10-18 cost at most $2.14 each.
+CREDIT_EXPECTED_COST_USD = 3.0
 
 
 def call_fable_credit(pools: list[str], prompt: str, timeout: int,
@@ -779,7 +784,10 @@ def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
 
     Credit records come from a different harness, so they go only into an
     experiment folder, and only a stage pinned to Fable may spend the pools: an
-    "auto" pick could land on a subscription and mix harnesses unannounced.
+    "auto" pick could land on a subscription and mix harnesses unannounced. An
+    experiment folder is a predictions tree's `_experiments/`, or an `experiments/`
+    folder with no predictions tree above it (the pundits data repo has no
+    predictions tree, and creating one would make data_sync build it an index).
     """
     if not pools:
         return None
@@ -790,8 +798,11 @@ def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
     if args.timeout > credit_run.MAX_TIMEOUT_S:
         return (f"--timeout {args.timeout} is over quotapick run's {credit_run.MAX_TIMEOUT_S}s limit; a longer "
                 f"call is cut off and still billed, so pass --timeout {credit_run.MAX_TIMEOUT_S} or less")
-    if "_experiments" not in out.resolve().parts:
-        return f"credit-pool records come from a different harness, so --out must be under predictions/_experiments/, not {out}"
+    parts = out.resolve().parts
+    if not (any(parts[i:i + 2] == ("predictions", "_experiments") for i in range(len(parts) - 1))
+            or ("experiments" in parts and "predictions" not in parts)):
+        return (f"credit-pool records come from a different harness, so --out must be under predictions/_experiments/ "
+                f"or a data repo's experiments/, not {out}")
     return None
 
 

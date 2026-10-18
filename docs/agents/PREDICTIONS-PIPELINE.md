@@ -42,6 +42,20 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   [JUDGES.md](JUDGES.md), "Fable on prepaid API credit". First use: the prior re-run in
   `data/predictions/_experiments/fable-prior-retest-20261018/` (2026-10-18).
 
+- Fable extraction or verification on prepaid API credit: `extract_predictions.py
+  --fable-credit-pools a,b,...` sends each call of a stage pinned to Fable (`--extractor fable`
+  or `--verifier fable`) through `quotapick run --only` those pools, and quotapick chooses among
+  them (`scripts/credit_run.py`). Name the pools: with no `--only`, run sent a Fable call to a
+  subscription on 2026-10-18, because it spends whatever quota expires first. The record keeps
+  `harness: fable`, so the different-family rule in verify still holds; its `account` is the
+  pool and its `extraction.telemetry` names `harness: "quotapick run"` and `credit_pool`. It
+  refuses `--out` outside an experiment folder (a predictions tree's `_experiments/`, or an
+  `experiments/` folder with no predictions tree above it), `--timeout` over 1800, and a run where
+  no stage is pinned to Fable. Failures are `credit_pool_exhausted` (nothing spent; the pools are
+  done) and `credit_run_failed: <label>`. Proof: `scripts/test_predictions_credit.py`,
+  `scripts/test_credit_run.py`. First use: the pundits prediction pilot, now in the pundits
+  data repo at `experiments/predictions-pilot-20261018/` (2026-10-18).
+
 - Verbatim Predictions (extract, verify, market consensus, validate, aggregate, page): skill in
   `.claude/skills/prediction-extractor/`, records in `data/predictions/<slug>/<sid>.jsonl`, design and limits in
   `docs/PREDICTIONS.md`, page built by `scripts/build_predictions_site.py` and deployed with

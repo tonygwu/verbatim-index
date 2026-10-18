@@ -16,7 +16,8 @@ because it spends whatever quota would expire first, credit or not. With
 
 Every field the caller asked for is checked against the response's `served`
 block, which quotapick fills from the CLI's own stream, never from the request.
-A billed failure still reports its cost to `spent`: a timed-out call is billed.
+`spent` receives every cost the response names, a failed call's included. A
+timeout names none: quotapick books an estimate in its own ledger instead.
 """
 from __future__ import annotations
 
@@ -28,13 +29,12 @@ from pathlib import Path
 #: never clamped: a call cut off at the limit is still billed.
 MAX_TIMEOUT_S = 1800
 
-#: Outcomes that mean the named pools are done. Neither costs anything, and a
-#: driver should stop dispatching rather than fail every remaining job.
-DONE_OUTCOMES = ("exhausted", "no_candidate")
+#: quotapick's own ceiling on attempts per request.
+MAX_ATTEMPTS = 3
 
 
 class PoolsExhausted(RuntimeError):
-    """The named pools are empty, or none may take this call. Nothing was spent."""
+    """Every named pool is empty, or none may take this call. Nothing was spent."""
 
 
 class CreditRunError(RuntimeError):
@@ -42,13 +42,16 @@ class CreditRunError(RuntimeError):
 
 
 def request_for(prompt: str, *, model: str, effort: str, timeout_s: int, expected_cost_usd: float,
-                request_id: str, client: str = "verbatim-index") -> dict:
+                request_id: str, pools: list[str], client: str = "verbatim-index") -> dict:
     if timeout_s > MAX_TIMEOUT_S:
         raise ValueError(f"quotapick run accepts at most {MAX_TIMEOUT_S}s, not {timeout_s}s")
-    # One attempt: a retry on a second pool would bill twice for one answer, and
-    # the caller's own retry policy decides whether a failure is worth another try.
+    # One attempt per named pool, up to quotapick's ceiling, so an empty pool hands
+    # the call to the next one: quotapick retries exhaustion, auth, transient and
+    # wrong-model failures elsewhere and never a timeout. Exhaustion and auth cost
+    # nothing. A wrong-model or transient attempt may be billed, and its cost is in
+    # the response's cost_usd, which covers every attempt.
     return {"model": model, "effort": effort, "prompt": prompt, "timeout_s": timeout_s,
-            "expected_cost_usd": expected_cost_usd, "max_attempts": 1,
+            "expected_cost_usd": expected_cost_usd, "max_attempts": min(MAX_ATTEMPTS, len(pools)),
             "client": client, "request_id": request_id}
 
 
@@ -57,10 +60,15 @@ def check_response(resp: dict, *, model: str, effort: str, pools: list[str]) -> 
     if resp.get("run_contract") != 1:
         raise CreditRunError(f"run_contract: {resp.get('run_contract')!r}, this module reads 1")
     outcome = resp.get("outcome")
-    if outcome in DONE_OUTCOMES:
-        raise PoolsExhausted(f"{outcome}: {_attempts(resp)}")
+    tried = {a.get("account") for a in resp.get("attempts") or []}
+    # no_candidate: no named pool may take the call (empty, its in-flight holds
+    # leave too little, or the router could not price credit; the warnings say
+    # which). exhausted: the last attempt found its pool empty; the named pools
+    # are done only if every one of them was tried.
+    if outcome == "no_candidate" or (outcome == "exhausted" and set(pools) <= tried):
+        raise PoolsExhausted(f"{outcome}: {_why(resp)}")
     if outcome != "ok" or resp.get("ok") is not True:
-        raise CreditRunError(f"outcome_{outcome}: {_attempts(resp)}")
+        raise CreditRunError(f"outcome_{outcome}: cost_usd {resp.get('cost_usd')!r}; {_why(resp)}")
     served = resp.get("served") or {}
     seen = served.get("models_seen") or []
     if served.get("model") != model or not seen or any(m != model for m in seen):
@@ -82,11 +90,14 @@ def check_response(resp: dict, *, model: str, effort: str, pools: list[str]) -> 
 
 def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: int, expected_cost_usd: float,
         request_id: str, raw_path: Path | None = None, spent=None, binary: str = "quotapick") -> tuple[str, dict]:
-    """(answer text, telemetry). Raises PoolsExhausted or CreditRunError."""
+    """(answer text, telemetry). Raises PoolsExhausted or CreditRunError.
+
+    `request_id` must be unique per attempt: quotapick settles a call's hold by it.
+    """
     if not pools or any("," in p or not p.strip() for p in pools):
         raise ValueError(f"name each credit pool separately, got {pools!r}")
     req = request_for(prompt, model=model, effort=effort, timeout_s=timeout_s,
-                      expected_cost_usd=expected_cost_usd, request_id=request_id)
+                      expected_cost_usd=expected_cost_usd, request_id=request_id, pools=pools)
     # The child's own timeout ends the call; this one only catches a wedged router.
     proc = subprocess.run([binary, "run", "--only", ",".join(pools)], input=json.dumps(req),
                           capture_output=True, text=True, timeout=timeout_s + 300)
@@ -104,17 +115,25 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
         spent(resp["cost_usd"])
     served = check_response(resp, model=model, effort=effort, pools=pools)
     usage = resp.get("usage") or {}
+    durations = [a.get("duration_ms") for a in resp.get("attempts") or []]
     return resp.get("text") or "", {
         "harness": "quotapick run", "credit_pool": served["account"], "served": served,
         "cost_usd": resp.get("cost_usd"), "request_id": resp.get("request_id"),
+        "attempts": len(durations),
         "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
         "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
         "thinking_tokens": (usage.get("output_tokens_details") or {}).get("thinking_tokens"),
-        "duration_ms": sum(a.get("duration_ms") or 0 for a in resp.get("attempts") or []),
+        # None, not a partial sum, when any attempt does not say how long it took.
+        "duration_ms": sum(durations) if durations and all(isinstance(d, int) for d in durations) else None,
     }
 
 
-def _attempts(resp: dict) -> str:
-    return "; ".join(f"{a.get('account')}: {a.get('outcome')} {a.get('detail', '')}".strip()
-                     for a in resp.get("attempts") or [])[:400] or "no attempts recorded"
+def _why(resp: dict) -> str:
+    """What the response says about a failure: each attempt, the router's reason, its warnings."""
+    attempts = "; ".join(f"{a.get('account')}: {a.get('outcome')} {a.get('detail', '')}".strip()
+                         for a in resp.get("attempts") or []) or "no attempts recorded"
+    reason = (resp.get("decision") or {}).get("reason")
+    warnings = " | ".join(resp.get("warnings") or [])
+    return (f"attempts [{attempts}]" + (f"; router: {reason}" if reason else "")
+            + (f"; warnings: {warnings}" if warnings else ""))[:700]

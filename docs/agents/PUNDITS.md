@@ -153,6 +153,27 @@ there. Add new material under the same headings.
   exists, then applies the P5 caps and gives yield with exact bounds. Proof:
   `.venv/bin/python scripts/test_pundits_pilot.py`.
 
+- Model drafts for the P6b speaker check: `scripts/pundits_speaker_infer.py infer --study pundits
+  --set p6b --credit-pools anthropic_api_e,anthropic_api_b,anthropic_api_a` drafts the three
+  answers for each of the 218 P6b recordings with Fable on prepaid API credit, through
+  `quotapick run` (`scripts/credit_run.py`), and keeps each attempt's full response under
+  `logs/p6b/_raw/speaker_inference/<slug>/<sid>.<n>.json` (the first run of 2026-10-18 wrote
+  `<sid>.json`, which counts as attempt 1). Re-running retries only rows with an error. Once the
+  named pools are out, no further call is made and the remaining rows are left to do; any error or
+  skipped row exits 1. `review --set
+  p6b` writes `speaker_review_queue.json`: calibration against the operator's labels, and the
+  rows a person should still check. A P6b label has no `main_speaker`, because the guide stopped
+  asking on 2026-09-15, so review and calibration compare only the fields a person labelled. A
+  draft is never a label: `merge` marks each one `drafted_by_model`. The review page does not show
+  drafts yet. Proof: `scripts/test_pundits_speaker_infer.py`, `scripts/test_credit_run.py`.
+
+- Pundits predictions pilot: `experiments/predictions-pilot-20261018/` in the pundits data repo,
+  with a README. Fable extracted on prepaid API credit (`extract_predictions.py --extractor fable
+  --fable-credit-pools ...`) and Gemini verified, because Astra refuses political content. 20
+  recordings gave 14 candidates and 4 accepted predictions for $18.72. An experiment only: the
+  extractor has no `--study` yet (BACKLOG, Verbatim Pundits), so pass the pundits transcripts,
+  roster and an `--out` under that folder by hand.
+
 - P6 speaker check (human labels for the full roster): `scripts/pundits_verify_page.py build`
   turns `pundits_pilot.py precheck`'s checklist into one page, written into the PRIVATE data
   checkout because it carries transcript excerpts. **Serve it locally; do not publish it as an

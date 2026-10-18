@@ -4,10 +4,11 @@
 Pundits plan, P6. The operator asked (2026-09-15) to review only recordings the
 model is unsure about instead of all 104. So:
 
-  infer    one Fable call per pilot recording, tools removed, asking the same
+  infer    one Fable call per recording, tools removed, asking the same
            three questions the operator answers (subject present, main speaker,
            venue) plus a confidence. Written to its own file, never into the
-           human labels file.
+           human labels file. --set picks the recordings: the 104-row pilot, or
+           the 218-row P6b checklist of the other 29 people.
   review   compares every draft with the operator's labels where both exist
            (agreement per field is the calibration), and lists the rows a
            person should still check: confidence below high, subject absent,
@@ -17,10 +18,13 @@ A draft is not a human label. When drafts are merged into the labels file for
 rows nobody reviewed, each carries `drafted_by_model: true` and `checked_by`
 naming the model, so the gate report can count and disclose them.
 
-SPENDS SUBSCRIPTION QUOTA with `infer`. Raw `claude`, never `cl`.
+SPENDS with `infer`: subscription quota through raw `claude` (never `cl`), or,
+with --credit-pools, prepaid API credit through `quotapick run` (credit_run.py),
+a different harness that each draft's telemetry names.
 
   pundits_speaker_infer.py infer  --study pundits --workers 4
-  pundits_speaker_infer.py review --study pundits
+  pundits_speaker_infer.py infer  --study pundits --set p6b --credit-pools anthropic_api_e,anthropic_api_b
+  pundits_speaker_infer.py review --study pundits [--set p6b]
 """
 from __future__ import annotations
 
@@ -43,17 +47,18 @@ from pundits_pilot import VENUES  # noqa: E402
 
 PILOT = "data-pundits/logs/pilot"
 #: Each recording set's files. The pilot's checklist maps row numbers to keys in
-#: its own file; P6b's checklist is keyed by recording, and a row is its
-#: 1-based position in that file, which is the order the review page shows.
+#: its own file; P6b's checklist is keyed by recording, and a row is its 1-based
+#: position in that file. The review page sorts by surname and upload date, so
+#: find a P6b recording on the page by its key, never by its row.
 SETS = {
     "pilot": {"root": PILOT, "manifest": "data-pundits/sources/pilot_manifest.jsonl"},
     "p6b": {"root": "data-pundits/logs/p6b", "manifest": "data-pundits/sources/p6b_manifest.jsonl"},
 }
 #: A draft through `quotapick run` (credit_run.py) is a different harness from
-#: draft_command: tools absent, no session, an API key. The pilot's 28 Fable
-#: drafts used about the transcript's length in input and a short answer; this
-#: is what the router must see a pool cover before it admits the call.
-CREDIT_EXPECTED_COST_USD = 3.0
+#: draft_command: tools absent, no session, an API key. This is what the router
+#: must see a pool cover, times its 1.5 margin, before it admits a call. The 218
+#: P6b drafts of 2026-10-18 cost at most $1.317 each (p95 $0.693).
+CREDIT_EXPECTED_COST_USD = 1.5
 MODELS = {"fable": "claude-fable-5-1", "sonnet": "claude-sonnet-5"}
 CONFIDENCE = ("high", "medium", "low")
 _lock = threading.Lock()
@@ -165,17 +170,88 @@ def load_keys(root: Path, which: str) -> dict[int, str]:
     """Row number -> recording key for one recording set."""
     if which == "pilot":
         return {int(n): k for n, k in json.loads((root / "checklist_table_keys.json").read_text()).items()}
-    # A dict keeps file order, so row n is the n-th recording on the review page.
+    # Row n is the n-th key in the file. The review page shows its own order.
     return {n: k for n, k in enumerate(json.loads((root / "human_checklist.json").read_text()), start=1)}
+
+
+def next_attempt(raw_dir: Path, key: str) -> int:
+    """The next attempt number for one recording: one past every raw response already kept.
+
+    Each attempt keeps its own file, so a retry never overwrites the evidence of a
+    billed failure. The first credit run named its files `<sid>.json`; that counts
+    as attempt 1.
+    """
+    slug, sid = key.split("/", 1)
+    d = raw_dir / slug
+    kept = {p.name for p in d.iterdir()} if d.is_dir() else set()
+    numbered = [int(name[len(sid) + 1:-5]) for name in kept
+                if name.startswith(sid + ".") and name.endswith(".json") and name[len(sid) + 1:-5].isdigit()]
+    return 1 + max(numbered + [1 if f"{sid}.json" in kept else 0])
 
 
 def call_credit(prompt: str, key: str, which: str, pools: list[str], raw_dir: Path, spent) -> tuple[str, dict]:
     """One Fable draft on API credit. Same prompt and parse; the harness is quotapick's."""
     import credit_run
     slug, sid = key.split("/", 1)
+    n = next_attempt(raw_dir, key)
     return credit_run.run(prompt, model=MODELS["fable"], effort="max", pools=pools,
                           timeout_s=credit_run.MAX_TIMEOUT_S, expected_cost_usd=CREDIT_EXPECTED_COST_USD,
-                          request_id=f"speaker-{which}-{key}", raw_path=raw_dir / slug / f"{sid}.json", spent=spent)
+                          request_id=f"speaker-{which}-{key}-{n}", raw_path=raw_dir / slug / f"{sid}.{n}.json",
+                          spent=spent)
+
+
+def draft_row(n: int, key: str, model_key: str, call) -> tuple[dict, str]:
+    """(entry, outcome) for one row. `call()` returns (text, telemetry) or raises.
+
+    The telemetry is kept even when the answer does not parse, so a paid answer
+    always names its pool and its cost.
+    """
+    entry = {"row": n, "key": key, "model": MODELS[model_key]}
+    try:
+        text, tel = call()
+    except Exception as exc:  # noqa: BLE001 -- recorded with its type, and counted
+        entry["error"] = f"{type(exc).__name__}: {exc}"[:500]
+        return entry, "error:" + type(exc).__name__ + ":" + str(exc).split(":", 1)[0][:40]
+    entry["telemetry"] = tel
+    try:
+        entry |= parse_answer(text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        entry["error"] = f"{type(exc).__name__}: {exc}"[:500]
+        return entry, "error:" + type(exc).__name__ + ":" + str(exc).split(":", 1)[0][:40]
+    return entry, "drafted"
+
+
+def run_rows(todo: list[int], draft, write, workers: int) -> Counter:
+    """Draft every row in `todo` and tally the outcomes.
+
+    `draft(n)` returns (entry, outcome); `write(entry)` keeps it. Once one call
+    finds the pools exhausted, no further call is made: those rows are counted as
+    skipped and written nowhere, so the next run picks them up.
+    """
+    tally: Counter = Counter()
+    exhausted = threading.Event()
+
+    def one(n: int) -> None:
+        if exhausted.is_set():
+            with _lock:
+                tally["skipped:pools_exhausted"] += 1
+            return
+        entry, outcome = draft(n)
+        if outcome.startswith("error:PoolsExhausted"):
+            exhausted.set()
+        with _lock:
+            tally[outcome] += 1
+            write(entry)
+            print(f"  row {n:3} {entry['key']:50} {outcome}", flush=True)
+
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        list(ex.map(one, todo))
+    return tally
+
+
+def exit_code(tally: Counter) -> int:
+    """1 when any row failed or was skipped, so a partial run never reads as done."""
+    return 1 if any(k.startswith(("error", "skipped")) for k in tally) else 0
 
 
 def needs_review(draft: dict, human: dict | None) -> list[str]:
@@ -282,8 +358,7 @@ def main() -> int:
         roster = {p["slug"]: p for p in json.loads((REPO / "data-pundits/roster/final.json").read_text())["roster"]}
         manifest = {}
         for x in map(json.loads, filter(str.strip, (REPO / SETS[args.which]["manifest"]).read_text().splitlines())):
-            # The P6b manifest lists a recording once per discovery stratum; the
-            # first entry is the one the checklist was built from.
+            # No key repeats in either manifest today; if one ever does, the first wins.
             manifest.setdefault(f"{x['leader_slug']}/{x['source_id']}", x)
         rows = sorted(keys) if not args.rows else [int(x) for x in args.rows.split(",")]
         unknown = [n for n in rows if n not in keys]
@@ -292,48 +367,33 @@ def main() -> int:
         todo = [n for n in rows if keys[n] not in drafts or drafts[keys[n]].get("error")]
         print(f"{len(rows)} rows requested, {len(rows) - len(todo)} already drafted, {len(todo)} to call"
               + (f", on credit pools {pools}" if pools else ""), flush=True)
-        tally: Counter = Counter()
         cost = {"usd": 0.0}
-        exhausted = threading.Event()
+        dirs = [d.strip() for d in args.config_dirs.split(",")] if args.config_dirs else [""]
 
         def spent(usd: float) -> None:
             with _lock:
                 cost["usd"] += usd
 
-        def one(n: int) -> None:
+        def draft(n: int) -> tuple[dict, str]:
             key = keys[n]
-            if exhausted.is_set():
-                # Not written: a row never attempted stays to-do for the next run.
-                with _lock:
-                    tally["skipped:pools_exhausted"] += 1
-                return
             slug, sid = key.split("/", 1)
             rec = json.loads((REPO / "data-pundits/transcripts" / slug / f"{sid}.json").read_text())
-            entry = {"row": n, "key": key, "model": MODELS[args.model]}
-            dirs = [d.strip() for d in args.config_dirs.split(",")] if args.config_dirs else [""]
             prompt = build_prompt(roster[slug], manifest[key], rec)
-            try:
-                if pools:
-                    text, tel = call_credit(prompt, key, args.which, pools, root / "_raw" / "speaker_inference", spent)
-                else:
-                    text, tel = call_model(prompt, args.model, os.path.expanduser(dirs[n % len(dirs)]) or None)
-                entry |= parse_answer(text) | {"telemetry": tel}
-                outcome = "drafted"
-            except Exception as exc:  # noqa: BLE001 -- recorded with its type, and counted
-                if type(exc).__name__ == "PoolsExhausted":
-                    exhausted.set()
-                entry["error"] = f"{type(exc).__name__}: {exc}"[:500]
-                outcome = "error:" + type(exc).__name__ + ":" + str(exc).split(":", 1)[0][:40]
-            with _lock:
-                tally[outcome] += 1
-                with open(drafts_path, "a") as fh:
-                    fh.write(json.dumps(entry) + "\n")
-                print(f"  row {n:3} {key:50} {outcome}", flush=True)
+            if pools:
+                return draft_row(n, key, args.model, lambda: call_credit(
+                    prompt, key, args.which, pools, root / "_raw" / "speaker_inference", spent))
+            return draft_row(n, key, args.model, lambda: call_model(
+                prompt, args.model, os.path.expanduser(dirs[n % len(dirs)]) or None))
 
-        with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-            list(ex.map(one, todo))
+        def write(entry: dict) -> None:
+            with open(drafts_path, "a") as fh:
+                fh.write(json.dumps(entry) + "\n")
+
+        tally = run_rows(todo, draft, write, args.workers)
+        # Costs the responses named. A timeout names none, so the sum can be short
+        # of what the pool's ledger books for the run.
         print(json.dumps({"attempted": len(todo), "outcomes": dict(tally), "cost_usd": round(cost["usd"], 4)}, indent=1))
-        return 1 if any(k.startswith(("error", "skipped")) for k in tally) else 0
+        return exit_code(tally)
 
     if args.cmd == "merge":
         merged, rep = merge_drafts(drafts, human, MODELS[args.model])

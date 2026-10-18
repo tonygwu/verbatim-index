@@ -791,6 +791,31 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
+- **Pundits grading on prepaid API credit waits on the operator.** Filed
+  2026-10-18 by repo-3. `quotapick run` (the router's only way to spend a credit
+  pool) runs Fable with tools removed, on an API key, with no sandbox wrapper.
+  Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container`, and
+  `judge_requests` is part of the hash that makes the contract ID. So a credit
+  grade filed under today's contract ID would claim a sandbox it never ran in.
+  If instead the contract is amended to name the credit harness, the contract ID
+  changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as
+  `stale_cache`, and `aggregate.py` refuses to mix contracts, so the whole pilot
+  is graded again (about $380 by the 2026-10-18 estimate). Options: (A) keep
+  pundits grading on the subscription harness, at no cost; (B) amend the contract
+  and re-grade; (C) decide after the CI-11 drift experiment in
+  `data/experiments/fable-credit-drift-20261018/` shows whether credit-served
+  Fable scores match subscription-served ones. Recommend C, because B spends
+  $380 to answer a question CI-11 answers for free. Comes back when CI-11 has
+  results.
+
+- **`extract_predictions.py` takes no `--study`.** Filed 2026-10-18 by repo-3.
+  Nothing stops a pundits run from writing into the leaders data repo: the
+  pundits prediction pilot of 2026-10-18 was written to the leaders
+  `predictions/_experiments/` and then moved by hand to the pundits data repo's
+  `experiments/predictions-pilot-20261018/`. Fix: `study_profile.add_study_arg` and `study_profile.guard(args.study,
+  out)`, as the speaker script does, with a test that a pundits run into a leaders
+  path refuses. Quota-free.
+
 - **RESOLVED 2026-10-12, same night, with option (a): when the published inputs differ
   from HEAD the footer says "plus uncommitted changes" and revision.json records
   `data_uncommitted`. Option (b) stays the operator's call. The pundits page names the
