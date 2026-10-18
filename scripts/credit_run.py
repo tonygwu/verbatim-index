@@ -101,6 +101,9 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
     """
     if not pools or any("," in p or not p.strip() for p in pools):
         raise ValueError(f"name each credit pool separately, got {pools!r}")
+    if len(set(pools)) != len(pools):
+        # A repeated name would ask quotapick for two attempts on one pool.
+        raise ValueError(f"each credit pool once, got {pools!r}")
     req = request_for(prompt, model=model, effort=effort, timeout_s=timeout_s,
                       expected_cost_usd=expected_cost_usd, request_id=request_id, pools=pools)
     # The child's own timeout ends the call; this one only catches a wedged router.

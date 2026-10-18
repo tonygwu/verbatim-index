@@ -176,7 +176,7 @@ def main() -> int:
         out, _, _ = run_call(tmp, "ok", account="anthropic_api_c", pool="anthropic_api_a,anthropic_api_b")
         check("an answer from a pool outside the list is refused as account_identity_mismatch",
               label_of(out) == G.E_IDENTITY, f"{out!r}")
-        for bad in ("", "anthropic_api_a,,anthropic_api_b", " ,"):
+        for bad in ("", "anthropic_api_a,,anthropic_api_b", " ,", "anthropic_api_a,anthropic_api_a"):
             try:
                 G.call_fable_pool("p", bad, 300, request_id="x", expected_cost_usd=1.0, binary=str(tmp / "quotapick"))
                 check(f"a malformed pool list {bad!r} is refused before any call", False, "no exception")
@@ -299,9 +299,13 @@ def main() -> int:
         prod = str(link / "grades")
         check("--credit-production admits <data>/grades",
               G.fable_pool_refusal("a,b", prod, 1800, ["fable"], 1, link, credit_production=True) is None)
-        check("... written as a relative path too",
-              G.fable_pool_refusal("a,b", str(Path("grades")), 1800, ["fable"], 1, link, credit_production=True) is None
-              if Path.cwd() == link else True)
+        cwd0 = os.getcwd()
+        os.chdir(link)
+        try:
+            check("... written as a relative path too",
+                  G.fable_pool_refusal("a,b", "grades", 1800, ["fable"], 1, link, credit_production=True) is None)
+        finally:
+            os.chdir(cwd0)
         for name, args in (("a subdirectory of grades", ("p", str(link / "grades" / "fable"), 1800, ["fable"], 1)),
                            ("a sibling grades_smoke", ("p", str(link / "grades_smoke"), 1800, ["fable"], 1)),
                            ("contract v2 with the flag", ("p", prod, 1800, ["fable"], 2)),
@@ -332,6 +336,8 @@ def main() -> int:
         check("resolve: the resolve stage is refused", bool(RP.fable_pool_refusal(ns(stage="resolve"), tmp / "n", runs)))
         check("resolve: a run the scores read is refused", bool(RP.fable_pool_refusal(ns(), runs[0], runs)))
         check("resolve: --timeout 2400 is refused", bool(RP.fable_pool_refusal(ns(timeout=2400), tmp / "n", runs)))
+        check("resolve: a pool list is refused (one pool here, a list is grade.py's)",
+              bool(RP.fable_pool_refusal(ns(fable_pool="anthropic_api_a,anthropic_api_b"), tmp / "n", runs)))
 
         print("\n[CLASSIFY] resolve_predictions reads the pool labels first")
         for lab in (G.E_POOL_EXHAUSTED, G.E_POOL_REFUSED, G.E_MODEL_MISMATCH, G.E_IDENTITY):

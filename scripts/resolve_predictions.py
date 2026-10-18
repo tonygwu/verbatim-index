@@ -398,7 +398,7 @@ def run_one(job: dict) -> dict:
                                             expected_cost_usd=args.fable_pool_expected_cost,
                                             raw_response_path=raw_path, spent=args.pool_state["spend"])
                 # Not "fable": a different harness, named so no reader pools it with one.
-                harness, account = "fable_quotapick_run", tel.get("credit_pool") or args.fable_pool
+                harness, account = "fable_quotapick_run", tel["credit_pool"]
             else:
                 text, tel = call_fable(prompt, job["account"], args.timeout, binary=args.fable_bin,
                                        workdir=str(workdir), raw_response_path=raw_path)
@@ -587,6 +587,10 @@ def fable_pool_refusal(args, out_root: Path, scored_runs: list[Path]) -> "str | 
     """
     if not args.fable_pool:
         return None
+    if "," in args.fable_pool:
+        # grade.py takes a list since 2026-10-18; this script's summary and routing
+        # label still record one pool, so a list is refused rather than mislabelled.
+        return f"--fable-pool names one pool here, not a list: got {args.fable_pool!r}"
     if args.stage not in ("prior", "lead_test"):
         return (f"--fable-pool is for the Fable stages (prior, lead_test); stage {args.stage} runs on "
                 f"Astra with web tools, which quotapick run cannot give")
