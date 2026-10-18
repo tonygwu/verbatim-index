@@ -51,7 +51,10 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   pool and its `extraction.telemetry` names `harness: "quotapick run"` and `credit_pool`. It
   refuses `--out` outside an experiment folder (a predictions tree's `_experiments/`, or an
   `experiments/` folder with no predictions tree above it), `--timeout` over 1800, and a run where
-  no stage is pinned to Fable. Failures are `credit_pool_exhausted` (no named pool would admit the call: each is
+  no stage is pinned to Fable. `--credit-production` also admits the production tree itself
+  (`--out data/predictions`, never a leader folder), by the operator's decision of 2026-10-18
+  (ledger VD-19): credit extractions may reach the board, and each record still names its
+  harness and pool. Failures are `credit_pool_exhausted` (no named pool would admit the call: each is
   empty, or held by calls in flight, or unpriced; re-run with `--workers 1` to spend what holds
   left) and `credit_run_failed: <label>`. A credit answer's cache audit names `fable_harness:
   "quotapick run"`, so a run without the pools never takes it as cached, nor the other way round.
