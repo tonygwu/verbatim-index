@@ -550,6 +550,30 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ---
 
+### VI-36. `sources_to_manifest.py` rewrites `sources/repairs.json` from discovery, so a hand-added ASR repair does not survive the next rebuild  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-2 while promoting david-sacks and chamath-palihapitiya (VI-14, closed). Three ASR name forms (`chamat`, `chamathie`, `David sax`) survived blinding and the natural fix was a pair in `sources/repairs.json` for `normalize_transcripts.py --repairs`. Rehearsed on scratch copies, `sources_to_manifest.py --sources ... --manifest ... --aliases ... --repairs ...` reported `repair_pairs: 0` and wrote the file back with every list empty, dropping the hand-added pairs, while it MERGED `aliases.json` (`alias_terms_preserved_by_merge: 17`). Every slug's repairs list is empty today, so nothing has been lost yet; the forms were put in `aliases.json` instead (they blind as `[SUBJECT]`, which is right for a name form). `grade_loop.sh` never runs the rebuild, but `fetch_loop.sh` does on each discovery cycle.
+
+**Impact:** The repairs mechanism, which the loop wires on every normalize, cannot hold a curated entry: the first discovery rebuild after a hand edit silently reverts it, and a misspelt surname leaks to the judge again with nothing in a log to say so.
+
+**Fix:** Merge repairs the way aliases are merged (keep every pair the file holds that discovery did not return, name dropped pairs in the report, `--replace-repairs` for the destructive form), with a failing-then-passing check in the manifest test that a hand-added pair survives a rebuild. Then move the three forms from `aliases.json` back to `repairs.json`, or record in BLINDING.md that aliases are the place for ASR name forms.
+
+**Touch points:** `scripts/sources_to_manifest.py` (the repairs write and the report), its test, `docs/agents/CORPUS.md` or `BLINDING.md`, `data/sources/repairs.json`.
+
+---
+
+### VI-37. The blinder applies only the subject's own alias list, so a co-host leader's name forms survive in another leader's transcript  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** Found by the post-push review of the VI-14 data commit. `blind()` (`scripts/normalize_transcripts.py`, the alias split around `:960`) redacts the subject's name, company and aliases; a second roster member named in the recording keeps every form. Measured on chamath-palihapitiya's 10 graded transcripts: `\bsax\b` 5, "David sacks" 5, "sacks" 2 across lex-fridman-kfqudc, mit-vcpe-club-q09n5t and tucker-carlson-erlkcr. The All-In hosts name each other constantly, so this pair is the sharpest case on the board, but it is pre-existing for every leader who appears in another's recording (the Nate Silver record notes the Risky Business co-host for the same reason).
+
+**Impact:** A judge blinded against the subject can still read the co-host's name, which narrows who the subject is (the other All-In host), and the identity-recognition rate the audit reports may be understated for exactly those recordings.
+
+**Fix:** Measure first: over `transcripts_blind/`, count surviving forms of every OTHER roster member's name and alias list per transcript, and report the leaders whose shelves carry the most. Then decide with the operator whether to blind every roster member's forms (changes blinding for the whole corpus, which makes new grades incomparable with old ones unless the corpus is re-blinded and re-graded) or to record it as a known limit in `docs/agents/BLINDING.md`. The measurement alone is the low item; the change is a separate, larger one.
+
+**Touch points:** `scripts/normalize_transcripts.py` (`blind()`), `docs/agents/BLINDING.md`, a new measurement script under `scripts/`.
+
+---
+
 ### VI-22. `grade.py --regrade-invalid` exists for leaders and is off, so 35 malformed leaders records stay as they are  `[difficulty: low]`  `[filed: 2026-10-11]`  `[BLOCKED: operator decides to turn it on; spends about 35 Fable calls and moves the published board]`
 
 **Background:** The manual pass is the leaders daemon clone's, repo-0; the loop-flag route is a code change any clone can make. Counted 2026-10-11 in the shared leaders data: 35 records failed validation while still carrying an attempt at scores, 26 with `dimensions` and 9 in a judge-invented shape with `overall`; six more failed as refusals or non-answers and stay put by the refusal rule in `docs/agents/JUDGES.md`. `scripts/grade.py:446-473` implements `--regrade-invalid` as an opt-in: a malformed record is moved under `grades/_obsolete/` byte for byte and graded again. `scripts/grade_loop.sh:205` and `:218` do not pass the flag, and `scripts/test_leaders_regrade_invalid.py:150` pins that they do not. It is opt-in because default-on would make repo-0's daemon spend about 35 calls and move the published board on its next code pull. The archived entry "LEADERS HALF FIXED 2026-10-11 as an opt-in" (`docs/BACKLOG-RESOLVED.md`, Verbatim Pundits) holds the count and the proof.
