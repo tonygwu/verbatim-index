@@ -55,7 +55,8 @@ import phase2_resolvability as P2  # noqa: E402
 import resolution_lib as R  # noqa: E402
 from data_clone_workflow import load_scoring_config  # noqa: E402
 from grade import (  # noqa: E402
-    E_CLI, E_TIMEOUT, account_label, call_astra, call_fable, extract_json,
+    E_CLI, E_IDENTITY, E_MODEL_MISMATCH, E_POOL_EXHAUSTED, E_POOL_REFUSED, E_TIMEOUT,
+    FABLE_POOL_MAX_TIMEOUT, account_label, call_astra, call_fable, call_fable_pool, extract_json,
 )
 
 _log_lock = threading.Lock()
@@ -64,7 +65,11 @@ E_NOJSON = "no_json_in_response"
 E_SCHEMA = "schema_violation"
 E_RULES = "rule_violation"
 E_LEAK = "prior_prompt_leak"
-ERROR_TYPES = (E_CLI, E_TIMEOUT, E_NOJSON, E_SCHEMA, E_RULES, E_LEAK, "auth_or_quota", "other")
+ERROR_TYPES = (E_CLI, E_TIMEOUT, E_NOJSON, E_SCHEMA, E_RULES, E_LEAK, "auth_or_quota",
+               E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY, "other")
+# The labels call_fable_pool puts at the front of its message. Read before the
+# keyword rules below, whose "timeout" and "auth" would otherwise claim them.
+POOL_LABELS = (E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY)
 
 
 def log(msg: str) -> None:
@@ -328,6 +333,9 @@ def narrow(rows: list[dict], slugs: "list[str] | None", include_ineligible: bool
 # ---------------------------------------------------------------------------
 
 def classify(detail: str) -> str:
+    for e in POOL_LABELS:
+        if detail.startswith(e):
+            return e
     d = detail.lower()
     if "timeout" in d or "timed out" in d:
         return E_TIMEOUT
@@ -381,9 +389,20 @@ def run_one(job: dict) -> dict:
                 raise RuntimeError(f"{E_LEAK}: prior prompt carries outcome vocabulary {leaks}")
             workdir = Path(args.workdir) / f"fable-{pid}"
             workdir.mkdir(parents=True, exist_ok=True)
-            text, tel = call_fable(prompt, job["account"], args.timeout, binary=args.fable_bin,
-                                   workdir=str(workdir), raw_response_path=raw_path)
-            harness, account = "fable", account_label(job["account"])
+            if args.fable_pool:
+                if args.pool_state["exhausted"].is_set():
+                    raise RuntimeError(f"{E_POOL_EXHAUSTED}: {args.fable_pool} reported empty earlier in "
+                                       f"this run; not sent")
+                text, tel = call_fable_pool(prompt, args.fable_pool, args.timeout,
+                                            request_id=f"{slug}/{pid}/{stage}",
+                                            expected_cost_usd=args.fable_pool_expected_cost,
+                                            raw_response_path=raw_path, spent=args.pool_state["spend"])
+                # Not "fable": a different harness, named so no reader pools it with one.
+                harness, account = "fable_quotapick_run", args.fable_pool
+            else:
+                text, tel = call_fable(prompt, job["account"], args.timeout, binary=args.fable_bin,
+                                       workdir=str(workdir), raw_response_path=raw_path)
+                harness, account = "fable", account_label(job["account"])
 
         prompt_sha = hashlib.sha256(prompt.encode()).hexdigest()
         try:
@@ -444,7 +463,10 @@ def run_one(job: dict) -> dict:
                 "detail": f"no answer in {args.timeout}s", "seconds": round(time.time() - t0, 1)}
     except Exception as exc:  # noqa: BLE001 - every failure is classified, never swallowed
         detail = str(exc)[:500]
-        return {**base, "ok": False, "error_type": classify(detail), "detail": detail,
+        etype = classify(detail)
+        if etype == E_POOL_EXHAUSTED and args.fable_pool:
+            args.pool_state["exhausted"].set()
+        return {**base, "ok": False, "error_type": etype, "detail": detail,
                 "seconds": round(time.time() - t0, 1)}
 
 
@@ -498,6 +520,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--codex-homes", default="",
                     help="comma-separated CODEX_HOME paths; empty uses the ambient one")
     ap.add_argument("--fable-bin", default="claude")
+    ap.add_argument("--fable-pool", default=None, metavar="POOL",
+                    help="prior and lead_test only: send each Fable call through `quotapick run --only POOL`, "
+                         "on prepaid API credit. A different harness (grade.call_fable_pool), recorded as "
+                         "harness fable_quotapick_run; never falls back to a subscription")
+    ap.add_argument("--fable-pool-expected-cost", type=float, default=0.5, metavar="USD",
+                    help="expected_cost_usd per credit-pool call (default 0.5; a production prior "
+                         "cost $0.23)")
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--workdir", default=None)
     ap.add_argument("--errors", type=Path, default=None)
@@ -547,6 +576,25 @@ def accounts_for(args) -> list[str]:
         if not Path(h).expanduser().is_dir():
             raise SystemExit(f"no such CODEX_HOME: {h}")
     return [str(Path(h).expanduser()) for h in homes] or [""]
+
+
+def fable_pool_refusal(args, out_root: Path, scored_runs: list[Path]) -> "str | None":
+    """Why a --fable-pool run must not start, or None.
+
+    The credit-pool harness differs from the production one, so its sidecars must
+    never land in a run the scores already read: that would mix two harnesses
+    under one run with nothing in scoring.json to say so.
+    """
+    if not args.fable_pool:
+        return None
+    if args.stage not in ("prior", "lead_test"):
+        return (f"--fable-pool is for the Fable stages (prior, lead_test); stage {args.stage} runs on "
+                f"Astra with web tools, which quotapick run cannot give")
+    if args.timeout > FABLE_POOL_MAX_TIMEOUT:
+        return f"--timeout {args.timeout} is over quotapick run's {FABLE_POOL_MAX_TIMEOUT}s limit"
+    if out_root.resolve() in {Path(r).resolve() for r in scored_runs}:
+        return f"--out {out_root} is a run the scores read; a credit-pool run needs its own directory"
+    return None
 
 
 def implied_scale(args) -> "float | None":
@@ -602,6 +650,9 @@ def main(argv: list[str] | None = None) -> int:
     # Trend windows freeze from the resolutions in EVERY run the scores read, not
     # only --out, so --ids into a new run judges a resolved record's first window.
     cfg_path, freeze_runs = scoring_runs_for(args.scoring_config, args.predictions)
+    why = fable_pool_refusal(args, out_root, freeze_runs)
+    if why:
+        raise SystemExit(f"REFUSING: {why}")
     resolutions, clash = resolutions_across(freeze_runs + [out_root], date_overrides if ov_path else None)
     log(f"trend windows: read {len(resolutions)} resolved predictions from {len(freeze_runs)} run(s) of "
         f"{cfg_path or 'no scoring config'} and --out; {len(clash)} resolved over different windows in "
@@ -665,8 +716,21 @@ def main(argv: list[str] | None = None) -> int:
     args.run_id = f"{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}-{args.stage}"
     args.workdir = args.workdir or str(Path(os.environ.get("TMPDIR", "/tmp")) / "prediction-resolve")
     Path(args.workdir).mkdir(parents=True, exist_ok=True)
-    accounts = accounts_for(args)
-    log(f"run_id={args.run_id}  accounts={[account_label(a) if a else 'ambient' for a in accounts]}")
+    pool_spent: list[float] = []
+    pool_lock = threading.Lock()
+
+    def _pool_spend(cost: float) -> None:
+        with pool_lock:
+            pool_spent.append(cost)
+
+    args.pool_state = {"exhausted": threading.Event(), "spend": _pool_spend}
+    if args.fable_pool:
+        accounts = [args.fable_pool]
+        log(f"run_id={args.run_id}  credit pool={args.fable_pool} (quotapick run, expected "
+            f"${args.fable_pool_expected_cost:.2f} per call)")
+    else:
+        accounts = accounts_for(args)
+        log(f"run_id={args.run_id}  accounts={[account_label(a) if a else 'ambient' for a in accounts]}")
 
     jobs = [{"rec": r, "args": args, "stage": args.stage,
              "account": accounts[i % len(accounts)]} for i, r in enumerate(todo)]
@@ -685,6 +749,9 @@ def main(argv: list[str] | None = None) -> int:
     for r in bad:
         tax[r["error_type"]] = tax.get(r["error_type"], 0) + 1
     log(f"\nattempted {len(results)}  succeeded {len(ok)}  failed {len(bad)}")
+    if args.fable_pool:
+        log(f"credit pool {args.fable_pool}: {len(pool_spent)} billed call(s), ${sum(pool_spent):.4f} spent"
+            + ("; stopped because the pool reported empty" if args.pool_state["exhausted"].is_set() else ""))
     log(f"error_taxonomy: {json.dumps(tax, sort_keys=True) if tax else '{}'}")
 
     if args.errors and bad:
@@ -703,6 +770,10 @@ def main(argv: list[str] | None = None) -> int:
                "left_out_ineligible": dict(sorted(left_out.items())),
                "ids_file": str(args.ids) if args.ids is not None else None,
                "ids_sha256": ids_sha,
+               "credit_pool": ({"pool": args.fable_pool, "billed_calls": len(pool_spent),
+                                "spent_usd": round(sum(pool_spent), 4),
+                                "stopped_empty": args.pool_state["exhausted"].is_set()}
+                               if args.fable_pool else None),
                "finished_at_utc": utc_now()}
     sp = out_root / "_runs" / f"{args.run_id}.json"
     sp.parent.mkdir(parents=True, exist_ok=True)

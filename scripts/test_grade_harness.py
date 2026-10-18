@@ -415,8 +415,13 @@ def test_quota_routing(g) -> None:
           ordered == ["/h/.claude-c", "/h/.claude-b"], f"ordered={ordered}")
 
     src = (REPO / "scripts" / "grade.py").read_text()
-    check("grade.py no longer shells out to quotapick",
-          '"quotapick"' not in src, "found a quotapick subprocess call")
+    # The 2026-09-06 rule is that Fable ROUTING never parses `quotapick status`; the
+    # router is a library. The one sanctioned quotapick call is call_fable_pool's
+    # `quotapick run --only POOL`, the credit-pool harness (2026-10-18).
+    qp = src.count('"quotapick"')
+    check("grade.py does not parse `quotapick status`; its one quotapick call is call_fable_pool's `run`",
+          qp == 1 and 'binary: str = "quotapick"' in src and '[binary, "run", "--only", pool]' in src
+          and '"quotapick", "status"' not in src, f'"quotapick" appears {qp} time(s)')
     check("the judge binary defaults to the plain claude CLI, not the cl wrapper",
           'default="cl"' not in src, "found --fable-bin default of cl")
 
