@@ -139,7 +139,9 @@ def billed_usd(resp: dict) -> float | None:
     """What every attempt of this call cost, summed; None when no attempt names a cost.
 
     quotapick's top-level cost_usd is only the final attempt's (run.py: `cost_usd =
-    final.cost_usd`), so a call retried on a second pool would under-count.
+    final.cost_usd`), so a call retried on a second pool would under-count. Nor is it
+    a fallback: `final` is the last entry of `attempts`, so when no attempt names a
+    cost the top level names none either.
     """
     costs = [a["cost_usd"] for a in resp.get("attempts") or [] if isinstance(a.get("cost_usd"), (int, float))]
     return sum(costs) if costs else None

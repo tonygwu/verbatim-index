@@ -50,7 +50,7 @@ def check(name, ok, detail=""):
 
 
 #: A stub page for node: enough DOM for the script to render, a local server that
-#: answers with no saved answers and records each save, and one "y" key press.
+#: answers with SAVED and records each save, and one "y" key press.
 PAGE_HARNESS = r"""
 const nodes = {};
 const mk = id => nodes[id] ||= {id, innerHTML: "", textContent: "", className: "", hidden: false, style: {},
@@ -65,7 +65,7 @@ global.location = {hash: ""};
 global.history = {replaceState() {}};
 global.CSS = {escape: s => s};
 global.fetch = async (url, opt) => {
-  if (url === "api/answers") return {ok: true, json: async () => ({labels: {}, attribution: {}})};
+  if (url === "api/answers") return {ok: true, json: async () => SAVED};
   if (url === "api/answer") { posts.push(JSON.parse(opt.body)); return {ok: true, json: async () => ({ok: true})}; }
   throw new Error("unexpected fetch " + url);
 };
@@ -79,13 +79,14 @@ setTimeout(() => {
 """
 
 
-def run_page(rows: list[dict]) -> dict:
-    """The page's own script run by node on `rows`; what it rendered and saved."""
+def run_page(rows: list[dict], saved: dict | None = None) -> dict:
+    """The page's own script run by node on `rows`, starting from the `saved` answers; what it rendered and saved."""
     import pundits_verify_page as V
     page = V.render_page(json.dumps({"rows": rows, "quote_rows": [], "venues": V.VENUES, "transcript_index": {}}))
     script = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
     # On stdin, not -e: a real page is about 1 MB, past the argument-length limit.
-    n = subprocess.run(["node", "-"], input=f"const SCRIPT = {json.dumps(script)};\n" + PAGE_HARNESS,
+    head = f"const SCRIPT = {json.dumps(script)};\nconst SAVED = {json.dumps(saved or {'labels': {}, 'attribution': {}})};\n"
+    n = subprocess.run(["node", "-"], input=head + PAGE_HARNESS,
                        capture_output=True, text=True, timeout=60)
     if n.returncode != 0 or not n.stdout.strip():
         return {"list": "", "detail": "", "posts": [], "threw": n.stderr[-400:]}
@@ -350,6 +351,31 @@ def main() -> int:
     check("a page without drafts has no sections and keeps surname order, and saves no draft_shown",
           order0 == ["p/conf", "p/absent", "p/unsure"] and r0["posts"] and "draft_shown" not in r0["posts"][0]["value"],
           f"{order0} {r0['posts']}")
+    check("the page's script throws nothing, with drafts or without", r["threw"] == "" and r0["threw"] == "",
+          f"{r['threw']!r} {r0['threw']!r}")
+    check("each section header counts only its own recordings",
+          "Check first <small>· 0 of 2 checked</small>" in r["list"]
+          and "Model was confident <small>· 0 of 1 checked</small>" in r["list"],
+          str(re.findall(r'class="sec"[^>]*>(.*?)</div>', r["list"])))
+    check("the draft card quotes the draft's evidence", "<blockquote>E1</blockquote>" in r["detail"], r["detail"][:600])
+    other = next(v for v in V.VENUES if v != "solo")
+    # Partial answers, so the recording stays first in the to-do list and its card is the one shown.
+    rd = run_page(rows, {"labels": {"p/absent": {"subject_present": True, "venue": other}}, "attribution": {}})
+    check("where a saved answer differs from the draft, the card names each field that differs, and only those",
+          "model says the subject is absent" in rd["detail"]
+          and "differs from the model's on: subject present, format</div>" in rd["detail"] and rd["threw"] == "",
+          re.sub(r"\s+", " ", rd["detail"])[:900])
+    ra = run_page(rows, {"labels": {"p/absent": {"subject_present": False, "venue": other}}, "attribution": {}})
+    check("where the person also says the subject is absent, a different format is no disagreement (as in needs_review)",
+          "model says the subject is absent" in ra["detail"] and "Model draft" in ra["detail"]
+          and "differs" not in ra["detail"] and ra["threw"] == "", re.sub(r"\s+", " ", ra["detail"])[:900])
+    nd = run_page([{**base, "key": "p/nodraft", "sid": "nodraft", "person": "Ann Able", "upload": "20240101",
+                    "draft": None, "doubt": ["no model draft"]}, rows[0]])
+    order_nd = [a or b for a, b in re.findall(r'class="sec"[^>]*>([^<]+?) <small|data-k="([^"]+)"', nd["list"])]
+    check("a recording with no usable draft goes under Check first and shows a card that says so, with its reason",
+          order_nd == ["Check first", "p/nodraft", "Model was confident", "p/conf"]
+          and "No usable model draft" in nd["detail"] and '<span class="chip">no model draft</span>' in nd["detail"]
+          and 'class="mtag"' not in nd["detail"] and nd["threw"] == "", f"{order_nd} {nd['detail'][:400]}")
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

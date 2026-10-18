@@ -215,10 +215,14 @@ there. Add new material under the same headings.
   disappear. Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`
   and `scripts/test_pundits_verify_serve.py`, which runs a real server on a real socket and
   reads the bind address off the listening socket rather than off the constant.
-  **The page's own JavaScript is not covered by either.** FOUND 2026-09-20: the save adapter
+  **The page's own JavaScript is covered only in part.** Since 2026-10-18 the page test runs the
+  script under node against a stub page (`run_page` in `test_pundits_verify_page.py`): the
+  list order, the section counts, the draft card and the save of one `y` key press, with
+  saved answers fed in. The stub has no layout and wires no click handlers, so it cannot see
+  what a browser sees. FOUND 2026-09-20: the save adapter
   went in as a module-level `store`, and `setField(store, id, f, v)` already took a parameter of
   that name, so inside setField the parameter won and every save died with
-  `store.put is not a function`. `node --check` passed it and no Python test executes the page.
+  `store.put is not a function`. `node --check` passed it and no Python test executed the page then.
   A browser found it in one keystroke. So after any change to the page's JS, drive it:
   serve the page, load it with Playwright, press `y`, and assert the answer reached the file.
   The globbed suite now carries the static half of that lesson as its SHADOW check.

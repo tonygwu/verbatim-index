@@ -884,7 +884,8 @@ function draftCard(r){
  const d=r.draft;
  if(!d) return `<div class="mdraft"><div class="hd"><b>No usable model draft</b></div>${why?`<div class="chips">${why}</div>`:""}</div>`;
  const l=labels[r.key]||{}, names={subject_present:"subject present", venue:"format", political_content:"political"};
- const differ=Object.keys(names).filter(f=>f in l && l[f]!==d[f]).map(f=>names[f]);
+ // Format counts only once the person says the subject is present, as in needs_review.
+ const differ=Object.keys(names).filter(f=>f in l && l[f]!==d[f] && !(f==="venue" && !l.subject_present)).map(f=>names[f]);
  return `<div class="mdraft">
   <div class="hd"><b>Model draft</b><span>${esc(d.model)} · confidence ${esc(d.confidence)}</span><span>a suggestion: you still pick each answer</span></div>
   <dl><div><dt>subject present</dt><dd>${YN(d.subject_present)}</dd></div><div><dt>main speaker</dt><dd>${YN(d.main_speaker)}</dd></div>

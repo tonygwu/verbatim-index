@@ -342,11 +342,29 @@ def cache_failure(base: dict, detail: str, label: str = L.E_CACHE_STALE) -> dict
             "detail": f"{detail}. Use a separate --out or explicitly re-extract with --force."}
 
 
+def saved_model_request(saved: dict) -> dict:
+    """A saved stage's model_request, naming the credit harness even where its audit does not.
+
+    Credit answers written before 328566c lack `fable_harness`, so their audits look
+    like subscription ones (26 in the pundits pilot, review 2026-10-18). Every credit
+    answer names its pools all the same: `router_account_id` is "credit:<pools>" from
+    0dd1065 on, and before that it is None while `account` is the anthropic_api_* pool
+    that served it. No subscription account has either form; on 2026-10-18 no leaders
+    meta named a pool.
+    """
+    req = dict((saved.get("audit") or {}).get("model_request") or {})
+    routed = saved.get("router_account_id")
+    if req.get("harness") == "fable" and "fable_harness" not in req and (
+            str(routed or "").startswith("credit:")
+            or (routed is None and str(saved.get("account") or "").startswith("anthropic_api_"))):
+        req["fable_harness"] = "quotapick run"
+    return req
+
+
 def cache_matches(saved: dict, audit: dict, contract: str) -> bool:
     old = saved.get("audit") or {}
-    return saved.get("contract_id") == contract and all(
-        old.get(k) == audit[k]
-        for k in ("policy_release", "input_sha256", "prompt_sha256", "model_request"))
+    return saved.get("contract_id") == contract and saved_model_request(saved) == audit["model_request"] and all(
+        old.get(k) == audit[k] for k in ("policy_release", "input_sha256", "prompt_sha256"))
 
 
 def save_inputs(job: dict, stage: str, slug: str, sid: str,
@@ -787,6 +805,24 @@ def resolve_date_checks(arg: str | None, extra_roots: list[Path]) -> tuple[Path 
     return path, L.load_statement_date_checks(path, roots)
 
 
+def code_revision_of(*paths: Path) -> str:
+    """HEAD, with "+dirty" when any of `paths` holds uncommitted changes, as in resolve_predictions.
+
+    Without the mark, a run from an edited tree names a commit that did not produce
+    it: 8 pundits pilot metas say 0dd1065 but ran 328566c's code (review 2026-10-18).
+    Each path is resolved first, because git matches nothing through the
+    .claude/skills symlink, and a path outside the repository stops the run.
+    """
+    real = [Path(p).resolve() for p in paths]
+    outside = [str(p) for p in real if not p.is_relative_to(L.REPO)]
+    if outside:
+        raise SystemExit(f"REFUSING: {outside} is outside {L.REPO}, so no code revision can name it")
+    rev = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=L.REPO, text=True).strip()
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", *map(str, real)], cwd=L.REPO,
+                           capture_output=True, text=True, check=True).stdout.strip()
+    return rev + ("+dirty" if dirty else "")
+
+
 def credit_pools_refusal(pools: list[str], args, out: Path) -> str | None:
     """Why a --fable-credit-pools run must not start, or None.
 
@@ -834,7 +870,7 @@ def main(argv: list[str] | None = None) -> int:
     skill = Path(args.skill_dir)
     release = L.load_policy_release(skill)  # reject an unreviewed contract pair before any routing or call
     header_template = L.load_header_template(skill)  # the template the release just pinned
-    code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=L.REPO, text=True).strip()
+    code_revision = code_revision_of(L.REPO / "scripts", skill)
     from data_clone_workflow import git as data_git
     input_data_revision = data_git(L.data_root(), "rev-parse", "HEAD") if (L.data_root() / ".git").exists() else None
     stages = ["extract", "verify"] if args.stage == "both" else [args.stage]

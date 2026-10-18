@@ -12,9 +12,13 @@
             "quotapick run" in its telemetry
   TAXONOMY  exhaustion and every other credit failure have their own labels
   FAILED    an extraction that fails on credit records the pools it was sent to, through
-            extract_one itself, not only the helper
-  CACHE     a credit answer and a subscription answer have different cache audits, and an
-            audit written without credit is unchanged
+            extract_one itself, not only the helper; a pick that fails before any route
+            exists is a recorded failure, not a crash
+  CACHE     a credit answer and a subscription answer have different cache audits, an
+            audit written without credit is unchanged, and a credit answer written before
+            the audit named its harness is still known by the pool it names
+  REVISION  the code revision a run records gains "+dirty" when scripts/ or the skill
+            (reached through the .claude/skills link) holds uncommitted changes
 
 No quota: credit_run.run is replaced by a stub.
 
@@ -37,6 +41,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def main() -> int:
+    import tempfile
     print("predictions on API credit")
     import credit_run
     import extract_predictions as X
@@ -133,7 +138,6 @@ def main() -> int:
     check("the taxonomy lists each label once", len(L.ALL_ERROR_TYPES) == len(set(L.ALL_ERROR_TYPES)))
 
     print("\n[FAILED]")
-    import tempfile
     patched = {(X, n): getattr(X, n) for n in ("read_meta", "write_meta", "read_transcript", "stage_audit",
                                                "save_inputs", "paths_for")}
     patched |= {(L, n): getattr(L, n) for n in ("build_extraction_prompt", "transcript_id_from_path")}
@@ -161,13 +165,25 @@ def main() -> int:
                    "contract": {"contract_id": "c"}, "roster": {}, "spec": None, "schema_text": "",
                    "header_template": None, "workroot": td / "work", "router": rt}
             res = X.extract_one(job)
+            ext = dict(written.get("extract", {}))
+
+            def no_route(*a):
+                raise RuntimeError("no_eligible_account: every account is out")
+            rt.pick = no_route
+            written.clear()
+            try:
+                res_pick = X.extract_one(job)
+            except Exception as exc:   # an unbound route surfaces here as UnboundLocalError
+                res_pick = {"raised": repr(exc)}
     finally:
         for (mod, name), fn in patched.items():
             setattr(mod, name, fn)
-    ext = written.get("extract", {})
     check("an extraction that fails on credit records the pools it was sent to, and its label",
           ext.get("account") == "credit:anthropic_api_d,anthropic_api_c" and ext.get("harness") == "fable"
           and ext.get("error_type") == L.E_CREDIT_EXHAUSTED and res.get("account") == ext.get("account"), str(ext))
+    check("a pick that fails before any route exists is a recorded failure, not a crash",
+          res_pick.get("status") == "failed" and "no_eligible_account" in res_pick.get("detail", "")
+          and written.get("extract", {}).get("status") == "failed", str(res_pick))
 
     print("\n[CACHE]")
     job = {"args": SimpleNamespace(extractor="fable", verifier="auto", astra_model="a", gemini_model="g",
@@ -180,6 +196,99 @@ def main() -> int:
           credit != sub and credit["model_request"]["fable_harness"] == "quotapick run", f"{credit} {sub}")
     check("an audit written without credit has no new key, so existing caches still match",
           sub["model_request"] == {"harness": "fable", "astra_model": None, "gemini_model": None}, str(sub))
+    same = {k: credit[k] for k in ("policy_release", "input_sha256", "prompt_sha256")}
+    plain = sub["model_request"]   # what a credit audit looked like before 328566c, too
+
+    def saved(model_request, **who):
+        return {"contract_id": "K", "audit": {**same, "model_request": model_request}, **who}
+    # (saved meta, cached by a subscription run, cached by a credit run)
+    shapes = {
+        "pilot credit (no router id, pool account)": (saved(plain, account="anthropic_api_e", router_account_id=None), False, True),
+        "credit before 328566c (credit: router id)": (saved(plain, account="anthropic_api_d",
+                                                         router_account_id="credit:anthropic_api_d,anthropic_api_c"), False, True),
+        "credit from 328566c on": (saved(credit["model_request"], account="anthropic_api_c",
+                                         router_account_id="credit:anthropic_api_c"), False, True),
+        "subscription": (saved(plain, account="claude_e", router_account_id="claude_e"), True, False),
+        "older subscription with no router id": (saved(plain, account="claude"), True, False),
+    }
+    got = {k: (X.cache_matches(m, sub, "K"), X.cache_matches(m, credit, "K")) for k, (m, *_) in shapes.items()}
+    check("a credit answer written before the fable_harness key is still known as credit by the pool it names, "
+          "and a subscription answer, old or new, is not",
+          got == {k: tuple(v[1:]) for k, v in shapes.items()}, str(got))
+
+    patched = {(X, n): getattr(X, n) for n in ("read_meta", "write_meta", "read_transcript", "paths_for")}
+    patched |= {(L, n): getattr(L, n) for n in ("build_extraction_prompt", "transcript_id_from_path")}
+    try:
+        rec = {"text": "t", "leader_slug": "s", "source_id": "i"}
+        X.read_transcript = lambda *a: rec
+        L.build_extraction_prompt = lambda *a, **k: "PROMPT"
+        X.write_meta = lambda p, m: None
+        X.paths_for = lambda out, slug, sid: (out / "a.jsonl", out / "m.json")
+        L.transcript_id_from_path = lambda p: "slug/sid"
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            args = SimpleNamespace(dry_run=False, force=False, extractor="fable", verifier="gemini", timeout=1800,
+                                   astra_model="a", gemini_model="g", fable_credit_pools="")
+            job = {"args": args, "path": str(td / "x.json"), "out": td, "run_id": "run2", "exclusions": {},
+                   "contract": {"contract_id": "c"}, "roster": {}, "spec": None, "schema_text": "",
+                   "header_template": None, "workroot": td / "work", "router": None,
+                   "release": {"release": "r"}, "code_revision": "c", "input_data_revision": "d"}
+            # The pilot's shape: written on credit before 328566c, so its audit equals a subscription audit.
+            pilot = X.stage_audit(job, "extract", {"transcript": rec, "roster_entry": None}, ["PROMPT"])
+            X.read_meta = lambda p: {"extract": {"status": "ok", "contract_id": "c", "harness": "fable",
+                                                 "account": "anthropic_api_e", "router_account_id": None,
+                                                 "audit": pilot}, "verify": {"status": "not_run"}}
+            as_sub = X.extract_one(job)
+            args.fable_credit_pools = "anthropic_api_e"
+            as_credit = X.extract_one(job)
+    finally:
+        for (mod, name), fn in patched.items():
+            setattr(mod, name, fn)
+    check("through extract_one: a subscription run refuses the pilot's credit answer as stale, and a credit run "
+          "takes it as cached",
+          as_sub.get("error_type") == L.E_CACHE_STALE and as_credit.get("status") == "cached", f"{as_sub} {as_credit}")
+
+    print("\n[REVISION]")
+    import subprocess
+    real_repo = L.REPO
+    with tempfile.TemporaryDirectory() as td:
+        g = Path(td).resolve() / "repo"
+        # Parts, not one "scripts/..." string, which test_script_references would read as a reference.
+        for f in (Path("scripts", "a.py"), Path(".agents/skills/x/PROMPT.md"), Path("README.md")):
+            (g / f).parent.mkdir(parents=True, exist_ok=True)
+            (g / f).write_text("v1\n")
+        (g / ".claude").mkdir()
+        (g / ".claude" / "skills").symlink_to("../.agents/skills")
+        git = lambda *a: subprocess.run(["git", "-C", str(g), *a], capture_output=True, text=True, check=True).stdout
+        git("init", "-q")
+        git("add", "-A")
+        git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "init")
+        head = git("rev-parse", "HEAD").strip()
+        skill = g / ".claude" / "skills" / "x"
+        try:
+            L.REPO = g
+            rev = lambda: X.code_revision_of(g / "scripts", skill)
+            clean = rev()
+            (g / "README.md").write_text("v2\n")
+            elsewhere = rev()
+            (g / ".agents/skills/x/PROMPT.md").write_text("v2\n")
+            in_skill = rev()
+            git("checkout", "-q", "--", ".agents/skills/x/PROMPT.md")
+            (g / "scripts" / "new.py").write_text("x\n")
+            untracked = rev()
+            try:
+                X.code_revision_of(Path(td))
+                outside = "ran"
+            except SystemExit as exc:
+                outside = str(exc)
+        finally:
+            L.REPO = real_repo
+    check("a clean tree records HEAD alone, and an edit outside scripts/ and the skill leaves it so",
+          clean == head and elsewhere == head, f"{clean} {elsewhere} {head}")
+    check("an edit inside the skill, reached through the .claude/skills link, marks the revision dirty",
+          in_skill == head + "+dirty", in_skill)
+    check("a new untracked file under scripts/ marks it dirty too", untracked == head + "+dirty", untracked)
+    check("a path outside the repository stops the run", "outside" in outside, outside)
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:
