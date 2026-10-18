@@ -2433,6 +2433,43 @@ def _queue(reason: str, detail: str, checks: list | None = None) -> dict:
     return {"outcome": "queue", "reason": reason, "detail": detail, "checks": checks or []}
 
 
+OWN_DATE_STATED = "own_date_stated"
+STATED_DATE_CONTRADICTED = "stated_date_contradicted"
+
+
+def _stated_date_guard(rec: dict, lat: str, found: list[dict], confirmed: list[dict]) -> dict | None:
+    """A source that states its own date gets no entry from the merge: queued, with the reason (2026-10-18).
+
+    `predictions_lib` refuses both entries such a source could get. A CHECK confirms an
+    upload or publication date (CHECKABLE_BASES), and load_statement_date_checks refuses one
+    on any other basis. An OVERRIDE may not contradict a stated date at all
+    (check_override_against_transcript: "its date is a fact about the words, not a bound";
+    relaxing that is decision D9, not taken). So a day the daters confirm on such a source is
+    queued: the stated day itself as `own_date_stated` (the scorer already counts it as exact,
+    EXACT_DATE_BASES, and the header says "stated in the source itself"), any other day as
+    `stated_date_contradicted`, for a person. FOUND on dating-thin-supplement-20261018: for
+    evan-spiegel/web-fool-com-e6be4392 the merge wrote a check on its stated 2019-10-22, the
+    staged checks file failed to load, and the run's whole merge died after its proposal
+    calls. The review of that fix showed an earlier confirmed day would have died the same
+    way at the overrides file. date_recordings.select_scope now leaves these sources out of
+    an --ids run too, as it always did by default, so the guard is the safety net.
+    """
+    own_date, own_basis = L.own_statement_date(rec)
+    if own_basis != "stated_in_page":
+        return None
+    checks = [_check_record(c, a["harness"]) for a in confirmed for c in a["good"]]
+    by_dater = {a["harness"]: ("confirmed" if a["confirmed"] else a["queue"]["reason"]) for a in found}
+    if lat == own_date:
+        return {**_queue(OWN_DATE_STATED,
+                         f"the confirmed day {lat} is the day the source itself states ({own_basis}); a check "
+                         f"applies only to an upload or publication date, and a stated date already counts as "
+                         f"exact, so there is nothing to promote", checks), "by_dater": by_dater}
+    return {**_queue(STATED_DATE_CONTRADICTED,
+                     f"the daters named {lat}, but the source itself states {own_date} ({own_basis}); an override "
+                     f"may not contradict a stated date (decision D9, not taken), so a person decides", checks),
+            "by_dater": by_dater}
+
+
 def assess(rec: dict, doc: dict, checks: list[dict], version: str = MERGE_VERSION) -> dict:
     """One proposal under `version`'s rules for ONE proposal, before any other dater's proposal is read.
 
@@ -2839,6 +2876,9 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
         conflict = _strong_year_conflict(rec, e, lat)
         if conflict:
             return conflict
+        stated = _stated_date_guard(rec, lat, found, confirmed)
+        if stated:
+            return stated
         first = lead["good"][0]
         route = first.get("route")
         # A description or a transcript lives on the recording's own page, so that page is its address.
@@ -2876,6 +2916,9 @@ def merge(rec: dict, docs: list[dict], checks_by: dict[str, list[dict]], refs: d
         conflict = _strong_year_conflict(rec, e, lat)
         if conflict:
             return conflict
+        stated = _stated_date_guard(rec, lat, found, [])
+        if stated:
+            return stated
         verdict = "dated" if all(a["prop"]["verdict"] == "dated" for a in found) else "publication_only"
         te = next((a["prop"]["transcript_evidence"] for a in found if a["prop"].get("transcript_evidence")), None)
         # The event is the first dater's in DATERS order; in a near agreement, the first that named the later day.

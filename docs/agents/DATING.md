@@ -57,6 +57,35 @@ verdicts, judged by the code at launch, give 2 of 3 for hs-2394 and agree on eve
 other case. Recordings, logs and the table (`logs/live-table.txt`) are in
 `predictions/_eval/cases-20261005-merge5/` in the data repository.
 
+## Rules that exist because something broke
+
+- **A source that states its own date is not dated by this stage, in an `--ids` run
+  either, and the merge makes no entry for one (2026-10-18).** A web transcript whose
+  page states the event's date carries `statement_date_basis: stated_in_page`, which the
+  scorer already counts as exact and the header renders as "stated in the source itself".
+  `predictions_lib` refuses both entries the merge could make for it: a check confirms an
+  upload or publication date only (`CHECKABLE_BASES`), and
+  `check_override_against_transcript` refuses an override that contradicts a stated date
+  (relaxing that is decision D9, not taken). The default scope has always left such
+  transcripts out unless a record is held, counted as "stated_in_page (not dated by this
+  stage)"; `--ids` took exactly the named transcripts, and `dating_lib.merge` labelled a
+  same-day confirmation a check. FOUND on `dating-thin-supplement-20261018`, the first run whose scope was mostly
+  earnings-call transcripts: 16 of its 22 ids were stated dates, the merge wrote a check on
+  evan-spiegel/web-fool-com-e6be4392's stated 2019-10-22, the staged `checks.json.candidate`
+  failed to load, and the whole merge died with 41 of its 44 proposals on disk and nothing
+  written for the other 21 recordings. The review of the first fix
+  showed an earlier confirmed day would have died the same way at the overrides file. Now
+  `select_scope` counts and skips a stated source under `--ids` as well, unless a record of
+  it is held (the verifier's doubt about the stated date, decision D9's case, which the
+  default scope has always dated for a person), and, as the safety net, the merge queues a
+  confirmed day on one instead of making an entry: the stated day as `own_date_stated`, any
+  other day as `stated_date_contradicted`, on the page-confirmed and the agreement paths
+  alike. Two agents agreeing on the stated day never reach the guard: that day is the upper
+  bound both prompts showed, which the merge already queues as `agreement_on_shared_input`. An earlier day on a publication or upload date is still an
+  override, and the same day a check. The proposals and source checks on disk were reused by
+  the re-merge. Proof: `scripts/test_dating_stated_in_page.py`, which fails on the code
+  before the fix under every merge version.
+
 ## Where things are
 
 - Recording dates (rescue round 4, operator decision VD-8 (c)):

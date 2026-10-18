@@ -149,6 +149,9 @@ def load_production_overrides(path: Path, explicit: bool) -> dict:
     return json.loads(path.read_text()).get("overrides") or {}
 
 
+STATED_EXCLUSION = "stated_in_page (not dated by this stage)"
+
+
 def select_scope(pred_dirs: list[Path], troots: list[Path], ids_file: Path | None, production: dict,
                  limit: int | None) -> tuple[list[dict], Counter, list[str]]:
     """(jobs, exclusions by reason, missing transcripts). Every exclusion is counted, none is silent.
@@ -157,7 +160,13 @@ def select_scope(pred_dirs: list[Path], troots: list[Path], ids_file: Path | Non
     an upload date, a publication date or unknown, and each transcript holding a
     record the 2.3 date checks hold. Out, and counted: a transcript that states its
     own date (overriding one is decision D9, not taken) and one the operator has
-    already dated. With --ids, exactly the named transcripts, each of which must exist.
+    already dated. With --ids, exactly the named transcripts, each of which must exist,
+    less any that states its own date and holds no held record: the merge can make no entry
+    for one (an override may not contradict a stated date, a check confirms only an upload or
+    publication date), so dating it spends two calls for a queue row. A held record is the
+    verifier's doubt about the stated date, decision D9's case, and is dated under --ids as
+    in the default scope, for a person. FOUND 2026-10-18: a 22-id run spent 32 of its 44
+    calls on stated dates. Such an id is counted under STATED_EXCLUSION, as the default is.
     """
     records: dict[str, list[dict]] = {}
     metas: dict[str, dict] = {}
@@ -194,7 +203,7 @@ def select_scope(pred_dirs: list[Path], troots: list[Path], ids_file: Path | Non
             if bases & set(UNDATED_BASES) or held or (doubted and "stated_in_page" not in bases):
                 wanted.append(tid)
             elif "stated_in_page" in bases:
-                excluded["stated_in_page (not dated by this stage)"] += 1
+                excluded[STATED_EXCLUSION] += 1
             else:
                 excluded["already dated by an override"] += 1
     jobs, missing = [], []
@@ -203,6 +212,10 @@ def select_scope(pred_dirs: list[Path], troots: list[Path], ids_file: Path | Non
         hits = [r / slug / f"{sid}.json" for r in troots if (r / slug / f"{sid}.json").is_file()]
         if not hits:
             missing.append(tid)
+            continue
+        if ids_file is not None and L.own_statement_date(json.loads(hits[0].read_text()))[1] == "stated_in_page" \
+                and not any(r.get("date_hold") for r in records.get(tid, [])):
+            excluded[STATED_EXCLUSION] += 1
             continue
         jobs.append({"tid": tid, "path": hits[0], "records": records.get(tid, []), "meta": metas.get(tid)})
     if ids_file is not None and missing:
