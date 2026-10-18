@@ -24,17 +24,17 @@ change to its file is an ordinary item.
 | ID scheme | `VI-<n>` (Verbatim Index), one counter for the file. Next ID = 1 + the highest `VI-` number in this file **and** its git history, because a deleted ID never returns; the command is under this table. Ledger IDs (`VP-`, `VD-`, `CI-`) are a different series, in `docs/LEDGER-*.md` |
 | Difficulty ladder | `low`, `medium`, `high`, `xhigh`; `ultra/workflows` is split into normal items when filing. The skill's § 5 maps the running model to a row; claim at or below it |
 | Agent handle | `#<n>` from a `repo-<n>` clone directory (`repo-0` is `#0`). Commit subjects: `claim: VI-n (#<n>)`, `backlog: delete VI-n (#<n>)` |
-| Priority | file order within `## Open items`: the first unclaimed, unblocked item in the file whose Background's first sentence does not name another clone's lane is the next one to take. Read that sentence before the claim, and never claim a lane item from another clone. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them; a new item goes at the end of the unblocked run unless it must be done sooner |
+| Priority | file order within `## Open items`: the first unclaimed, unblocked item in the file whose Background's first sentence does not name another clone's lane is the next one to take. Read that sentence before the claim, and never claim a lane item from another clone. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them. A lane item goes at the head of the unblocked run, so the one clone that can do it reaches it first and every other clone skips it in one read; any other new item goes at the end of the unblocked run unless it must be done sooner |
 | Validation gate | `bash scripts/run_tests.sh` from the clone root, the whole output kept, `failed: 0` required. Never pipe it through `tail -1`: the per-file `FAILED <path>` lines are the finding. `test_log_bloat.py` and the `LIVE DATA` checks in `test_render_integrity.py` read the leaders daemon's live checkout, so a red there is reported with its text, never retried until green (VI-12) |
 | Pre-push review | `adversarial-self-review` on `origin/main..HEAD` before every push, verdict `ship` required, two fix rounds at most |
-| Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Two kinds: an operator decision, or a measurement or event that has not happened. Nobody claims a blocked item, and the loop never lists one, so a lane is never a block: an item that only one clone can finish (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; AGENTS.md, "Clone roles") says so in the first sentence of its Background, and an agent on another clone skips it without claiming, and releases if it claimed before reading. Whoever lifts a block deletes the tag in its own commit |
+| Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Two kinds: an operator decision, or a measurement or event that has not happened. Nobody claims a blocked item, and the loop never lists one, so a lane is never a block: an item that only one clone can finish (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; AGENTS.md, "Clone roles") says so in the first sentence of its Background, and an agent on another clone skips it without claiming, and releases if it claimed before reading. Whoever lifts a block deletes the tag in its own commit and writes the lane sentence for the option chosen |
 | Completion | delete the item; git history is the record. A decision or measurement worth keeping goes in the `docs/agents/` file of its topic, under "Rules that exist because something broke" or "Experiments run", never back into this file |
 | Doc-gap routing | a standalone `low` item |
 | Scan logs / ledgers | `backlog/scan-logs/improve-code/<shard>.md` and `backlog/scan-logs/improve-data/<domain>.md`, tracked, created when those modes first run here |
 | Data read path (`improve-data`) | none named: `improve-data` stops |
 | Names in items | roster slugs, recording ids and public figures named in the roster or the transcripts are the data's own keys and may appear; no email address, phone number, private person's handle or message text, ever |
 
-The next ID, derived at write time after the pull, never earlier:
+The highest ID used so far, in this file and its history; the next ID is this plus one. Derive it at write time after the pull, never earlier:
 
 ```bash
 { grep -oE '^### VI-[0-9]+' BACKLOG.md; git log -p --all -- BACKLOG.md | grep -oE '^\+### VI-[0-9]+'; } | grep -oE '[0-9]+$' | sort -n | tail -1
@@ -66,9 +66,33 @@ The skill's § 3, repeated here so a filing agent has it in front of it:
 
 The `filed:` date is the UTC calendar date the item was first written down,
 kept from the ledger entry it came from, and never updated. "Filed by repo-N"
-in a Background is provenance, not a claim.
+in a Background is provenance, not a claim and not a lane.
 
 ## Open items
+
+### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/pundits_verify_page.py build` takes `--drafts` (`:16-31`, `load_drafts` at `:341`), to be run with `data-pundits/logs/p6b/speaker_inference.jsonl` and the same `--grades` and `--quote-key` as before, then the pundits data pushed; 65 flagged recordings list first.
+
+**Impact:** Three recordings have extractions nobody verified, one person has none, and the labelling page does not show the drafts that were paid for.
+
+**Fix:** From the pundits daemon clone: re-run verify on the three (Gemini quota only); record the `bret-weinstein-bmwp9g` refusal with its raw answers in the run's README rather than retrying blind; rebuild `data-pundits/logs/p6b/speaker_check.html` with `--drafts` and push with `data_sync.py push --daemon`. The review nits that came with this entry are VI-3.
+
+**Touch points:** `data-pundits/experiments/predictions-pilot-20261018/` (README and the three records), `data-pundits/logs/p6b/speaker_check.html`, `scripts/pundits_verify_page.py:16-31` (read only).
+
+---
+
+### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[difficulty: medium]`  `[filed: 2026-10-11]`
+
+**Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
+
+**Impact:** Until the re-grade, the pundits grading loop exits 1 on every cycle after the normalize, and four board scores rest on text in which a judge read "Tim [SUBJECT]" for Tim Walz.
+
+**Fix:** From the pundits daemon clone: run the normalize, then `grade.py --study pundits --force` on the eight cells, then aggregate; record the before-and-after scores in `docs/PUNDITS-RELEASE-PLAN.md`, beside the step at `:49-51` that names this re-grade. One known residual stays: `mehdi-hasan/al-jazeera-english-bwb6x8` keeps "Mary Hassen", a caption corruption after a real given name; it is ungraded.
+
+**Touch points:** `data-pundits/transcripts_blind/` (the 14 files), `data-pundits/grades/{fable,gemini}/{ben-shapiro,matt-walsh}/` (the 8 cells), `docs/PUNDITS-RELEASE-PLAN.md:49-51`.
+
+---
 
 ### VI-1. `extract_predictions.py` takes no `--study`, so a pundits run can write into the leaders data repo  `[difficulty: medium]`  `[filed: 2026-10-18]`
 
@@ -215,30 +239,6 @@ in a Background is provenance, not a claim.
 
 ---
 
-### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`
-
-**Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/pundits_verify_page.py build` takes `--drafts` (`:16-31`, `load_drafts` at `:341`), to be run with `data-pundits/logs/p6b/speaker_inference.jsonl` and the same `--grades` and `--quote-key` as before, then the pundits data pushed; 65 flagged recordings list first.
-
-**Impact:** Three recordings have extractions nobody verified, one person has none, and the labelling page does not show the drafts that were paid for.
-
-**Fix:** From the pundits daemon clone: re-run verify on the three (Gemini quota only); record the `bret-weinstein-bmwp9g` refusal with its raw answers in the run's README rather than retrying blind; rebuild `data-pundits/logs/p6b/speaker_check.html` with `--drafts` and push with `data_sync.py push --daemon`. The review nits that came with this entry are VI-3.
-
-**Touch points:** `data-pundits/experiments/predictions-pilot-20261018/` (README and the three records), `data-pundits/logs/p6b/speaker_check.html`, `scripts/pundits_verify_page.py:16-31` (read only).
-
----
-
-### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[difficulty: medium]`  `[filed: 2026-10-11]`
-
-**Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
-
-**Impact:** Until the re-grade, the pundits grading loop exits 1 on every cycle after the normalize, and four board scores rest on text in which a judge read "Tim [SUBJECT]" for Tim Walz.
-
-**Fix:** From the pundits daemon clone: run the normalize, then `grade.py --study pundits --force` on the eight cells, then aggregate; record the before-and-after scores in `docs/PUNDITS-RELEASE-PLAN.md`, beside the step at `:49-51` that names this re-grade. One known residual stays: `mehdi-hasan/al-jazeera-english-bwb6x8` keeps "Mary Hassen", a caption corruption after a real given name; it is ungraded.
-
-**Touch points:** `data-pundits/transcripts_blind/` (the 14 files), `data-pundits/grades/{fable,gemini}/{ben-shapiro,matt-walsh}/` (the 8 cells), `docs/PUNDITS-RELEASE-PLAN.md:49-51`.
-
----
-
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
@@ -370,7 +370,7 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ### VI-14. david-sacks and chamath-palihapitiya are on the predictions board only, and promoting them means a multi-hour grading run on prepaid credit  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks it up; spends about $50 to $60 of API credit]`
 
-**Background:** Only the leaders daemon clone, repo-0, can finish this: steps (1), (2) and (5) write owner paths of the leaders data repo and deploy the leaderboard. Filed by repo-0 on the operator's instruction of 2026-10-17 and deferred the same day. `membership.json` gives each `['predictions']` today. This item also carries the archived entry "Discovery will re-pollute the seven's curated alias lists" (`docs/BACKLOG-RESOLVED.md`, Board membership): its open clause, re-curate the alias blocks when one of the seven is promoted, is step (3) below, and its measurement (zero incremental blinding damage either way) is in the archive. The ledger entry, verbatim except for one refreshed line number:
+**Background:** Only the leaders daemon clone, repo-0, can finish this: steps (1) to (3), (5) and (6) write owner paths of the leaders data repo and deploy the leaderboard. Filed by repo-0 on the operator's instruction of 2026-10-17 and deferred at once. `membership.json` gives each `['predictions']` today. This item also carries the archived entry "Discovery will re-pollute the seven's curated alias lists" (`docs/BACKLOG-RESOLVED.md`, Board membership): its open clause, re-curate the alias blocks when one of the seven is promoted, is step (3) below, and its measurement (zero incremental blinding damage either way) is in the archive. The ledger entry, verbatim except for one refreshed line number:
 
 Filed 2026-10-18 by repo-0, on the
 operator's instruction of 2026-10-17, and deferred the same day: the work is a
@@ -559,7 +559,7 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 
 ### VI-17. Pundits grading cannot run on prepaid API credit under contract v2 without re-grading the whole pilot  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks (A) or (B); CI-11 stopped after day 1, so its day-1 result is all that is coming]`
 
-**Background:** Filed by repo-3. `quotapick run` (the router's only way to spend a credit pool) runs Fable with tools removed, on an API key, with no sandbox wrapper. Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container` (`profiles/pundits.json:41-51`), `scripts/grade.py:998` refuses any other sandbox, and `judge_requests` is part of the hash that makes the contract ID. So a credit grade filed under today's contract ID would claim a sandbox it never ran in. If instead the contract is amended to name the credit harness, the contract ID changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as `stale_cache`, and `aggregate.py` refuses to mix contracts (`scripts/aggregate.py:1429`), so the whole pilot is graded again (about $380 by the 2026-10-18 estimate). That is more than pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's share into the pundits predictions scale-up, so a re-grade would run on the November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16). CI-11 (`data/experiments/fable-credit-drift-20261018/`) was to grade day 1 on d and day 2 on c; the operator stopped it after day 1 and cancelled day 2 (`docs/LEDGER-corpus-integrity.md:23`), with day 1 showing credit minus subscription -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman 0.939 (`results.md`).
+**Background:** Only the pundits daemon clone, repo-3, can finish option (B): it pushes the re-graded cells; option (A) is a decision with no work. Filed by repo-3. `quotapick run` (the router's only way to spend a credit pool) runs Fable with tools removed, on an API key, with no sandbox wrapper. Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container` (`profiles/pundits.json:41-51`), `scripts/grade.py:998` refuses any other sandbox, and `judge_requests` is part of the hash that makes the contract ID. So a credit grade filed under today's contract ID would claim a sandbox it never ran in. If instead the contract is amended to name the credit harness, the contract ID changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as `stale_cache`, and `aggregate.py` refuses to mix contracts (`scripts/aggregate.py:1429`), so the whole pilot is graded again (about $380 by the 2026-10-18 estimate). That is more than pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's share into the pundits predictions scale-up, so a re-grade would run on the November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16). CI-11 (`data/experiments/fable-credit-drift-20261018/`) was to grade day 1 on d and day 2 on c; the operator stopped it after day 1 and cancelled day 2 (`docs/LEDGER-corpus-integrity.md:23`), with day 1 showing credit minus subscription -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman 0.939 (`results.md`).
 
 **Impact:** The pundits full grade either stays on the subscription harness, or costs about $380 of credit and a contract change.
 
@@ -594,7 +594,7 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 
 ### VI-19. An unsupported dimension removes the whole recording, though the plan says it should still count toward the dimensions it supports  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: the pundits full grade, or a second recording with an unsupported dimension]`
 
-**Background:** The re-aggregate and deploy in step 3 are the pundits daemon clone's, repo-3; the code change is any clone's. Found while asking why `asmongold/asmongold-tv-ks77-g` is missing from `results.json` despite four schema-valid grades. Three of its four grades mark `d1_steelmanning` `unsupported` (fable/blinded, gemini/blinded, gemini/open). `scripts/aggregate.py:1248` marks each such grade `_excluded = "unsupported_dimension"`, which removes the whole grade, and then `drop_partial_panels` (`:115`) drops the fourth, fully supported fable/open grade as an incomplete panel. The recording contributes to no dimension. `docs/PUNDITS-PLAN.md:241-246` ("Anchors and minimum evidence") says otherwise: a transcript with any unsupported dimension has no `overall`, still counts toward each dimension it supports, and ranking by overall uses only transcripts with all three supported. Re-running `aggregate.py --study pundits` on a scratch clone of data-pundits at `dced184` reproduces the committed result: 154 transcripts, the same one partial panel, and `grades_excluded_unsupported_dimension 3` (`:1696`), so the loss is counted rather than silent. The reporting half is done: `drop_partial_panels` names a cell removed earlier and why (`:164`), so the report reads "missing gemini/open (removed: unsupported_dimension)". `docs/PUNDITS-RELEASE-PLAN.md:198-201` asks the operator to choose one rule and delete the other sentence from the plan.
+**Background:** Only the pundits daemon clone, repo-3, can finish this: step 3 re-aggregates and deploys, and the item is deleted only after it; the code change in step 2 may be prepared on any clone. Found while asking why `asmongold/asmongold-tv-ks77-g` is missing from `results.json` despite four schema-valid grades. Three of its four grades mark `d1_steelmanning` `unsupported` (fable/blinded, gemini/blinded, gemini/open). `scripts/aggregate.py:1248` marks each such grade `_excluded = "unsupported_dimension"`, which removes the whole grade, and then `drop_partial_panels` (`:115`) drops the fourth, fully supported fable/open grade as an incomplete panel. The recording contributes to no dimension. `docs/PUNDITS-PLAN.md:241-246` ("Anchors and minimum evidence") says otherwise: a transcript with any unsupported dimension has no `overall`, still counts toward each dimension it supports, and ranking by overall uses only transcripts with all three supported. Re-running `aggregate.py --study pundits` on a scratch clone of data-pundits at `dced184` reproduces the committed result: 154 transcripts, the same one partial panel, and `grades_excluded_unsupported_dimension 3` (`:1696`), so the loss is counted rather than silent. The reporting half is done: `drop_partial_panels` names a cell removed earlier and why (`:164`), so the report reads "missing gemini/open (removed: unsupported_dimension)". `docs/PUNDITS-RELEASE-PLAN.md:198-201` asks the operator to choose one rule and delete the other sentence from the plan.
 
 **Impact:** Size today: 3 grades, 1 recording. Per-dimension counting also has to decide what a partial panel means per dimension: here d1 has one supported cell out of four, while d2 and d3 have all four.
 
