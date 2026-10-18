@@ -361,6 +361,30 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
+### VI-39. The transcript annotation tool is split by study and named for pundits, so one recording cannot carry an insights and a predictions tag in one interface  `[difficulty: high]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-2 at the operator's request. The code and the two leaders-data sessions are any clone's work; the pundits session's migration is repo-3's lane, because the pundits data repo is owner-only, and is handed to repo-3 as a command. `scripts/speaker_audit_page.py:58` "STUDIES = (" builds a separate page per board, and `scripts/pundits_verify_page.py:389` "def build(args) -> int:" builds the pundits page; both are served by `scripts/pundits_verify_serve.py`. The shared page template hard-codes the pundits checklist (`scripts/pundits_verify_page.py:824` "const askDone"), the pundits venue list and a banner naming the pundits server. It also keeps an Artifact `db` fallback whose `put` sends every collection except attribution to the labels collection (`scripts/pundits_verify_page.py:1015` "doc(id.replace("), so a spans or corrections save there would overwrite a recording's labels.
+
+**Impact:** A leaderboard recording that also has accepted predictions would get two pages and two independent sets of word ranges over the same text; the two 2026-09-27 sessions happen to share no recording. No recording carries a project tag. Tool names say "pundits" and "speaker audit" for work that is the same in every study.
+
+**Fix:**
+1. Hard rename to `scripts/annotations*.py` and `.js`: text helpers, quote selection, page, spans, corrections, a `Store` interface with a file store, and the server.
+2. Session manifest v2: `projects` per recording (`insights` for the leaderboard, `predictions`, `pundits`), enabled modes (`speakers`, `captions`, `checklist`), file names, `blind`, and `legacy_from` for a migrated session.
+3. One CLI, `scripts/annotations.py`: `build`, `migrate`, `verify`, `rebuild`, `export`, `status` and `serve`, where `serve` shows several sessions in one interface. `export labels`, `export quotes` and `export spans` replace today's `import`, `import-quotes` and `import-spans`, and `export corrections` replaces `pundits_text_corrections.py`; each still reads an Artifact db export as well as an answers file.
+4. The page differs by mode, not by study: the checklist comes from a per-project spec, rows and quotes show project tags, and model drafts (`--drafts`, VI-16) carry over. New pages drop the Artifact fallback. The published Artifact and its db are not touched, so nothing stored there is lost, and `export labels` keeps accepting an Artifact db export. The db was not readable from the account that tried, which is outside the Artifact's organization, so whether it holds labels missing from git is for the owning account to check.
+5. Migrate `predictions/_experiments/speaker-audit-20260927/{leaders,predictions}` in the leaders data with each `human_answers.json` sha256 unchanged; prove the pundits `logs/p6b` migration on a copy and hand repo-3 the command.
+6. Tests, failing first where behaviour changes: `verify` refuses a changed answers sha256; a two-project recording shows both projects' quotes in one row; the server refuses a section whose mode the session lacks; a built page carries no `claude.use("db")` fallback; the renamed suites pass unchanged in substance.
+7. `docs/agents/ANNOTATIONS.md`, its AGENTS.md row, and pointers from `docs/agents/PUNDITS.md` and `docs/agents/MAP.md`.
+8. Before deleting this item, file a repo-3 lane item that carries the pundits migration command and its expected `verify` output, so the handoff outlives this item.
+
+*Risks and edge cases:* An annotation lost in migration: answers files are only read, and `verify` asserts their sha256 before and after. `scripts/test_play_time.py` scans the builders' source for `3600`. `scripts/test_script_references.py` fails on a dangling `scripts/` name. `scripts/test_private_label_leak.py` fails a new script whose source contains `private/`. Pundits sidecars tokenize raw `transcripts/`, not `transcripts_open`, so a session records its transcript directory. The rename rewrites the commands and line cites in VI-3, VI-9, VI-13, VI-16 and VI-21; VI-16's `--drafts` rebuild is carried into `annotations.py build`.
+
+*Why high not medium:* about twenty files across Python, JavaScript and docs, with a migration of stored human labels.
+
+**Touch points:** `scripts/pundits_verify_page.py`, `scripts/pundits_verify_serve.py`, `scripts/pundits_speaker_spans.py`, `scripts/pundits_text_corrections.py`, `scripts/pundits_span_editor.js`, `scripts/pundits_text_corrections.js`, `scripts/speaker_audit_page.py`, their `scripts/test_*.py`, `scripts/check_pundits_span_ui.py`, `scripts/speaker_turns.py:59` "from pundits_speaker_spans import token_kinds", `scripts/speaker_segment_probe.py:58` "from pundits_speaker_spans import quote_review", `scripts/test_play_time.py`, `docs/agents/PUNDITS.md`, `docs/agents/MAP.md`, `AGENTS.md`.
+
+---
+
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
