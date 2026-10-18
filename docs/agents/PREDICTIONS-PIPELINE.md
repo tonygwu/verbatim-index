@@ -57,7 +57,8 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   "quotapick run"`, so a run without the pools never takes it as cached, nor the other way round.
   Credit answers written before 328566c lack that key; the cache check
   (`extract_predictions.saved_model_request`) still knows them by the pool they name, in
-  `router_account_id` ("credit:<pools>") or in `account` (an `anthropic_api_*` pool). With the pools named,
+  `router_account_id` ("credit:<pools>"), or in `account` (an `anthropic_api_*` pool) when
+  the router id is None. With the pools named,
   every stage that runs must be pinned; `auto` is refused. Proof: `scripts/test_predictions_credit.py`,
   `scripts/test_credit_run.py`. First use: the pundits prediction pilot, now in the pundits
   data repo at `experiments/predictions-pilot-20261018/` (2026-10-18).

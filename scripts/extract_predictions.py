@@ -348,7 +348,7 @@ def saved_model_request(saved: dict) -> dict:
     Credit answers written before 328566c lack `fable_harness`, so their audits look
     like subscription ones (26 in the pundits pilot, review 2026-10-18). Every credit
     answer names its pools all the same: `router_account_id` is "credit:<pools>" from
-    0dd1065 on, and before that it is None while `account` is the anthropic_api_* pool
+    79d4e07 on, and before that it is None while `account` is the anthropic_api_* pool
     that served it. No subscription account has either form; on 2026-10-18 no leaders
     meta named a pool.
     """

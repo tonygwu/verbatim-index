@@ -358,6 +358,16 @@ def main() -> int:
           and "Model was confident <small>· 0 of 1 checked</small>" in r["list"],
           str(re.findall(r'class="sec"[^>]*>(.*?)</div>', r["list"])))
     check("the draft card quotes the draft's evidence", "<blockquote>E1</blockquote>" in r["detail"], r["detail"][:600])
+    done = {"subject_present": True, "venue": "solo", "political_content": True}
+    # p/absent stays to do, so the Check first header still renders with a numerator of 1.
+    rc = run_page(rows, {"labels": {"p/unsure": done}, "attribution": {}})
+    check("a section header counts only its own checked recordings, not every checked one",
+          "Check first <small>· 1 of 2 checked</small>" in rc["list"]
+          and "Model was confident <small>· 0 of 1 checked</small>" in rc["list"] and rc["threw"] == "",
+          str(re.findall(r'class="sec"[^>]*>(.*?)</div>', rc["list"])))
+    ev = run_page([{**rows[2], "draft": {**rows[2]["draft"], "evidence": ["E1 <i>&"]}}])
+    check("the draft's evidence is escaped on the page", "<blockquote>E1 &lt;i&gt;&amp;</blockquote>" in ev["detail"],
+          ev["detail"][:600])
     other = next(v for v in V.VENUES if v != "solo")
     # Partial answers, so the recording stays first in the to-do list and its card is the one shown.
     rd = run_page(rows, {"labels": {"p/absent": {"subject_present": True, "venue": other}}, "attribution": {}})
