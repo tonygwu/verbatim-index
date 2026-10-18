@@ -298,7 +298,7 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-30. The market consensus run summary files every market API error as `cli_nonzero_exit`  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-30. The market consensus run summary files every market API error as `cli_nonzero_exit`  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
 
 **Background:** `scripts/market_consensus.py:69` defines the error label `market_api_error`, which every HTTP failure's error text starts with (`:163` for a cached non-200 replay, `:176`, `:179`), and `:666` and `:682` label each failed record with `L.classify_exception_detail(error)`. That function, `scripts/predictions_lib.py:147-149`, matches the detail against `ALL_ERROR_TYPES` (`:95-97`), which does not name `market_api_error`, so it falls through to the grade taxonomy's default. Verified in repo-1 at `87c42e3` on 2026-10-18:
 
