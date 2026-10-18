@@ -770,7 +770,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "or the production tree with --credit-production.")
     ap.add_argument("--credit-production", action="store_true",
                     help="with --fable-credit-pools, allow --out to be the production predictions tree itself "
-                         "(operator decision 2026-10-18, ledger VD-19); every other credit refusal still applies")
+                         "(operator decision 2026-10-18, ledger VD-19); refuses --verifier fable, which VD-19 does not "
+                         "cover, and every other credit refusal still applies")
     ap.add_argument("--agy-bin", default=AGY_JUDGE_BIN)
     ap.add_argument("--astra-model", default="gpt-6-astra")
     ap.add_argument("--gemini-model", default=GEMINI_MODEL)

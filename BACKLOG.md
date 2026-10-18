@@ -870,6 +870,21 @@ they were filed (50aeaac).
   `fetch_transcripts.py` now says the same thing and no longer claims the pace
   caused a block.
 
+## Verbatim Predictions
+
+- **`index.json` counts credit extractions as plain `fable`.** Filed 2026-10-18 by
+  repo-3, from the adversarial review of `--credit-production` (e267bef).
+  `aggregate_predictions.py` keys the extraction-harness breakdown on the record's
+  `harness`, which stays `fable` for a credit call so the different-family rule in
+  verify still holds. So `data/predictions/index.json` cannot tell subscription Fable
+  from `quotapick run` Fable: on a copy of the pundits pilot, all 184 credit records
+  came out as one row, `extraction_harness: "fable"`. VD-19 says nobody has measured
+  whether the two harnesses extract alike, so the split is worth seeing. Fix: split
+  the breakdown on `extraction.telemetry.harness`. Cost: the derived `index.json`
+  bytes change, so `data_sync.py push` regenerates it on the next push. Comes back
+  with the next change to `aggregate_predictions.py`, or when anyone compares the two
+  harnesses.
+
 ## Verbatim Pundits
 
 - **Pundits predictions scale-up: three follow-ups.** Filed 2026-10-18 by repo-3.
