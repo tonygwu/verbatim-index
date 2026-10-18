@@ -45,7 +45,7 @@ The highest ID used so far, in this file and its history; the next ID is this pl
 The skill's § 3, repeated here so a filing agent has it in front of it:
 
 ```markdown
-### VI-<n>. <one-line problem statement>  `[difficulty: <level>]`  `[filed: YYYY-MM-DD]`  `[BLOCKED: <what lifts it>]`?
+### VI-<n>. <one-line problem statement>  `[difficulty: <level>]`  `[filed: YYYY-MM-DD]`  `[BLOCKED: <what lifts it>]`?  `[claimed by: <handle>]`?
 
 **Background:** first sentence, when only one clone can finish the item: which clone, and why. Then what the code or data does today and where; at least one `file:line`. For a doc item, the stale sentence verbatim.
 
@@ -65,8 +65,9 @@ The skill's § 3, repeated here so a filing agent has it in front of it:
 ```
 
 The `filed:` date is the UTC calendar date the item was first written down,
-kept from the ledger entry it came from, and never updated. "Filed by repo-N"
-in a Background is provenance, not a claim and not a lane.
+kept from the ledger entry it came from, and never updated. Only the skill's
+`claim.py` writes the claim tag, and a blocked item never carries one.
+"Filed by repo-N" in a Background is provenance, not a claim and not a lane.
 
 ## Open items
 
@@ -222,22 +223,21 @@ in a Background is provenance, not a claim and not a lane.
 
 ### VI-23. A Fable answer that overran one turn's output cap reaches the extractor as its last continuation chunk, and the failure is filed as `schema_validation_failed`  `[difficulty: high]`  `[filed: 2026-10-18]`
 
-**Background:** `scripts/credit_run.py:125` returns `resp.get("text")` from the `quotapick run` response as the whole answer; `quotapick run` starts one `claude -p` child and returns that child's final `result` field (it has no continuation code of its own); the subscription harness reads the same field (`scripts/grade.py:1145`), and `grade.call_fable_pool` (`scripts/grade.py:1163`, the priors' and credit grades' path) runs its own `quotapick run` and reads it too, so all three Fable paths share the exposure (VI-5, claimed by #2, is moving `call_fable_pool` onto `credit_run.run`). For pat-gelsinger/web-fool-com-335b172e (10,861 words) two credit extractions on 2026-10-18 returned a `text` of 652 and 11,400 characters that starts mid-string (`in the span.","resolution_cr...`): data `predictions/_raw/responses/pat-gelsinger/web-fool-com-335b172e__extract__20261018T053831Z-both-499ae6b1.json` ($4.81, pool c) and `...20261018T080210Z-both-b18c577b.json` ($5.03, pool b). In both, `usage.output_tokens` (64,247 and 68,707) minus the one `usage.iterations[].output_tokens` entry (247 and 4,707) is exactly 64,000, the child's `maxOutputTokens`: the first turn hit the cap and the child continued, and only the continuation's text came back. The extractor parsed a fragment (every schema error is at `$`, a missing top-level field) and failed; the third attempt on the subscription harness gave 21 candidates, 4 accepted.
+**Background:** `scripts/credit_run.py:128` returns `resp.get("text")` from the `quotapick run` response as the whole answer; `quotapick run` starts one `claude -p` child and returns that child's final `result` field (it has no continuation code of its own); the subscription harness reads the same field (`scripts/grade.py:1160`, in `call_fable`), and `grade.call_fable_pool` (`scripts/grade.py:1206`, the priors' and credit grades' path) has called `credit_run.run` (`:1235`) since VI-5 (`9a2e8ea`), so all three Fable paths share the exposure. For pat-gelsinger/web-fool-com-335b172e (10,861 words) two credit extractions on 2026-10-18 returned a `text` of 652 and 11,400 characters that starts mid-string (`in the span.","resolution_cr...`): data `predictions/_raw/responses/pat-gelsinger/web-fool-com-335b172e__extract__20261018T053831Z-both-499ae6b1.json` ($4.81, pool c) and `...20261018T080210Z-both-b18c577b.json` ($5.03, pool b). In both, `usage.output_tokens` (64,247 and 68,707) minus the one `usage.iterations[].output_tokens` entry (247 and 4,707) is exactly 64,000, the child's `maxOutputTokens`: the first turn hit the cap and the child continued, and only the continuation's text came back. The extractor parsed a fragment (every schema error is at `$`, a missing top-level field) and failed; the third attempt on the subscription harness gave 21 candidates, 4 accepted.
 
 **Impact:** any Fable answer longer than one turn's cap fails after being paid for, and the failure names the model when the harness is at fault; a grade or a prior would fail the same way.
 
 **Fix:**
 1. In `credit_run.run`, after `check_response`, compute `usage.output_tokens` minus the sum of `usage.iterations[].output_tokens`; when the gap is at least the cap (64,000, or the response's own `maxOutputTokens` when present; two continuations leave 128,000) raise `CreditRunError("continuation_truncated: ...")`, counted under that taxonomy label by `extract_predictions.py` and `grade.py`.
-2. The same check in `grade.call_fable` for the subscription harness's `result` (`scripts/grade.py:1140-1150`) and in `grade.call_fable_pool` (`:1163`) until VI-5 routes it through `credit_run.run`.
+2. The same check in `grade.call_fable` for the subscription harness's `result` (`scripts/grade.py:1127-1160`). `grade.call_fable_pool` gets step 1 through `credit_run.run`, but `grade.pool_error` (`:1178-1203`) files a label it does not know as `credit_pool_refused` (`:1201-1202`), so the new label needs its own entry there. The extractor relabels it too: `call_fable_credit` (`scripts/extract_predictions.py:269-270`) wraps every `CreditRunError` as `credit_run_failed: ...`, and `classify_exception_detail` (`scripts/predictions_lib.py:153-155`) files it under that prefix, so the label also needs its own branch there and a place in `ALL_ERROR_TYPES` (`:101-103`). That list includes grade.py's own `ALL_ERROR_TYPES` (`scripts/grade.py:153-156`), which `grade.classify_exception_detail` reads with a `cli_nonzero_exit` fallback (`:170`), so the label goes in grade.py's list first.
 3. A test with a fake `quotapick` binary whose response carries a mid-string `text` and the 64,000-token gap; and one for `call_fable`.
 4. Name the label in `docs/agents/PREDICTIONS-PIPELINE.md` beside `credit_pool_exhausted`.
-5. Coordinate with VI-5, which edits the same served-block check in `credit_run.run`.
 
 *Risks and edge cases:* a prose answer must never be refused for not starting with `{`; the token-gap signal is the check, and a text-shape check only a hint. A response whose `usage` lacks `iterations` must pass as before.
 
-*Why high not medium:* two harnesses, a taxonomy label other scripts count, and an overlap with a claimed item.
+*Why high not medium:* two harnesses, and a taxonomy label that both scripts relabel and count.
 
-**Touch points:** `scripts/credit_run.py:96-140`, `scripts/grade.py:1140-1170`, `scripts/extract_predictions.py:250-272`, `scripts/test_credit_run.py`, `docs/agents/PREDICTIONS-PIPELINE.md`.
+**Touch points:** `scripts/credit_run.py:96-140`, `scripts/grade.py:153-170`, `:1127-1160`, `:1178-1203`, `scripts/extract_predictions.py:253-272`, `scripts/predictions_lib.py:101-103`, `:153-155`, `scripts/test_credit_run.py`, `docs/agents/PREDICTIONS-PIPELINE.md`.
 
 ---
 
@@ -289,7 +289,7 @@ in a Background is provenance, not a claim and not a lane.
 1. In `Cache.get_json` (`:155-180`), catch `urllib.error.URLError`, `TimeoutError`, `OSError` and `http.client.HTTPException` around the fetcher call only, and raise `RuntimeError(f"{E_MARKET_HTTP}: <type>: <reason> for <url>")`, so every handler below sees one exception class. Nothing is cached for it.
 2. Parse the body before writing the cache file; a 200 that does not parse raises the same `market_api_error` and is not cached.
 3. Write the file after each record's consensus block is set (or every N records), through `L.write_prediction_file`, so finished work survives a later crash; keep the final write.
-4. In `main`'s catch-all (`:761-762`) add an `errors` entry with `error_type` from `L.classify_exception_detail`, so the taxonomy counts it (after VI-30 gives it a label).
+4. In `main`'s catch-all (`:761-762`) add an `errors` entry with `error_type` from `L.classify_exception_detail`, so the taxonomy counts it. VI-30 (`f998861`) put the `market_api_error` label in `predictions_lib.ALL_ERROR_TYPES` (`scripts/predictions_lib.py:101-103`).
 5. Tests: a fetcher that raises `URLError` leaves the record `failed` with `reason: None` and `error` starting `market_api_error:`, the file still holds the records finished before it, and the run summary's `error_taxonomy` names it; a fetcher that returns a non-JSON 200 leaves no cache file; a fetcher that raises midway through a two-record file leaves the first record's block on disk.
 6. Optional: re-raise `RefusedDataWrite` from the handlers at `:548` and `:588`, with a test that a cache writer raising it stops the run instead of filing a record error.
 
@@ -346,6 +346,30 @@ in a Background is provenance, not a claim and not a lane.
 **Fix:** in `parse_model_output`, pick the label by message as `grade.py:2481` does: "no opening brace" is `no_json_in_response`, anything else from `extract_json` is `json_parse_error`. Add checks to `scripts/test_predictions_driver.py`, the only test that calls `parse_model_output`: `no JSON here` files `no_json_in_response`; `{"a": 1,, }` and the truncated `{"a": 1, "b": [2, 3` both file `json_parse_error`; failing first.
 
 **Touch points:** `scripts/extract_predictions.py:379-384`, `scripts/test_predictions_driver.py`.
+
+---
+
+### VI-36. `sources_to_manifest.py` rewrites `sources/repairs.json` from discovery, so a hand-added ASR repair does not survive the next rebuild  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** Filed by repo-2 while promoting david-sacks and chamath-palihapitiya (VI-14, closed). Three ASR name forms (`chamat`, `chamathie`, `David sax`) survived blinding and the natural fix was a pair in `sources/repairs.json` for `normalize_transcripts.py --repairs`. Rehearsed on scratch copies, `sources_to_manifest.py --sources ... --manifest ... --aliases ... --repairs ...` reported `repair_pairs: 0` and wrote the file back with every list empty, dropping the hand-added pairs, while it MERGED `aliases.json` (`alias_terms_preserved_by_merge: 17`). Every slug's repairs list is empty today, so nothing has been lost yet; the forms were put in `aliases.json` instead (they blind as `[SUBJECT]`, which is right for a name form). The script builds `repairs` from the discovery payload alone (`scripts/sources_to_manifest.py:57-71`) and writes it whole (`:182`), while `aliases` goes through a merge that keeps hand-added terms (`:130-172`). No loop runs the rebuild: it is stage 1 of `scripts/run_pipeline.sh` (`:36-42`), run by hand on the daemon clone, and the roster-add procedure runs it directly but sends `--repairs` to a scratch file for this reason (`docs/ROSTER-EXPANSION-2026-09-10.md:321-325`); neither `fetch_loop.sh` nor `grade_loop.sh` has ever called it.
+
+**Impact:** The repairs mechanism, which the loop wires on every normalize, cannot hold a curated entry: the first discovery rebuild after a hand edit silently reverts it, and a misspelt surname leaks to the judge again with nothing in a log to say so.
+
+**Fix:** Merge repairs the way aliases are merged (keep every pair the file holds that discovery did not return, name dropped pairs in the report, `--replace-repairs` for the destructive form), with a failing-then-passing check in the manifest test that a hand-added pair survives a rebuild. Then move the three forms from `aliases.json` back to `repairs.json`, or record in BLINDING.md that aliases are the place for ASR name forms.
+
+**Touch points:** `scripts/sources_to_manifest.py:57-71` (repairs from discovery only), `:182` (the write), `:204` (the report's `repair_pairs`), `:38` (beside `--replace-aliases`, for `--replace-repairs`); its test `scripts/test_aliases_subset.py`, whose docstring says at `:28-29` that repairs.json carries no exposure; `docs/agents/CORPUS.md` or `BLINDING.md`, `data/sources/repairs.json`.
+
+---
+
+### VI-37. The blinder applies only the subject's own alias list, so a co-host leader's name forms survive in another leader's transcript  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** Found by the post-push review of the VI-14 data commit. `blind()` (`scripts/normalize_transcripts.py:402`; the live branch is `:427-430`, since no production caller passes a `wordlist`, and `:432-437` is the opt-in split) redacts the subject's name, company and aliases. Normalize passes it only the subject's alias list (`aliases.get(slug, [])`, `:962-963`), and passes `blind_study()` the same list (`:959-960`), so a second roster member named in the recording keeps every form. Measured on chamath-palihapitiya's 10 graded transcripts: `\bsax\b` 5, "David sacks" 5, "sacks" 2 across lex-fridman-kfqudc, mit-vcpe-club-q09n5t and tucker-carlson-erlkcr. The All-In hosts name each other constantly, so this pair is the sharpest case on the board, but it is pre-existing for every leader who appears in another's recording (the Nate Silver record notes the Risky Business co-host for the same reason).
+
+**Impact:** A judge blinded against the subject can still read the co-host's name, which narrows who the subject is (the other All-In host), and the identity-recognition rate the audit reports may be understated for exactly those recordings.
+
+**Fix:** Measure first: over `transcripts_blind/`, count surviving forms of every OTHER roster member's name and alias list per transcript, and report the leaders whose shelves carry the most. Then decide with the operator whether to blind every roster member's forms (changes blinding for the whole corpus, which makes new grades incomparable with old ones unless the corpus is re-blinded and re-graded) or to record it as a known limit in `docs/agents/BLINDING.md`. The measurement alone is the low item; the change is a separate, larger one.
+
+**Touch points:** `scripts/normalize_transcripts.py:402-437` (`blind()`, live branch `:427-430`) and `:959-963` (its call sites), read only for the measurement; `docs/agents/BLINDING.md`; a new measurement script under `scripts/`.
 
 ---
 
@@ -583,30 +607,6 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 *Why high not medium:* a rubric interpretation with a per-judge consequence.
 
 **Touch points:** `scripts/pundits_verify_page.py:181-238`, `scripts/test_pundits_verify_page.py`, `scripts/aggregate.py` (the quote report), `docs/agents/PUNDITS.md`.
-
----
-
-### VI-36. `sources_to_manifest.py` rewrites `sources/repairs.json` from discovery, so a hand-added ASR repair does not survive the next rebuild  `[difficulty: medium]`  `[filed: 2026-10-18]`
-
-**Background:** Filed by repo-2 while promoting david-sacks and chamath-palihapitiya (VI-14, closed). Three ASR name forms (`chamat`, `chamathie`, `David sax`) survived blinding and the natural fix was a pair in `sources/repairs.json` for `normalize_transcripts.py --repairs`. Rehearsed on scratch copies, `sources_to_manifest.py --sources ... --manifest ... --aliases ... --repairs ...` reported `repair_pairs: 0` and wrote the file back with every list empty, dropping the hand-added pairs, while it MERGED `aliases.json` (`alias_terms_preserved_by_merge: 17`). Every slug's repairs list is empty today, so nothing has been lost yet; the forms were put in `aliases.json` instead (they blind as `[SUBJECT]`, which is right for a name form). `grade_loop.sh` never runs the rebuild, but `fetch_loop.sh` does on each discovery cycle.
-
-**Impact:** The repairs mechanism, which the loop wires on every normalize, cannot hold a curated entry: the first discovery rebuild after a hand edit silently reverts it, and a misspelt surname leaks to the judge again with nothing in a log to say so.
-
-**Fix:** Merge repairs the way aliases are merged (keep every pair the file holds that discovery did not return, name dropped pairs in the report, `--replace-repairs` for the destructive form), with a failing-then-passing check in the manifest test that a hand-added pair survives a rebuild. Then move the three forms from `aliases.json` back to `repairs.json`, or record in BLINDING.md that aliases are the place for ASR name forms.
-
-**Touch points:** `scripts/sources_to_manifest.py` (the repairs write and the report), its test, `docs/agents/CORPUS.md` or `BLINDING.md`, `data/sources/repairs.json`.
-
----
-
-### VI-37. The blinder applies only the subject's own alias list, so a co-host leader's name forms survive in another leader's transcript  `[difficulty: low]`  `[filed: 2026-10-18]`
-
-**Background:** Found by the post-push review of the VI-14 data commit. `blind()` (`scripts/normalize_transcripts.py`, the alias split around `:960`) redacts the subject's name, company and aliases; a second roster member named in the recording keeps every form. Measured on chamath-palihapitiya's 10 graded transcripts: `\bsax\b` 5, "David sacks" 5, "sacks" 2 across lex-fridman-kfqudc, mit-vcpe-club-q09n5t and tucker-carlson-erlkcr. The All-In hosts name each other constantly, so this pair is the sharpest case on the board, but it is pre-existing for every leader who appears in another's recording (the Nate Silver record notes the Risky Business co-host for the same reason).
-
-**Impact:** A judge blinded against the subject can still read the co-host's name, which narrows who the subject is (the other All-In host), and the identity-recognition rate the audit reports may be understated for exactly those recordings.
-
-**Fix:** Measure first: over `transcripts_blind/`, count surviving forms of every OTHER roster member's name and alias list per transcript, and report the leaders whose shelves carry the most. Then decide with the operator whether to blind every roster member's forms (changes blinding for the whole corpus, which makes new grades incomparable with old ones unless the corpus is re-blinded and re-graded) or to record it as a known limit in `docs/agents/BLINDING.md`. The measurement alone is the low item; the change is a separate, larger one.
-
-**Touch points:** `scripts/normalize_transcripts.py` (`blind()`), `docs/agents/BLINDING.md`, a new measurement script under `scripts/`.
 
 ---
 
