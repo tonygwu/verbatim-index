@@ -13,11 +13,22 @@ recording decisions in labels, coarse quote decisions in attribution, and human
 word ranges in spans. import, import-quotes, and import-spans consume this file.
 Model drafts never enter the human store without an explicit operator action.
 
+MODEL DRAFTS. With `--drafts` (the speaker_inference.jsonl that
+`pundits_speaker_infer.py infer` writes), each recording shows the model's draft
+answers beside the three questions, and the list puts first every recording whose
+draft `pundits_speaker_infer.needs_review` flags (not high confidence, subject
+absent, subject not the main speaker, no usable answer, or no draft). A draft is
+never an answer: the person still picks each one. A label saved while a draft was
+on screen records `draft_shown` with the model's name, because it is then an
+ASSISTED label, and calibration against the model counts only labels without it.
+
 The page holds transcript text, so it is written into the PRIVATE data checkout
 and never into this repository. No lean label is read or written.
 
   pundits_verify_page.py build  --checklist data-pundits/logs/p6b/human_checklist.json \\
       --transcripts data-pundits/transcripts --roster data-pundits/roster/final.json \\
+      [--grades data-pundits/grades --quote-key data-pundits/logs/p6b/quote_check_key.json] \\
+      [--drafts data-pundits/logs/p6b/speaker_inference.jsonl] \\
       --out data-pundits/logs/p6b/speaker_check.html
   pundits_verify_page.py import --export labels_export.json \\
       --checklist data-pundits/logs/p6b/human_checklist.json \\
@@ -322,6 +333,42 @@ PAGE_TITLE = "Pundit Speaker Check"
 PAGE_SUBTITLE = "Confirm who is speaking before a recording is graded. Each answer saves the moment you pick it."
 
 
+#: What the page shows of a model draft. `evidence` is the model's own verbatim
+#: transcript fragments, which the person can check without opening the video.
+DRAFT_FIELDS = ("subject_present", "main_speaker", "venue", "political_content", "confidence", "reason", "evidence")
+
+
+def load_drafts(path: Path, checklist: dict) -> dict:
+    """Each recording's latest draft, by key. A re-run appends, so the last line wins.
+
+    Refuses a draft for a recording the checklist does not have: that is a drafts
+    file for another set of recordings, and showing it would mislabel the page.
+    """
+    latest = {}
+    for line in path.read_text().splitlines():
+        if line.strip():
+            d = json.loads(line)
+            latest[d["key"]] = d
+    foreign = sorted(set(latest) - set(checklist))
+    if foreign:
+        raise SystemExit(f"REFUSING: {path} drafts {len(foreign)} recordings not on the checklist, e.g. {foreign[:3]}")
+    return latest
+
+
+def draft_view(draft: dict | None) -> tuple[dict | None, list[str]]:
+    """(what the page shows of one draft, why a person should check it first).
+
+    The reasons are `needs_review`'s, the same rule that builds speaker_review_queue.json,
+    without the operator comparison: the page makes that live, as the person answers.
+    """
+    from pundits_speaker_infer import needs_review
+    if draft is None:
+        return None, ["no model draft"]
+    if draft.get("error"):
+        return None, needs_review(draft, None)
+    return {**{f: draft.get(f) for f in DRAFT_FIELDS}, "model": draft["model"]}, needs_review(draft, None)
+
+
 def render_page(data: str, title: str = PAGE_TITLE, subtitle: str = PAGE_SUBTITLE) -> str:
     """The page with its data, its words and its two embedded scripts filled in.
 
@@ -342,6 +389,7 @@ def render_page(data: str, title: str = PAGE_TITLE, subtitle: str = PAGE_SUBTITL
 def build(args) -> int:
     checklist = json.loads(Path(args.checklist).read_text())
     roster = {p["slug"]: p for p in json.loads(Path(args.roster).read_text())["roster"]}
+    drafts = load_drafts(Path(args.drafts), checklist) if getattr(args, "drafts", None) else None
     rows = []
     for key, row in checklist.items():
         slug, sid = key.split("/", 1)
@@ -366,6 +414,8 @@ def build(args) -> int:
             "mentions": mentions,
             "excerpts": excerpts(text),
         })
+        if drafts is not None:
+            rows[-1]["draft"], rows[-1]["doubt"] = draft_view(drafts.get(key))
     rows.sort(key=lambda r: (r["person"].split()[-1], r["person"], r["upload"]))
     quote_rows, key_map, qrep = ([], {}, {})
     if args.grades:
@@ -399,6 +449,11 @@ def build(args) -> int:
           f"{len(page) / 1024:.0f} KB")
     if qrep:
         print(f"quote scan: {qrep}")
+    if drafts is not None:
+        shown = sum(1 for r in rows if r["draft"])
+        first = sum(1 for r in rows if r["doubt"])
+        print(f"model drafts: {shown} of {len(rows)} recordings show one; {first} are listed first for a person "
+              f"to check ({len(rows) - shown} with no usable draft among them)")
     return 0
 
 
@@ -421,7 +476,9 @@ def to_labels(docs: list[dict], checklist: dict) -> dict:
             continue
         out[key] = {"subject_present": d["subject_present"], "venue": d.get("venue"),
                     "political_content": d["political_content"],
-                    "checked_by": d.get("checked_by") or "operator", "notes": d.get("notes") or ""}
+                    "checked_by": d.get("checked_by") or "operator", "notes": d.get("notes") or "",
+                    # An assisted label says so, so calibration can leave it out.
+                    **({"draft_shown": d["draft_shown"]} if d.get("draft_shown") else {})}
     if unknown:
         raise SystemExit(f"REFUSING: {len(unknown)} labels name recordings not on the checklist, e.g. {unknown[:3]}")
     return {"labels": out, "partial": sorted(partial), "unlabelled": sorted(set(checklist) - set(out) - set(partial))}
@@ -520,6 +577,8 @@ def main() -> int:
         b.add_argument(a, required=True)
     b.add_argument("--grades", default=None, help="graded corpus to draw suspect quotes from")
     b.add_argument("--quote-key", default=None, help="private file for the judges' labels of those quotes")
+    b.add_argument("--drafts", default=None, help="speaker_inference.jsonl from pundits_speaker_infer.py: show each "
+                   "recording's model draft, and list the ones it flags first")
     i = sub.add_parser("import")
     for a in ("--export", "--checklist", "--out"):
         i.add_argument(a, required=True)
@@ -638,6 +697,18 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 .qcard .q{display:inline;color:var(--ink);background:var(--accentbg);box-shadow:0 0 0 2px var(--accentbg);border-radius:3px}
 .qhelp{font-size:.8rem;color:var(--muted);max-width:80ch}
 .qblock{display:grid;gap:10px;border-top:1px solid var(--rule);padding-top:14px}
+.sec{padding:8px 12px 6px;font-size:.74rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink2);border-top:1px solid var(--rule2)}
+.sec small{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)}
+.mdraft{border:1px dashed var(--rule2);border-radius:9px;padding:12px 14px;display:grid;gap:8px;font-size:.86rem;max-width:92ch}
+.mdraft .hd{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;font-size:.78rem;color:var(--muted)}
+.mdraft .hd b{color:var(--ink2);font-weight:600}
+.mdraft dl{display:flex;flex-wrap:wrap;gap:4px 18px;margin:0}
+.mdraft dt{display:inline;color:var(--muted)}
+.mdraft dd{display:inline;margin:0 0 0 4px;font-weight:500}
+.mdraft p{margin:0;color:var(--ink2)}
+.mdraft blockquote{margin:0;border-left:2px solid var(--rule2);padding-left:10px;color:var(--ink2);font-size:.82rem}
+.mdraft .differ{color:var(--warn);font-size:.8rem}
+.opt .mtag{font:500 .66rem var(--mono);color:var(--muted);border:1px dashed var(--rule2);border-radius:4px;padding:0 4px}
 .qitem{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--rule);border-radius:9px}
 .qitem[data-focus="true"]{border-color:var(--accent);box-shadow:0 0 0 3px var(--accentbg)}
 .qitem .hd{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:.72rem;color:var(--faint)}
@@ -736,7 +807,15 @@ for(const r of (D.quote_rows||[])){
  const x = REC[r.key] ||= {...r, ask:false, hints:[], excerpts:[], description:"", mentions:null};
  x.quotes = r.quotes; if(!x.title) Object.assign(x, {title:r.title, channel:r.channel, upload:r.upload, video_id:r.video_id, duration:r.duration, forms:r.forms, person:r.person, role:r.role});
 }
-const recs = Object.values(REC).sort((a,b)=>(a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
+// With model drafts (build --drafts), recordings the model flagged come first, then
+// the ones it was confident about, then recordings that only have quotes to check.
+// Without drafts every recording is in one section, so the order is as it was.
+const HAS_DRAFTS = D.rows.some(r=>"doubt" in r);
+const SECTIONS = ["Check first", "Model was confident", "Quotes only"];
+const SECTION_HELP = ["The model was unsure, found the subject absent or not the main speaker, or has no draft",
+ "The model answered with high confidence. Its draft is a suggestion, never an answer", "No recording questions, only flagged quotes"];
+const section = r => !HAS_DRAFTS ? 0 : !r.ask ? 2 : (r.doubt||[]).length ? 0 : 1;
+const recs = Object.values(REC).sort((a,b)=>section(a)-section(b) || (a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
 // A page with no recording-level questions (speaker_audit_page.py) is only quotes.
 const QUOTE_ONLY = !D.rows.length;
 let filter="todo", cur=recs.length?recs[0].key:null, focusQ=0;
@@ -769,11 +848,16 @@ const curRec = () => REC[cur];
 
 function renderList(){
  const vis=visible(), groups={}, per={};
- for(const r of vis)(groups[r.person] ||= []).push(r);
+ // One group per person within each section, so a person's flagged recordings
+ // are not pulled down into their confident ones.
+ for(const r of vis)(groups[section(r)+"\u0000"+r.person] ||= []).push(r);
  for(const r of recs){const p=(per[r.person] ||= {n:0,ok:0,q:0,qa:0}); p.n++; if(r.ask&&recState(r)==="done") p.ok++; p.q+=r.quotes.length; p.qa+=r.quotes.filter(c=>(attrib[c.qid]||{}).answer).length;}
- let h="";
- for(const [person,rs] of Object.entries(groups)){
-  const p=per[person];
+ let h="", lastSec=null;
+ for(const [gk,rs] of Object.entries(groups)){
+  const person=rs[0].person, p=per[person], sec=section(rs[0]);
+  if(HAS_DRAFTS && sec!==lastSec){lastSec=sec;
+   const all=recs.filter(r=>section(r)===sec);
+   h+=`<div class="sec" title="${esc(SECTION_HELP[sec])}">${SECTIONS[sec]} <small>· ${all.filter(complete).length} of ${all.length} checked</small></div>`;}
   h+= QUOTE_ONLY
    ? `<div class="grp"><b>${esc(person)}</b><span class="${p.qa===p.q?"ok":""}" title="quotes with a saved answer">${p.qa} of ${p.q} quotes answered</span></div>`
    : `<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=5?"ok":""}" title="recordings verified so far (subject present and political); 5 are needed to rank">${p.ok} verified of ${p.n}${p.q?` · ${p.q} quotes`:""}</span></div>`;
@@ -788,7 +872,28 @@ function renderList(){
 
 function opt(store, id, field, value, label, key, cls=""){
  const on=(store[id]||{})[field]===value;
- return `<button type="button" class="opt ${cls}" data-store="${store===labels?"l":"a"}" data-id="${esc(id)}" data-f="${field}" data-v='${JSON.stringify(value)}' aria-pressed="${on}" ${writable?"":"disabled"}>${esc(label)} <kbd>${key}</kbd></button>`;}
+ const fab = store===labels && REC[id]?.draft?.[field]===value ? ` <span class="mtag" title="the model's draft answer">model</span>` : "";
+ return `<button type="button" class="opt ${cls}" data-store="${store===labels?"l":"a"}" data-id="${esc(id)}" data-f="${field}" data-v='${JSON.stringify(value)}' aria-pressed="${on}" ${writable?"":"disabled"}>${esc(label)}${fab} <kbd>${key}</kbd></button>`;}
+
+// The model's draft, shown as a suggestion beside the questions. Where the person's
+// saved answer differs, the card says so, so a slip is caught before moving on.
+const YN = v => v===true?"yes":v===false?"no":"?";
+function draftCard(r){
+ if(!HAS_DRAFTS || !r.ask) return "";
+ const why=(r.doubt||[]).map(w=>`<span class="chip">${esc(w)}</span>`).join("");
+ const d=r.draft;
+ if(!d) return `<div class="mdraft"><div class="hd"><b>No usable model draft</b></div>${why?`<div class="chips">${why}</div>`:""}</div>`;
+ const l=labels[r.key]||{}, names={subject_present:"subject present", venue:"format", political_content:"political"};
+ const differ=Object.keys(names).filter(f=>f in l && l[f]!==d[f]).map(f=>names[f]);
+ return `<div class="mdraft">
+  <div class="hd"><b>Model draft</b><span>${esc(d.model)} · confidence ${esc(d.confidence)}</span><span>a suggestion: you still pick each answer</span></div>
+  <dl><div><dt>subject present</dt><dd>${YN(d.subject_present)}</dd></div><div><dt>main speaker</dt><dd>${YN(d.main_speaker)}</dd></div>
+   <div><dt>format</dt><dd>${esc(d.venue)}</dd></div><div><dt>political</dt><dd>${YN(d.political_content)}</dd></div></dl>
+  ${why?`<div class="chips">${why}</div>`:""}
+  <p>${esc(d.reason)}</p>
+  ${(d.evidence||[]).map(x=>`<blockquote>${esc(x)}</blockquote>`).join("")}
+  ${differ.length?`<div class="differ">Your answer differs from the model's on: ${esc(differ.join(", "))}</div>`:""}
+ </div>`;}
 
 function renderDetail(){
  const r=curRec();
@@ -819,6 +924,7 @@ function renderDetail(){
   ${hints?`<div class="chips">${hints}</div>`:""}
   <a class="yt" id="yt" href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${start}s" target="_blank" rel="noopener">Open on YouTube at ${fmtT(start)} ↗</a>
   ${r.description?`<details class="desc"><summary>Video description</summary><p>${esc(r.description)}</p></details>`:""}
+  ${draftCard(r)}
   <div class="form">${ask}${quotes}
    ${!r.quotes.length?`<details class="range-extra"><summary>Mark speaker ranges in this recording (optional)</summary><div data-span-editor="-1">Loading speaker-range editor…</div></details>`:""}
    <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
@@ -843,6 +949,8 @@ const queue={};
 function setField(store, id, f, v, quiet){
  if(!writable) return;
  const next={...(store[id]||{}), key:id, [f]:v, checked_by:"operator", updated_at:new Date().toISOString()};
+ // Saved while a draft was on screen: an assisted label, and it says so.
+ if(store===labels && REC[id]?.draft) next.draft_shown=REC[id].draft.model;
  store[id]=next;
  if(!quiet){renderList();renderDetail();}
  const st=el("status");st&&(st.textContent="Saving…",st.className="status");

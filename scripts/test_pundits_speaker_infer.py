@@ -10,7 +10,8 @@ Pundits plan, P6.
              a confident present-and-main draft with no human label is not
   VENUE      a venue disagreement on a row the operator marked absent is ignored
   CALIBRATE  agreement is counted per field, venue only where the subject is present
-  UNLABELLED a field the operator did not label is neither queued nor counted
+  UNLABELLED a field the operator did not label is neither queued nor counted, and a label
+             saved with the draft on screen (draft_shown) is left out of calibration
   SETS       a P6b row is its position in the checklist file; a pilot row is its key table's
   CREDIT     a credit draft asks for Fable at effort max, and each attempt keeps its own raw
              file and request id, counting a legacy `<sid>.json` as attempt 1
@@ -139,6 +140,11 @@ def main() -> int:
               and cal6["high_confidence"] == {"rows": 2, "all_three_agree": 1}, str(cal6))
     except KeyError as exc:
         check("calibration counts main_speaker only where a person labelled it", False, f"KeyError {exc}")
+
+    cal7 = S.calibration({"a": d, "b": d}, {"a": p6b_human, "b": {**p6b_human, "draft_shown": "claude-fable-5-1"}})
+    check("a label made with the draft on screen is left out of calibration, and counted",
+          cal7["rows_compared"] == 1 and cal7["assisted_labels_left_out"] == 1
+          and cal7["subject_present"] == {"agree": 1, "of": 1}, str(cal7))
 
     print("\n[SETS]")
     import tempfile

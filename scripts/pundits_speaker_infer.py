@@ -275,8 +275,11 @@ def needs_review(draft: dict, human: dict | None) -> list[str]:
 
 
 def calibration(drafts: dict, human: dict) -> dict:
-    both = [k for k in drafts if k in human and not drafts[k].get("error")]
-    out = {"rows_compared": len(both)}
+    # A label saved while the draft was on screen (draft_shown, set by the review
+    # page) is anchored on it, so it says nothing about the draft's accuracy.
+    assisted = [k for k in drafts if k in human and human[k].get("draft_shown")]
+    both = [k for k in drafts if k in human and not drafts[k].get("error") and not human[k].get("draft_shown")]
+    out = {"rows_compared": len(both), "assisted_labels_left_out": len(assisted)}
     for f in ("subject_present", "main_speaker", "venue"):
         # A field counts only on rows where a person labelled it (P6b labels
         # carry no main_speaker), and venue only where the subject is present.

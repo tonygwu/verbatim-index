@@ -20,6 +20,12 @@ passed through would be a guessed label. So this checks the importer against
   HIDDEN     the judges' labels reach the private key file, never the page
   JOIN       quote answers join the key, and a foreign answer stops the import
   SHADOW     no function parameter hides a module-level binding its own body uses
+  DRAFTS     with --drafts each recording carries its latest draft and needs_review's
+             reasons; a draft for a recording off the checklist stops the build; without
+             --drafts the rows are as before; draft_shown survives the import
+  RENDER     run by node against a stub page: flagged recordings come first, each under
+             its own section, the draft card and its tags show, and a saved answer
+             carries draft_shown; a page without drafts has no sections
 
   .venv/bin/python scripts/test_pundits_verify_page.py
 """
@@ -27,6 +33,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -40,6 +47,50 @@ PASS, FAIL = [], []
 def check(name, ok, detail=""):
     (PASS if ok else FAIL).append(name)
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"\n        {detail}" if not ok and detail else ""))
+
+
+#: A stub page for node: enough DOM for the script to render, a local server that
+#: answers with no saved answers and records each save, and one "y" key press.
+PAGE_HARNESS = r"""
+const nodes = {};
+const mk = id => nodes[id] ||= {id, innerHTML: "", textContent: "", className: "", hidden: false, style: {},
+  setAttribute(k, v) { this[k] = v; }, querySelectorAll() { return []; }, querySelector() { return null; },
+  addEventListener() {}, scrollIntoView() {}, closest() { return null; }, dataset: {}};
+let keydown = null;
+const posts = [];
+global.document = {getElementById: mk, querySelector() { return null; }, querySelectorAll() { return []; },
+  addEventListener(type, fn) { if (type === "keydown") keydown = fn; }, createElement: () => mk("x" + Math.random())};
+global.window = {open() {}, addEventListener() {}, removeEventListener() {}};
+global.location = {hash: ""};
+global.history = {replaceState() {}};
+global.CSS = {escape: s => s};
+global.fetch = async (url, opt) => {
+  if (url === "api/answers") return {ok: true, json: async () => ({labels: {}, attribution: {}})};
+  if (url === "api/answer") { posts.push(JSON.parse(opt.body)); return {ok: true, json: async () => ({ok: true})}; }
+  throw new Error("unexpected fetch " + url);
+};
+let threw = "";
+try { new Function(SCRIPT)(); } catch (e) { threw = String(e && e.stack || e).split("\n")[0]; }
+setTimeout(() => {
+  const list = nodes.list && nodes.list.innerHTML, detail = nodes.detail && nodes.detail.innerHTML;
+  if (keydown) keydown({key: "y", target: {tagName: "BODY", closest: () => null}, preventDefault() {}});
+  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw})), 20);
+}, 20);
+"""
+
+
+def run_page(rows: list[dict]) -> dict:
+    """The page's own script run by node on `rows`; what it rendered and saved."""
+    import pundits_verify_page as V
+    page = V.render_page(json.dumps({"rows": rows, "quote_rows": [], "venues": V.VENUES, "transcript_index": {}}))
+    script = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
+    # On stdin, not -e: a real page is about 1 MB, past the argument-length limit.
+    n = subprocess.run(["node", "-"], input=f"const SCRIPT = {json.dumps(script)};\n" + PAGE_HARNESS,
+                       capture_output=True, text=True, timeout=60)
+    if n.returncode != 0 or not n.stdout.strip():
+        return {"list": "", "detail": "", "posts": [], "threw": n.stderr[-400:]}
+    out = json.loads(n.stdout.strip().splitlines()[-1])
+    return {k: out.get(k) or ("" if k != "posts" else []) for k in ("list", "detail", "posts", "threw")}
 
 
 def main() -> int:
@@ -221,6 +272,84 @@ def main() -> int:
                 offenders.append(f"{fname}({n}) hides the module-level {n}")
     check("no function parameter hides a module-level binding its body dereferences",
           not offenders, "; ".join(offenders))
+
+    print("\n[DRAFTS]")
+    good = {"subject_present": True, "main_speaker": True, "venue": "solo", "political_content": True,
+            "confidence": "high", "reason": "R", "evidence": ["E1"]}
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        (td / "t" / "p").mkdir(parents=True)
+        for sid in ("conf", "unsure", "none", "broken"):
+            (td / "t" / "p" / f"{sid}.json").write_text(json.dumps({"video_id": f"v{sid}", "text": "[00:00:00] words " * 40,
+                                                                    "yt_duration_sec": 600, "word_count": 80}))
+        (td / "c.json").write_text(json.dumps({f"p/{s}": {"title": s, "hints": []} for s in ("conf", "unsure", "none", "broken")}))
+        (td / "r.json").write_text(json.dumps({"roster": [{"slug": "p", "name": "Jane Roe", "role": "host"}]}))
+        lines = [{"row": 1, "key": "p/conf", "model": "claude-fable-5-1", **good, "confidence": "medium"},
+                 {"row": 1, "key": "p/conf", "model": "claude-fable-5-1", **good},
+                 {"row": 2, "key": "p/unsure", "model": "claude-fable-5-1", **good, "confidence": "medium"},
+                 {"row": 4, "key": "p/broken", "model": "claude-fable-5-1", "error": "ValueError: no JSON"}]
+        (td / "d.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+        ns = dict(checklist=str(td / "c.json"), transcripts=str(td / "t"), roster=str(td / "r.json"),
+                  out=str(td / "o.html"), grades=None, quote_key=None)
+        V.build(SimpleNamespace(**ns, drafts=str(td / "d.jsonl")))
+        page = (td / "o.html").read_text()
+        got = {r["key"]: r for r in json.loads(page[page.index("const D = ") + 10:page.index(";\nconst VENUE_DEF")]
+                                               .replace("<\\/", "</"))["rows"]}
+        check("the latest draft wins, and a confident one gives no reason to check first",
+              got["p/conf"]["draft"]["confidence"] == "high" and got["p/conf"]["doubt"] == [], str(got["p/conf"].get("doubt")))
+        check("a medium-confidence draft is flagged with needs_review's own words",
+              got["p/unsure"]["doubt"] == ["model confidence medium"] and got["p/unsure"]["draft"]["model"] == "claude-fable-5-1")
+        check("a recording with no draft, or a failed one, shows none and is flagged",
+              got["p/none"]["draft"] is None and got["p/none"]["doubt"] == ["no model draft"]
+              and got["p/broken"]["draft"] is None and got["p/broken"]["doubt"] == ["the model gave no usable answer"],
+              str({k: (got[k]["draft"], got[k]["doubt"]) for k in ("p/none", "p/broken")}))
+        check("the page shows the draft's evidence fragments", got["p/conf"]["draft"]["evidence"] == ["E1"])
+        V.build(SimpleNamespace(**ns))
+        page0 = (td / "o.html").read_text()
+        rows0 = json.loads(page0[page0.index("const D = ") + 10:page0.index(";\nconst VENUE_DEF")].replace("<\\/", "</"))["rows"]
+        check("without --drafts no row carries a draft or a reason",
+              len(rows0) == 4 and not any("draft" in r or "doubt" in r for r in rows0), str([sorted(r) for r in rows0][:1]))
+        (td / "d2.jsonl").write_text(json.dumps({"key": "p/elsewhere", "model": "m", **good}) + "\n")
+        try:
+            V.build(SimpleNamespace(**ns, drafts=str(td / "d2.jsonl")))
+            check("a draft for a recording off the checklist stops the build", False, "built")
+        except SystemExit as exc:
+            check("a draft for a recording off the checklist stops the build", "not on the checklist" in str(exc), str(exc))
+    lab = V.to_labels([{"key": "p/a", "subject_present": True, "venue": "solo", "political_content": True,
+                        "draft_shown": "claude-fable-5-1"}], {"p/a": {}})["labels"]["p/a"]
+    check("an assisted label keeps draft_shown through the import, and report still accepts it",
+          lab.get("draft_shown") == "claude-fable-5-1" and P.human_errors(lab) == [], str(lab))
+    lab0 = V.to_labels([{"key": "p/a", "subject_present": True, "venue": "solo", "political_content": True}],
+                       {"p/a": {}})["labels"]["p/a"]
+    check("a blind label gains no draft_shown", "draft_shown" not in lab0, str(lab0))
+
+    print("\n[RENDER]")
+    base = {"slug": "p", "role": "", "title": "T", "channel": "c", "url": "", "video_id": "v", "duration": 600,
+            "words": 100, "hints": [], "description": "", "forms": ["Jane Roe"], "mentions": 1, "excerpts": []}
+    shown = {**good, "model": "claude-fable-5-1"}
+    rows = [{**base, "key": "p/conf", "sid": "conf", "person": "Ann Able", "upload": "20240101", "draft": shown, "doubt": []},
+            {**base, "key": "p/unsure", "sid": "unsure", "person": "Zed Zulu", "upload": "20240101",
+             "draft": {**shown, "confidence": "medium"}, "doubt": ["model confidence medium"]},
+            {**base, "key": "p/absent", "sid": "absent", "person": "Ann Able", "upload": "20240202",
+             "draft": {**shown, "subject_present": False}, "doubt": ["model says the subject is absent"]}]
+    r = run_page(rows)
+    order = [a or b for a, b in re.findall(r'class="sec"[^>]*>([^<]+?) <small|data-k="([^"]+)"', r["list"])]
+    check("flagged recordings come first under their own section, whatever the surname, and one person's "
+          "confident recording stays in the confident section",
+          order == ["Check first", "p/absent", "p/unsure", "Model was confident", "p/conf"], f"{order} {r.get('threw', '')}")
+    check("the first recording shown is the flagged one, with the draft card and a model tag on each drafted answer",
+          "Model draft" in r["detail"] and "model says the subject is absent" in r["detail"]
+          and r["detail"].count('class="mtag"') == 3, r["detail"][:300])
+    post = r["posts"][0] if r["posts"] else {}
+    check("an answer saved with a draft on screen carries draft_shown",
+          post.get("kind") == "labels" and post.get("id") == "p/absent"
+          and post.get("value", {}).get("draft_shown") == "claude-fable-5-1"
+          and post["value"].get("subject_present") is True, str(r["posts"]))
+    r0 = run_page([{k: v for k, v in x.items() if k not in ("draft", "doubt")} for x in rows])
+    order0 = [a or b for a, b in re.findall(r'class="sec"[^>]*>([^<]+?) <small|data-k="([^"]+)"', r0["list"])]
+    check("a page without drafts has no sections and keeps surname order, and saves no draft_shown",
+          order0 == ["p/conf", "p/absent", "p/unsure"] and r0["posts"] and "draft_shown" not in r0["posts"][0]["value"],
+          f"{order0} {r0['posts']}")
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

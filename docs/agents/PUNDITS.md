@@ -164,8 +164,11 @@ there. Add new material under the same headings.
   p6b` writes `speaker_review_queue.json`: calibration against the operator's labels, and the
   rows a person should still check. A P6b label has no `main_speaker`, because the guide stopped
   asking on 2026-09-15, so review and calibration compare only the fields a person labelled. A
-  draft is never a label: `merge` marks each one `drafted_by_model`. The review page does not show
-  drafts yet. Proof: `scripts/test_pundits_speaker_infer.py`, `scripts/test_credit_run.py`.
+  draft is never a label: `merge` marks each one `drafted_by_model`. The review page shows the
+  drafts when built with `--drafts` (next item). Calibration counts only blind labels: one saved
+  with a draft on screen carries `draft_shown` and is left out, and counted as
+  `assisted_labels_left_out`. Proof: `scripts/test_pundits_speaker_infer.py`,
+  `scripts/test_credit_run.py`.
 
 - Pundits predictions pilot: `experiments/predictions-pilot-20261018/` in the pundits data repo,
   with a README. Fable extracted on prepaid API credit (`extract_predictions.py --extractor fable
@@ -197,7 +200,18 @@ there. Add new material under the same headings.
   the quote, a question inside a conversation or debate, the subject's own name); build with
   `--grades` and `--quote-key`. The private key preserves grading provenance,
   and `import-quotes` joins answers to it. Its rates describe FLAGGED quotes only, so it
-  does not replace the P7 random quote audit. Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`
+  does not replace the P7 random quote audit.
+  With `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` (2026-10-18) each recording
+  also shows the model's draft: its three answers, confidence, reason and evidence fragments,
+  and a "model" tag on each option it picked. The list puts first every recording that
+  `pundits_speaker_infer.needs_review` flags, the same rule as `speaker_review_queue.json`
+  (not high confidence, subject absent or not the main speaker, no usable draft), then the
+  confident ones, then quote-only recordings. A draft is never an answer. A label saved while a
+  draft was on screen records `draft_shown` with the model's name, `import` keeps it, and
+  calibration leaves it out, because an assisted label cannot measure the model. The template
+  names no model: `speaker_audit_page.py` renders it as a blind page, and its test refuses a
+  judge name. Rebuild with the same `--grades` and `--quote-key` as before, or the quote checks
+  disappear. Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`
   and `scripts/test_pundits_verify_serve.py`, which runs a real server on a real socket and
   reads the bind address off the listening socket rather than off the constant.
   **The page's own JavaScript is not covered by either.** FOUND 2026-09-20: the save adapter
