@@ -8,8 +8,8 @@ extractor and the verifier both said the subject spoke. Nothing in a caption tra
 says who is talking, so each of those is a model's inference about speaker turns.
 This page puts a chosen few in front of a person, who marks who actually spoke.
 
-It reuses the pundits speaker-check page (`pundits_verify_page.py`), its local
-server (`pundits_verify_serve.py`), its word-range editor and its importers
+It reuses the pundits speaker-check page (`annotations_page.py`), its local
+server (`annotations_serve.py`), its word-range editor and its importers
 unchanged. Only the choice of quotes differs:
 
   leaders      every evidence quote any judge cited in the recording, located in
@@ -31,12 +31,12 @@ page. Those claims stay in the private key file that `import-quotes` joins with
 the answers. The page carries transcript text, so write it into a private data
 checkout and serve it locally; never publish it.
 
-  .venv/bin/python scripts/speaker_audit_page.py build --study leaders \\
+  .venv/bin/python scripts/annotations_select.py build --study leaders \\
       --data ../data --keys marc-benioff/exacttarget-9game7,... \\
       --out data/predictions/_experiments/RUN/leaders/speaker_check.html
-  .venv/bin/python scripts/pundits_verify_serve.py --port 5002 \\
+  .venv/bin/python scripts/annotations_serve.py --port 5002 \\
       --page data/predictions/_experiments/RUN/leaders/speaker_check.html
-  .venv/bin/python scripts/pundits_verify_page.py import-quotes \\
+  .venv/bin/python scripts/annotations_page.py import-quotes \\
       --export .../human_answers.json --key .../quote_key.json \\
       --page .../speaker_check.html --out .../quote_results.json
 """
@@ -52,8 +52,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
-from pundits_speaker_spans import build_transcript, sidecar_path  # noqa: E402
-from pundits_verify_page import CONTEXT_WORDS, MARK, locate, name_forms, play_time, render_page, _norm  # noqa: E402
+from annotations_spans import build_transcript, sidecar_path  # noqa: E402
+from annotations_page import CONTEXT_WORDS, MARK, locate, name_forms, play_time, render_page, _norm  # noqa: E402
 
 STUDIES = ("leaders", "predictions")
 DEFAULT_CAP = 6

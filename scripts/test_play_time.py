@@ -4,15 +4,15 @@
 Both speaker-check pages link each quote to YouTube at `t` seconds. They used the
 nearest EARLIER `[hh:mm:ss]` mark, and the fetcher writes one mark a minute, so on
 sergey-brin/badbellabear-9uzqfz four quotes at words 1, 23, 63 and 154 all linked to
-0:05. `play_time` in pundits_verify_page.py interpolates between the marks around the
+0:05. `play_time` in annotations_page.py interpolates between the marks around the
 word and starts PLAY_LEAD_SECONDS early. Both builders call it, so they cannot drift.
 
 Synthetic text only: this repository is public.
 
   HELPER    interpolation, lead, >> and marks not counted, both ends, a sparse gap,
             no marks, and the answer is never negative or past the duration
-  LEADERS   speaker_audit_page.py gives four first-minute quotes four distinct times
-  PUNDITS   pundits_verify_page.suspect_quotes gives the same times for the same quotes
+  LEADERS   annotations_select.py gives four first-minute quotes four distinct times
+  PUNDITS   annotations_page.suspect_quotes gives the same times for the same quotes
   SHARED    neither builder reads a mark's hours and minutes itself
 
   .venv/bin/python scripts/test_play_time.py
@@ -29,8 +29,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import pundits_verify_page as V  # noqa: E402
-import speaker_audit_page as A  # noqa: E402
+import annotations_page as V  # noqa: E402
+import annotations_select as A  # noqa: E402
 
 FAILED = []
 
@@ -82,7 +82,7 @@ def quote(n: int) -> str:
 def helper_checks():
     print("[HELPER]")
     if not hasattr(V, "play_time"):
-        check("pundits_verify_page defines the shared play_time helper", False, "no play_time")
+        check("annotations_page defines the shared play_time helper", False, "no play_time")
         return
     P = V.play_time
     text = uniform_text()
@@ -182,9 +182,9 @@ def main() -> int:
               f"got {pun_t}, want {want}")
         check("the two builders agree card for card", pun_t == lead_t, f"pundits {pun_t}, leaders {lead_t}")
     print("\n[SHARED]")
-    check("speaker_audit_page no longer carries its own mark lookup", not hasattr(A, "mark_before"))
-    for name, src in (("speaker_audit_page", inspect.getsource(A)),
-                      ("pundits_verify_page.suspect_quotes", inspect.getsource(V.suspect_quotes))):
+    check("annotations_select no longer carries its own mark lookup", not hasattr(A, "mark_before"))
+    for name, src in (("annotations_select", inspect.getsource(A)),
+                      ("annotations_page.suspect_quotes", inspect.getsource(V.suspect_quotes))):
         check(f"{name} converts no mark to seconds itself", "3600" not in src)
     print(f"\n{'FAILED: ' + '; '.join(FAILED) if FAILED else 'all passed'}")
     return 1 if FAILED else 0

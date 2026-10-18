@@ -25,12 +25,12 @@ ASSISTED label, and calibration against the model counts only labels without it.
 The page holds transcript text, so it is written into the PRIVATE data checkout
 and never into this repository. No lean label is read or written.
 
-  pundits_verify_page.py build  --checklist data-pundits/logs/p6b/human_checklist.json \\
+  annotations_page.py build  --checklist data-pundits/logs/p6b/human_checklist.json \\
       --transcripts data-pundits/transcripts --roster data-pundits/roster/final.json \\
       [--grades data-pundits/grades --quote-key data-pundits/logs/p6b/quote_check_key.json] \\
       [--drafts data-pundits/logs/p6b/speaker_inference.jsonl] \\
       --out data-pundits/logs/p6b/speaker_check.html
-  pundits_verify_page.py import --export labels_export.json \\
+  annotations_page.py import --export labels_export.json \\
       --checklist data-pundits/logs/p6b/human_checklist.json \\
       --out data-pundits/logs/p6b/human_labels.json
 
@@ -372,14 +372,14 @@ def draft_view(draft: dict | None) -> tuple[dict | None, list[str]]:
 def render_page(data: str, title: str = PAGE_TITLE, subtitle: str = PAGE_SUBTITLE) -> str:
     """The page with its data, its words and its two embedded scripts filled in.
 
-    `speaker_audit_page.py` renders the same page for the leaders and predictions
+    `annotations_select.py` renders the same page for the leaders and predictions
     boards, so the words are parameters and every placeholder must be filled exactly.
     """
     page = TEMPLATE
     for mark, value in (("/*__DATA__*/null", data), ("/*__TITLE__*/", html.escape(title)),
                         ("/*__SUBTITLE__*/", html.escape(subtitle)),
-                        ("/*__SPAN_EDITOR__*/", Path(__file__).with_name("pundits_span_editor.js").read_text()),
-                        ("/*__TEXT_CORRECTIONS__*/", Path(__file__).with_name("pundits_text_corrections.js").read_text())):
+                        ("/*__SPAN_EDITOR__*/", Path(__file__).with_name("annotations_span_editor.js").read_text()),
+                        ("/*__TEXT_CORRECTIONS__*/", Path(__file__).with_name("annotations_corrections.js").read_text())):
         if mark not in page:
             raise SystemExit(f"REFUSING: template placeholder {mark} is missing")
         page = page.replace(mark, value)
@@ -423,7 +423,7 @@ def build(args) -> int:
         # Exact grading provenance stays in this key; the local range editor gets
         # sparse model estimates separately from its transcript sidecar.
         Path(args.quote_key).write_text(json.dumps(key_map, indent=1, ensure_ascii=False) + "\n")
-    from pundits_speaker_spans import build_transcript, sidecar_path
+    from annotations_spans import build_transcript, sidecar_path
     from atomicio import write_atomic
     grades_by_key = {}
     if args.grades:
@@ -555,7 +555,7 @@ def do_import_quotes(args) -> int:
     key_map = json.loads(Path(args.key).read_text())
     raw = json.loads(Path(args.export).read_text())
     if isinstance(raw, dict) and raw.get("spans"):
-        from pundits_speaker_spans import reconcile_quote_reviews
+        from annotations_spans import reconcile_quote_reviews
         page = Path(getattr(args, "page", None) or Path(args.export).parent / "speaker_check.html")
         if not page.exists():
             raise SystemExit("Range-derived quote answers require --page pointing to the review page")
@@ -591,7 +591,7 @@ def main() -> int:
         s.add_argument(a, required=True)
     args = ap.parse_args()
     if args.cmd == "import-spans":
-        from pundits_speaker_spans import import_spans
+        from annotations_spans import import_spans
         result = import_spans(Path(args.export), Path(args.page), Path(args.out))
         print(f"wrote {args.out}: {len(result['recordings'])} recordings with human word ranges")
         return 0
@@ -816,7 +816,7 @@ const SECTION_HELP = ["The model was unsure, found the subject absent or not the
  "The model answered with high confidence. Its draft is a suggestion, never an answer", "No recording questions, only flagged quotes"];
 const section = r => !HAS_DRAFTS ? 0 : !r.ask ? 2 : (r.doubt||[]).length ? 0 : 1;
 const recs = Object.values(REC).sort((a,b)=>section(a)-section(b) || (a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
-// A page with no recording-level questions (speaker_audit_page.py) is only quotes.
+// A page with no recording-level questions (annotations_select.py) is only quotes.
 const QUOTE_ONLY = !D.rows.length;
 let filter="todo", cur=recs.length?recs[0].key:null, focusQ=0;
 let labels={}, attrib={}, db=null, saver=null, writable=false;
@@ -989,7 +989,7 @@ el("keyhelp").innerHTML = QUOTE_ONLY
  : "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
 
 // Two places answers can live, and the page picks by asking, never by guessing at
-// its own hostname. `pundits_verify_serve.py` answers api/answers; the published
+// its own hostname. `annotations_serve.py` answers api/answers; the published
 // Artifact has no such path, so the probe fails there and the Artifact db is used.
 const localStore = {
  where: "this machine",
@@ -1030,7 +1030,7 @@ renderList(); renderDetail();
  }
  db = await (window.claude?.use ? window.claude.use("db") : null);
  if(!db){ writable=false; el("banner").hidden=false;
-  el("banner").textContent="Answers can't be saved in this view. Serve it with scripts/pundits_verify_serve.py and open the localhost URL, or open it on claude.ai while signed in as its owner. Either way every answer saves as you pick it.";
+  el("banner").textContent="Answers can't be saved in this view. Serve it with scripts/annotations_serve.py and open the localhost URL, or open it on claude.ai while signed in as its owner. Either way every answer saves as you pick it.";
   renderDetail(); return; }
  saver=artifactStore; writable=true;
  let first=true;

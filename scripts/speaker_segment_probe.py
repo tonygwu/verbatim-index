@@ -6,7 +6,7 @@ context", and a judge that infers them wrongly scores the wrong person, as Gemin
 on marc-benioff/exacttarget-9game7. This probe makes the step explicit. Each model
 reads one whole transcript, with the named subject and the recording's metadata, and
 returns the speaker turns. Its turns are scored against the operator's word ranges
-from the speaker-check page (`speaker_audit_page.py`), which are the ground truth.
+from the speaker-check page (`annotations_select.py`), which are the ground truth.
 
   run    SPENDS SUBSCRIPTION QUOTA. One call per arm, recording and repeat. Raw CLI
          output and parsed turns go under --out; nothing is scored.
@@ -55,7 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import grade as G  # noqa: E402
 from atomicio import write_atomic  # noqa: E402
-from pundits_speaker_spans import quote_review, sidecar_path, token_kinds  # noqa: E402
+from annotations_spans import quote_review, sidecar_path, token_kinds  # noqa: E402
 # One prompt and one parser for the experiment and the production step, so what was
 # measured is what runs. speaker_turns pins the prompt by hash.
 from speaker_turns import (FIRST_WORDS, MARK_EVERY, PROMPT, SEARCH_AHEAD, SPEAKERS,  # noqa: E402,F401

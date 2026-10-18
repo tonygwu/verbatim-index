@@ -12,7 +12,7 @@ where the subscription is.
 
 It also removes a step. On the Artifact route the answers had to be exported from the
 store and then imported; here they land straight in a file that
-`pundits_verify_page.py import` and `import-quotes` read.
+`annotations_page.py import` and `import-quotes` read.
 
 PRIVACY. The page carries transcript text from the private data checkout, so the
 socket binds to loopback only and there is no flag to widen it. Nothing leaves the
@@ -25,11 +25,11 @@ accepts are exactly the ids the page can send. `import` refuses a foreign key at
 end of the pipeline; refusing it here as well means a typo or a stale page cannot
 quietly accumulate answers that the import will later throw away.
 
-  .venv/bin/python scripts/pundits_verify_serve.py \\
+  .venv/bin/python scripts/annotations_serve.py \\
       --page data-pundits/logs/p6b/speaker_check.html
   # then open http://127.0.0.1:5001/ in any browser on this Mac
 
-  .venv/bin/python scripts/pundits_verify_page.py import \\
+  .venv/bin/python scripts/annotations_page.py import \\
       --export data-pundits/logs/p6b/human_answers.json \\
       --checklist data-pundits/logs/p6b/human_checklist.json \\
       --out data-pundits/logs/p6b/human_labels.json
@@ -47,8 +47,8 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
-from pundits_speaker_spans import sidecar_path, validate_annotation, token_kinds, reconcile_quote_reviews  # noqa: E402
-from pundits_text_corrections import update_corrections  # noqa: E402
+from annotations_spans import sidecar_path, validate_annotation, token_kinds, reconcile_quote_reviews  # noqa: E402
+from annotations_corrections import update_corrections  # noqa: E402
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5001
@@ -71,7 +71,7 @@ def page_ids(page: str) -> dict[str, set[str]]:
     """
     m = DATA_LINE.search(page)
     if not m:
-        raise SystemExit("REFUSING: no `const D = {...};` data block in the page; rebuild it with pundits_verify_page.py build")
+        raise SystemExit("REFUSING: no `const D = {...};` data block in the page; rebuild it with annotations_page.py build")
     data = json.loads(m.group(1).replace("<\\/", "</"))
     keys = {r["key"] for r in data.get("rows", []) if r.get("key")}
     qids = {c["qid"] for r in data.get("quote_rows", []) for c in r.get("quotes", []) if c.get("qid")}
@@ -214,7 +214,7 @@ def build_server(page_path: Path, answers_path: Path, port: int) -> ThreadingHTT
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--page", required=True, help="the page built by pundits_verify_page.py build")
+    ap.add_argument("--page", required=True, help="the page built by annotations_page.py build")
     ap.add_argument("--answers", help="where answers are saved (default: human_answers.json beside the page)")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = ap.parse_args()

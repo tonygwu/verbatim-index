@@ -14,7 +14,7 @@ there. Add new material under the same headings.
 **Can a model say who spoke each word from the caption text alone?**
 (2026-09-28) Yes, when it finishes; the difference between models is whether
 it finishes. Ground truth is the operator's word ranges from the first
-speaker-check session (`speaker_audit_page.py`): 10 recordings chosen as the
+speaker-check session (`annotations_select.py`): 10 recordings chosen as the
 shakiest on both boards, 2,576 labelled words, 39 quotes. Each model read a
 whole transcript with the subject's name and the recording's metadata and
 returned speaker turns (`scripts/speaker_segment_probe.py`), 2 repeats,
@@ -131,9 +131,9 @@ repository.
   rule to the data repository's own `ownership.json` before its first push of turns.
   Proof: `.venv/bin/python scripts/test_speaker_turns.py`.
 
-- Speaker check for the leaders and predictions boards: `scripts/speaker_audit_page.py build
+- Speaker check for the leaders and predictions boards: `scripts/annotations_select.py build
   --study leaders|predictions --data ../data --keys slug/sid,... --reasons FILE --out PAGE`. It
-  reuses the pundits page, `pundits_verify_serve.py` and `import-quotes` unchanged, and only
+  reuses the pundits page, `annotations_serve.py` and `import-quotes` unchanged, and only
   chooses the quotes: for leaders, the evidence quotes the judges cited, located in
   `transcripts_open` and capped per recording with the judges taking turns, most suspect judge
   first; for predictions, every ACCEPTED prediction, placed by its exact character offsets. The
@@ -142,4 +142,4 @@ repository.
   why each recording was chosen and what the cap cut. Write the page into a private data
   checkout and serve it locally, like the pundits page. The first session, 2026-09-27, is under
   `predictions/_experiments/speaker-audit-20260927/` on repo-3's private branch. Proof:
-  `scripts/test_speaker_audit_page.py`; drive the page in a browser after any JS change.
+  `scripts/test_annotations_select.py`; drive the page in a browser after any JS change.

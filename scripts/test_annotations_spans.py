@@ -5,13 +5,13 @@ import json
 import tempfile
 import threading
 import unittest
-import pundits_speaker_spans as spans
+import annotations_spans as spans
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from pundits_speaker_spans import build_transcript, import_spans, sidecar_path, validate_annotation
-from pundits_verify_serve import build_server
+from annotations_spans import build_transcript, import_spans, sidecar_path, validate_annotation
+from annotations_serve import build_server
 
 
 class SpeakerSpans(unittest.TestCase):
@@ -128,7 +128,7 @@ class SpeakerSpans(unittest.TestCase):
         self.assertEqual((self.root / 'imported.json').read_bytes(), prior)
 
     def test_atomic_quote_result_and_legacy_pending_projection(self):
-        import pundits_verify_page as verify
+        import annotations_page as verify
         from types import SimpleNamespace
         page = self.root / 'page.html'
         quote = {'qid':'p:a:7','quote_start':7,'quote_end':12}

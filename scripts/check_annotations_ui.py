@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Isolated browser check; synthetic data only. Requires Playwright + Chromium.
 
-.venv/bin/python scripts/check_pundits_span_ui.py
+.venv/bin/python scripts/check_annotations_ui.py
 """
 import json
 import tempfile
@@ -9,9 +9,9 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright
-import pundits_verify_page as V
-from pundits_verify_serve import build_server
-from pundits_speaker_spans import token_kinds
+import annotations_page as V
+from annotations_serve import build_server
+from annotations_spans import token_kinds
 
 
 def main():

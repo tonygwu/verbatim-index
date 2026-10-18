@@ -96,7 +96,7 @@ def sidecar_path(page: Path, key: str) -> Path:
 
 
 def build_transcript(key: str, raw: str, grades: list[tuple[Path, dict]]) -> dict:
-    from pundits_verify_page import locate, MARK
+    from annotations_page import locate, MARK
 
     matches = list(re.finditer(r"\S+", raw))
     tokens = [m.group() for m in matches]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""speaker_audit_page.py builds a blind speaker-check page for leaders and predictions.
+"""annotations_select.py builds a blind speaker-check page for leaders and predictions.
 
 Synthetic data only, in a temporary git checkout. Proves: a blinded leaders quote is
 located in the open text; the per-recording cap takes every judge in turn rather than
@@ -18,8 +18,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import speaker_audit_page as A  # noqa: E402
-from pundits_verify_serve import page_ids  # noqa: E402
+import annotations_select as A  # noqa: E402
+from annotations_serve import page_ids  # noqa: E402
 
 FAILED = []
 

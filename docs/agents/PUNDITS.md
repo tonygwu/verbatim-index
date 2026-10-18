@@ -178,10 +178,10 @@ there. Add new material under the same headings.
   extractor has no `--study` yet (BACKLOG.md VI-1), so pass the pundits transcripts,
   roster and an `--out` under that folder by hand.
 
-- P6 speaker check (human labels for the full roster): `scripts/pundits_verify_page.py build`
+- P6 speaker check (human labels for the full roster): `scripts/annotations_page.py build`
   turns `pundits_pilot.py precheck`'s checklist into one page, written into the PRIVATE data
   checkout because it carries transcript excerpts. **Serve it locally; do not publish it as an
-  Artifact.** `scripts/pundits_verify_serve.py --page <the built page>` serves it on
+  Artifact.** `scripts/annotations_serve.py --page <the built page>` serves it on
   127.0.0.1:5001 and saves every answer to `human_answers.json` beside the page, which
   `import` and `import-quotes` both read. The socket binds to loopback and there is no flag to
   widen it, because the page carries private transcript text; that is also why it is not a
@@ -210,13 +210,13 @@ there. Add new material under the same headings.
   confident ones, then quote-only recordings. A draft is never an answer. A label saved while a
   draft was on screen records `draft_shown` with the model's name, `import` keeps it, and
   calibration leaves it out, because an assisted label cannot measure the model. The template
-  names no model: `speaker_audit_page.py` renders it as a blind page, and its test refuses a
+  names no model: `annotations_select.py` renders it as a blind page, and its test refuses a
   judge name. Rebuild with the same `--grades` and `--quote-key` as before, or the quote checks
-  disappear. Proof: `.venv/bin/python scripts/test_pundits_verify_page.py`
-  and `scripts/test_pundits_verify_serve.py`, which runs a real server on a real socket and
+  disappear. Proof: `.venv/bin/python scripts/test_annotations_page.py`
+  and `scripts/test_annotations_serve.py`, which runs a real server on a real socket and
   reads the bind address off the listening socket rather than off the constant.
   **The page's own JavaScript is covered only in part.** Since 2026-10-18 the page test runs the
-  script under node against a stub page (`run_page` in `test_pundits_verify_page.py`): the
+  script under node against a stub page (`run_page` in `test_annotations_page.py`): the
   list order, the section counts, the draft card and the save of one `y` key press, with
   saved answers fed in. The stub has no layout and wires no click handlers, so it cannot see
   what a browser sees. FOUND 2026-09-20: the save adapter
@@ -228,17 +228,17 @@ there. Add new material under the same headings.
   The globbed suite now carries the static half of that lesson as its SHADOW check.
   **Speaker ranges (2026-09-20, operator requested assisted review):** each quote passage
   has draggable text selection, multiple disjoint ranges, start/end sliders, remove and
-  undo; full transcript expansion stays on the same video. `pundits_span_editor.js` is
+  undo; full transcript expansion stays on the same video. `annotations_span_editor.js` is
   embedded at build time. Private `<page-stem>.transcripts/` sidecars hold raw tokens and
-  located evidence suggestions; `pundits_speaker_spans.py` records judge provenance and
+  located evidence suggestions; `annotations_spans.py` records judge provenance and
   withholds ambiguous matches. Model drafts are shown explicitly and require confirmation;
   words without a saved attribution remain unknown. These assisted labels cannot count as
   blind audit labels. Human ranges live in `human_answers.json`'s `spans` section with a
   transcript SHA-256 and end-exclusive word offsets. The server refuses stale hashes,
   overlapping ranges and invalid bounds; existing labels/attribution remain compatible.
-  Import using `pundits_verify_page.py import-spans --export <answers> --page <page> --out <output>`.
+  Import using `annotations_page.py import-spans --export <answers> --page <page> --out <output>`.
   This preserves annotations separately; it does not rewrite grades. Verification:
-  `test_pundits_speaker_spans.py` plus `.venv/bin/python scripts/check_pundits_span_ui.py`
+  `test_annotations_spans.py` plus `.venv/bin/python scripts/check_annotations_ui.py`
   (Playwright, isolated synthetic data). Rebuild the page and restart ONLY its local server
   after changing embedded JS; a running server holds its page in memory.
   **One annotation decision (2026-09-20):** quote answers now derive automatically
@@ -259,9 +259,9 @@ there. Add new material under the same headings.
   speaker ranges never shift. Restore original reverses an edit without removing
   history. Stale windows cannot overwrite a newer correction. Original captions and
   grade evidence remain intact; grades are not recomputed by this UI. Export with
-  `scripts/pundits_text_corrections.py --answers <answers> --page <page> --out <private-output>`
+  `scripts/annotations_corrections.py --answers <answers> --page <page> --out <private-output>`
   for corrected reading text and provenance. Verify with
-  `test_pundits_text_corrections.py` and `check_pundits_span_ui.py`.
+  `test_annotations_corrections.py` and `check_annotations_ui.py`.
 
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a

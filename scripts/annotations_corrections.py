@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from atomicio import write_atomic
-from pundits_speaker_spans import sidecar_path, text_hash, token_kinds
+from annotations_spans import sidecar_path, text_hash, token_kinds
 
 
 def validate_corrections(value: dict, transcript: dict) -> None:

@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import speaker_segment_probe as P  # noqa: E402
-from pundits_speaker_spans import build_transcript, sidecar_path  # noqa: E402
+from annotations_spans import build_transcript, sidecar_path  # noqa: E402
 
 FAILED = []
 

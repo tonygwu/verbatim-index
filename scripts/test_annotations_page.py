@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The speaker-check page's importer produces labels `report` accepts, and nothing it would not.
 
-The page stores one db document per recording; `pundits_verify_page.py import`
+The page stores one db document per recording; `annotations_page.py import`
 turns an export of them into human_labels.json, which `pundits_pilot.py report`
 reads to decide the P6 gate. A label the importer writes but `report` rejects
 would silently drop a recording from the gate, and a partly answered recording
@@ -27,7 +27,7 @@ passed through would be a guessed label. So this checks the importer against
              its own section, the draft card and its tags show, and a saved answer
              carries draft_shown; a page without drafts has no sections
 
-  .venv/bin/python scripts/test_pundits_verify_page.py
+  .venv/bin/python scripts/test_annotations_page.py
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ setTimeout(() => {
 
 def run_page(rows: list[dict], saved: dict | None = None) -> dict:
     """The page's own script run by node on `rows`, starting from the `saved` answers; what it rendered and saved."""
-    import pundits_verify_page as V
+    import annotations_page as V
     page = V.render_page(json.dumps({"rows": rows, "quote_rows": [], "venues": V.VENUES, "transcript_index": {}}))
     script = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
     # On stdin, not -e: a real page is about 1 MB, past the argument-length limit.
@@ -97,7 +97,7 @@ def run_page(rows: list[dict], saved: dict | None = None) -> dict:
 def main() -> int:
     print("pundits speaker-check page")
     import pundits_pilot as P
-    import pundits_verify_page as V
+    import annotations_page as V
 
     checklist = {"p/a": {}, "p/b": {}, "p/c": {}, "p/d": {}}
     docs = [

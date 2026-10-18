@@ -8,9 +8,9 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-from pundits_speaker_spans import build_transcript, sidecar_path
-from pundits_text_corrections import validate_corrections, update_corrections, corrected_text, export_corrections
-from pundits_verify_serve import build_server
+from annotations_spans import build_transcript, sidecar_path
+from annotations_corrections import validate_corrections, update_corrections, corrected_text, export_corrections
+from annotations_serve import build_server
 
 
 class Corrections(unittest.TestCase):

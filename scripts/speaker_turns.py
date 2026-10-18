@@ -56,7 +56,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import grade as G  # noqa: E402
 from atomicio import write_atomic  # noqa: E402
-from pundits_speaker_spans import token_kinds  # noqa: E402
+from annotations_spans import token_kinds  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 #: The container of every clone and every data checkout; the P3 sandbox denies it.
@@ -352,7 +352,7 @@ def segment(args, router=None, call=None) -> int:
 # --------------------------------------------------------------------- check --
 
 def check(args) -> int:
-    from pundits_verify_page import locate
+    from annotations_page import locate
     from wrong_person_screen import SHARE_DISSENT_GAP
     data = Path(args.data)
     report = {"generated_at_utc": utc(), "share_dissent_gap": SHARE_DISSENT_GAP, "segmented": 0,

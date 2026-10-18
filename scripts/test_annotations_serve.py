@@ -17,7 +17,7 @@ so that one is read off the listening socket rather than off the constant.
   BROKEN     a page with no data block stops the server rather than accepting any id
   KEPT       an answer for an id missing from a rebuilt page is kept, not dropped
 
-  .venv/bin/python scripts/test_pundits_verify_serve.py
+  .venv/bin/python scripts/test_annotations_serve.py
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ PASS, FAIL = [], []
 # healthy run; it only decides how slow a loaded machine may be. This file's
 # intermittent failure (d9f2321, 2026-09-27) was NOT a timeout: reproduced on
 # 2026-10-11 as a connection reset at the oversized-body check, 3 runs in 60, and
-# fixed in the server (pundits_verify_serve.DRAIN_LIMIT).
+# fixed in the server (annotations_serve.DRAIN_LIMIT).
 HTTP_TIMEOUT_S = 30
 
 
@@ -77,8 +77,8 @@ def write_page(path: Path, keys, qids):
 
 def main() -> int:
     print("pundits local answer server")
-    import pundits_verify_serve as S
-    import pundits_verify_page as V
+    import annotations_serve as S
+    import annotations_page as V
 
     td = Path(tempfile.mkdtemp())
     page, answers = td / "page.html", td / "human_answers.json"
