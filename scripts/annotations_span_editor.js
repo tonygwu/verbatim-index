@@ -67,7 +67,9 @@ function saveRanges(recording,ranges){
   updateSpanStatus(recording);return;
  }
  const value={schema_version:1,key:recording.key,text_sha256:data.text_sha256,token_count:data.token_count,
-  ranges,checked_by:"operator",updated_at:new Date().toISOString(),assisted:true,
+  ranges,checked_by:"operator",updated_at:new Date().toISOString(),
+  // Assisted only when the editor showed model suggestions for this recording.
+  assisted:data.suggestions.length>0,
   suggestions_sha256:data.suggestions_sha256};
  spanAnswers[recording.key]=value;spanErrors[recording.key]="";
  spanPending[recording.key]=(spanPending[recording.key]||0)+1;
@@ -139,7 +141,7 @@ function spanToolbar(recording,index){
  const text=selection ? readingText(recording,...selection) : "Drag across words below to label the speaker or correct the text.";
  const hasEdit=selection&&editsFor(recording).some(e=>e.start<selection[1]&&e.end>selection[0]);
  node.querySelector(".span-selection").textContent=selection?`${hasEdit?"Selected text":`Selected ${speechIndices(data,...selection).length} words`}: ${text}`:text;
- node.querySelector('[data-correct-text]').disabled=!selection||!writable||!!correctionPending[recording.key];
+ const correct=node.querySelector('[data-correct-text]');if(correct)correct.disabled=!selection||!writable||!!correctionPending[recording.key];
  node.querySelectorAll("[data-paint]").forEach(b=>b.disabled=!selection||!speechIndices(data,...selection).length||!writable);
  node.querySelectorAll("[data-w]").forEach(word=>word.classList.toggle("selected-word",!!selection&&+word.dataset.end>selection[0]&&+word.dataset.w<selection[1]));
  const sliders=node.querySelector(".span-boundaries");sliders.hidden=!selection;
@@ -189,21 +191,22 @@ function drawSpanEditor(recording,index){
   if(edit)i=end-1;
 
  }
+ const SPK=HAS("speakers"),CAP=HAS("captions");
  const marked=humanRanges(recording).filter(range=>range.start<hi&&range.end>lo&&speechIndices(data,Math.max(lo,range.start),Math.min(hi,range.end)).length);
- root.innerHTML=`<div class="span-top"><b>Mark who is speaking</b><button type="button" class="opt" data-expand>${spanFull[id]?"Back to passage":"Expand to full transcript"}</button></div>
-  <p class="span-instructions">Select words, then choose who said them or use Correct text for caption errors. Caption gaps and playback times are skipped automatically.</p>
+ root.innerHTML=`<div class="span-top"><b>${SPK?"Mark who is speaking":"Correct the captions"}</b><button type="button" class="opt" data-expand>${spanFull[id]?"Back to passage":"Expand to full transcript"}</button></div>
+  <p class="span-instructions">Select words, then ${SPK&&CAP?"choose who said them or use Correct text for caption errors":SPK?"choose who said them":"use Correct text for caption errors"}. Caption gaps and playback times are skipped automatically.</p>
   <div class="span-legend"><span class="subject reviewed">Subject · reviewed</span><span class="other reviewed">Other · reviewed</span><span class="subject draft">Dashed · model draft</span><span>Plain · not reviewed</span>${quote?'<span class="evidence">Underline · quote being checked</span>':""}</div>
   <p class="span-model">${known?"Model estimates cover "+known+" of these "+spoken.length+" words. Confirm or correct the dashed suggestions.":"No model suggestions for this passage. Label the words you can identify; use “Unsure” when you cannot identify the speaker."} ${states.slice(lo,hi).some(s=>s.speaker==="conflict")?"Models disagree on the dotted words; review those yourself.":""}</p>
   ${index<0&&!spanFull[id]?`<label class="span-samples">Passage <select data-sample>${(recording.excerpts||[]).map((e,i)=>`<option value="${i}" ${i===(spanSample[recording.key]||0)?"selected":""}>${Math.round(e.at*100)}% into recording</option>`).join("")}</select></label>`:""}
   <div class="span-actions"><div class="span-selection" aria-live="polite"></div><div class="opts">
-   <button class="opt y" type="button" data-paint="subject">Mark as ${esc(recording.person)}</button>
+   ${SPK?`<button class="opt y" type="button" data-paint="subject">Mark as ${esc(recording.person)}</button>
    <button class="opt n" type="button" data-paint="other">Someone else</button><button class="opt" type="button" data-paint="unclear">Unsure</button>
-   <button class="opt" type="button" data-paint="">Clear human marks</button><button class="opt" type="button" data-correct-text>Correct text</button></div>
+   <button class="opt" type="button" data-paint="">Clear human marks</button>`:""}${CAP?'<button class="opt" type="button" data-correct-text>Correct text</button>':""}</div>
    <div class="span-boundaries" hidden><label>Selection start <input type="range" data-edge="start" aria-label="Selection start word"></label><label>Selection end <input type="range" data-edge="end" aria-label="Selection end word"></label></div>
   </div>
   ${correctionPanel(recording,index,lo,hi)}
   <div class="span-transcript" tabindex="0" role="region" aria-label="Transcript passage for speaker annotation">${words}</div>
-  <div class="opts"><button type="button" class="opt" data-confirm ${!writable||!markable?"disabled":""}>Confirm suggested spans in ${spanFull[id]?"full transcript":"this passage"}</button>
+  <div class="opts">${SPK?`<button type="button" class="opt" data-confirm ${!writable||!markable?"disabled":""}>Confirm suggested spans in ${spanFull[id]?"full transcript":"this passage"}</button>`:""}
    <button type="button" class="opt" data-undo ${!writable||!spanUndo[recording.key]?.length?"disabled":""}>Undo marking</button>
    <button type="button" class="opt" data-retry ${!spanErrors[recording.key]?"hidden":""}>Retry save</button></div>
   <div class="span-status status" role="status"></div>
@@ -232,7 +235,7 @@ function drawSpanEditor(recording,index){
   spanSelections[id]=correctionBounds(recording,...selection);
   spanToolbar(recording,index);
  });
- root.querySelector("[data-confirm]").onclick=()=>confirmDrafts(recording,index);
+ const confirm=root.querySelector("[data-confirm]");if(confirm)confirm.onclick=()=>confirmDrafts(recording,index);
  root.querySelector("[data-undo]").onclick=()=>{const ranges=spanUndo[recording.key]?.pop();if(ranges)saveRanges(recording,ranges);};
  root.querySelector("[data-retry]").onclick=()=>saveRanges(recording,humanRanges(recording));
  root.querySelectorAll("[data-select-span]").forEach(button=>button.onclick=()=>{

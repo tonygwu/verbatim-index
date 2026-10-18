@@ -178,90 +178,31 @@ there. Add new material under the same headings.
   extractor has no `--study` yet (BACKLOG.md VI-1), so pass the pundits transcripts,
   roster and an `--out` under that folder by hand.
 
-- P6 speaker check (human labels for the full roster): `scripts/annotations_page.py build`
-  turns `pundits_pilot.py precheck`'s checklist into one page, written into the PRIVATE data
-  checkout because it carries transcript excerpts. **Serve it locally; do not publish it as an
-  Artifact.** `scripts/annotations_serve.py --page <the built page>` serves it on
-  127.0.0.1:5001 and saves every answer to `human_answers.json` beside the page, which
-  `import` and `import-quotes` both read. The socket binds to loopback and there is no flag to
-  widen it, because the page carries private transcript text; that is also why it is not a
-  fourth Cloudflare Worker. The server accepts only ids it reads out of the page it is serving,
-  so a stale page cannot accumulate answers the import would later throw away.
-  The page chooses where to save by asking, never by inspecting its own hostname: it probes
-  `api/answers` first and falls back to the Artifact `db` capability. The published Artifact
-  https://claude.ai/artifact/9TEivUMn7nhrYZJhkRRnsb still works, but ONLY for the one account
-  that owns it. The runtime grants db writes to people who can interact or edit and never to a
-  view-only viewer or a link visitor, and a page cannot lower that bar, so a second Google
-  account gets a read-only page. That is what sent this local.
-  A partly answered recording is left out and counted, never filled.
-  ONE screen per recording: the three questions and, below them,
-  any flagged evidence quotes for that same recording, so a video is opened once. The page shows
-  evidence quotes the judges
-  credited to the subject that mechanical signals mark as suspect (a caption turn mark inside
-  the quote, a question inside a conversation or debate, the subject's own name); build with
-  `--grades` and `--quote-key`. The private key preserves grading provenance,
-  and `import-quotes` joins answers to it. Its rates describe FLAGGED quotes only, so it
-  does not replace the P7 random quote audit.
-  With `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` (2026-10-18) each recording
-  also shows the model's draft: its three answers, confidence, reason and evidence fragments,
-  and a "model" tag on each option it picked. The list puts first every recording that
-  `pundits_speaker_infer.needs_review` flags, the same rule as `speaker_review_queue.json`
-  (not high confidence, subject absent or not the main speaker, no usable draft), then the
-  confident ones, then quote-only recordings. A draft is never an answer. A label saved while a
-  draft was on screen records `draft_shown` with the model's name, `import` keeps it, and
-  calibration leaves it out, because an assisted label cannot measure the model. The template
-  names no model: `annotations_select.py` renders it as a blind page, and its test refuses a
-  judge name. Rebuild with the same `--grades` and `--quote-key` as before, or the quote checks
-  disappear. Proof: `.venv/bin/python scripts/test_annotations_page.py`
-  and `scripts/test_annotations_serve.py`, which runs a real server on a real socket and
-  reads the bind address off the listening socket rather than off the constant.
-  **The page's own JavaScript is covered only in part.** Since 2026-10-18 the page test runs the
-  script under node against a stub page (`run_page` in `test_annotations_page.py`): the
-  list order, the section counts, the draft card and the save of one `y` key press, with
-  saved answers fed in. The stub has no layout and wires no click handlers, so it cannot see
-  what a browser sees. FOUND 2026-09-20: the save adapter
-  went in as a module-level `store`, and `setField(store, id, f, v)` already took a parameter of
-  that name, so inside setField the parameter won and every save died with
-  `store.put is not a function`. `node --check` passed it and no Python test executed the page then.
-  A browser found it in one keystroke. So after any change to the page's JS, drive it:
-  serve the page, load it with Playwright, press `y`, and assert the answer reached the file.
-  The globbed suite now carries the static half of that lesson as its SHADOW check.
-  **Speaker ranges (2026-09-20, operator requested assisted review):** each quote passage
-  has draggable text selection, multiple disjoint ranges, start/end sliders, remove and
-  undo; full transcript expansion stays on the same video. `annotations_span_editor.js` is
-  embedded at build time. Private `<page-stem>.transcripts/` sidecars hold raw tokens and
-  located evidence suggestions; `annotations_spans.py` records judge provenance and
-  withholds ambiguous matches. Model drafts are shown explicitly and require confirmation;
-  words without a saved attribution remain unknown. These assisted labels cannot count as
-  blind audit labels. Human ranges live in `human_answers.json`'s `spans` section with a
-  transcript SHA-256 and end-exclusive word offsets. The server refuses stale hashes,
-  overlapping ranges and invalid bounds; existing labels/attribution remain compatible.
-  Import using `annotations_page.py import-spans --export <answers> --page <page> --out <output>`.
-  This preserves annotations separately; it does not rewrite grades. Verification:
-  `test_annotations_spans.py` plus `.venv/bin/python scripts/check_annotations_ui.py`
-  (Playwright, isolated synthetic data). Rebuild the page and restart ONLY its local server
-  after changing embedded JS; a running server holds its page in memory.
-  **One annotation decision (2026-09-20):** quote answers now derive automatically
-  from reviewed speech ranges and save atomically with them; there are no independent
-  quote-answer buttons or shortcuts. Timestamps, caption gaps/ellipses and turn marks
-  are excluded from selection counts and quote coverage without changing raw offsets.
-  Unmarked quote words are INCOMPLETE, not an explicit uncertain answer. Only a human
-  `unclear` range supplies uncertainty. GET and quote import re-evaluate legacy stored
-  answers from ranges without rewriting those ranges; the old answer is retained as
-  `legacy_answer` when the reconciled result is saved. `import-quotes --page <page>`
-  uses the same calculation (defaults to speaker_check.html beside the answer file).
-  Context-only annotations cannot complete the quote, and a stale browser cannot
-  override a range-derived result using the old manual answer endpoint.
-  **Caption corrections (2026-09-20):** select words and choose Correct text.
-  Replacements are overlays in `human_answers.json`'s `corrections` section with
-  original token bounds, source hash, revision and server-appended edit history.
-  A corrected phrase is selected as one anchored unit, even when word count changes;
-  speaker ranges never shift. Restore original reverses an edit without removing
-  history. Stale windows cannot overwrite a newer correction. Original captions and
-  grade evidence remain intact; grades are not recomputed by this UI. Export with
-  `scripts/annotations_corrections.py --answers <answers> --page <page> --out <private-output>`
-  for corrected reading text and provenance. Verify with
-  `test_annotations_corrections.py` and `check_annotations_ui.py`.
+- P6 speaker check (human labels for the full roster): an annotation session of the `pundits`
+  project, built and served by `scripts/annotations.py`. The tool, its modes, storage, commands
+  and rules are in [ANNOTATIONS.md](ANNOTATIONS.md); what is pundits-specific is here. Build
+  it into the pundits data checkout, never this repository, with
+  `annotations.py build --data data-pundits --project pundits --checklist
+  data-pundits/logs/p6b/human_checklist.json --grades [--drafts
+  data-pundits/logs/p6b/speaker_inference.jsonl] --out data-pundits/logs/p6b`, and serve it
+  with `annotations.py serve --session data-pundits/logs/p6b`. ONE screen per recording: the
+  checklist (subject present, format, political content) and, below it, any flagged evidence
+  quotes for that recording, so a video is opened once. `--grades` flags evidence quotes the
+  judges credited to the subject that mechanical signals mark as suspect (a caption turn mark
+  inside the quote, a question inside a conversation or debate, the subject's own name) and
+  shows the judges' located evidence as suggestions, so these are ASSISTED labels; their
+  rates describe FLAGGED quotes only and do not replace the P7 random quote audit.
+  With `--drafts` each recording also shows the model's draft and the list puts first every
+  recording that `pundits_speaker_infer.needs_review` flags, then the confident ones, then
+  quote-only recordings. A draft is never an answer; a label saved while a draft was on
+  screen records `draft_shown` with the model's name, and calibration leaves it out.
+  `annotations.py export labels --session data-pundits/logs/p6b --out
+  data-pundits/logs/p6b/human_labels.json` writes what `pundits_pilot.py report` and
+  `pundits_speaker_infer.py review` read; a partly answered recording is left out and
+  counted, never filled. The session built before 2026-10-18 (`speaker_check.html`,
+  `quote_check_key.json`, no manifest) is adopted with `annotations.py migrate --session
+  data-pundits/logs/p6b --project pundits`, which writes `manifest.json` only; repo-3 runs it,
+  because this data repository is owner-only.
 
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a

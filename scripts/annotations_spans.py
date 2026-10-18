@@ -10,6 +10,7 @@ import json
 import re
 from pathlib import Path
 
+from annotations_text import locate, mark_times
 from atomicio import write_atomic
 
 SPEAKERS = {"subject", "other", "unclear"}
@@ -96,8 +97,6 @@ def sidecar_path(page: Path, key: str) -> Path:
 
 
 def build_transcript(key: str, raw: str, grades: list[tuple[Path, dict]]) -> dict:
-    from annotations_page import locate, MARK
-
     matches = list(re.finditer(r"\S+", raw))
     tokens = [m.group() for m in matches]
     suggestions = []
@@ -131,12 +130,7 @@ def build_transcript(key: str, raw: str, grades: list[tuple[Path, dict]]) -> dic
                                     "dimension": dim, "original_speaker": speaker,
                                     "grade_file": path.name, "grade_sha256": text_hash(path.read_text()),
                                     "matched_piece": "..." in quote or "…" in quote})
-    times = []
-    for i, token in enumerate(tokens):
-        mark = MARK.fullmatch(token)
-        if mark:
-            h, m, s = map(int, mark.groups())
-            times.append([i, h * 3600 + m * 60 + s])
+    times = mark_times(tokens)
     return {"schema_version": 1, "key": key, "text_sha256": text_hash(raw),
             "suggestions_sha256": text_hash(json.dumps(suggestions, sort_keys=True)),
             "token_count": len(tokens), "tokens": tokens, "times": times,

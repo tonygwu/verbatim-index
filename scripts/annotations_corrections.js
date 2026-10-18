@@ -59,7 +59,7 @@ async function persistCorrections(recording,edits,index){
 }
 function bindCorrections(root,recording,index){
  const id=recording.key+":"+index,form=correctionForms[id];
- root.querySelector('[data-correct-text]').onclick=()=>{
+ const correct=root.querySelector('[data-correct-text]');if(correct)correct.onclick=()=>{
   const selected=spanSelections[id];if(selected)openCorrection(recording,index,selected);
  };
  const input=root.querySelector('[data-corrected-text]');if(input)input.oninput=()=>{form.text=input.value;};

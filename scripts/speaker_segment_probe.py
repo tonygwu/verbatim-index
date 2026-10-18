@@ -6,7 +6,7 @@ context", and a judge that infers them wrongly scores the wrong person, as Gemin
 on marc-benioff/exacttarget-9game7. This probe makes the step explicit. Each model
 reads one whole transcript, with the named subject and the recording's metadata, and
 returns the speaker turns. Its turns are scored against the operator's word ranges
-from the speaker-check page (`annotations_select.py`), which are the ground truth.
+from an annotation session (`annotations.py`), which are the ground truth.
 
   run    SPENDS SUBSCRIPTION QUOTA. One call per arm, recording and repeat. Raw CLI
          output and parsed turns go under --out; nothing is scored.

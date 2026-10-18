@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""annotations_select.py builds a blind speaker-check page for leaders and predictions.
+"""`annotations.py build` makes blind sessions for the insights and predictions projects.
 
-Synthetic data only, in a temporary git checkout. Proves: a blinded leaders quote is
+Synthetic data only, in a temporary git checkout. Proves: a blinded insights quote is
 located in the open text; the per-recording cap takes every judge in turn rather than
 spending itself on the one with the strongest signal; a judge far from the others'
 share is marked; prediction offsets map to exactly the quoted words, and an offset
 that does not reproduce the quote stops the build; no judge, extractor or verifier
-claim reaches the page; and the local server accepts the page it produced.
+claim reaches the page; the local server accepts the page it produced; and one
+recording built for both projects is ONE row carrying both tags and both projects'
+quotes, with one set of word ranges, and no Artifact storage fallback on the page.
 """
 from __future__ import annotations
 
@@ -18,8 +20,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import annotations_select as A  # noqa: E402
-from annotations_serve import page_ids  # noqa: E402
+import annotations as C  # noqa: E402
+from annotations_page import page_data, page_ids  # noqa: E402
+from annotations_text import MARK  # noqa: E402
 
 FAILED = []
 
@@ -83,14 +86,14 @@ def make_data(root: Path, prediction_offset_ok=True, video=True):
                    check=True)
 
 
-def run(root: Path, study: str, cap=2):
-    out = root / "session" / study / "speaker_check.html"
-    A.build(SimpleNamespace(study=study, data=str(root), keys="jane-roe/talk-1", out=str(out),
-                            reasons=None, cap=cap))
-    page = out.read_text()
-    key = json.loads((out.parent / "quote_key.json").read_text())
-    data = json.loads(page.split("const D = ", 1)[1].split(";\n", 1)[0].replace("<\\/", "</"))
-    return out, page, key, data
+def run(root: Path, projects, cap=2):
+    projects = [projects] if isinstance(projects, str) else projects
+    out = root / "session" / "-".join(projects)
+    C.build(SimpleNamespace(project=projects, data=str(root), keys="jane-roe/talk-1", out=str(out), name=None,
+                            reasons=None, cap=cap, checklist=None, grades=False, drafts=None))
+    page = (out / "annotations.html").read_text()
+    key = json.loads((out / "quote_key.json").read_text())
+    return out / "annotations.html", page, key, page_data(page)
 
 
 def main() -> int:
@@ -99,7 +102,7 @@ def main() -> int:
         make_data(root)
 
         print("[LEADERS]")
-        out, page, key, data = run(root, "leaders", cap=2)
+        out, page, key, data = run(root, "insights", cap=2)
         judges = {j["judge"] for v in key.values() for j in v["judges"]}
         check("a cap of 2 still reaches a quote from more than the strongest-signal judge",
               "gemini" in judges and judges & {"astra", "fable"})
@@ -109,10 +112,10 @@ def main() -> int:
               gem and all("dissenting_judge" in v["signals"] for v in gem))
         tokens = OPEN.split()
         check("each card's word offsets hold exactly its quote text",
-              all(" ".join(t for t in tokens[c["quote_start"]:c["quote_end"]] if not A.MARK.fullmatch(t))
+              all(" ".join(t for t in tokens[c["quote_start"]:c["quote_end"]] if not MARK.fullmatch(t))
                   == " ".join(c["text"].split()) for c in quotes))
         man = json.loads((out.parent / "manifest.json").read_text())
-        rep = man["recordings"]["jane-roe/talk-1"]
+        rep = man["recordings"]["jane-roe/talk-1"]["reports"]["insights"]
         check("every quote, including one with [SUBJECT] and [COMPANY], is located in the open text",
               rep["cited"] == 7 and rep["located"] == 7 and rep["not_located"] == 0)
         check("the manifest reports what the cap cut", rep["distinct_quotes"] == 5 and rep["shown"] == 2
@@ -123,11 +126,17 @@ def main() -> int:
               not any(s in page for s in ("gemini", "astra", "fable", "claimed_speaker", "dissenting")))
         side = json.loads((out.with_suffix(".transcripts") / "jane-roe" / "talk-1.json").read_text())
         check("the range editor gets no model suggestion", side["suggestions"] == [])
-        ids = page_ids(page)
+        ids = page_ids(data)
         check("the local server accepts every quote on the page", ids["attribution"] == set(key)
               and ids["spans"] == {"jane-roe/talk-1"})
-        check("the page is titled for its board", "<title>Leaders Speaker Check</title>" in page
+        check("the page is titled for its project", "<title>Annotations · insights</title>" in page
               and "/*__" not in page)
+        check("the session is blind and tags its recording insights",
+              man["blind"] is True and man["projects"] == ["insights"]
+              and man["recordings"]["jane-roe/talk-1"]["projects"] == ["insights"])
+        check("the page has no checklist and saves only to this machine",
+              data["session"]["checklist"] is None and data["session"]["modes"] == ["speakers", "captions"]
+              and 'claude.use("db")' not in page and "artifactStore" not in page)
 
         print("\n[PREDICTIONS]")
         out, page, key, data = run(root, "predictions", cap=6)
@@ -139,8 +148,25 @@ def main() -> int:
               not any(s in page for s in ("EXTRACTOR-NOTE", "VERIFIER-NOTE", "CLAIM-TEXT", "m1", "m2"))
               and key["p1"]["judges"][1]["claimed_speaker"] == "subject")
 
+        print("\n[BOTH]")
+        out, page, key, data = run(root, ["insights", "predictions"], cap=6)
+        rows = data["quote_rows"]
+        man = json.loads((out.parent / "manifest.json").read_text())
+        check("a recording built for both projects is one row tagged with both",
+              len(rows) == 1 and rows[0]["projects"] == ["insights", "predictions"])
+        projs = sorted({c["project"] for c in rows[0]["quotes"]})
+        check("and carries both projects' quotes, each tagged with its project",
+              projs == ["insights", "predictions"] and sum(c["project"] == "predictions" for c in rows[0]["quotes"]) == 1)
+        check("the quote key says which project each quote belongs to",
+              key["p1"]["project"] == "predictions" and all(v["project"] == "insights" for q, v in key.items() if q != "p1"))
+        check("one transcript, so one set of word ranges serves both projects",
+              list(data["transcript_index"]) == ["jane-roe/talk-1"] and man["projects"] == ["insights", "predictions"])
+        check("and still no judge, extractor or verifier claim reaches the page",
+              not any(s in page for s in ("gemini", "astra", "fable", "claimed_speaker", "dissenting",
+                                          "EXTRACTOR-NOTE", "VERIFIER-NOTE", "CLAIM-TEXT")))
+
     for label, kwargs, study in (("an offset that does not reproduce quote_original", {"prediction_offset_ok": False}, "predictions"),
-                                 ("a recording with no video to listen to", {"video": False}, "leaders")):
+                                 ("a recording with no video to listen to", {"video": False}, "insights")):
         with tempfile.TemporaryDirectory() as td:
             make_data(Path(td), **kwargs)
             try:

@@ -71,15 +71,27 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ## Open items
 
+### VI-40. The pundits `logs/p6b` speaker-check session predates the annotations tool and has no manifest, so `annotations.py serve` cannot open it  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** Only the pundits daemon clone, repo-3, can finish this: `logs/p6b` is a pundits data path, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. VI-39 replaced `pundits_verify_page.py` and `pundits_verify_serve.py` with `scripts/annotations.py`, which opens a session only through its `manifest.json` (`scripts/annotations_store.py:112` "has no {MANIFEST}"). `data-pundits/logs/p6b/` holds `speaker_check.html`, `speaker_check.transcripts/`, `human_answers.json`, `quote_check_key.json` and no manifest. On 2026-10-18 repo-2 ran the migration on a copy of that directory at pundits data `089ac14`: every `verify` check passed before and after `rebuild`, including `--data` against repo-3's `data-pundits`, and `export labels` and `export corrections` reproduced `human_labels.json` and `human_text_corrections.json`.
+
+**Impact:** Until it runs, the P6b answers (11 checklist labels, 11 speaker ranges over 2 recordings, 1 corrected recording) open only with the old tools in git history, and VI-16's `--drafts` rebuild cannot start.
+
+**Fix:** In repo-3, at a public revision that contains VI-39: `.venv/bin/python scripts/annotations.py migrate --session data-pundits/logs/p6b --project pundits`; then `verify --session data-pundits/logs/p6b --expect-answers-sha256 2e2327ffe9e57776df222cdbb2e8f7f5575e2c85722739573b9bb388eeb0e6e3 --data data-pundits` and expect `"ok": true`; then `rebuild --session data-pundits/logs/p6b` and the same `verify` again; then `git -C data-pundits add logs/p6b/manifest.json logs/p6b/speaker_check.html`, commit, and `data_sync.py push --daemon`. The copy gave: labels 11; attribution 6 (5 `range_review_v2`, 1 legacy); spans 2 recordings, 11 ranges; corrections 1 recording, 1 edit; 239 recordings on the page. If `human_answers.json` changed after `089ac14`, drop `--expect-answers-sha256` and read the counts instead. `migrate` writes `manifest.json` and nothing else; `rebuild` writes the page and nothing else.
+
+**Touch points:** `data-pundits/logs/p6b/manifest.json` (new), `data-pundits/logs/p6b/speaker_check.html`.
+
+---
+
 ### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`
 
-**Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/annotations_page.py build` takes `--drafts` (`:16-31`, `load_drafts` at `:341`), to be run with `data-pundits/logs/p6b/speaker_inference.jsonl` and the same `--grades` and `--quote-key` as before, then the pundits data pushed; 65 flagged recordings list first.
+**Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/annotations.py build --project pundits` takes `--drafts` (`load_drafts` in `scripts/annotations_page.py`), to be run on the `logs/p6b` session, once VI-40 has migrated it, with `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` and `--grades` as before, then the pundits data pushed; 65 flagged recordings list first.
 
 **Impact:** Three recordings have extractions nobody verified, one person has none, and the labelling page does not show the drafts that were paid for.
 
-**Fix:** From the pundits daemon clone: re-run verify on the three (Gemini quota only); record the `bret-weinstein-bmwp9g` refusal with its raw answers in the run's README rather than retrying blind; rebuild `data-pundits/logs/p6b/speaker_check.html` with `--drafts` and push with `data_sync.py push --daemon`. The review nits that came with this entry are VI-3.
+**Fix:** From the pundits daemon clone: re-run verify on the three (Gemini quota only); record the `bret-weinstein-bmwp9g` refusal with its raw answers in the run's README rather than retrying blind; after VI-40, rebuild the `data-pundits/logs/p6b` session with `annotations.py build --data data-pundits --project pundits --checklist data-pundits/logs/p6b/human_checklist.json --grades --drafts data-pundits/logs/p6b/speaker_inference.jsonl --out data-pundits/logs/p6b`, run `annotations.py verify` on it, and push with `data_sync.py push --daemon`. The review nits that came with this entry are VI-3.
 
-**Touch points:** `data-pundits/experiments/predictions-pilot-20261018/` (README and the three records), `data-pundits/logs/p6b/speaker_check.html`, `scripts/annotations_page.py:16-31` (read only).
+**Touch points:** `data-pundits/experiments/predictions-pilot-20261018/` (README and the three records), `data-pundits/logs/p6b/speaker_check.html`, `scripts/annotations.py` (read only).
 
 ---
 
@@ -121,13 +133,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ### VI-3. `extract_predictions.main()`'s `code_revision_of` call is untested, and two speaker scripts record HEAD without a `+dirty` mark  `[difficulty: medium]`  `[filed: 2026-10-18]`
 
-**Background:** Filed by repo-3 as the review nits of 2026-10-18 round 4. `scripts/extract_predictions.py:890` passes `L.REPO / "scripts"` and the skill directory to `code_revision_of` (`:813`), which appends `+dirty` when either path holds uncommitted changes. `scripts/test_predictions_credit.py:295` and `:305` test the function, but nothing tests the call, so dropping `skill` from it passes the suite. `scripts/annotations_select.py:225-226` (`git_revision`, used at `:286`) and `scripts/speaker_segment_probe.py:176` record `git rev-parse HEAD` as `code_revision` with no dirty mark at all.
+**Background:** Filed by repo-3 as the review nits of 2026-10-18 round 4. `scripts/extract_predictions.py:890` passes `L.REPO / "scripts"` and the skill directory to `code_revision_of` (`:813`), which appends `+dirty` when either path holds uncommitted changes. `scripts/test_predictions_credit.py:295` and `:305` test the function, but nothing tests the call, so dropping `skill` from it passes the suite. `scripts/annotations_select.py:343` (`git_revision`, used by `build` and `migrate` in `scripts/annotations.py`) and `scripts/speaker_segment_probe.py:176` record `git rev-parse HEAD` as `code_revision` with no dirty mark at all.
 
 **Impact:** A speaker audit or probe run from an edited tree records a revision that did not produce it, the defect `code_revision_of`'s own docstring records (8 pundits pilot metas named one commit and ran another's code), and a regression in what `main()` hashes passes the suite.
 
-**Fix:** (1) A check that drives the run-record builder in `extract_predictions.py` with a stubbed `code_revision_of` and asserts it receives both the scripts directory and the skill directory. (2) The two speaker scripts append `+dirty` when `git status --porcelain` on their own paths is non-empty, the way `code_revision_of` does; one check per script in `scripts/test_annotations_select.py` and `scripts/test_speaker_segment_probe.py`, each failing first against a scratch repository with an edited file. Quota-free.
+**Fix:** (1) A check that drives the run-record builder in `extract_predictions.py` with a stubbed `code_revision_of` and asserts it receives both the scripts directory and the skill directory. (2) The two speaker scripts append `+dirty` when `git status --porcelain` on their own paths is non-empty, the way `code_revision_of` does; one check per script in `scripts/test_annotations_cli.py` and `scripts/test_speaker_segment_probe.py`, each failing first against a scratch repository with an edited file. Quota-free.
 
-**Touch points:** `scripts/extract_predictions.py:813-830`, `:890`, `scripts/test_predictions_credit.py:295-305`, `scripts/annotations_select.py:225-226`, `:286`, `scripts/speaker_segment_probe.py:176`, `scripts/test_annotations_select.py`, `scripts/test_speaker_segment_probe.py`.
+**Touch points:** `scripts/extract_predictions.py:813-830`, `:890`, `scripts/test_predictions_credit.py:295-305`, `scripts/annotations_select.py:343`, `scripts/annotations.py` (`build`, `migrate`), `scripts/speaker_segment_probe.py:176`, `scripts/test_annotations_cli.py`, `scripts/test_speaker_segment_probe.py`.
 
 ---
 
@@ -215,7 +227,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 **Impact:** Until the convention is written where a labelling session reads it, no session's corrections can count toward VI-13's threshold, and the count (15 over 5 recordings on 2026-10-11) cannot grow.
 
-**Fix:** Add one rule to "Rules for every label": in a reviewed passage, correct every caption error you notice with the page's "Correct text" field, so that a word left alone counts as correct; name the counter, `.venv/bin/python scripts/annotations_corrections.py` over the answers files.
+**Fix:** Add one rule to "Rules for every label": in a reviewed passage, correct every caption error you notice with the page's "Correct text" field, so that a word left alone counts as correct; name the counter, `.venv/bin/python scripts/annotations.py export corrections --session <dir> --out <file>` over each session.
 
 **Touch points:** `docs/PUNDITS-LABELLING-GUIDE.md:11-27`.
 
@@ -387,7 +399,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ### VI-39. The transcript annotation tool is split by study and named for pundits, so one recording cannot carry an insights and a predictions tag in one interface  `[difficulty: high]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
-**Background:** Filed by repo-2 at the operator's request. The code and the two leaders-data sessions are any clone's work; the pundits session's migration is repo-3's lane, because the pundits data repo is owner-only, and is handed to repo-3 as a command. `scripts/annotations_select.py:58` "STUDIES = (" builds a separate page per board, and `scripts/annotations_page.py:389` "def build(args) -> int:" builds the pundits page; both are served by `scripts/annotations_serve.py`. The shared page template hard-codes the pundits checklist (`scripts/annotations_page.py:824` "const askDone"), the pundits venue list and a banner naming the pundits server. It also keeps an Artifact `db` fallback whose `put` sends every collection except attribution to the labels collection (`scripts/annotations_page.py:1015` "doc(id.replace("), so a spans or corrections save there would overwrite a recording's labels.
+**Background:** Filed by repo-2 at the operator's request. The code and the two leaders-data sessions are any clone's work; the pundits session's migration is repo-3's lane, because the pundits data repo is owner-only, and is handed to repo-3 as a command. Before this item's rename (its commit 1cf7853), `scripts/speaker_audit_page.py:58` built a separate page per board, and `scripts/pundits_verify_page.py:389` built the pundits page; both were served by `scripts/pundits_verify_serve.py`. The shared page template hard-coded the pundits checklist (`scripts/pundits_verify_page.py:824`), the pundits venue list and a banner naming the pundits server. It also kept an Artifact `db` fallback whose `put` sent every collection except attribution to the labels collection (`scripts/pundits_verify_page.py:1015`), so a spans or corrections save there would overwrite a recording's labels.
 
 **Impact:** A leaderboard recording that also has accepted predictions would get two pages and two independent sets of word ranges over the same text; the two 2026-09-27 sessions happen to share no recording. No recording carries a project tag. Tool names say "pundits" and "speaker audit" for work that is the same in every study.
 
@@ -405,7 +417,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Why high not medium:* about twenty files across Python, JavaScript and docs, with a migration of stored human labels.
 
-**Touch points:** `scripts/annotations_page.py`, `scripts/annotations_serve.py`, `scripts/annotations_spans.py`, `scripts/annotations_corrections.py`, `scripts/annotations_span_editor.js`, `scripts/annotations_corrections.js`, `scripts/annotations_select.py`, their `scripts/test_*.py`, `scripts/check_annotations_ui.py`, `scripts/speaker_turns.py:59` "from annotations_spans import token_kinds", `scripts/speaker_segment_probe.py:58` "from annotations_spans import quote_review", `scripts/test_play_time.py`, `docs/agents/PUNDITS.md`, `docs/agents/MAP.md`, `AGENTS.md`.
+**Touch points (renamed in 1cf7853):** `scripts/annotations_page.py`, `scripts/annotations_serve.py`, `scripts/annotations_spans.py`, `scripts/annotations_corrections.py`, `scripts/annotations_span_editor.js`, `scripts/annotations_corrections.js`, `scripts/annotations_select.py`, their `scripts/test_*.py`, `scripts/check_annotations_ui.py`, `scripts/speaker_turns.py:59` "from annotations_spans import token_kinds", `scripts/speaker_segment_probe.py:58` "from annotations_spans import quote_review", `scripts/test_play_time.py`, `docs/agents/PUNDITS.md`, `docs/agents/MAP.md`, `AGENTS.md`.
 
 ---
 
@@ -481,7 +493,7 @@ Comes back when the operator picks one.
 
 ### VI-13. The speaker-segmentation call does not correct obvious caption errors, and there is too little ground truth to measure an attempt  `[difficulty: xhigh]`  `[filed: 2026-09-28]`  `[BLOCKED: at least 50 operator caption corrections across at least 10 recordings, made under the VI-9 convention]`
 
-**Background:** Re-checked 2026-10-11: still waiting, at 15 corrections over 5 recordings of the 50 over 10 it needs. Counted with `scripts/annotations_corrections.py` over every speaker-check answers file on this Mac: leaders 9 edits over 2 recordings, predictions 5 over 2, pundits 1 over 1. The newest edit is from 2026-09-28T05:07Z, and no later session exists in either data repo. The ledger entry, verbatim:
+**Background:** Re-checked 2026-10-11: still waiting, at 15 corrections over 5 recordings of the 50 over 10 it needs. Counted with the corrections export (since VI-39, `scripts/annotations.py export corrections`) over every speaker-check answers file on this Mac: leaders 9 edits over 2 recordings, predictions 5 over 2, pundits 1 over 1. The newest edit is from 2026-09-28T05:07Z, and no later session exists in either data repo. The ledger entry, verbatim:
 
 Filed 2026-09-28 at the operator's request. `scripts/speaker_segment_probe.py`
 asks a model to split a whole transcript into speaker turns, and the first
@@ -522,9 +534,9 @@ in a reviewed passage is corrected, so that a reviewed word left alone counts as
 correct. Both numbers are a judgement, not a measurement: enough corrections that
 one model finding 3 more than another is not noise, spread over enough
 recordings that one speaker's accent or one caption track does not dominate.
-Count them with `annotations_corrections.py` over the answers files.
+Count them with `annotations.py export corrections` over each session.
 
-Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter (`gpt-6-astra`, `SEGMENT_SINCE_UTC = 2026-09-28`), `scripts/speaker_segment_probe.py` scores a run, and `scripts/annotations_corrections.py:17-72` holds the overlay shape and the counter.
+Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter (`gpt-6-astra`, `SEGMENT_SINCE_UTC = 2026-09-28`), `scripts/speaker_segment_probe.py` scores a run, and `scripts/annotations_corrections.py:16-82` holds the overlay shape and the export that counts them.
 
 **Impact:** The commonest fixable caption error, a misheard name, stays in every transcript the judges read, and the operator's corrections are the only repair.
 
@@ -534,7 +546,7 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 *Why xhigh not high:* prompt design, a two-sided measurement and a schema that every published quote offset depends on.
 
-**Touch points:** `scripts/speaker_turns.py:65-66` and `PROMPT`, `scripts/speaker_segment_probe.py`, `scripts/annotations_corrections.py:17-72`, their tests, `docs/agents/PUNDITS.md`.
+**Touch points:** `scripts/speaker_turns.py:65-66` and `PROMPT`, `scripts/speaker_segment_probe.py`, `scripts/annotations_corrections.py:16-82`, their tests, `docs/agents/PUNDITS.md`.
 
 ---
 
@@ -594,7 +606,7 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ### VI-21. 89 judge quotes credited to the subject do not place in the open transcript, and nobody has said whether a tidied quote counts as verbatim  `[difficulty: high]`  `[filed: 2026-09-19]`  `[BLOCKED: operator decides whether a quote with fillers removed or a caption error corrected is verbatim under the rubric]`
 
-**Background:** Of 3,290 subject quotes in the 312 live pundits grades, `annotations_page.locate` (`scripts/annotations_page.py:191`) first failed to place 137. Re-measured 2026-10-11 after three matcher fixes (`[AFFILIATION]` as a placeholder for up to five words, `_norm` at `:181` stripping edge quote marks and curly apostrophes, an empty quote counted as `empty`): against `transcripts_open/`, located 3,198, not located 89, empty 3 (`suspect_quotes` at `:238`; the full re-measurement is the archived entry "RE-MEASURED AND PARTLY FIXED 2026-10-11", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits). Of the 89, 84 share at least 80% of their three-word sequences with the transcript and 5 share 73 to 77%; all 5 were read in context, and every one is a judge tidying the captions, never a paraphrase (a dropped filler, a joined caption-split number, a corrected typo). 86 of the 89 are Gemini. A matcher that also skipped fillers and immediate repeats would place 29 of the 89; not done, because it makes "located" fuzzier and the remaining 60 differ in more varied ways.
+**Background:** Of 3,290 subject quotes in the 312 live pundits grades, `annotations_text.locate` (`scripts/annotations_text.py:148`) first failed to place 137. Re-measured 2026-10-11 after three matcher fixes (`[AFFILIATION]` as a placeholder for up to five words, `_norm` at `:181` stripping edge quote marks and curly apostrophes, an empty quote counted as `empty`): against `transcripts_open/`, located 3,198, not located 89, empty 3 (`suspect_quotes` at `:238`; the full re-measurement is the archived entry "RE-MEASURED AND PARTLY FIXED 2026-10-11", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits). Of the 89, 84 share at least 80% of their three-word sequences with the transcript and 5 share 73 to 77%; all 5 were read in context, and every one is a judge tidying the captions, never a paraphrase (a dropped filler, a joined caption-split number, a corrected typo). 86 of the 89 are Gemini. A matcher that also skipped fillers and immediate repeats would place 29 of the 89; not done, because it makes "located" fuzzier and the remaining 60 differ in more varied ways.
 
 **Impact:** The quote cap and the minimum-subject-quotes rule both assume quotes are real; 89 of them are either matcher misses or rubric violations, mostly Gemini's, and the pundits evidence drawer (VI-18) waits on the answer.
 
@@ -606,7 +618,7 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 *Why high not medium:* a rubric interpretation with a per-judge consequence.
 
-**Touch points:** `scripts/annotations_page.py:181-238`, `scripts/test_annotations_page.py`, `scripts/aggregate.py` (the quote report), `docs/agents/PUNDITS.md`.
+**Touch points:** `scripts/annotations_text.py:138-192`, `scripts/test_annotations_page.py`, `scripts/aggregate.py` (the quote report), `docs/agents/PUNDITS.md`.
 
 ---
 

@@ -1,11 +1,10 @@
-"""Human caption corrections over immutable raw token offsets.
+"""Human caption corrections over immutable raw token offsets (the `captions` mode).
 
 The original transcript and grades stay intact. A replacement is selected as one
 phrase, so a change in word count cannot shift existing speaker annotations.
 """
 from __future__ import annotations
 
-import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,12 +81,3 @@ def export_corrections(answers: Path, page: Path, out: Path) -> dict:
                       "Existing scores use the original captions; regrading is a separate step."}
     write_atomic(out, json.dumps(result, ensure_ascii=False, indent=1) + "\n")
     return result
-
-
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    for flag in ("--answers", "--page", "--out"):
-        ap.add_argument(flag, type=Path, required=True)
-    args = ap.parse_args()
-    result = export_corrections(args.answers, args.page, args.out)
-    print(f"Exported corrections for {len(result['recordings'])} recordings")

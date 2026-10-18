@@ -1,336 +1,63 @@
 #!/usr/bin/env python3
-"""Build the speaker-check page a person uses to label P6 recordings.
+"""The annotation page: its template, its data block, and what its answers become.
 
-Pundits plan, P6: discovery proves who UPLOADED a video, not who speaks in it, so a
-person labels every recording before it is graded. `pundits_pilot.py precheck`
-writes the checklist of recordings that need a person; this turns it into one
-local page with per-recording checks and a word-range speaker editor. Full raw
-transcripts and sparse model evidence suggestions live in private sidecar files
-loaded by the local server. Existing recording and quote answers are preserved.
+One page serves every project. What it asks is set by the session, never by the
+study: the session's MODES say which panels the page shows, and its PROJECTS tag
+each recording and quote.
 
-Labels are NOT stored in the page. The local server saves them in human_answers.json:
-recording decisions in labels, coarse quote decisions in attribution, and human
-word ranges in spans. import, import-quotes, and import-spans consume this file.
-Model drafts never enter the human store without an explicit operator action.
+  checklist  recording questions from the project's spec (`annotations_select`);
+             only pundits has one today. Saved in the answers file's `labels`.
+  speakers   who said which words: word ranges over the transcript, saved in
+             `spans`. A quote's result (`attribution`) is DERIVED from the ranges
+             on the server; no button sets it.
+  captions   corrections to the caption text, saved in `corrections` as an overlay
+             on the original tokens.
 
-MODEL DRAFTS. With `--drafts` (the speaker_inference.jsonl that
-`pundits_speaker_infer.py infer` writes), each recording shows the model's draft
-answers beside the three questions, and the list puts first every recording whose
-draft `pundits_speaker_infer.needs_review` flags (not high confidence, subject
-absent, subject not the main speaker, no usable answer, or no draft). A draft is
-never an answer: the person still picks each one. A label saved while a draft was
-on screen records `draft_shown` with the model's name, because it is then an
-ASSISTED label, and calibration against the model counts only labels without it.
-
-The page holds transcript text, so it is written into the PRIVATE data checkout
-and never into this repository. No lean label is read or written.
-
-  annotations_page.py build  --checklist data-pundits/logs/p6b/human_checklist.json \\
-      --transcripts data-pundits/transcripts --roster data-pundits/roster/final.json \\
-      [--grades data-pundits/grades --quote-key data-pundits/logs/p6b/quote_check_key.json] \\
-      [--drafts data-pundits/logs/p6b/speaker_inference.jsonl] \\
-      --out data-pundits/logs/p6b/speaker_check.html
-  annotations_page.py import --export labels_export.json \\
-      --checklist data-pundits/logs/p6b/human_checklist.json \\
-      --out data-pundits/logs/p6b/human_labels.json
-
-QUOTE CHECK. With `--grades` and `--quote-key`, build also flags evidence quotes the
-judges credited to the subject that are most likely someone else's (see
-`suspect_quotes`), shows each in context on the same recording screen, and writes a
-private provenance key. Saved model estimates are exposed in the range editor at
-the operator's request (2026-09-20), so these are ASSISTED labels, not a blind audit.
-`import-quotes` joins the operator's answers with the key. The sample is selected for
-being suspect and cannot stand in for the P7 random quote audit.
+The page holds transcript text, so it lives in a data checkout and is served from
+this machine only (`scripts/annotations.py serve`). Answers are never stored in the
+page. Model drafts (`--drafts`) are shown as suggestions; a checklist answer saved
+with one on screen records `draft_shown`, so calibration can leave it out.
 """
 from __future__ import annotations
 
-import argparse
 import html
 import json
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-VENUES = ("solo", "reaction", "conversation", "debate", "speech")
-EXCERPT_AT = (0.12, 0.50, 0.85)
-EXCERPT_WORDS = 130
-MARK = re.compile(r"\[(\d{2}):(\d{2}):(\d{2})\]")
-# Seconds of lead before a quote's estimated start. MEASURED 2026-09-28 on one
-# video (sergey-brin/badbellabear-9uzqfz, 3,187 words, true caption times fetched
-# once): interpolation lands a median 1.4 s from the true time, and with a 5 s lead
-# playback starts after the word for 19 of 3,187 words, against 192 with 3 s.
-PLAY_LEAD_SECONDS = 5
-# A gap between two marks whose words arrive at less than this share of the
-# recording's typical rate has lost words, as a paragraph-loop collapse does.
-SPARSE_GAP_SHARE = 0.5
+#: The page's data block, one line: `const D = {...};`. `</` is written `<\/`.
+DATA_LINE = re.compile(r"^const D = (\{.*\});$", re.M)
+#: Keys the page itself binds; a checklist option may not take one.
+RESERVED_KEYS = {"j", "k", "v", "[", "]", "arrowup", "arrowdown"}
 
 
-def play_time(toks: list, a: int, duration=None, lead: int = PLAY_LEAD_SECONDS):
-    """Whole seconds at which to start playing the word at token index `a`, or None.
+def page_payload(data: dict) -> str:
+    """The data block's JSON, safe inside a <script> element."""
+    return json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
 
-    `toks` are the `re.finditer(r"\\S+", text)` matches of a transcript. The fetcher
-    writes a `[hh:mm:ss]` mark about once a minute, each right before the caption
-    whose start it records, so a mark is exact to the second and the words between
-    two marks fill the time between them. The word's time is interpolated between
-    the marks around it by spoken-word position. Marks and `>>` turn marks are not
-    words. The result is `lead` seconds earlier, so playback starts just before the
-    quote.
 
-    Three cases do not interpolate. Each leans toward starting early rather than
-    late, because a late start makes the listener scrub back past the opening
-    words they must attribute. None of them is guaranteed to land before the quote:
+def page_data(page: str) -> dict:
+    """The data block of a built page. A page without one stops the caller."""
+    m = DATA_LINE.search(page)
+    if not m:
+        raise SystemExit("REFUSING: no `const D = {...};` data block in the page; rebuild it with "
+                         "scripts/annotations.py rebuild")
+    return json.loads(m.group(1).replace("<\\/", "</"))
 
-      - A SPARSE gap, whose words arrive at under SPARSE_GAP_SHARE of the typical
-        rate, has lost words (a paragraph-loop collapse drops a replay and keeps
-        only the later mark). Where the survivors sat inside it is unknown, so the
-        word is placed at the typical rate from the earlier mark. That lands in the
-        first half of the gap, since a sparse gap's words take under half its time
-        at the typical rate.
-      - Before the first mark, or after the last, the word is extrapolated from the
-        nearest mark at the typical rate, and clamped to [0, duration].
-      - With no rate at all (one mark and no duration) the nearest earlier mark, or
-        0, is used; with no mark and no duration the answer is None.
 
-    The typical rate is the median words per second over the recording's gaps, not
-    word count over `duration`, which counts intros and outros with no speech.
-    With fewer than two marks it falls back to words over `duration`.
+def page_ids(data: dict) -> dict[str, set[str]]:
+    """The recording keys and quote ids the page can send, per answers section.
+
+    Raises rather than returning empty sets: a page that carries nothing to answer
+    is a build this tool does not understand, and accepting every id from it would
+    turn a loud mismatch into a file of answers nothing can export.
     """
-    if not 0 <= a < len(toks):
-        raise IndexError(f"token {a} is outside a transcript of {len(toks)} tokens")
-    marks, words, pos = [], 0, None
-    for i, t in enumerate(toks):
-        if i == a:
-            pos = words
-        m = MARK.fullmatch(t.group())
-        if m:
-            h, mi, s = (int(x) for x in m.groups())
-            marks.append((words, h * 3600 + mi * 60 + s))
-        elif t.group() != ">>":
-            words += 1
-    rates = sorted((c1 - c0) / (s1 - s0) for (c0, s0), (c1, s1) in zip(marks, marks[1:])
-                   if c1 > c0 and s1 > s0)
-    if rates:
-        typical = rates[len(rates) // 2]
-    elif duration and words:
-        typical = words / duration
-    else:
-        typical = None
-    before = [k for k, (c, _) in enumerate(marks) if c <= pos]
-    if before:
-        k = before[-1]
-        c0, s0 = marks[k]
-        if k + 1 < len(marks):
-            c1, s1 = marks[k + 1]
-            if typical and (c1 - c0) / max(s1 - s0, 1e-9) < SPARSE_GAP_SHARE * typical:
-                t = s0 + (pos - c0) / typical
-            else:
-                t = s0 + (pos - c0) / (c1 - c0) * (s1 - s0)
-        else:
-            t = s0 + (pos - c0) / typical if typical else s0
-    elif marks:
-        c1, s1 = marks[0]
-        t = s1 - (c1 - pos) / typical if typical else 0
-    elif typical:
-        t = pos / typical
-    else:
-        return None
-    if duration:
-        t = min(t, duration)
-    return max(0, int(t) - lead)
-
-
-def name_forms(person: dict) -> list[str]:
-    parts = person["name"].split()
-    forms = [person["name"], parts[0], parts[-1]] + list(person.get("handles") or [])
-    return [f for f in dict.fromkeys(forms) if len(f) >= 3]
-
-
-def excerpts(text: str) -> list[dict]:
-    """Three windows of the transcript, each with the time of the nearest earlier mark."""
-    words = list(re.finditer(r"\S+", text))
-    out = []
-    for frac in EXCERPT_AT:
-        if not words:
-            break
-        i = min(int(len(words) * frac), max(0, len(words) - EXCERPT_WORDS))
-        span = words[i:i + EXCERPT_WORDS]
-        start = span[0].start()
-        marks = [m for m in MARK.finditer(text, 0, start)]
-        secs = None
-        if marks:
-            h, m, s = (int(x) for x in marks[-1].groups())
-            secs = h * 3600 + m * 60 + s
-        chunk = text[start:span[-1].end()]
-        out.append({"at": frac, "t": secs, "text": MARK.sub("", chunk).strip(),
-                    "start": i, "end": i + len(span)})
-    return out
-
-
-CONTEXT_WORDS = 35
-QUOTE_CAP_PER_RECORDING = 4
-# A blinding token in a quote taken from blinded text, and the most raw words it
-# can stand for. [AFFILIATION] is the pundits token for a show or outlet, which
-# runs longer than a name ("The Matt Walsh Show").
-WILDCARD_SPAN = {"[subject]": 3, "[company]": 3, "[affiliation]": 5}
-WILDCARD = set(WILDCARD_SPAN)
-SIGNAL_RANK = {"spans_turn": 3, "question_in_conversation": 2, "names_subject": 1}
-
-
-def _norm(tok: str) -> str:
-    t = tok.lower()
-    if t in WILDCARD or t == ">>":
-        return t
-    # One apostrophe, and none at the edges: a judge quoting a quotation writes
-    # 'Oh, no.' where the captions have "Oh, no.", and either side may be curly.
-    t = re.sub(r"[^\w']", "", t.replace("\u2019", "'").replace("\u2018", "'"))
-    return t.strip("'")
-
-
-def locate(quote: str, raw: str):
-    """Find a judge's quote in the raw transcript; returns (first, last) raw token indices or None.
-
-    Matching is on normalized words. `[SUBJECT]` and `[COMPANY]` in a quote taken from
-    blinded text stand for the one to three raw words of the name they replaced, at any
-    position, and `[AFFILIATION]` for one to five words of a show or outlet. An elided quote ("...") is matched on its longest piece. Caption turn marks
-    `>>` and timestamp marks are skipped. A quote shorter than four words is not located,
-    because a match that short says nothing about where it came from.
-    """
-    toks = list(re.finditer(r"\S+", raw))
-    words = [(i, _norm(m.group())) for i, m in enumerate(toks)
-             if not MARK.fullmatch(m.group())]
-    words = [(i, w) for i, w in words if w and w != ">>"]
-    piece = max(re.split(r"\.\.\.|…", quote), key=lambda x: len(x.split()))
-    q = [w for w in (_norm(t) for t in piece.split()) if w and w != ">>"]
-    if len(q) < 4 or all(w in WILDCARD for w in q):
-        return None
-
-    def match(qi: int, wi: int):
-        if qi == len(q):
-            return wi
-        if q[qi] in WILDCARD:
-            for n in range(1, WILDCARD_SPAN[q[qi]] + 1):
-                if wi + n <= len(words):
-                    end = match(qi + 1, wi + n)
-                    if end is not None:
-                        return end
-            return None
-        if wi < len(words) and words[wi][1] == q[qi]:
-            return match(qi + 1, wi + 1)
-        return None
-
-    lead = next(k for k, w in enumerate(q) if w not in WILDCARD)
-    anchor = q[lead]
-    for s0, (_, w0) in enumerate(words):
-        if w0 != anchor:
-            continue
-        for back in range(lead, max(WILDCARD_SPAN.values()) * lead + 1):
-            st = s0 - back
-            if st < 0:
-                break
-            end = match(0, st)
-            if end is not None:
-                return words[st][0], words[end - 1][0]
-    return None
-
-
-def suspect_quotes(grades_dir: Path, transcripts_dir: Path, roster: dict) -> tuple[list, dict, dict]:
-    """The quotes a judge credited to the subject that are most likely someone else's.
-
-    Signals, strongest first, all mechanical because the judges report no per-quote
-    confidence: the quote's span crosses a caption turn mark `>>`; it is a question
-    in a conversation or debate, where questions are usually the other voice's; it
-    contains the subject's own name or the blinded subject token, which people rarely
-    say about themselves. Deduplicated per recording across judges and modes, capped
-    at QUOTE_CAP_PER_RECORDING. Returns (page rows, private answer key, report). The
-    judge's own label never reaches the page rows.
-    """
-    by_rec: dict = {}
-    report = {"subject_quotes": 0, "located": 0, "not_located": 0, "empty": 0, "flagged": 0}
-    raw_cache: dict = {}
-    for gp in sorted(Path(grades_dir).glob("*/*/*__r0.json")):
-        if "_obsolete" in gp.parts or "_raw" in gp.parts:
-            continue
-        g = json.loads(gp.read_text())
-        body = g.get("grade") or {}
-        if g.get("validation_errors") or not isinstance(body.get("dimensions"), dict):
-            continue
-        slug, sid = g["leader_slug"], g["source_id"]
-        person = roster.get(slug)
-        if person is None:
-            continue
-        if (slug, sid) not in raw_cache:
-            rp = Path(transcripts_dir) / slug / f"{sid}.json"
-            raw_cache[(slug, sid)] = json.loads(rp.read_text()) if rp.exists() else None
-        rec = raw_cache[(slug, sid)]
-        if rec is None:
-            continue
-        raw = rec.get("text") or ""
-        toks = list(re.finditer(r"\S+", raw))
-        forms = name_forms(person)
-        for dim, d in body["dimensions"].items():
-            for e in d.get("evidence") or []:
-                if e.get("speaker") != "subject":
-                    continue
-                report["subject_quotes"] += 1
-                q = e.get("quote") or ""
-                if not q.strip():
-                    # A judge that cites nothing is not a quote the matcher missed.
-                    report["empty"] += 1
-                    continue
-                span = locate(q, raw)
-                if span is None:
-                    report["not_located"] += 1
-                    continue
-                report["located"] += 1
-                a, z = span
-                signals = []
-                if any(toks[i].group() == ">>" for i in range(a, z + 1)):
-                    signals.append("spans_turn")
-                if q.strip().endswith("?") and body.get("venue_type") in ("conversation", "debate"):
-                    signals.append("question_in_conversation")
-                if "[SUBJECT]" in q or any(re.search(r"\b" + re.escape(f) + r"\b", q, re.I) for f in forms):
-                    signals.append("names_subject")
-                if not signals:
-                    continue
-                dedupe = " ".join(_norm(t.group()) for t in toks[a:a + 8])
-                key = f"{slug}/{sid}"
-                entry = by_rec.setdefault(key, {}).setdefault(dedupe, {
-                    "qid": f"{slug}:{sid}:{a}", "a": a, "z": z, "signals": set(), "judges": []})
-                entry["signals"].update(signals)
-                entry["judges"].append({"judge": g["judge"], "mode": g["mode"], "dimension": dim,
-                                        "label": "subject", "quote": q})
-    rows, key_map = [], {}
-    for key, quotes in by_rec.items():
-        slug, sid = key.split("/", 1)
-        rec, person = raw_cache[(slug, sid)], roster[slug]
-        raw = rec.get("text") or ""
-        toks = list(re.finditer(r"\S+", raw))
-        ranked = sorted(quotes.values(), key=lambda q: (-max(SIGNAL_RANK[s] for s in q["signals"]), q["a"]))
-        cards = []
-        for q in ranked[:QUOTE_CAP_PER_RECORDING]:
-            a, z = q["a"], q["z"]
-            b0 = max(0, a - CONTEXT_WORDS)
-            t = play_time(toks, a, rec.get("yt_duration_sec") or rec.get("duration_sec"))
-            strip = lambda i, j: MARK.sub("", raw[toks[i].start():toks[j].end()]).strip() if j >= i else ""
-            cards.append({"qid": q["qid"], "t": t, "start": b0,
-                          "end": min(len(toks), z + CONTEXT_WORDS + 1),
-                          "quote_start": a, "quote_end": z + 1, "before": strip(b0, a - 1),
-                          "text": strip(a, z), "after": strip(z + 1, min(len(toks) - 1, z + CONTEXT_WORDS))})
-            key_map[q["qid"]] = {"key": key, "signals": sorted(q["signals"]), "judges": q["judges"]}
-        report["flagged"] += len(cards)
-        rows.append({"key": key, "slug": slug, "sid": sid, "person": person["name"],
-                     "role": person.get("role", ""), "title": rec.get("yt_title") or "",
-                     "channel": rec.get("yt_channel") or "", "upload": rec.get("yt_upload_date") or "",
-                     "video_id": rec.get("video_id"), "duration": rec.get("yt_duration_sec") or rec.get("duration_sec"),
-                     "forms": name_forms(person), "quotes": cards})
-    rows.sort(key=lambda r: (r["person"].split()[-1], r["person"], r["upload"]))
-    return rows, key_map, report
-
-
-PAGE_TITLE = "Pundit Speaker Check"
-PAGE_SUBTITLE = "Confirm who is speaking before a recording is graded. Each answer saves the moment you pick it."
+    keys = {r["key"] for r in data.get("rows", []) if r.get("key")}
+    qids = {c["qid"] for r in data.get("quote_rows", []) for c in r.get("quotes", []) if c.get("qid")}
+    transcripts = set(data.get("transcript_index", {}))
+    if not keys and not qids and not transcripts:
+        raise SystemExit("REFUSING: the page carries no recordings and no quotes")
+    return {"labels": keys, "attribution": qids, "spans": transcripts, "corrections": transcripts}
 
 
 #: What the page shows of a model draft. `evidence` is the model's own verbatim
@@ -369,119 +96,57 @@ def draft_view(draft: dict | None) -> tuple[dict | None, list[str]]:
     return {**{f: draft.get(f) for f in DRAFT_FIELDS}, "model": draft["model"]}, needs_review(draft, None)
 
 
-def render_page(data: str, title: str = PAGE_TITLE, subtitle: str = PAGE_SUBTITLE) -> str:
-    """The page with its data, its words and its two embedded scripts filled in.
-
-    `annotations_select.py` renders the same page for the leaders and predictions
-    boards, so the words are parameters and every placeholder must be filled exactly.
-    """
+def render_page(data: dict, title: str, subtitle: str) -> str:
+    """The page with its data, its words and its two embedded scripts filled in."""
+    checklist = (data.get("session") or {}).get("checklist")
+    for field in (checklist or {}).get("fields", []):
+        for option in field.get("options", []):
+            if str(option.get("key", "")).lower() in RESERVED_KEYS:
+                raise SystemExit(f"REFUSING: checklist key {option['key']!r} is one the page already uses")
     page = TEMPLATE
-    for mark, value in (("/*__DATA__*/null", data), ("/*__TITLE__*/", html.escape(title)),
+    here = Path(__file__)
+    for mark, value in (("/*__DATA__*/null", page_payload(data)), ("/*__TITLE__*/", html.escape(title)),
                         ("/*__SUBTITLE__*/", html.escape(subtitle)),
-                        ("/*__SPAN_EDITOR__*/", Path(__file__).with_name("annotations_span_editor.js").read_text()),
-                        ("/*__TEXT_CORRECTIONS__*/", Path(__file__).with_name("annotations_corrections.js").read_text())):
+                        ("/*__SPAN_EDITOR__*/", here.with_name("annotations_span_editor.js").read_text()),
+                        ("/*__TEXT_CORRECTIONS__*/", here.with_name("annotations_corrections.js").read_text())):
         if mark not in page:
             raise SystemExit(f"REFUSING: template placeholder {mark} is missing")
         page = page.replace(mark, value)
     return page
 
 
-def build(args) -> int:
-    checklist = json.loads(Path(args.checklist).read_text())
-    roster = {p["slug"]: p for p in json.loads(Path(args.roster).read_text())["roster"]}
-    drafts = load_drafts(Path(args.drafts), checklist) if getattr(args, "drafts", None) else None
-    rows = []
-    for key, row in checklist.items():
-        slug, sid = key.split("/", 1)
-        person = roster[slug]
-        rec = json.loads((Path(args.transcripts) / slug / f"{sid}.json").read_text())
-        text = rec.get("text") or ""
-        forms = name_forms(person)
-        mentions = sum(len(re.findall(r"\b" + re.escape(f) + r"\b", text, re.I)) for f in forms[:1] + forms[2:])
-        rows.append({
-            "key": key, "slug": slug, "sid": sid,
-            "person": person["name"], "role": person.get("role", ""),
-            "title": row.get("title") or rec.get("yt_title") or "",
-            "channel": row.get("channel") or rec.get("yt_channel") or "",
-            "upload": row.get("upload") or rec.get("yt_upload_date") or "",
-            "url": row.get("url") or rec.get("url"),
-            "video_id": rec.get("video_id"),
-            "duration": rec.get("yt_duration_sec") or rec.get("duration_sec"),
-            "words": rec.get("word_count"),
-            "hints": [h for h in row.get("hints", []) if not h.startswith("passes automatic checks")],
-            "description": (rec.get("yt_description") or "")[:700],
-            "forms": forms,
-            "mentions": mentions,
-            "excerpts": excerpts(text),
-        })
-        if drafts is not None:
-            rows[-1]["draft"], rows[-1]["doubt"] = draft_view(drafts.get(key))
-    rows.sort(key=lambda r: (r["person"].split()[-1], r["person"], r["upload"]))
-    quote_rows, key_map, qrep = ([], {}, {})
-    if args.grades:
-        quote_rows, key_map, qrep = suspect_quotes(Path(args.grades), Path(args.transcripts), roster)
-        # Exact grading provenance stays in this key; the local range editor gets
-        # sparse model estimates separately from its transcript sidecar.
-        Path(args.quote_key).write_text(json.dumps(key_map, indent=1, ensure_ascii=False) + "\n")
-    from annotations_spans import build_transcript, sidecar_path
-    from atomicio import write_atomic
-    grades_by_key = {}
-    if args.grades:
-        for path in sorted(Path(args.grades).glob("*/*/*__r0.json")):
-            if any(p in {"_obsolete", "_raw"} for p in path.parts):
-                continue
-            record = json.loads(path.read_text())
-            key = f"{record.get('leader_slug')}/{record.get('source_id')}"
-            grades_by_key.setdefault(key, []).append((path, record))
-    transcript_index = {}
-    for key in sorted({r["key"] for r in rows + quote_rows}):
-        rec = json.loads((Path(args.transcripts) / (key + ".json")).read_text())
-        transcript = build_transcript(key, rec.get("text") or "", grades_by_key.get(key, []))
-        write_atomic(sidecar_path(Path(args.out), key), json.dumps(transcript, ensure_ascii=False))
-        transcript_index[key] = {k: transcript[k] for k in ("text_sha256", "token_count")}
-    data = json.dumps({"rows": rows, "quote_rows": quote_rows, "venues": VENUES,
-                       "transcript_index": transcript_index},
-                      ensure_ascii=False).replace("</", "<\\/")
-    page = render_page(data)
-    write_atomic(Path(args.out), page)
-    print(f"wrote {args.out}: {len(rows)} recordings to speaker-check, {len({r['slug'] for r in rows})} people; "
-          f"{sum(len(r['quotes']) for r in quote_rows)} quotes to attribute across {len(quote_rows)} recordings; "
-          f"{len(page) / 1024:.0f} KB")
-    if qrep:
-        print(f"quote scan: {qrep}")
-    if drafts is not None:
-        shown = sum(1 for r in rows if r["draft"])
-        first = sum(1 for r in rows if r["doubt"])
-        print(f"model drafts: {shown} of {len(rows)} recordings show one; {first} are listed first for a person "
-              f"to check ({len(rows) - shown} with no usable draft among them)")
-    return 0
+def answered(field: dict, value) -> bool:
+    """Whether a checklist answer is a complete answer to `field`."""
+    if field["type"] == "bool":
+        return isinstance(value, bool)
+    if field["type"] == "enum":
+        return any(value == o["value"] for o in field["options"])
+    return isinstance(value, str) and bool(value.strip())
 
 
-def to_labels(docs: list[dict], checklist: dict) -> dict:
-    """The human_labels.json shape `pundits_pilot.py report` reads, from db documents.
+def to_labels(docs: list[dict], keys, checklist: dict) -> dict:
+    """Complete checklist answers, in the shape `pundits_pilot.py report` reads.
 
     Refuses a document whose key is not on the checklist, and reports rather than
-    guesses a missing field: a partly labelled recording is left out, not filled.
+    guesses a missing field: a partly answered recording is left out, not filled.
     """
+    fields = checklist["fields"]
     out, partial, unknown = {}, [], []
     for d in docs:
         key = d.get("key")
-        if key not in checklist:
+        if key not in keys:
             unknown.append(key)
             continue
-        # report needs all three for every recording, excluded ones included.
-        if not isinstance(d.get("subject_present"), bool) or not isinstance(d.get("political_content"), bool) \
-                or d.get("venue") not in VENUES:
+        if not all(answered(f, d.get(f["name"])) for f in fields if f.get("required")):
             partial.append(key)
             continue
-        out[key] = {"subject_present": d["subject_present"], "venue": d.get("venue"),
-                    "political_content": d["political_content"],
+        out[key] = {**{f["name"]: d.get(f["name"]) for f in fields},
                     "checked_by": d.get("checked_by") or "operator", "notes": d.get("notes") or "",
                     # An assisted label says so, so calibration can leave it out.
                     **({"draft_shown": d["draft_shown"]} if d.get("draft_shown") else {})}
     if unknown:
         raise SystemExit(f"REFUSING: {len(unknown)} labels name recordings not on the checklist, e.g. {unknown[:3]}")
-    return {"labels": out, "partial": sorted(partial), "unlabelled": sorted(set(checklist) - set(out) - set(partial))}
+    return {"labels": out, "partial": sorted(partial), "unlabelled": sorted(set(keys) - set(out) - set(partial))}
 
 
 def docs_from(raw, section: str) -> list[dict]:
@@ -501,16 +166,6 @@ def docs_from(raw, section: str) -> list[dict]:
     if isinstance(raw, dict):
         return [dict(v, **{id_field: v.get(id_field, k)}) for k, v in raw.items() if isinstance(v, dict)]
     raise SystemExit(f"REFUSING: {section} is neither a list of documents nor an object of them")
-
-
-def do_import(args) -> int:
-    checklist = json.loads(Path(args.checklist).read_text())
-    docs = docs_from(json.loads(Path(args.export).read_text()), "labels")
-    res = to_labels(docs, checklist)
-    Path(args.out).write_text(json.dumps(res["labels"], indent=1, ensure_ascii=False) + "\n")
-    print(f"wrote {args.out}: {len(res['labels'])} complete labels; "
-          f"{len(res['partial'])} partly labelled (left out); {len(res['unlabelled'])} not yet labelled")
-    return 0
 
 
 ANSWERS = ("subject", "other", "both", "unclear")
@@ -549,53 +204,6 @@ def join_quotes(docs: list[dict], key_map: dict) -> dict:
     return {"answers": out, "tally": tally, "by_signal": by_signal,
             "unanswered": sorted(set(key_map) - set(out)), "invalid": sorted(bad),
             "note": "Rates are among quotes FLAGGED as suspect, not across all quotes."}
-
-
-def do_import_quotes(args) -> int:
-    key_map = json.loads(Path(args.key).read_text())
-    raw = json.loads(Path(args.export).read_text())
-    if isinstance(raw, dict) and raw.get("spans"):
-        from annotations_spans import reconcile_quote_reviews
-        page = Path(getattr(args, "page", None) or Path(args.export).parent / "speaker_check.html")
-        if not page.exists():
-            raise SystemExit("Range-derived quote answers require --page pointing to the review page")
-        data = json.loads(re.search(r"^const D = (\{.*\});$", page.read_text(), re.M).group(1).replace("<\\/", "</"))
-        raw = reconcile_quote_reviews(raw, page, data.get("quote_rows", []))
-    docs = docs_from(raw, "attribution")
-    res = join_quotes(docs, key_map)
-    Path(args.out).write_text(json.dumps(res, indent=1, ensure_ascii=False) + "\n")
-    print(f"wrote {args.out}: {sum(res['tally'].values())} answered of {len(key_map)} flagged; "
-          f"{res['tally']}; {len(res['invalid'])} invalid")
-    return 0
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("build")
-    for a in ("--checklist", "--transcripts", "--roster", "--out"):
-        b.add_argument(a, required=True)
-    b.add_argument("--grades", default=None, help="graded corpus to draw suspect quotes from")
-    b.add_argument("--quote-key", default=None, help="private file for the judges' labels of those quotes")
-    b.add_argument("--drafts", default=None, help="speaker_inference.jsonl from pundits_speaker_infer.py: show each "
-                   "recording's model draft, and list the ones it flags first")
-    i = sub.add_parser("import")
-    for a in ("--export", "--checklist", "--out"):
-        i.add_argument(a, required=True)
-    q = sub.add_parser("import-quotes")
-    for a in ("--export", "--key", "--out"):
-        q.add_argument(a, required=True)
-    q.add_argument("--page", help="review page for deriving quote results from saved word ranges")
-    s = sub.add_parser("import-spans")
-    for a in ("--export", "--page", "--out"):
-        s.add_argument(a, required=True)
-    args = ap.parse_args()
-    if args.cmd == "import-spans":
-        from annotations_spans import import_spans
-        result = import_spans(Path(args.export), Path(args.page), Path(args.out))
-        print(f"wrote {args.out}: {len(result['recordings'])} recordings with human word ranges")
-        return 0
-    return {"build": build, "import": do_import, "import-quotes": do_import_quotes}[args.cmd](args)
 
 
 TEMPLATE = r"""<title>/*__TITLE__*/</title>
@@ -762,6 +370,11 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 .span-samples{display:block;margin:12px 0}
 .span-samples select{font:inherit;color:var(--ink);background:var(--surface);padding:5px}
 
+.pchip{font:500 .7rem var(--mono);border:1px solid var(--rule2);border-radius:999px;padding:0 7px;color:var(--ink2);background:var(--surface2);white-space:nowrap}
+.mode{display:grid;gap:12px}
+.mode+.mode{border-top:1px solid var(--rule);padding-top:14px}
+.mode-hd{margin:0;font-size:.74rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink2)}
+.mode-hd small{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);margin-left:8px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 <div class="app">
@@ -779,6 +392,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
    <button type="button" id="f-all" aria-pressed="false">All</button>
    <button type="button" id="f-done" aria-pressed="false">Done</button>
   </div>
+  <div class="seg" role="group" aria-label="Project" id="projects" hidden></div>
   <span class="keys" id="legend"></span>
   <span class="keys" id="keyhelp"></span>
  </div>
@@ -789,20 +403,22 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,.item:focus-visible{
 </div>
 <script>
 const D = /*__DATA__*/null;
-const VENUE_DEF = {
- solo:"The subject talks to the audience with no other live voice, including covering news stories.",
- reaction:"The subject plays other material and comments on it, with no other live voice.",
- conversation:"Other live voices talk with the subject, whoever hosts: interviews either way round, panels, co-hosted shows, TV segments.",
- debate:"Organised opposing sides with at least one named opponent, usually with a moderator or turns.",
- speech:"A prepared talk to a live audience, with or without questions afterwards."};
+// What this page asks comes from its session, never from the study: the modes it
+// enables, the projects that tag each recording, and the checklist spec if any.
+const S = D.session;
+const CHECK = S.modes.includes("checklist") ? S.checklist : null;
+const FIELDS = CHECK ? CHECK.fields : [];
+const HAS = mode => S.modes.includes(mode);
+const projectsOf = r => r.projects || S.projects;
+const projectOf = c => c.project || S.projects[0];
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const el = id => document.getElementById(id);
 
-// ONE item per recording. A recording may need the three questions, a set of quote
+// ONE item per recording. A recording may need its checklist, a set of quote
 // attributions, or both — everything about it is answered on one screen, so a video
 // is never opened twice.
 const REC = {};
-for(const r of D.rows) REC[r.key] = {...r, ask:true, quotes:[]};
+for(const r of D.rows) REC[r.key] = {...r, ask:!!CHECK, quotes:[]};
 for(const r of (D.quote_rows||[])){
  const x = REC[r.key] ||= {...r, ask:false, hints:[], excerpts:[], description:"", mentions:null};
  x.quotes = r.quotes; if(!x.title) Object.assign(x, {title:r.title, channel:r.channel, upload:r.upload, video_id:r.video_id, duration:r.duration, forms:r.forms, person:r.person, role:r.role});
@@ -816,26 +432,28 @@ const SECTION_HELP = ["The model was unsure, found the subject absent or not the
  "The model answered with high confidence. Its draft is a suggestion, never an answer", "No recording questions, only flagged quotes"];
 const section = r => !HAS_DRAFTS ? 0 : !r.ask ? 2 : (r.doubt||[]).length ? 0 : 1;
 const recs = Object.values(REC).sort((a,b)=>section(a)-section(b) || (a.person.split(" ").pop()+a.person+a.upload).localeCompare(b.person.split(" ").pop()+b.person+b.upload));
-// A page with no recording-level questions (annotations_select.py) is only quotes.
+// A page with no recording-level questions is only quotes.
 const QUOTE_ONLY = !D.rows.length;
-let filter="todo", cur=recs.length?recs[0].key:null, focusQ=0;
-let labels={}, attrib={}, db=null, saver=null, writable=false;
+let filter="todo", projectFilter="all", cur=recs.length?recs[0].key:null, focusQ=0;
+let labels={}, attrib={}, saver=null, writable=false;
 
-const askDone = r => {const l=labels[r.key]||{}; return !r.ask || (typeof l.subject_present==="boolean" && typeof l.political_content==="boolean" && D.venues.includes(l.venue));};
+const answered = (f, v) => f.type==="bool" ? typeof v==="boolean" : f.type==="enum" ? f.options.some(o=>o.value===v)
+ : typeof v==="string" && v.trim()!=="";
+// Count the questions, not the blocks: a fresh recording has three unanswered
+// questions and used to report "1 left", which reads as one click away from done.
+const askLeft = r => {if(!r.ask) return 0; const l=labels[r.key]||{};
+ return FIELDS.filter(f=>f.required && !answered(f, l[f.name])).length;};
+const askDone = r => askLeft(r)===0;
 const quotesDone = r => r.quotes.every(c=>!!(attrib[c.qid]||{}).answer) &&
  (!r.quotes.length || (!spanPending[r.key] && !spanErrors[r.key]));
 const complete = r => askDone(r) && quotesDone(r);
 function recState(r){
  if(complete(r)){
   const l=labels[r.key]||{};
-  if(r.ask && !(l.subject_present && l.political_content)) return "rej";
+  if(r.ask && !CHECK.accept_when_true.every(f=>l[f]===true)) return "rej";
   if(r.quotes.some(c=>["other","both"].includes((attrib[c.qid]||{}).answer))) return "rej";
   return "done";}
  return (labels[r.key]||spanAnswers[r.key]?.ranges.length||r.quotes.some(c=>(attrib[c.qid]||{}).answer)) ? "part" : "todo";}
-// Count the questions, not the blocks: a fresh recording has three unanswered
-// questions and used to report "1 left", which reads as one click away from done.
-const askLeft = r => {if(!r.ask) return 0; const l=labels[r.key]||{};
- return (typeof l.subject_present==="boolean"?0:1) + (D.venues.includes(l.venue)?0:1) + (typeof l.political_content==="boolean"?0:1);};
 const outstanding = r => askLeft(r) + r.quotes.filter(c=>!(attrib[c.qid]||{}).answer).length;
 
 function fmtT(s){if(s==null)return "";const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0");}
@@ -843,7 +461,9 @@ function fmtDate(d){return d&&d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.
 function highlight(text, forms){let h=esc(text).replace(/&gt;&gt;/g,'<span class="turn">⟩⟩ </span>');
  const sorted=[...(forms||[])].sort((a,b)=>b.length-a.length).map(f=>f.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
  if(!sorted.length) return h; return h.replace(new RegExp("\\b("+sorted.join("|")+")\\b","gi"),"<mark>$1</mark>");}
-const visible = () => recs.filter(r=> filter==="all" || (filter==="todo" ? !complete(r) : complete(r)));
+const visible = () => recs.filter(r=> (projectFilter==="all" || projectsOf(r).includes(projectFilter))
+ && (filter==="all" || (filter==="todo" ? !complete(r) : complete(r))));
+const chips = ps => S.projects.length>1 ? ps.map(p=>` <span class="pchip">${esc(p)}</span>`).join("") : "";
 const curRec = () => REC[cur];
 
 function renderList(){
@@ -860,10 +480,10 @@ function renderList(){
    h+=`<div class="sec" title="${esc(SECTION_HELP[sec])}">${SECTIONS[sec]} <small>· ${all.filter(complete).length} of ${all.length} checked</small></div>`;}
   h+= QUOTE_ONLY
    ? `<div class="grp"><b>${esc(person)}</b><span class="${p.qa===p.q?"ok":""}" title="quotes with a saved answer">${p.qa} of ${p.q} quotes answered</span></div>`
-   : `<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=5?"ok":""}" title="recordings verified so far (subject present and political); 5 are needed to rank">${p.ok} verified of ${p.n}${p.q?` · ${p.q} quotes`:""}</span></div>`;
+   : `<div class="grp"><b>${esc(person)}</b><span class="${p.ok>=CHECK.goal.count?"ok":""}" title="${esc(CHECK.goal.help)}">${p.ok} verified of ${p.n}${p.q?` · ${p.q} quotes`:""}</span></div>`;
   for(const r of rs){
    const left=outstanding(r);
-   h+=`<div class="item" tabindex="0" data-k="${esc(r.key)}" aria-current="${r.key===cur}"><span class="dot ${recState(r)}"></span><span class="t">${esc(r.title)}${r.quotes.length?` <span class="turn">· ${r.quotes.length} quote${r.quotes.length>1?"s":""}</span>`:""}</span></div>`;}
+   h+=`<div class="item" tabindex="0" data-k="${esc(r.key)}" aria-current="${r.key===cur}"><span class="dot ${recState(r)}"></span><span class="t">${esc(r.title)}${r.quotes.length?` <span class="turn">· ${r.quotes.length} quote${r.quotes.length>1?"s":""}</span>`:""}${chips(projectsOf(r))}</span></div>`;}
  }
  el("list").innerHTML = h || `<div class="item">Nothing here. ${filter==="todo"?"Everything has an answer.":""}</div>`;
  const done=recs.filter(complete).length, q=recs.reduce((n,r)=>n+r.quotes.length,0);
@@ -873,7 +493,7 @@ function renderList(){
 function opt(store, id, field, value, label, key, cls=""){
  const on=(store[id]||{})[field]===value;
  const fab = store===labels && REC[id]?.draft?.[field]===value ? ` <span class="mtag" title="the model's draft answer">model</span>` : "";
- return `<button type="button" class="opt ${cls}" data-store="${store===labels?"l":"a"}" data-id="${esc(id)}" data-f="${field}" data-v='${JSON.stringify(value)}' aria-pressed="${on}" ${writable?"":"disabled"}>${esc(label)}${fab} <kbd>${key}</kbd></button>`;}
+ return `<button type="button" class="opt ${cls}" data-id="${esc(id)}" data-f="${field}" data-v='${JSON.stringify(value)}' aria-pressed="${on}" ${writable?"":"disabled"}>${esc(label)}${fab} <kbd>${key}</kbd></button>`;}
 
 // The model's draft, shown as a suggestion beside the questions. Where the person's
 // saved answer differs, the card says so, so a slip is caught before moving on.
@@ -883,13 +503,12 @@ function draftCard(r){
  const why=(r.doubt||[]).map(w=>`<span class="chip">${esc(w)}</span>`).join("");
  const d=r.draft;
  if(!d) return `<div class="mdraft"><div class="hd"><b>No usable model draft</b></div>${why?`<div class="chips">${why}</div>`:""}</div>`;
- const l=labels[r.key]||{}, names={subject_present:"subject present", venue:"format", political_content:"political"};
- // Format counts only once the person says the subject is present, as in needs_review.
- const differ=Object.keys(names).filter(f=>f in l && l[f]!==d[f] && !(f==="venue" && !l.subject_present)).map(f=>names[f]);
+ const l=labels[r.key]||{};
+ // A field marked differs_only_if counts only once that other answer is true, as in needs_review.
+ const differ=FIELDS.filter(f=>f.name in l && l[f.name]!==d[f.name] && !(f.differs_only_if && !l[f.differs_only_if])).map(f=>f.draft_label);
  return `<div class="mdraft">
   <div class="hd"><b>Model draft</b><span>${esc(d.model)} · confidence ${esc(d.confidence)}</span><span>a suggestion: you still pick each answer</span></div>
-  <dl><div><dt>subject present</dt><dd>${YN(d.subject_present)}</dd></div><div><dt>main speaker</dt><dd>${YN(d.main_speaker)}</dd></div>
-   <div><dt>format</dt><dd>${esc(d.venue)}</dd></div><div><dt>political</dt><dd>${YN(d.political_content)}</dd></div></dl>
+  <dl>${CHECK.draft_fields.map(([f,label])=>`<div><dt>${esc(label)}</dt><dd>${typeof d[f]==="string"?esc(d[f]):YN(d[f])}</dd></div>`).join("")}</dl>
   ${why?`<div class="chips">${why}</div>`:""}
   <p>${esc(d.reason)}</p>
   ${(d.evidence||[]).map(x=>`<blockquote>${esc(x)}</blockquote>`).join("")}
@@ -902,24 +521,27 @@ function renderDetail(){
  const l=labels[r.key]||{}, start=r.duration?Math.floor(r.duration*0.2):0;
  const hints=(r.hints||[]).map(h=>`<span class="chip">${esc(h)}</span>`).join("")
   + (r.mentions!=null?`<span class="chip info">${r.mentions} mention${r.mentions===1?"":"s"} of the name in the transcript</span>`:"");
- const ask = r.ask ? `
-   <div class="q"><label class="l">1 · Subject present<small>Takes part live; a played clip is not presence</small></label><div class="opts">${opt(labels,r.key,"subject_present",true,"Yes","y","y")}${opt(labels,r.key,"subject_present",false,"No","n","n")}</div></div>
-   <div class="q"><label class="l">2 · Format<small>of this recording</small></label><div class="opts">${D.venues.map((v,i)=>opt(labels,r.key,"venue",v,v,i+1)).join("")}</div></div>
-   <div class="q"><span></span><div class="def">${l.venue?esc(VENUE_DEF[l.venue]):"Pick the format that fills most of the recording."}</div></div>
-   <div class="q"><label class="l">3 · Political content<small>politics, policy, news or public controversy</small></label><div class="opts">${opt(labels,r.key,"political_content",true,"Yes","p","y")}${opt(labels,r.key,"political_content",false,"No","o","n")}</div></div>
-   <div class="q"><label class="l" for="notes">Notes<small>optional</small></label><textarea id="notes" ${writable?"":"disabled"} placeholder="e.g. guest-only episode; the subject is only quoted">${esc(l.notes||"")}</textarea></div>` : "";
- const quotes = r.quotes.length ? `
-  <div class="qblock">
-   <div class="q"><label class="l">${r.ask?"4 · ":""}Who says these lines?<small>the judges credited them to the subject</small></label>
+ const ask = r.ask ? `<section class="mode" data-mode="checklist"><h3 class="mode-hd">Checklist<small>about this recording</small></h3>
+   ${FIELDS.map((f,i)=>{
+    const cur=(f.options||[]).find(o=>o.value===l[f.name]);
+    return `<div class="q"><label class="l">${i+1} · ${esc(f.label)}<small>${esc(f.help||"")}</small></label><div class="opts">${(f.options||[]).map(o=>opt(labels,r.key,f.name,o.value,o.label,o.key,o.cls||"")).join("")}</div></div>`
+     + ((f.options||[]).some(o=>o.help) ? `<div class="q"><span></span><div class="def">${cur?esc(cur.help):esc(f.prompt||"")}</div></div>` : "");}).join("")}
+   <div class="q"><label class="l" for="notes">Notes<small>optional</small></label><textarea id="notes" ${writable?"":"disabled"} placeholder="${esc(CHECK.notes_placeholder||"")}">${esc(l.notes||"")}</textarea></div></section>` : "";
+ const helps=[...new Set(r.quotes.map(c=>S.project_help[projectOf(c)]))].join("; ");
+ const quotes = r.quotes.length && HAS("speakers") ? `
+  <section class="mode qblock" data-mode="speakers"><h3 class="mode-hd">Speakers<small>who says the quoted words</small></h3>
+   <div class="q"><label class="l">${r.ask?(FIELDS.length+1)+" · ":""}Who says these lines?<small>${esc(helps)}</small></label>
     <div class="qhelp">Label the underlined quote words. You can also label the surrounding speech, but only the quote determines this review's result. The result updates and saves automatically.</div></div>
    ${r.quotes.map((c,i)=>`<div class="qitem" data-q="${i}" data-focus="${i===focusQ}">
-     <div class="hd"><span>quote ${i+1} of ${r.quotes.length}</span>${c.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${c.t}s" target="_blank" rel="noopener">play from ${fmtT(c.t)}</a>`:""}</div>
+     <div class="hd"><span>quote ${i+1} of ${r.quotes.length}${chips([projectOf(c)])}</span>${c.t!=null?`<a href="https://www.youtube.com/watch?v=${encodeURIComponent(r.video_id)}&t=${c.t}s" target="_blank" rel="noopener">play from ${fmtT(c.t)}</a>`:""}</div>
      <div class="quote-exact"><b>Quote being checked</b><p>${esc(c.text)}</p></div>
      <div data-span-editor="${i}">Loading speaker-range editor…</div>
     </div>`).join("")}
-  </div>` : "";
+  </section>` : "";
+ const extra = (!r.quotes.length || !HAS("speakers")) && (HAS("speakers")||HAS("captions"))
+  ? `<details class="range-extra"><summary>${HAS("speakers")?"Mark speaker ranges in this recording (optional)":"Correct the captions of this recording"}</summary><div data-span-editor="-1">Loading transcript…</div></details>` : "";
  el("detail").innerHTML=`
-  <div class="who"><h2>${esc(r.person)}</h2><span class="role">${esc(r.role||"")}</span></div>
+  <div class="who"><h2>${esc(r.person)}</h2><span class="role">${esc(r.role||"")}</span>${chips(projectsOf(r))}</div>
   <p class="title">${esc(r.title)}</p>
   <div class="facts"><span>${esc(r.channel||"")}</span><span>uploaded ${fmtDate(r.upload)}</span><span>${r.duration?Math.round(r.duration/60)+" min":""}</span>${r.words?`<span>${r.words.toLocaleString()} words</span>`:""}</div>
   ${hints?`<div class="chips">${hints}</div>`:""}
@@ -927,14 +549,11 @@ function renderDetail(){
   ${r.description?`<details class="desc"><summary>Video description</summary><p>${esc(r.description)}</p></details>`:""}
   ${draftCard(r)}
   <div class="form">${ask}${quotes}
-   ${!r.quotes.length?`<details class="range-extra"><summary>Mark speaker ranges in this recording (optional)</summary><div data-span-editor="-1">Loading speaker-range editor…</div></details>`:""}
+   ${extra}
    <div class="foot"><div class="nav"><button type="button" class="opt" id="prev">Previous <kbd>k</kbd></button><button type="button" class="opt" id="next">Next <kbd>j</kbd></button></div><span class="status" id="status"></span></div>
   </div>`;
  el("status").textContent = complete(r) ? "All answered" : `${outstanding(r)} answer${outstanding(r)===1?"":"s"} left on this recording`;
- el("detail").querySelectorAll("button[data-f]").forEach(b=>b.onclick=()=>{
-  const store = b.dataset.store==="l" ? labels : attrib;
-  if(b.dataset.store==="a"){const i=+b.closest(".qitem").dataset.q; focusQ=i;}
-  setField(store, b.dataset.id, b.dataset.f, JSON.parse(b.dataset.v));});
+ el("detail").querySelectorAll("button[data-f]").forEach(b=>b.onclick=()=>setField(labels, b.dataset.id, b.dataset.f, JSON.parse(b.dataset.v)));
  el("detail").querySelectorAll(".qitem").forEach(n=>n.onclick=()=>{focusQ=+n.dataset.q;});
  mountSpanEditors(r);
  el("prev").onclick=()=>step(-1); el("next").onclick=()=>step(1);
@@ -965,6 +584,9 @@ function setField(store, id, f, v, quiet){
 /*__SPAN_EDITOR__*/
 /*__TEXT_CORRECTIONS__*/
 
+const CHECK_KEYS={}; for(const f of FIELDS) for(const o of f.options||[]) if(o.key!=null) CHECK_KEYS[String(o.key).toLowerCase()]=[f.name,o.value];
+const fieldKeys = f => {const ks=(f.options||[]).map(o=>String(o.key));
+ return ks.length>2 && ks.every((k,i)=>k===String(i+1)) ? `<b>1</b>–<b>${ks.length}</b>` : ks.map(k=>`<b>${esc(k)}</b>`).join("/");};
 document.addEventListener("keydown", e=>{
  if(["TEXTAREA","INPUT","SELECT"].includes(e.target.tagName)||e.target.closest("[data-span-editor]")){ if(e.key==="Escape") e.target.blur(); return; }
  if(e.metaKey||e.ctrlKey||e.altKey) return;
@@ -976,21 +598,23 @@ document.addEventListener("keydown", e=>{
  if(k==="]"){if(r.quotes.length){focusQ=(focusQ+1)%r.quotes.length; renderDetail(); e.preventDefault();}return;}
  if(k==="["){if(r.quotes.length){focusQ=(focusQ-1+r.quotes.length)%r.quotes.length; renderDetail(); e.preventDefault();}return;}
  if(!r.ask) return;
- if(k==="y") setField(labels,r.key,"subject_present",true); else if(k==="n") setField(labels,r.key,"subject_present",false);
- else if(k==="p") setField(labels,r.key,"political_content",true); else if(k==="o") setField(labels,r.key,"political_content",false);
- else if(/^[1-5]$/.test(k)) setField(labels,r.key,"venue",D.venues[+k-1]);
+ const hit=CHECK_KEYS[k]; if(hit) setField(labels,r.key,hit[0],hit[1]);
 });
 el("list").addEventListener("click", e=>{const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);});
 el("list").addEventListener("keydown", e=>{if(e.key==="Enter"){const n=e.target.closest(".item[data-k]"); n&&select(n.dataset.k);}});
 for(const [id,f] of [["f-todo","todo"],["f-all","all"],["f-done","done"]]) el(id).onclick=()=>{filter=f; for(const b of ["f-todo","f-all","f-done"]) el(b).setAttribute("aria-pressed", b===id); renderList();};
 el("legend").innerHTML = `<span class="dot done" style="display:inline-block;vertical-align:-1px"></span> verified · <span class="dot rej" style="display:inline-block;vertical-align:-1px"></span> excluded or a misattributed quote · <span class="dot part" style="display:inline-block;vertical-align:-1px"></span> partly answered`;
-el("keyhelp").innerHTML = QUOTE_ONLY
- ? "Keys: <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video"
- : "Keys: <b>y</b>/<b>n</b> subject present · <b>1</b>–<b>5</b> format · <b>p</b>/<b>o</b> political · quotes: <b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
+el("keyhelp").innerHTML = (QUOTE_ONLY || !CHECK
+ ? "Keys: " : "Keys: " + FIELDS.map(f=>`${fieldKeys(f)} ${esc(f.draft_label||f.label)}`).join(" · ") + " · quotes: ")
+ + "<b>[</b>/<b>]</b> move between quotes · <b>j</b>/<b>k</b> next recording · <b>v</b> open video";
+if(S.projects.length>1){const box=el("projects"); box.hidden=false;
+ const opts=["all",...S.projects];
+ box.innerHTML=opts.map(p=>`<button type="button" data-project="${esc(p)}" aria-pressed="${p===projectFilter}">${p==="all"?"All projects":esc(p)}</button>`).join("");
+ box.onclick=e=>{const b=e.target.closest("button[data-project]"); if(!b) return; projectFilter=b.dataset.project;
+  for(const x of box.querySelectorAll("button")) x.setAttribute("aria-pressed", x.dataset.project===projectFilter); renderList();};}
 
-// Two places answers can live, and the page picks by asking, never by guessing at
-// its own hostname. `annotations_serve.py` answers api/answers; the published
-// Artifact has no such path, so the probe fails there and the Artifact db is used.
+// Answers live in the session's answers file on this machine, through the local
+// server (`scripts/annotations.py serve`). Without it the page is read-only.
 const localStore = {
  where: "this machine",
  async load(){
@@ -1008,13 +632,6 @@ const localStore = {
   if(!res.ok) throw new Error(j.error || ("the server answered "+res.status));
   return j;
  }};
-const artifactStore = {
- where: "claude.ai",
- put(coll, id, value){
-  const ref = coll==="attribution" ? db.collection("attribution").doc(id)
-                                   : db.collection("labels").doc(id.replace("/",":"));
-  return ref.set(value);
- }};
 function startAt(){let key="";try{key=decodeURIComponent(location.hash.slice(1));}catch(e){}
  const todo=REC[key]||recs.find(r=>!complete(r)); if(todo){cur=todo.key; focusQ=firstOpenQuote(todo);}}
 
@@ -1022,29 +639,12 @@ renderList(); renderDetail();
 (async()=>{
  let local=null;
  try{ local = await localStore.load(); }catch(e){ local=null; }
- if(local){
-  saver=localStore; writable=true;
-  labels=local.labels; attrib=local.attribution; spanAnswers=local.spans||{}; correctionAnswers=local.corrections||{};
-  startAt(); renderList(); renderDetail();
-  return;
- }
- db = await (window.claude?.use ? window.claude.use("db") : null);
- if(!db){ writable=false; el("banner").hidden=false;
-  el("banner").textContent="Answers can't be saved in this view. Serve it with scripts/annotations_serve.py and open the localhost URL, or open it on claude.ai while signed in as its owner. Either way every answer saves as you pick it.";
+ if(!local){ writable=false; el("banner").hidden=false;
+  el("banner").textContent="Answers can't be saved in this view. Serve the session with scripts/annotations.py serve and open the localhost address it prints; every answer then saves as you make it.";
   renderDetail(); return; }
- saver=artifactStore; writable=true;
- let first=true;
- const sub=(coll, assign, keyf)=>db.collection(coll).onSnapshot(snap=>{
-  const next={}; for(const d of snap.docs){const x=d.data(); const k=keyf(x); if(k) next[k]=x;}
-  assign(next);
-  if(first){first=false; startAt();}
-  renderList(); renderDetail();
- }, err=>{ writable=false; el("banner").hidden=false; el("banner").textContent="Saved answers stopped loading ("+err.code+"). Reload the page."; renderDetail(); });
- sub("labels", x=>labels=x, x=>x&&x.key);
- sub("attribution", x=>attrib=x, x=>x&&x.qid);
+ saver=localStore; writable=true;
+ labels=local.labels; attrib=local.attribution; spanAnswers=local.spans||{}; correctionAnswers=local.corrections||{};
+ startAt(); renderList(); renderDetail();
 })();
 </script>
 """
-
-if __name__ == "__main__":
-    raise SystemExit(main())

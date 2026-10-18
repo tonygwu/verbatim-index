@@ -1,48 +1,32 @@
 #!/usr/bin/env python3
-"""Build a speaker-check page for the leaders board or the predictions board.
+"""What each project annotates: its data, its checklist and how its quotes are chosen.
 
-Both boards credit words to a named person. The leaders board scores the evidence
-quotes the judges cite, and the rubric requires those to be the subject's own
-speech. The predictions board publishes accepted predictions, each a quote the
-extractor and the verifier both said the subject spoke. Nothing in a caption track
-says who is talking, so each of those is a model's inference about speaker turns.
-This page puts a chosen few in front of a person, who marks who actually spoke.
+A PROJECT is the work a transcript feeds. `insights` is the leaderboard (study
+`leaders`, board `leaders`), `predictions` is the predictions board (study
+`leaders`, board `predictions`) and `pundits` is the pundits study. One recording
+can belong to more than one project: insights and predictions read the same
+`transcripts_open` file, so a session can tag a recording with both and the
+person marks its speakers once.
 
-It reuses the pundits speaker-check page (`annotations_page.py`), its local
-server (`annotations_serve.py`), its word-range editor and its importers
-unchanged. Only the choice of quotes differs:
+The annotation tool itself knows nothing project-specific. Everything that differs
+between projects is in PROJECTS below: where the transcript and roster are, which
+quotes a person checks, and whether the recording has a checklist. Quote selection:
 
-  leaders      every evidence quote any judge cited in the recording, located in
-               `transcripts_open` (the blinded quote's `[SUBJECT]` matches the name
-               it replaced). Deduplicated across judges, then capped per recording
-               by taking the judges in turn, strongest suspicion first, so every
-               judge's reading is checked.
-  predictions  every ACCEPTED prediction in the recording, which is what the
-               predictions site publishes. Each carries exact character offsets into
-               `transcripts_open`; an offset that does not reproduce
-               `quote_original` stops the build rather than being searched for.
+  insights     every evidence quote any judge cited, located in the open text
+               (a blinded `[SUBJECT]` matches the name it replaced), deduplicated
+               across judges and capped per recording by taking the judges in turn,
+               strongest suspicion first. Blind: no judge label reaches the page.
+  predictions  every ACCEPTED prediction, placed by its exact character offsets; an
+               offset that does not reproduce `quote_original` stops the build.
+  pundits      evidence quotes the judges credited to the subject that mechanical
+               signals mark as suspect (`suspect_quotes`), across the graded corpus.
 
-The person names the recordings with --keys. Choosing them is a judgement and the
-page does not pretend otherwise: record why in --reasons.
-
-The review is BLIND. Transcript sidecars are built with no model suggestions, so
-every word starts unknown, and no judge, extractor or verifier label reaches the
-page. Those claims stay in the private key file that `import-quotes` joins with
-the answers. The page carries transcript text, so write it into a private data
-checkout and serve it locally; never publish it.
-
-  .venv/bin/python scripts/annotations_select.py build --study leaders \\
-      --data ../data --keys marc-benioff/exacttarget-9game7,... \\
-      --out data/predictions/_experiments/RUN/leaders/speaker_check.html
-  .venv/bin/python scripts/annotations_serve.py --port 5002 \\
-      --page data/predictions/_experiments/RUN/leaders/speaker_check.html
-  .venv/bin/python scripts/annotations_page.py import-quotes \\
-      --export .../human_answers.json --key .../quote_key.json \\
-      --page .../speaker_check.html --out .../quote_results.json
+Every judge, extractor and verifier claim goes into the session's quote key, never
+onto the page. This module must never convert a mark's time itself; `card` uses
+`annotations_text.play_time` (checked by `scripts/test_play_time.py`).
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import re
@@ -51,23 +35,74 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from atomicio import write_atomic  # noqa: E402
-from annotations_spans import build_transcript, sidecar_path  # noqa: E402
-from annotations_page import CONTEXT_WORDS, MARK, locate, name_forms, play_time, render_page, _norm  # noqa: E402
+from annotations_text import CONTEXT_WORDS, MARK, _norm, locate, name_forms, play_time  # noqa: E402
+from pundits_pilot import VENUES  # noqa: E402
 
-STUDIES = ("leaders", "predictions")
+MODES = ("checklist", "speakers", "captions")
 DEFAULT_CAP = 6
+QUOTE_CAP_PER_RECORDING = 4
+SIGNAL_RANK = {"spans_turn": 3, "question_in_conversation": 2, "names_subject": 1}
 # A judge whose speech share sits this far from the recording's median read the
 # turns differently from the others, so its quotes are the likeliest to be wrong.
 DISSENT_POINTS = 25
 SIGNAL_WEIGHT = {"dissenting_judge": 4, "spans_turn": 3, "question": 2, "names_subject": 1,
                  "turn_near_quote": 1}
-TITLES = {
-    "leaders": ("Leaders Speaker Check",
-                "Check who said each quote the judges scored as this leader's words. Each answer saves the moment you pick it."),
-    "predictions": ("Predictions Speaker Check",
-                    "Check who said each prediction the site credits to this person. Each answer saves the moment you pick it."),
+
+VENUE_HELP = {
+    "solo": "The subject talks to the audience with no other live voice, including covering news stories.",
+    "reaction": "The subject plays other material and comments on it, with no other live voice.",
+    "conversation": "Other live voices talk with the subject, whoever hosts: interviews either way round, panels, "
+                    "co-hosted shows, TV segments.",
+    "debate": "Organised opposing sides with at least one named opponent, usually with a moderator or turns.",
+    "speech": "A prepared talk to a live audience, with or without questions afterwards.",
 }
+
+#: The pundits P6 recording questions. The page renders any checklist from a spec of
+#: this shape, and `export labels` requires exactly the `required` fields. Each
+#: field's `draft_label` names it on the model-draft card; `differs_only_if` makes a
+#: disagreement with the draft count only once that other field is true (the format
+#: of a recording the subject is absent from does not matter, as in `needs_review`).
+PUNDITS_CHECKLIST = {
+    "fields": [
+        {"name": "subject_present", "label": "Subject present", "help": "Takes part live; a played clip is not presence",
+         "type": "bool", "required": True, "draft_label": "subject present",
+         "options": [{"value": True, "label": "Yes", "key": "y", "cls": "y"},
+                     {"value": False, "label": "No", "key": "n", "cls": "n"}]},
+        {"name": "venue", "label": "Format", "help": "of this recording", "type": "enum", "required": True,
+         "draft_label": "format", "differs_only_if": "subject_present",
+         "prompt": "Pick the format that fills most of the recording.",
+         "options": [{"value": v, "label": v, "key": str(i + 1), "help": VENUE_HELP[v]} for i, v in enumerate(VENUES)]},
+        {"name": "political_content", "label": "Political content", "help": "politics, policy, news or public controversy",
+         "type": "bool", "required": True, "draft_label": "political",
+         "options": [{"value": True, "label": "Yes", "key": "p", "cls": "y"},
+                     {"value": False, "label": "No", "key": "o", "cls": "n"}]},
+    ],
+    "notes_placeholder": "e.g. guest-only episode; the subject is only quoted",
+    # A recording counts as verified only when every one of these is true; otherwise
+    # it is excluded, and the list marks it so.
+    "accept_when_true": ["subject_present", "political_content"],
+    "goal": {"count": 5, "help": "recordings verified so far (subject present and political); 5 are needed to rank"},
+    "draft_fields": [["subject_present", "subject present"], ["main_speaker", "main speaker"],
+                     ["venue", "format"], ["political_content", "political"]],
+}
+
+PROJECTS = {
+    "insights": {"study": "leaders", "board": "leaders", "transcript_dir": "transcripts_open",
+                 "quote_help": "the judges scored them as this person's words", "checklist": None},
+    "predictions": {"study": "leaders", "board": "predictions", "transcript_dir": "transcripts_open",
+                    "quote_help": "the predictions site credits them to this person", "checklist": None},
+    "pundits": {"study": "pundits", "board": None, "transcript_dir": "transcripts",
+                "quote_help": "the judges credited them to the subject", "checklist": PUNDITS_CHECKLIST},
+}
+#: The `study` a version-1 manifest named, as a project. Version 1 used the board name.
+LEGACY_STUDY_PROJECT = {"leaders": "insights", "predictions": "predictions"}
+
+
+def project(name: str) -> dict:
+    """A project's settings. An unknown name stops the caller rather than defaulting."""
+    if name not in PROJECTS:
+        raise SystemExit(f"REFUSING: unknown project {name!r}; known: {sorted(PROJECTS)}")
+    return PROJECTS[name]
 
 
 def sha256_file(path: Path) -> str:
@@ -132,7 +167,7 @@ def take_in_turn(entries: list[dict], cap: int | None) -> list[dict]:
     return sorted(chosen, key=lambda e: e["a"])
 
 
-def leaders_quotes(key: str, raw: str, grades: list[dict], forms: list[str], cap: int | None, duration):
+def insights_quotes(key: str, raw: str, grades: list[dict], forms: list[str], cap: int | None, duration):
     """Evidence quotes for one recording, and a report of what was found and cut."""
     toks = list(re.finditer(r"\S+", raw))
     shares = {g["judge"]: g["grade"].get("subject_speech_share_pct") for g in grades}
@@ -176,7 +211,7 @@ def leaders_quotes(key: str, raw: str, grades: list[dict], forms: list[str], cap
     for e in chosen:
         qid = f"{slug}:{sid}:{e['a']}"
         cards.append(card(qid, raw, toks, e["a"], e["z"], duration))
-        key_map[qid] = {"key": key, "board": "leaders", "signals": sorted(e["signals"]) or ["recording_selected"],
+        key_map[qid] = {"key": key, "project": "insights", "board": "leaders", "signals": sorted(e["signals"]) or ["recording_selected"],
                         "judges": e["judges"]}
     return cards, key_map, report
 
@@ -210,7 +245,7 @@ def predictions_quotes(key: str, raw: str, records: list[dict], cap: int | None,
         qid = r["prediction_id"]
         cards.append(card(qid, raw, toks, a, z, duration))
         v = r.get("verification") or {}
-        key_map[qid] = {"key": key, "board": "predictions", "signals": signals or ["recording_selected"],
+        key_map[qid] = {"key": key, "project": "predictions", "board": "predictions", "signals": signals or ["recording_selected"],
                         "judges": [{"judge": "extractor", "claimed_speaker": "subject" if r["extraction"]["gates"].get("own_voice") else "not_subject",
                                     "model": r["extraction"].get("served_model"), "notes": r["extraction"].get("gate_notes")},
                                    {"judge": "verifier", "claimed_speaker": v.get("attribution"),
@@ -222,92 +257,88 @@ def predictions_quotes(key: str, raw: str, records: list[dict], cap: int | None,
     return cards, key_map, report
 
 
+def suspect_quotes(grades_dir: Path, transcripts_dir: Path, roster: dict) -> tuple[list, dict, dict]:
+    """The quotes a judge credited to the subject that are most likely someone else's.
+
+    Signals, strongest first, all mechanical because the judges report no per-quote
+    confidence: the quote's span crosses a caption turn mark `>>`; it is a question
+    in a conversation or debate, where questions are usually the other voice's; it
+    contains the subject's own name or the blinded subject token, which people rarely
+    say about themselves. Deduplicated per recording across judges and modes, capped
+    at QUOTE_CAP_PER_RECORDING. Returns (page rows, private answer key, report). The
+    judge's own label never reaches the page rows.
+    """
+    by_rec: dict = {}
+    report = {"subject_quotes": 0, "located": 0, "not_located": 0, "empty": 0, "flagged": 0}
+    raw_cache: dict = {}
+    for gp in sorted(Path(grades_dir).glob("*/*/*__r0.json")):
+        if "_obsolete" in gp.parts or "_raw" in gp.parts:
+            continue
+        g = json.loads(gp.read_text())
+        body = g.get("grade") or {}
+        if g.get("validation_errors") or not isinstance(body.get("dimensions"), dict):
+            continue
+        slug, sid = g["leader_slug"], g["source_id"]
+        person = roster.get(slug)
+        if person is None:
+            continue
+        if (slug, sid) not in raw_cache:
+            rp = Path(transcripts_dir) / slug / f"{sid}.json"
+            raw_cache[(slug, sid)] = json.loads(rp.read_text()) if rp.exists() else None
+        rec = raw_cache[(slug, sid)]
+        if rec is None:
+            continue
+        raw = rec.get("text") or ""
+        toks = list(re.finditer(r"\S+", raw))
+        forms = name_forms(person)
+        for dim, d in body["dimensions"].items():
+            for e in d.get("evidence") or []:
+                if e.get("speaker") != "subject":
+                    continue
+                report["subject_quotes"] += 1
+                q = e.get("quote") or ""
+                if not q.strip():
+                    # A judge that cites nothing is not a quote the matcher missed.
+                    report["empty"] += 1
+                    continue
+                span = locate(q, raw)
+                if span is None:
+                    report["not_located"] += 1
+                    continue
+                report["located"] += 1
+                a, z = span
+                signals = []
+                if any(toks[i].group() == ">>" for i in range(a, z + 1)):
+                    signals.append("spans_turn")
+                if q.strip().endswith("?") and body.get("venue_type") in ("conversation", "debate"):
+                    signals.append("question_in_conversation")
+                if "[SUBJECT]" in q or any(re.search(r"\b" + re.escape(f) + r"\b", q, re.I) for f in forms):
+                    signals.append("names_subject")
+                if not signals:
+                    continue
+                dedupe = " ".join(_norm(t.group()) for t in toks[a:a + 8])
+                key = f"{slug}/{sid}"
+                entry = by_rec.setdefault(key, {}).setdefault(dedupe, {
+                    "qid": f"{slug}:{sid}:{a}", "a": a, "z": z, "signals": set(), "judges": []})
+                entry["signals"].update(signals)
+                entry["judges"].append({"judge": g["judge"], "mode": g["mode"], "dimension": dim,
+                                        "label": "subject", "quote": q})
+    rows, key_map = [], {}
+    for key, quotes in by_rec.items():
+        slug, sid = key.split("/", 1)
+        rec, person = raw_cache[(slug, sid)], roster[slug]
+        raw = rec.get("text") or ""
+        toks = list(re.finditer(r"\S+", raw))
+        ranked = sorted(quotes.values(), key=lambda q: (-max(SIGNAL_RANK[s] for s in q["signals"]), q["a"]))
+        cards = []
+        for q in ranked[:QUOTE_CAP_PER_RECORDING]:
+            cards.append(card(q["qid"], raw, toks, q["a"], q["z"], rec.get("yt_duration_sec") or rec.get("duration_sec")))
+            key_map[q["qid"]] = {"key": key, "project": "pundits", "signals": sorted(q["signals"]), "judges": q["judges"]}
+        report["flagged"] += len(cards)
+        rows.append(recording_row(key, rec, person, cards))
+    rows.sort(key=lambda r: (r["person"].split()[-1], r["person"], r["upload"]))
+    return rows, key_map, report
+
+
 def git_revision(path: Path) -> str:
     return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
-
-
-def build(args) -> int:
-    data = Path(args.data)
-    keys = [k.strip() for k in args.keys.split(",") if k.strip()]
-    if not keys or len(keys) != len(set(keys)):
-        raise SystemExit("REFUSING: --keys must name at least one recording, each once")
-    roster = {p["slug"]: p for p in json.loads((data / "roster" / "final.json").read_text())["roster"]}
-    reasons = json.loads(Path(args.reasons).read_text()) if args.reasons else {}
-    if set(reasons) - set(keys):
-        raise SystemExit(f"REFUSING: --reasons names recordings not in --keys: {sorted(set(reasons) - set(keys))}")
-    out = Path(args.out)
-    rows, key_map, reports, inputs = [], {}, {}, {}
-    for key in keys:
-        slug, sid = key.split("/", 1)
-        if slug not in roster:
-            raise SystemExit(f"REFUSING: {slug} is not on the roster")
-        tpath = data / "transcripts_open" / slug / f"{sid}.json"
-        rec = json.loads(tpath.read_text())
-        raw = rec["text"]
-        duration = rec.get("yt_duration_sec") or rec.get("duration_sec")
-        inputs[str(tpath.relative_to(data))] = sha256_file(tpath)
-        if args.study == "leaders":
-            gpaths = sorted(p for p in (data / "grades").glob(f"*/{slug}/{sid}__*__blinded__r0.json")
-                            if not {"_obsolete", "_raw"} & set(p.parts))
-            grades = []
-            for p in gpaths:
-                g = json.loads(p.read_text())
-                if g.get("validation_errors") or not isinstance((g.get("grade") or {}).get("dimensions"), dict):
-                    continue
-                grades.append(g)
-                inputs[str(p.relative_to(data))] = sha256_file(p)
-            if not grades:
-                raise SystemExit(f"REFUSING: {key} has no valid blinded grade")
-            quotes, kmap, rep = leaders_quotes(key, raw, grades, name_forms(roster[slug]), args.cap, duration)
-        else:
-            ppath = data / "predictions" / slug / f"{sid}.jsonl"
-            records = [json.loads(line) for line in ppath.read_text().splitlines() if line.strip()]
-            inputs[str(ppath.relative_to(data))] = sha256_file(ppath)
-            quotes, kmap, rep = predictions_quotes(key, raw, records, args.cap, duration)
-        if not quotes:
-            raise SystemExit(f"REFUSING: {key} yields no quote to check ({rep})")
-        rows.append(recording_row(key, rec, roster[slug], quotes))
-        key_map.update(kmap)
-        reports[key] = {**rep, "reason_selected": reasons.get(key)}
-        # No grades are passed, so the editor shows no model suggestion: a blind review.
-        transcript = build_transcript(key, raw, [])
-        write_atomic(sidecar_path(out, key), json.dumps(transcript, ensure_ascii=False))
-        reports[key]["text_sha256"] = transcript["text_sha256"]
-    transcript_index = {r["key"]: {"text_sha256": reports[r["key"]]["text_sha256"],
-                                   "token_count": len(re.findall(r"\S+", json.loads(
-                                       (data / "transcripts_open" / (r["key"] + ".json")).read_text())["text"]))}
-                        for r in rows}
-    payload = json.dumps({"rows": [], "quote_rows": rows, "venues": [], "transcript_index": transcript_index},
-                         ensure_ascii=False).replace("</", "<\\/")
-    title, subtitle = TITLES[args.study]
-    page = render_page(payload, title, subtitle)
-    write_atomic(out.with_name("quote_key.json"), json.dumps(key_map, indent=1, ensure_ascii=False) + "\n")
-    manifest = {"schema_version": 1, "study": args.study, "cap_per_recording": args.cap,
-                "data_revision": git_revision(data), "code_revision": git_revision(Path(__file__).parent),
-                "inputs_sha256": inputs, "recordings": reports,
-                "blind": "no model suggestion or claimed speaker is on the page; see quote_key.json"}
-    write_atomic(out.with_name("manifest.json"), json.dumps(manifest, indent=1, ensure_ascii=False) + "\n")
-    write_atomic(out, page)
-    shown = sum(len(r["quotes"]) for r in rows)
-    print(f"wrote {out}: {len(rows)} recordings, {shown} quotes to attribute; {len(page) / 1024:.0f} KB")
-    for key, rep in reports.items():
-        print(f"  {key}: {({k: v for k, v in rep.items() if k not in ('reason_selected', 'text_sha256')})}")
-    return 0
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("build")
-    b.add_argument("--study", required=True, choices=STUDIES)
-    b.add_argument("--data", required=True, help="private data checkout to read, e.g. ../data")
-    b.add_argument("--keys", required=True, help="comma-separated slug/source_id recordings")
-    b.add_argument("--out", required=True, help="page path inside a private data checkout")
-    b.add_argument("--reasons", help="JSON {key: why it was chosen}, recorded in manifest.json")
-    b.add_argument("--cap", type=int, default=DEFAULT_CAP, help=f"quotes per recording (default {DEFAULT_CAP})")
-    args = ap.parse_args()
-    return build(args)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

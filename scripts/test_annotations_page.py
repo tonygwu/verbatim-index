@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""The speaker-check page's importer produces labels `report` accepts, and nothing it would not.
+"""The annotation page, and the checklist labels it exports, which `report` must accept.
 
-The page stores one db document per recording; `annotations_page.py import`
-turns an export of them into human_labels.json, which `pundits_pilot.py report`
-reads to decide the P6 gate. A label the importer writes but `report` rejects
+The page stores one answer per recording; `annotations.py export labels` turns
+them into human_labels.json, which `pundits_pilot.py report` reads to decide the
+P6 gate. A label the importer writes but `report` rejects
 would silently drop a recording from the gate, and a partly answered recording
 passed through would be a guessed label. So this checks the importer against
 `report`'s own validator rather than restating its rules.
@@ -12,7 +12,8 @@ passed through would be a guessed label. So this checks the importer against
   EXCLUDED   a wrong-person or off-topic answer is kept, with all three fields
   PARTIAL    a recording missing any answer is left out and counted, never filled
   FOREIGN    a label for a recording not on the checklist stops the import
-  PAGE       the built page carries each recording and no lean field
+  PAGE       the built page carries each recording and no lean field, and keeps answers
+             on this machine only (no Artifact db fallback)
   TIMES      an excerpt's link time is the nearest earlier transcript mark
   LOCATE     a judge's quote is found in the raw transcript, [SUBJECT] and elisions included
   SIGNALS    a quote spanning a turn, a question in a conversation, and a self-naming
@@ -26,6 +27,10 @@ passed through would be a guessed label. So this checks the importer against
   RENDER     run by node against a stub page: flagged recordings come first, each under
              its own section, the draft card and its tags show, and a saved answer
              carries draft_shown; a page without drafts has no sections
+  MODES      the page follows its session, not its study: a session without the
+             checklist mode shows no checklist and binds no checklist key; a recording
+             tagged with two projects shows both tags, and the page offers a project
+             filter; the checklist questions come from the project's spec
 
   .venv/bin/python scripts/test_annotations_page.py
 """
@@ -73,16 +78,28 @@ let threw = "";
 try { new Function(SCRIPT)(); } catch (e) { threw = String(e && e.stack || e).split("\n")[0]; }
 setTimeout(() => {
   const list = nodes.list && nodes.list.innerHTML, detail = nodes.detail && nodes.detail.innerHTML;
+  const projects = nodes.projects && !nodes.projects.hidden ? nodes.projects.innerHTML : "";
+  const keyhelp = nodes.keyhelp && nodes.keyhelp.innerHTML;
   if (keydown) keydown({key: "y", target: {tagName: "BODY", closest: () => null}, preventDefault() {}});
-  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw})), 20);
+  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp})), 20);
 }, 20);
 """
 
 
-def run_page(rows: list[dict], saved: dict | None = None) -> dict:
+PUNDITS_SESSION = None
+
+
+def session(projects=("pundits",), modes=("checklist", "speakers", "captions")) -> dict:
+    import annotations as C
+    return C.session_block({"name": "t", "projects": list(projects), "modes": list(modes)})
+
+
+def run_page(rows: list[dict], saved: dict | None = None, sess: dict | None = None,
+             quote_rows: list[dict] | None = None) -> dict:
     """The page's own script run by node on `rows`, starting from the `saved` answers; what it rendered and saved."""
     import annotations_page as V
-    page = V.render_page(json.dumps({"rows": rows, "quote_rows": [], "venues": V.VENUES, "transcript_index": {}}))
+    page = V.render_page({"rows": rows, "quote_rows": quote_rows or [], "transcript_index": {},
+                          "session": sess or session()}, "t", "s")
     script = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
     # On stdin, not -e: a real page is about 1 MB, past the argument-length limit.
     head = f"const SCRIPT = {json.dumps(script)};\nconst SAVED = {json.dumps(saved or {'labels': {}, 'attribution': {}})};\n"
@@ -91,13 +108,45 @@ def run_page(rows: list[dict], saved: dict | None = None) -> dict:
     if n.returncode != 0 or not n.stdout.strip():
         return {"list": "", "detail": "", "posts": [], "threw": n.stderr[-400:]}
     out = json.loads(n.stdout.strip().splitlines()[-1])
-    return {k: out.get(k) or ("" if k != "posts" else []) for k in ("list", "detail", "posts", "threw")}
+    return {k: out.get(k) or ("" if k != "posts" else []) for k in ("list", "detail", "posts", "threw", "projects", "keyhelp")}
+
+
+def pundits_data(td: Path, transcripts: dict, roster: list[dict]) -> Path:
+    """A pundits data checkout: `.study`, an origin the study guard accepts, roster, transcripts."""
+    root = td / "data"
+    (root / "roster").mkdir(parents=True)
+    (root / ".study").write_text("pundits\n")
+    (root / "roster" / "final.json").write_text(json.dumps({"roster": roster}))
+    for key, rec in transcripts.items():
+        slug, sid = key.split("/")
+        (root / "transcripts" / slug).mkdir(parents=True, exist_ok=True)
+        (root / "transcripts" / slug / f"{sid}.json").write_text(json.dumps(rec))
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "remote", "add", "origin", "git@example.invalid:t/verbatim-pundits-data.git"],
+                   check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"],
+                   check=True)
+    return root
+
+
+def build_pundits(root: Path, checklist: dict, drafts: Path | None = None) -> str:
+    import annotations as C
+    (root.parent / "c.json").write_text(json.dumps(checklist))
+    C.build(SimpleNamespace(project=["pundits"], data=str(root), out=str(root / "session"), name=None, keys=None,
+                            reasons=None, cap=6, checklist=str(root.parent / "c.json"), grades=False,
+                            drafts=str(drafts) if drafts else None))
+    return (root / "session" / "annotations.html").read_text()
 
 
 def main() -> int:
-    print("pundits speaker-check page")
+    print("annotation page")
     import pundits_pilot as P
     import annotations_page as V
+    import annotations_select as Sel
+    import annotations_text as T
+    from annotations_page import page_data
+    SPEC = Sel.PUNDITS_CHECKLIST
 
     checklist = {"p/a": {}, "p/b": {}, "p/c": {}, "p/d": {}}
     docs = [
@@ -106,7 +155,7 @@ def main() -> int:
         {"key": "p/c", "subject_present": True, "venue": "reaction", "political_content": False, "checked_by": "operator"},
         {"key": "p/d", "subject_present": True, "political_content": True},
     ]
-    res = V.to_labels(docs, checklist)
+    res = V.to_labels(docs, set(checklist), SPEC)
 
     print("\n[VALID]")
     errs = {k: P.human_errors(v) for k, v in res["labels"].items()}
@@ -123,38 +172,39 @@ def main() -> int:
 
     print("\n[FOREIGN]")
     try:
-        V.to_labels(docs + [{"key": "q/zz", "subject_present": True, "venue": "solo", "political_content": True}], checklist)
+        V.to_labels(docs + [{"key": "q/zz", "subject_present": True, "venue": "solo", "political_content": True}],
+                    set(checklist), SPEC)
         check("a label for a recording not on the checklist stops the import", False, "it was accepted")
     except SystemExit as exc:
         check("a label for a recording not on the checklist stops the import", "not on the checklist" in str(exc), str(exc))
 
     print("\n[TIMES]")
-    ex = V.excerpts("[00:00:00] " + " ".join(f"w{i}" for i in range(400)) + " [00:05:07] " + " ".join(f"x{i}" for i in range(600)))
+    ex = T.excerpts("[00:00:00] " + " ".join(f"w{i}" for i in range(400)) + " [00:05:07] " + " ".join(f"x{i}" for i in range(600)))
     check("three excerpts are cut", len(ex) == 3, str(len(ex)))
     check("a late excerpt links to the nearest earlier mark", ex[-1]["t"] == 307, str([e["t"] for e in ex]))
     check("marks are stripped from the excerpt text", "[00:" not in "".join(e["text"] for e in ex))
 
     print("\n[LOCATE]")
     raw = "[00:00:10] hello there >> do you think this is right? >> I think it is right because the evidence says so"
-    check("a quote spanning a turn is found", V.locate("do you think this is right? I think it is right", raw) is not None)
+    check("a quote spanning a turn is found", T.locate("do you think this is right? I think it is right", raw) is not None)
     check("a leading [SUBJECT] matches the replaced name",
-          V.locate("[SUBJECT] said the evidence says so", "[00:00:01] Tim Walz said the evidence says so indeed") is not None)
+          T.locate("[SUBJECT] said the evidence says so", "[00:00:01] Tim Walz said the evidence says so indeed") is not None)
     check("an elided quote matches on its longest piece",
-          V.locate("a b ... the long part of the quote here", "x the long part of the quote here y") is not None)
-    check("a quote not in the transcript is not located", V.locate("words that are not there at all", "nothing to see here") is None)
-    check("a quote under four words is not located", V.locate("so it goes", "and so it goes on") is None)
+          T.locate("a b ... the long part of the quote here", "x the long part of the quote here y") is not None)
+    check("a quote not in the transcript is not located", T.locate("words that are not there at all", "nothing to see here") is None)
+    check("a quote under four words is not located", T.locate("so it goes", "and so it goes on") is None)
     # The pundits blinder writes [AFFILIATION] for a show or outlet, often several
     # words long. Until 2026-10-11 the matcher knew only [SUBJECT] and [COMPANY],
     # so a blinded quote naming the show could never be placed.
     # Judges often write a quotation inside a quote with single marks where the
     # captions have double ones, and either side may use a curly apostrophe.
     check("single quotation marks in a quote match double ones in the transcript",
-          V.locate("people were like, 'Oh, you love war.' They loved it",
+          T.locate("people were like, 'Oh, you love war.' They loved it",
                    'people were like, "Oh, you love war." They loved it') is not None)
     check("a curly apostrophe matches a straight one",
-          V.locate("it’s what we always said it would be", "it's what we always said it would be") is not None)
+          T.locate("it’s what we always said it would be", "it's what we always said it would be") is not None)
     check("an [AFFILIATION] in a blinded quote matches the show it replaced",
-          V.locate("we said it on [AFFILIATION] last night again",
+          T.locate("we said it on [AFFILIATION] last night again",
                    "[00:00:01] we said it on The Matt Walsh Show last night again") is not None)
 
     print("\n[SIGNALS]")
@@ -179,7 +229,7 @@ def main() -> int:
             "leader_slug": "p", "source_id": "s1", "judge": "fable", "mode": "blinded", "run": 0,
             "grade": {"venue_type": "conversation", "dimensions": {"d1": {"evidence": ev}}}}))
         roster = {"p": {"slug": "p", "name": "Jane Roe", "role": "host", "lean": "SECRET-LEAN"}}
-        rows, key, rep = V.suspect_quotes(td / "g", td / "t", roster)
+        rows, key, rep = Sel.suspect_quotes(td / "g", td / "t", roster)
         sigs = {tuple(sorted(v["signals"])) for v in key.values()}
         texts = [c["text"] for r in rows for c in r["quotes"]]
         check("a question inside a conversation is flagged", any("question_in_conversation" in x for x in sigs), str(sigs))
@@ -214,20 +264,28 @@ def main() -> int:
     print("\n[PAGE]")
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        (td / "t" / "p").mkdir(parents=True)
-        for sid in ("a", "b"):
-            (td / "t" / "p" / f"{sid}.json").write_text(json.dumps({
-                "video_id": f"vid{sid}", "text": "[00:00:00] Jane Roe said a thing " * 50,
-                "yt_duration_sec": 1800, "word_count": 350, "yt_description": "with Jane Roe"}))
-        (td / "c.json").write_text(json.dumps({"p/a": {"title": "A", "hints": []}, "p/b": {"title": "B", "hints": []}}))
-        (td / "r.json").write_text(json.dumps({"roster": [{"slug": "p", "name": "Jane Roe", "role": "host", "lean": "SECRET-LEAN"}]}))
-        V.build(SimpleNamespace(checklist=str(td / "c.json"), transcripts=str(td / "t"),
-                                roster=str(td / "r.json"), out=str(td / "o.html"), grades=None, quote_key=None))
-        page = (td / "o.html").read_text()
+        root = pundits_data(td, {f"p/{sid}": {
+            "video_id": f"vid{sid}", "text": "[00:00:00] Jane Roe said a thing " * 50,
+            "yt_duration_sec": 1800, "word_count": 350, "yt_description": "with Jane Roe"} for sid in ("a", "b")},
+            [{"slug": "p", "name": "Jane Roe", "role": "host", "lean": "SECRET-LEAN"}])
+        page = build_pundits(root, {"p/a": {"title": "A", "hints": []}, "p/b": {"title": "B", "hints": []}})
         check("the page carries every recording", '"key": "p/a"' in page and '"key": "p/b"' in page)
         check("and no lean field or value, even when the roster has one",
               "SECRET-LEAN" not in page and '"lean"' not in page)
         check("the data placeholder was replaced", "/*__DATA__*/null" not in page)
+        check("answers are kept on this machine only: no Artifact db fallback on the page",
+              'claude.use("db")' not in page and "artifactStore" not in page and "window.claude" not in page)
+        man = json.loads((root / "session" / "manifest.json").read_text())
+        check("the session is tagged pundits, has the checklist mode, and without --grades shows no suggestion",
+              man["projects"] == ["pundits"] and man["modes"] == ["checklist", "speakers", "captions"]
+              and man["transcript_dir"] == "transcripts" and man["blind"] is True)
+        try:
+            import annotations as C
+            C.build(SimpleNamespace(project=["pundits", "insights"], data=str(root), out=str(root / "s2"), name=None,
+                                    keys=None, reasons=None, cap=6, checklist=str(td / "c.json"), grades=False, drafts=None))
+            check("a session mixing two studies stops the build", False, "built")
+        except SystemExit as exc:
+            check("a session mixing two studies stops the build", "span studies" in str(exc), str(exc))
 
     print("\n[SHADOW]")
     # FOUND 2026-09-20 in a real browser: the page grew a module-level `store` holding
@@ -261,7 +319,7 @@ def main() -> int:
             name = p.split("=")[0].strip()
             if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
                 globals_.add(name)
-    assert {"labels", "attrib", "db", "writable"} <= globals_, f"extraction missed names: {sorted(globals_)}"
+    assert {"labels", "attrib", "saver", "writable"} <= globals_, f"extraction missed names: {sorted(globals_)}"
     offenders = []
     for m in re.finditer(r"function\s+(\w+)\s*\(([^)]*)\)\s*\{", js):
         fname, params = m.group(1), m.group(2)
@@ -279,23 +337,18 @@ def main() -> int:
             "confidence": "high", "reason": "R", "evidence": ["E1"]}
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        (td / "t" / "p").mkdir(parents=True)
-        for sid in ("conf", "unsure", "none", "broken"):
-            (td / "t" / "p" / f"{sid}.json").write_text(json.dumps({"video_id": f"v{sid}", "text": "[00:00:00] words " * 40,
-                                                                    "yt_duration_sec": 600, "word_count": 80}))
-        (td / "c.json").write_text(json.dumps({f"p/{s}": {"title": s, "hints": []} for s in ("conf", "unsure", "none", "broken")}))
-        (td / "r.json").write_text(json.dumps({"roster": [{"slug": "p", "name": "Jane Roe", "role": "host"}]}))
+        root = pundits_data(td, {f"p/{sid}": {"video_id": f"v{sid}", "text": "[00:00:00] words " * 40,
+                                              "yt_duration_sec": 600, "word_count": 80}
+                                 for sid in ("conf", "unsure", "none", "broken")},
+                            [{"slug": "p", "name": "Jane Roe", "role": "host"}])
+        cl = {f"p/{s}": {"title": s, "hints": []} for s in ("conf", "unsure", "none", "broken")}
         lines = [{"row": 1, "key": "p/conf", "model": "claude-fable-5-1", **good, "confidence": "medium"},
                  {"row": 1, "key": "p/conf", "model": "claude-fable-5-1", **good},
                  {"row": 2, "key": "p/unsure", "model": "claude-fable-5-1", **good, "confidence": "medium"},
                  {"row": 4, "key": "p/broken", "model": "claude-fable-5-1", "error": "ValueError: no JSON"}]
         (td / "d.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
-        ns = dict(checklist=str(td / "c.json"), transcripts=str(td / "t"), roster=str(td / "r.json"),
-                  out=str(td / "o.html"), grades=None, quote_key=None)
-        V.build(SimpleNamespace(**ns, drafts=str(td / "d.jsonl")))
-        page = (td / "o.html").read_text()
-        got = {r["key"]: r for r in json.loads(page[page.index("const D = ") + 10:page.index(";\nconst VENUE_DEF")]
-                                               .replace("<\\/", "</"))["rows"]}
+        page = build_pundits(root, cl, td / "d.jsonl")
+        got = {r["key"]: r for r in page_data(page)["rows"]}
         check("the latest draft wins, and a confident one gives no reason to check first",
               got["p/conf"]["draft"]["confidence"] == "high" and got["p/conf"]["doubt"] == [], str(got["p/conf"].get("doubt")))
         check("a medium-confidence draft is flagged with needs_review's own words",
@@ -305,23 +358,22 @@ def main() -> int:
               and got["p/broken"]["draft"] is None and got["p/broken"]["doubt"] == ["the model gave no usable answer"],
               str({k: (got[k]["draft"], got[k]["doubt"]) for k in ("p/none", "p/broken")}))
         check("the page shows the draft's evidence fragments", got["p/conf"]["draft"]["evidence"] == ["E1"])
-        V.build(SimpleNamespace(**ns))
-        page0 = (td / "o.html").read_text()
-        rows0 = json.loads(page0[page0.index("const D = ") + 10:page0.index(";\nconst VENUE_DEF")].replace("<\\/", "</"))["rows"]
+        page0 = build_pundits(root, cl)
+        rows0 = page_data(page0)["rows"]
         check("without --drafts no row carries a draft or a reason",
               len(rows0) == 4 and not any("draft" in r or "doubt" in r for r in rows0), str([sorted(r) for r in rows0][:1]))
         (td / "d2.jsonl").write_text(json.dumps({"key": "p/elsewhere", "model": "m", **good}) + "\n")
         try:
-            V.build(SimpleNamespace(**ns, drafts=str(td / "d2.jsonl")))
+            build_pundits(root, cl, td / "d2.jsonl")
             check("a draft for a recording off the checklist stops the build", False, "built")
         except SystemExit as exc:
             check("a draft for a recording off the checklist stops the build", "not on the checklist" in str(exc), str(exc))
     lab = V.to_labels([{"key": "p/a", "subject_present": True, "venue": "solo", "political_content": True,
-                        "draft_shown": "claude-fable-5-1"}], {"p/a": {}})["labels"]["p/a"]
+                        "draft_shown": "claude-fable-5-1"}], {"p/a"}, SPEC)["labels"]["p/a"]
     check("an assisted label keeps draft_shown through the import, and report still accepts it",
           lab.get("draft_shown") == "claude-fable-5-1" and P.human_errors(lab) == [], str(lab))
     lab0 = V.to_labels([{"key": "p/a", "subject_present": True, "venue": "solo", "political_content": True}],
-                       {"p/a": {}})["labels"]["p/a"]
+                       {"p/a"}, SPEC)["labels"]["p/a"]
     check("a blind label gains no draft_shown", "draft_shown" not in lab0, str(lab0))
 
     print("\n[RENDER]")
@@ -368,7 +420,7 @@ def main() -> int:
     ev = run_page([{**rows[2], "draft": {**rows[2]["draft"], "evidence": ["E1 <i>&"]}}])
     check("the draft's evidence is escaped on the page", "<blockquote>E1 &lt;i&gt;&amp;</blockquote>" in ev["detail"],
           ev["detail"][:600])
-    other = next(v for v in V.VENUES if v != "solo")
+    other = next(v for v in P.VENUES if v != "solo")
     # Partial answers, so the recording stays first in the to-do list and its card is the one shown.
     rd = run_page(rows, {"labels": {"p/absent": {"subject_present": True, "venue": other}}, "attribution": {}})
     check("where a saved answer differs from the draft, the card names each field that differs, and only those",
@@ -386,6 +438,36 @@ def main() -> int:
           order_nd == ["Check first", "p/nodraft", "Model was confident", "p/conf"]
           and "No usable model draft" in nd["detail"] and '<span class="chip">no model draft</span>' in nd["detail"]
           and 'class="mtag"' not in nd["detail"] and nd["threw"] == "", f"{order_nd} {nd['detail'][:400]}")
+
+    print("\n[MODES]")
+    det = re.sub(r"\s+", " ", r["detail"])
+    check("the pundits checklist questions come from the project's spec",
+          all(f"{i} · {lab}" in det for i, lab in ((1, "Subject present"), (2, "Format"), (3, "Political content")))
+          and 'data-mode="checklist"' in det and "Keys: <b>y</b>/<b>n</b> subject present" in r["keyhelp"], det[:400])
+    qrow = {**{k: v for k, v in base.items() if k not in ("hints", "excerpts", "mentions", "description", "url", "words")},
+            "key": "p/q", "sid": "q", "person": "Ann Able", "upload": "20240101", "projects": ["insights", "predictions"],
+            "quotes": [{"qid": "p:q:3", "project": "insights", "t": 5, "start": 0, "end": 9, "quote_start": 3,
+                        "quote_end": 6, "before": "", "text": "QUOTE-I", "after": ""},
+                       {"qid": "abcdef0123456789", "project": "predictions", "t": 9, "start": 4, "end": 12,
+                        "quote_start": 7, "quote_end": 9, "before": "", "text": "QUOTE-P", "after": ""}]}
+    two = session(("insights", "predictions"), ("speakers", "captions"))
+    m = run_page([], sess=two, quote_rows=[qrow])
+    check("a session without the checklist mode shows no checklist and binds no checklist key",
+          m["threw"] == "" and "data-f=" not in m["detail"] and 'data-mode="checklist"' not in m["detail"]
+          and m["posts"] == [] and "subject present" not in m["keyhelp"], f"{m['threw']} {m['posts']} {m['keyhelp']}")
+    check("a recording tagged with two projects shows both tags, in the list and on the recording",
+          m["list"].count('class="pchip"') == 2 and 'class="pchip">insights<' in m["list"]
+          and 'class="pchip">predictions<' in m["list"], m["list"][:400])
+    check("each quote carries its own project's tag, and the help names what each project claims",
+          "QUOTE-I" in m["detail"] and "QUOTE-P" in m["detail"]
+          and "scored them as this person" in m["detail"] and "the predictions site credits them" in m["detail"],
+          re.sub(r"\s+", " ", m["detail"])[:600])
+    check("with two projects the page offers a project filter",
+          'data-project="all"' in m["projects"] and 'data-project="insights"' in m["projects"]
+          and 'data-project="predictions"' in m["projects"], m["projects"])
+    one = run_page([], sess=session(("insights",), ("speakers", "captions")), quote_rows=[{**qrow, "projects": ["insights"]}])
+    check("with one project there is no filter and no tag", one["projects"] == "" and 'class="pchip"' not in one["list"],
+          f"{one['projects']!r}")
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

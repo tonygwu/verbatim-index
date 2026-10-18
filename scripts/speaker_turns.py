@@ -352,7 +352,7 @@ def segment(args, router=None, call=None) -> int:
 # --------------------------------------------------------------------- check --
 
 def check(args) -> int:
-    from annotations_page import locate
+    from annotations_text import locate
     from wrong_person_screen import SHARE_DISSENT_GAP
     data = Path(args.data)
     report = {"generated_at_utc": utc(), "share_dissent_gap": SHARE_DISSENT_GAP, "segmented": 0,

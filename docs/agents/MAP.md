@@ -4,7 +4,7 @@ Part of this repository's working agreement. [AGENTS.md](../../AGENTS.md) holds
 what every agent needs on every task and is loaded at the start of every
 session. This file is read on demand. Read it before you look for the rubric,
 the roster, board membership, coverage, grader validation, study profiles,
-speaker turns or the leaders and predictions speaker-check pages.
+speaker turns or the leaders and predictions speaker checks.
 
 The text below moved here unchanged from AGENTS.md, under the heading it had
 there. Add new material under the same headings.
@@ -14,7 +14,7 @@ there. Add new material under the same headings.
 **Can a model say who spoke each word from the caption text alone?**
 (2026-09-28) Yes, when it finishes; the difference between models is whether
 it finishes. Ground truth is the operator's word ranges from the first
-speaker-check session (`annotations_select.py`): 10 recordings chosen as the
+speaker-check session (built by `speaker_audit_page.py`, now `annotations.py`): 10 recordings chosen as the
 shakiest on both boards, 2,576 labelled words, 39 quotes. Each model read a
 whole transcript with the subject's name and the recording's metadata and
 returned speaker turns (`scripts/speaker_segment_probe.py`), 2 repeats,
@@ -131,15 +131,12 @@ repository.
   rule to the data repository's own `ownership.json` before its first push of turns.
   Proof: `.venv/bin/python scripts/test_speaker_turns.py`.
 
-- Speaker check for the leaders and predictions boards: `scripts/annotations_select.py build
-  --study leaders|predictions --data ../data --keys slug/sid,... --reasons FILE --out PAGE`. It
-  reuses the pundits page, `annotations_serve.py` and `import-quotes` unchanged, and only
-  chooses the quotes: for leaders, the evidence quotes the judges cited, located in
-  `transcripts_open` and capped per recording with the judges taking turns, most suspect judge
-  first; for predictions, every ACCEPTED prediction, placed by its exact character offsets. The
-  review is blind: sidecars carry no model suggestion, and every judge, extractor and verifier
-  claim stays in `quote_key.json`. `manifest.json` pins the data revision, each input's sha256,
-  why each recording was chosen and what the cap cut. Write the page into a private data
-  checkout and serve it locally, like the pundits page. The first session, 2026-09-27, is under
-  `predictions/_experiments/speaker-audit-20260927/` on repo-3's private branch. Proof:
-  `scripts/test_annotations_select.py`; drive the page in a browser after any JS change.
+- Speaker check for the leaders (`insights`) and predictions boards: an annotation session,
+  built and served by `scripts/annotations.py`; see [ANNOTATIONS.md](ANNOTATIONS.md). One
+  session can carry both projects, so a recording on both boards is checked once:
+  `annotations.py build --data data --project insights --project predictions --keys
+  slug/sid,... --reasons FILE --out data/predictions/_experiments/RUN/annotations`. It is
+  blind: the sidecars carry no model suggestion, and every judge, extractor and verifier
+  claim stays in `quote_key.json`. The first session, 2026-09-27, is under
+  `predictions/_experiments/speaker-audit-20260927/{leaders,predictions}/` in the data
+  repository, built by the tool then called `speaker_audit_page.py`.

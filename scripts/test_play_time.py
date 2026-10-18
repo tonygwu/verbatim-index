@@ -4,16 +4,18 @@
 Both speaker-check pages link each quote to YouTube at `t` seconds. They used the
 nearest EARLIER `[hh:mm:ss]` mark, and the fetcher writes one mark a minute, so on
 sergey-brin/badbellabear-9uzqfz four quotes at words 1, 23, 63 and 154 all linked to
-0:05. `play_time` in annotations_page.py interpolates between the marks around the
+0:05. `play_time` in annotations_text.py interpolates between the marks around the
 word and starts PLAY_LEAD_SECONDS early. Both builders call it, so they cannot drift.
 
 Synthetic text only: this repository is public.
 
   HELPER    interpolation, lead, >> and marks not counted, both ends, a sparse gap,
             no marks, and the answer is never negative or past the duration
-  LEADERS   annotations_select.py gives four first-minute quotes four distinct times
-  PUNDITS   annotations_page.suspect_quotes gives the same times for the same quotes
-  SHARED    neither builder reads a mark's hours and minutes itself
+  LEADERS   `annotations.py build --project insights` gives four first-minute quotes four
+            distinct times
+  PUNDITS   annotations_select.suspect_quotes gives the same times for the same quotes
+  SHARED    no annotation builder reads a mark's hours and minutes itself; only
+            annotations_text does
 
   .venv/bin/python scripts/test_play_time.py
 """
@@ -29,8 +31,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import annotations_page as V  # noqa: E402
+import annotations as C  # noqa: E402
 import annotations_select as A  # noqa: E402
+import annotations_spans as SPN  # noqa: E402
+import annotations_text as V  # noqa: E402
+from annotations_page import page_data  # noqa: E402
 
 FAILED = []
 
@@ -82,7 +87,7 @@ def quote(n: int) -> str:
 def helper_checks():
     print("[HELPER]")
     if not hasattr(V, "play_time"):
-        check("annotations_page defines the shared play_time helper", False, "no play_time")
+        check("annotations_text defines the shared play_time helper", False, "no play_time")
         return
     P = V.play_time
     text = uniform_text()
@@ -145,11 +150,10 @@ def leaders_times(root: Path) -> dict:
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"],
                    check=True)
-    out = root / "session" / "speaker_check.html"
-    A.build(SimpleNamespace(study="leaders", data=str(root), keys="jane-roe/talk-1", out=str(out),
-                            reasons=None, cap=6))
-    page = out.read_text()
-    data = json.loads(page.split("const D = ", 1)[1].split(";\n", 1)[0].replace("<\\/", "</"))
+    out = root / "session"
+    C.build(SimpleNamespace(project=["insights"], data=str(root), keys="jane-roe/talk-1", out=str(out), name=None,
+                            reasons=None, cap=6, checklist=None, grades=False, drafts=None))
+    data = page_data((out / "annotations.html").read_text())
     return {c["text"].split()[0]: c["t"] for c in data["quote_rows"][0]["quotes"]}
 
 
@@ -162,7 +166,7 @@ def pundits_times(root: Path) -> dict:
         "leader_slug": "jane-roe", "source_id": "talk-1", "judge": "fable", "mode": "blinded", "run": 0,
         "grade": {"venue_type": "conversation", "dimensions": {"d1": {"evidence": [
             {"quote": quote(n), "speaker": "subject"} for n in QUOTE_AT]}}}}))
-    rows, _, _ = V.suspect_quotes(root / "g", root / "t", {"jane-roe": {"slug": "jane-roe", "name": "Jane Roe"}})
+    rows, _, _ = A.suspect_quotes(root / "g", root / "t", {"jane-roe": {"slug": "jane-roe", "name": "Jane Roe"}})
     return {c["text"].split()[0]: c["t"] for c in rows[0]["quotes"]}
 
 
@@ -183,8 +187,8 @@ def main() -> int:
         check("the two builders agree card for card", pun_t == lead_t, f"pundits {pun_t}, leaders {lead_t}")
     print("\n[SHARED]")
     check("annotations_select no longer carries its own mark lookup", not hasattr(A, "mark_before"))
-    for name, src in (("annotations_select", inspect.getsource(A)),
-                      ("annotations_page.suspect_quotes", inspect.getsource(V.suspect_quotes))):
+    for name, src in (("annotations_select", inspect.getsource(A)), ("annotations", inspect.getsource(C)),
+                      ("annotations_spans", inspect.getsource(SPN))):
         check(f"{name} converts no mark to seconds itself", "3600" not in src)
     print(f"\n{'FAILED: ' + '; '.join(FAILED) if FAILED else 'all passed'}")
     return 1 if FAILED else 0

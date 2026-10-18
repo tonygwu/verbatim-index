@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 
 from annotations_spans import build_transcript, import_spans, sidecar_path, validate_annotation
+from annotations_fixtures import write_session
 from annotations_serve import build_server
 
 
@@ -92,17 +93,18 @@ class SpeakerSpans(unittest.TestCase):
         self.assertEqual((review['answer'],review['total_words'],review['unreviewed_words']),('other',2,0))
 
     def test_roundtrip_keeps_legacy_answers_and_imports_only_human_ranges(self):
-        page = self.root / 'page.html'
-        page.write_text('const D = ' + json.dumps({'rows': [{'key': 'p/a'}], 'transcript_index': {'p/a': {}}}) + ';\n')
+        session = write_session(self.root, {'rows': [{'key': 'p/a'}], 'transcript_index': {'p/a': {}}},
+                                modes=('checklist', 'speakers', 'captions'))
+        page = session.page
         side = sidecar_path(page, 'p/a'); side.parent.mkdir(parents=True)
         side.write_text(json.dumps(self.transcript))
         answers = self.root / 'human_answers.json'
         legacy = {'labels': {'p/a': {'subject_present': True}}, 'attribution': {'old': {'answer': 'other'}}}
         answers.write_text(json.dumps(legacy))
-        server = build_server(page, answers, 0)
+        server = build_server([session], 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
-        base = f'http://127.0.0.1:{server.server_port}'
+        base = f'http://127.0.0.1:{server.server_port}/s/t'
         def post(value):
             req = urllib.request.Request(base + '/api/answer', data=json.dumps({'kind': 'spans', 'id': 'p/a', 'value': value}).encode(), headers={'Content-Type': 'application/json'})
             with urllib.request.urlopen(req) as response: return json.load(response)
@@ -128,30 +130,27 @@ class SpeakerSpans(unittest.TestCase):
         self.assertEqual((self.root / 'imported.json').read_bytes(), prior)
 
     def test_atomic_quote_result_and_legacy_pending_projection(self):
-        import annotations_page as verify
-        from types import SimpleNamespace
-        page = self.root / 'page.html'
+        import annotations as tool
         quote = {'qid':'p:a:7','quote_start':7,'quote_end':12}
-        page.write_text('const D = ' + json.dumps({'rows':[{'key':'p/a'}], 'transcript_index':{'p/a':{}},
-                        'quote_rows':[{'key':'p/a','quotes':[quote]}]}) + ';\n')
+        session = write_session(self.root, {'rows':[{'key':'p/a'}], 'transcript_index':{'p/a':{}},
+                                'quote_rows':[{'key':'p/a','quotes':[quote]}]}, modes=('checklist','speakers','captions'))
+        page = session.page
         side = sidecar_path(page, 'p/a');side.parent.mkdir(parents=True);side.write_text(json.dumps(self.transcript))
         answers = self.root / 'human_answers.json'
         value = copy.deepcopy(self.value);value['ranges'] = value['ranges'][1:]
         original = {'labels':{},'attribution':{'p:a:7':{'qid':'p:a:7','answer':'unclear'}},'spans':{'p/a':value}}
         answers.write_text(json.dumps(original));before=answers.read_bytes()
-        server=build_server(page,answers,0);threading.Thread(target=server.serve_forever,daemon=True).start()
+        server=build_server([session],0);threading.Thread(target=server.serve_forever,daemon=True).start()
         self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
-        base=f'http://127.0.0.1:{server.server_port}'
+        base=f'http://127.0.0.1:{server.server_port}/s/t'
         with urllib.request.urlopen(base+'/api/answers') as response: loaded=json.load(response)
         self.assertIsNone(loaded['attribution']['p:a:7']['answer'])
         self.assertEqual(loaded['attribution']['p:a:7']['legacy_answer'],'unclear')
         self.assertEqual(loaded['spans'],original['spans'])
         self.assertEqual(answers.read_bytes(),before,'GET rewrote original human data')
         # Even without another save, import must not count legacy unreviewed words as an uncertain human decision.
-        key=self.root/'key.json';key.write_text(json.dumps({'p:a:7':{'signals':[],'judges':[]}}))
-        out=self.root/'quote_report.json'
-        verify.do_import_quotes(SimpleNamespace(export=str(answers),page=str(page),key=str(key),out=str(out)))
-        self.assertEqual(json.loads(out.read_text())['unanswered'],['p:a:7'])
+        session.file('quote_key').write_text(json.dumps({'p:a:7':{'signals':[],'judges':[]}}))
+        self.assertEqual(tool.export_result(session,'quotes')['unanswered'],['p:a:7'])
         def post(kind, value):
             req=urllib.request.Request(base+'/api/answer',data=json.dumps({'kind':kind,'id':'p/a' if kind=='spans' else 'p:a:7','value':value}).encode(),headers={'Content-Type':'application/json'})
             with urllib.request.urlopen(req) as response:return json.load(response)

@@ -40,9 +40,10 @@ you change that part. Each one names, at its top, the work that needs it.
 | [docs/agents/BLINDING.md](docs/agents/BLINDING.md) | Change `blind()`, an alias list or `scripts/blind_wordlist.json`, or reason about what a judge can infer about the speaker. |
 | [docs/agents/SCORING.md](docs/agents/SCORING.md) | Change `aggregate.py`, calibration, the venue adjustment, the subject-share cutoff, the rank floor or the bootstrap, or quote a number from `results.json`. |
 | [docs/agents/SITES.md](docs/agents/SITES.md) | Change `build_site.py`, `build_predictions_site.py` or anything that sets the size or shape of a published page. |
-| [docs/agents/MAP.md](docs/agents/MAP.md) | Look for the rubric, the roster, board membership, coverage, grader validation, study profiles, speaker turns or the leaders and predictions speaker-check pages. |
+| [docs/agents/MAP.md](docs/agents/MAP.md) | Look for the rubric, the roster, board membership, coverage, grader validation, study profiles, speaker turns or the leaders and predictions speaker checks. |
 | [docs/agents/PREDICTIONS-PIPELINE.md](docs/agents/PREDICTIONS-PIPELINE.md) | Add, extract, verify, price, resolve or score predictions; move the scoring as-of date; change a policy release; run a case eval; or deploy the predictions site. |
 | [docs/agents/DATING.md](docs/agents/DATING.md) | Run or change `date_recordings.py`, `dating_lib.py`, a merge version or the promotion of a dating run. |
+| [docs/agents/ANNOTATIONS.md](docs/agents/ANNOTATIONS.md) | Build, serve, migrate, verify or export an annotation session (speaker ranges, caption corrections, a recording checklist) for insights, predictions or pundits; change `scripts/annotations*.py` or the page's JavaScript; or add a project, a mode or a checklist field. |
 | [docs/agents/PUNDITS.md](docs/agents/PUNDITS.md) | Work on the pundits study: its data repository, contract v2, judge harness, roster, discovery, pilot, speaker-check pages, labelling kit or deploy. |
 
 Where each section of the old single-file agreement went, for a comment or a

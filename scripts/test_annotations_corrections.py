@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 
 from annotations_spans import build_transcript, sidecar_path
 from annotations_corrections import validate_corrections, update_corrections, corrected_text, export_corrections
+from annotations_fixtures import write_session
 from annotations_serve import build_server
 
 
@@ -51,18 +52,18 @@ class Corrections(unittest.TestCase):
         self.assertEqual(corrected_text(self.transcript,restored),' '.join(self.transcript['tokens']))
 
     def test_http_roundtrip_preserves_labels_ranges_and_original_evidence(self):
-        page=self.root/'page.html'; answers=self.root/'answers.json'
         data={'rows':[{'key':'p/a'}],'transcript_index':{'p/a':{}},'quote_rows':[
             {'key':'p/a','quotes':[{'qid':'p:a:6','quote_start':6,'quote_end':9,'text':'the the Bush'}]}]}
-        page.write_text('const D = '+json.dumps(data)+';\n')
+        session=write_session(self.root,data,modes=('checklist','speakers','captions'))
+        page=session.page; answers=session.answers
         side=sidecar_path(page,'p/a');side.parent.mkdir(parents=True);side.write_text(json.dumps(self.transcript))
         annotation={k:self.transcript[k] for k in ('key','text_sha256','token_count')}
         annotation.update(checked_by='operator',ranges=[{'start':6,'end':9,'speaker':'other','origin':'human'}])
         original={'labels':{'p/a':{'subject_present':True}},'attribution':{},'spans':{'p/a':annotation}}
         answers.write_text(json.dumps(original));source=side.read_bytes();page_before=page.read_bytes()
-        server=build_server(page,answers,0);threading.Thread(target=server.serve_forever,daemon=True).start()
+        server=build_server([session],0);threading.Thread(target=server.serve_forever,daemon=True).start()
         self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
-        base=f'http://127.0.0.1:{server.server_port}'
+        base=f'http://127.0.0.1:{server.server_port}/s/t'
         def post(value):
             req=Request(base+'/api/answer',data=json.dumps({'kind':'corrections','id':'p/a','value':value}).encode(),headers={'Content-Type':'application/json'})
             with urlopen(req) as r:return json.load(r)
