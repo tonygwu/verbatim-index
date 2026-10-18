@@ -49,7 +49,8 @@ there. Add new material under the same headings.
   ```
 
   The fetch_loop one is the reason this is a rule and not a note. An unbounded
-  fetch loop is how the IP blocks already recorded in `BACKLOG.md` happen, and
+  fetch loop is how the IP blocks recorded in `docs/BACKLOG-RESOLVED.md` (Shared
+  fetcher) happen, and
   repo-3's pundits fetcher was IP-blocked while this was being fixed. The others
   are the shape this repo already knows: a component reporting a false number
   every cycle teaches the operator to stop reading the line, and the next real

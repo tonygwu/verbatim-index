@@ -175,7 +175,7 @@ there. Add new material under the same headings.
   with a README. Fable extracted on prepaid API credit (`extract_predictions.py --extractor fable
   --fable-credit-pools ...`) and Gemini verified, because Astra refuses political content. 20
   recordings gave 14 candidates and 4 accepted predictions for $18.72. An experiment only: the
-  extractor has no `--study` yet (BACKLOG, Verbatim Pundits), so pass the pundits transcripts,
+  extractor has no `--study` yet (BACKLOG.md VI-1), so pass the pundits transcripts,
   roster and an `--out` under that folder by hand.
 
 - P6 speaker check (human labels for the full roster): `scripts/pundits_verify_page.py build`

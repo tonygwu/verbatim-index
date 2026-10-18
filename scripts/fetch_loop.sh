@@ -93,7 +93,8 @@ roster = [r["slug"] for r in json.loads((D / "roster/final.json").read_text())["
 # the roster carries seven people on the predictions board only; grade.py drops
 # them, so they can never hold a leaders transcript and at_target caps seven
 # short of len(roster). The loop would never reach COMPLETE and would re-fetch
-# YouTube for ever, which is how the IP blocks already in BACKLOG.md happen.
+# YouTube for ever, which is how the IP blocks recorded in docs/BACKLOG-RESOLVED.md
+# (Shared fetcher) happen.
 sys.path.insert(0, "scripts")
 import study_profile as SP, membership as MB
 _board = MB.for_study(SP.default_study())

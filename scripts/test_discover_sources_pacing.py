@@ -7,8 +7,10 @@ nothing else paced them for it", changed `discover_pundits.py` and left
 no sleep flag, from EIGHT worker threads at once, while the pundits path ran
 three workers at 1.5 seconds.
 
-That is the configuration `BACKLOG.md` blames for the pundits P6 pilot producing
-202 IP blocks in 218 first-pass errors, and the machine this was found on was
+That configuration ran while the pundits P6 pilot produced 202 IP blocks in 218
+first-pass errors (the count is from BACKLOG.md at `1db54a2`, cut when
+`0f77d06` withdrew the claim that the fetch pace caused them; the withdrawal is in
+`docs/BACKLOG-RESOLVED.md`, Shared fetcher), and the machine this was found on was
 IP-blocked on YouTube at the time. The fix was written once and applied to one of
 the two callers, which is the same shape as the judge list and the fetcher name
 this repo has already paid for: one rule, several copies, one left behind.
@@ -114,8 +116,8 @@ def main() -> int:
 
     print("\n[MODEST] the shipped defaults are gentle rather than fast")
     check("workers default to 3 or fewer", D.DEFAULT_WORKERS <= 3,
-          f"{D.DEFAULT_WORKERS}; it was 8, unpaced, which is the configuration "
-          f"BACKLOG.md blames for 202 IP blocks")
+          f"{D.DEFAULT_WORKERS}; it was 8, unpaced, beside the pundits pilot's "
+          f"202 IP blocks (BACKLOG.md at 1db54a2; withdrawal in docs/BACKLOG-RESOLVED.md)")
     check("workers times the rate stays under one request a second",
           D.DEFAULT_WORKERS / D.SLEEP_REQUESTS <= 2.0,
           f"{D.DEFAULT_WORKERS} workers at {D.SLEEP_REQUESTS}s is "

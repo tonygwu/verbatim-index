@@ -448,8 +448,7 @@ they are not exchangeable, which is all a hybrid needed them to be.
   `RunCommand`. The failure lines in that log stand for 1,999 Gemini calls.
   The per-run `FailureBudget` in `grade.py` does not stop this, because it caps a
   judge's failures within one run and these six are a small share of every run.
-  The backlog entry "Gemini retries on the six longest transcripts" holds the
-  options.
+  `BACKLOG.md` VI-10 holds the options.
 
 - **The Gemini judge has live web search too, and it also cannot be disabled.**
   Same position as the Astra arm, reached by a different route: the permission
