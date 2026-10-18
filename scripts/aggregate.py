@@ -292,6 +292,28 @@ DEFAULT_JUDGE_MODEL = {"fable": "claude-fable-5-1", "astra": "gpt-6-astra",
 SHADOW_JUDGES: tuple[str, ...] = ()
 
 
+#: What a grade record names as its harness when it names none: the production
+#: judge invocation (claude -p for Fable, codex exec for Astra, agy for Gemini).
+#: Only credit-pool grades carry a `harness` key ("quotapick run", grade.py
+#: `_pool_fields`), so a missing key is the production harness by construction,
+#: not a guess.
+PRODUCTION_HARNESS = "production"
+
+
+def harness_counts(grades: list[dict]) -> dict[str, dict[str, int]]:
+    """Per judge, how many usable grades each harness wrote.
+
+    Since 2026-10-18 (`grade.py --credit-production`, BACKLOG VI-14) Fable
+    grades made on prepaid API credit may sit beside subscription ones in the
+    corpus. They share the contract_id, so the rubric check cannot see them;
+    this count is what makes the mix visible in `diagnostics.judge_harness`.
+    """
+    counts: dict[str, Counter] = defaultdict(Counter)
+    for g in grades:
+        counts[g["judge"]][g.get("harness") or PRODUCTION_HARNESS] += 1
+    return {j: dict(c) for j, c in sorted(counts.items())}
+
+
 def served_model(g: dict) -> str:
     """Which model actually produced this grade.
 
@@ -1449,6 +1471,13 @@ def main() -> int:
                   f"Each is calibrated on its own distribution, and any with fewer than "
                   f"{MIN_CALIBRATION_N} grades is not rescaled at all, so its scores enter "
                   f"unadjusted. Check that this is intended.", file=sys.stderr)
+    judge_harness = harness_counts(usable)
+    for j, harnesses in judge_harness.items():
+        if len(harnesses) > 1:
+            print(f"judge {j!r} grades come from more than one harness: {harnesses} "
+                  f"(credit-pool grades are pooled with the corpus by the operator's decision of "
+                  f"2026-10-18, VI-14; CI-11 day 1 measured credit minus production -0.62 points, "
+                  f"95% CI -1.7 to +0.47, n 34)", file=sys.stderr)
 
     params = calibrate(usable, shared=is_v2)
     # Contract v2: the halo is measured on matched pairs under the shared map.
@@ -1745,6 +1774,7 @@ def main() -> int:
         # distributions under one name. Calibration already keys on the model;
         # this makes the situation visible rather than merely handled.
         "judge_models": {j: dict(m) for j, m in sorted(judge_models.items())},
+        "judge_harness": judge_harness,
         "min_subject_share_pct": MIN_SUBJECT_SHARE,
         "judge_refusals": len(refusals),
         "judge_refusals_by_leader": refusal_breakdown,

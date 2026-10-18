@@ -125,7 +125,7 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
     return resp.get("text") or "", {
         "harness": "quotapick run", "credit_pool": served["account"], "served": served,
         "cost_usd": billed, "cost_usd_final_attempt": resp.get("cost_usd"), "request_id": resp.get("request_id"),
-        "attempts": len(durations),
+        "attempts": len(durations), "served_at_utc": resp.get("generated_at"),
         "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
         "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),

@@ -417,11 +417,15 @@ def test_quota_routing(g) -> None:
     src = (REPO / "scripts" / "grade.py").read_text()
     # The 2026-09-06 rule is that Fable ROUTING never parses `quotapick status`; the
     # router is a library. The one sanctioned quotapick call is call_fable_pool's
-    # `quotapick run --only POOL`, the credit-pool harness (2026-10-18).
+    # `quotapick run --only POOLS`, the credit-pool harness (2026-10-18), and since
+    # VI-5 grade.py does not spawn it itself: call_fable_pool is credit_run.run,
+    # whose argv is `[binary, "run", "--only", ",".join(pools)]`.
     qp = src.count('"quotapick"')
-    check("grade.py does not parse `quotapick status`; its one quotapick call is call_fable_pool's `run`",
-          qp == 1 and 'binary: str = "quotapick"' in src and '[binary, "run", "--only", pool]' in src
-          and '"quotapick", "status"' not in src, f'"quotapick" appears {qp} time(s)')
+    cr = (REPO / "scripts" / "credit_run.py").read_text()
+    check("grade.py does not parse `quotapick status`; its one quotapick call is call_fable_pool's `run` via credit_run",
+          qp == 1 and 'binary: str = "quotapick"' in src and 'credit_run.run(' in src
+          and 'subprocess.run([binary' not in src and '"quotapick", "status"' not in src
+          and '[binary, "run", "--only", ",".join(pools)]' in cr, f'"quotapick" appears {qp} time(s)')
     check("the judge binary defaults to the plain claude CLI, not the cl wrapper",
           'default="cl"' not in src, "found --fable-bin default of cl")
 

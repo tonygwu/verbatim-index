@@ -239,33 +239,48 @@ the mix even.
   which is the operator's and repo-0's call. Contract v2 (pundits) does this
   always. Guarded by `scripts/test_leaders_regrade_invalid.py`.
 
-- **Fable on prepaid API credit is a DIFFERENT HARNESS; its leaderboard grades
-  are kept out of the corpus (2026-10-18).** `grade.py --fable-pool POOL` and
-  `resolve_predictions.py --fable-pool POOL` send each Fable call through
-  `quotapick run --only POOL` (`grade.call_fable_pool`), the only route to a
-  credit pool. quotapick runs `claude -p --bare --tools "" --safe-mode
-  --strict-mcp-config --no-session-persistence --max-budget-usd` from an empty
-  directory with the pool's API key. So tools are absent rather than denied,
-  there is no session transcript, and no subscription is involved. The model,
-  effort and prompt are the same. The leaders contract hashes the rubric and
-  schema, not the harness, so these grades carry the production `contract_id`.
-  For that reason every record also names `harness: "quotapick run"` and
-  `credit_pool`, and grade.py refuses `--fable-pool` unless `--out` is under
-  `data/experiments/`. It refuses a contract v2 study (pundits hashes
+- **Fable on prepaid API credit is a DIFFERENT HARNESS, named on every record;
+  since 2026-10-18 its grades may join the corpus, by the operator's decision.**
+  `grade.py --fable-pool POOLS` and `resolve_predictions.py --fable-pool POOL`
+  send each Fable call through `quotapick run --only POOLS`, the only route to a
+  credit pool. There is ONE call path: `grade.call_fable_pool` is
+  `credit_run.run` with the model and effort fixed, its failures mapped onto
+  grade.py's labels by `grade.pool_error`, and the telemetry block shaped for
+  the grade record (BACKLOG VI-5, closed 2026-10-18; before that grade.py held
+  its own copy of the served checks, and two copies drift). `POOLS` is one pool
+  or a comma list: quotapick picks among the named pools and retries an empty
+  one on the next, and a record's `credit_pool` is the pool that served, with
+  `telemetry.credit_pools_asked` the list. quotapick runs `claude -p --bare
+  --tools "" --safe-mode --strict-mcp-config --no-session-persistence
+  --max-budget-usd` from an empty directory with the pool's API key. So tools
+  are absent rather than denied, there is no session transcript, and no
+  subscription is involved. The model, effort and prompt are the same. The
+  leaders contract hashes the rubric and schema, not the harness, so these
+  grades carry the production `contract_id`. For that reason every record also
+  names `harness: "quotapick run"` and `credit_pool`. grade.py refuses
+  `--fable-pool` unless `--out` is under `data/experiments/`, OR is exactly the
+  study's `grades/` with `--credit-production`: that opt-in exists because on
+  2026-10-18 the operator chose to grade david-sacks and chamath-palihapitiya
+  for the leaders board on credit (BACKLOG VI-14, record in
+  `docs/ROSTER-ADD-SACKS-PALIHAPITIYA-2026-10-18.md`), on the evidence of
+  `data/experiments/fable-credit-drift-20261018/results.md` (ledger CI-11, day
+  1: credit minus production -0.62 points, 95% CI -1.7 to +0.47, n 34; Spearman
+  0.939 between the harnesses, against 0.949 for a credit repeat and 0.955 for
+  a subscription repeat against production). The mix is reported, never
+  hidden: `aggregate.py` counts grades per judge per harness into
+  `diagnostics.judge_harness` and prints a line when a judge has more than
+  one. It still refuses a contract v2 study (pundits hashes
   `sandbox_exec_deny_container`, which quotapick cannot give), and it refuses
   `--timeout` over 1800, quotapick's limit: a longer call is cut off and still
   billed. An answer counts only when `served` names `claude-fable-5-1` for
-  every model seen, effort max, a credit pool, API-key auth and the pool asked
+  every model seen, effort max, a credit pool, API-key auth and a pool asked
   for. When quotapick answers `exhausted` or `no_candidate`, the run stops
   sending, as `credit_pool_exhausted`. With many workers, `no_candidate` can
   come from the holds of calls still in flight while money remains, so re-run
-  with `--workers 1` to drain. Whether this harness grades like the production
-  one is what `data/experiments/fable-credit-drift-20261018/` measures (ledger
-  CI-11; day 1: credit minus production -0.62 points, 95% CI -1.7 to +0.47, n 34).
-  Until the operator decides otherwise, do not pool these grades with the corpus.
-  Predictions differ: VD-19 (operator, 2026-10-18) lets Fable extraction, lead tests
-  and priors on credit reach the predictions board (docs/agents/PREDICTIONS-PIPELINE.md).
-  Guarded by `scripts/test_fable_pool.py`.
+  with `--workers 1` to drain. Predictions: VD-19 (operator, 2026-10-18) lets
+  Fable extraction, lead tests and priors on credit reach the predictions
+  board (docs/agents/PREDICTIONS-PIPELINE.md). Guarded by
+  `scripts/test_fable_pool.py` and `scripts/test_credit_run.py`.
 
 ## Experiments run, and what they showed
 

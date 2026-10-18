@@ -398,7 +398,7 @@ def run_one(job: dict) -> dict:
                                             expected_cost_usd=args.fable_pool_expected_cost,
                                             raw_response_path=raw_path, spent=args.pool_state["spend"])
                 # Not "fable": a different harness, named so no reader pools it with one.
-                harness, account = "fable_quotapick_run", args.fable_pool
+                harness, account = "fable_quotapick_run", tel.get("credit_pool") or args.fable_pool
             else:
                 text, tel = call_fable(prompt, job["account"], args.timeout, binary=args.fable_bin,
                                        workdir=str(workdir), raw_response_path=raw_path)

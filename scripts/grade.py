@@ -45,6 +45,11 @@ from pathlib import Path
 from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parent.parent
+# Run as `scripts/grade.py` the scripts directory is sys.path[0]; loaded through
+# importlib by a test it may not be, so make the sibling import work in both cases.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import credit_run  # noqa: E402
+
 SKILL = REPO / ".claude" / "skills" / "leader-transcript-grader"
 RUBRIC_PATH = SKILL / "RUBRIC.md"
 SCHEMA_PATH = SKILL / "judge_output.schema.json"
@@ -574,15 +579,23 @@ def _policy_fields(job: dict) -> dict:
 
 
 def fable_pool_refusal(pool: str | None, out: str, timeout: int, judges: list[str],
-                       contract_version: int, data_link: Path) -> str | None:
+                       contract_version: int, data_link: Path, credit_production: bool = False) -> str | None:
     """Why a `--fable-pool` run must not start, or None.
 
     The credit-pool harness is not the production harness (call_fable_pool), so
-    its grades must never land where aggregate.py reads them. Contract v2 hashes
-    a harness, `sandbox_exec_deny_container`, that quotapick cannot give.
+    its grades land under experiments/ unless `--credit-production` names the
+    study's own grades/ directory, exactly, by the operator's decision of
+    2026-10-18 (BACKLOG VI-14): every such record still names its harness and
+    pool, so the credit grades stay separable, and aggregate.py counts them per
+    judge in its diagnostics. Contract v2 hashes a harness,
+    `sandbox_exec_deny_container`, that quotapick cannot give.
     """
+    if credit_production and not pool:
+        return "--credit-production needs --fable-pool"
     if not pool:
         return None
+    if any(not p.strip() for p in pool.split(",")):
+        return f"--fable-pool must name each pool, comma-separated, with no empty names: got {pool!r}"
     if contract_version == 2:
         return ("--fable-pool cannot serve a contract v2 study: its contract requires the "
                 "sandbox_exec_deny_container harness, and quotapick run gives no sandbox")
@@ -592,9 +605,11 @@ def fable_pool_refusal(pool: str | None, out: str, timeout: int, judges: list[st
         return (f"--timeout {timeout} is over quotapick run's {FABLE_POOL_MAX_TIMEOUT}s limit; a longer grade "
                 f"would be cut off and still billed, so pass --timeout {FABLE_POOL_MAX_TIMEOUT} or less")
     experiments = (data_link / "experiments").resolve()
+    if credit_production and Path(out).resolve() == (data_link / "grades").resolve():
+        return None
     if not Path(out).resolve().is_relative_to(experiments):
         return (f"--fable-pool writes grades from a different harness, so --out must be under "
-                f"{experiments}, not {out}")
+                f"{experiments}, or exactly {data_link / 'grades'} with --credit-production, not {out}")
     return None
 
 
@@ -1160,6 +1175,34 @@ FABLE_POOL_OUTCOMES = {"exhausted": E_POOL_EXHAUSTED, "no_candidate": E_POOL_EXH
                        "bad_request": E_POOL_REFUSED}
 
 
+def pool_error(exc: Exception) -> RuntimeError:
+    """A credit_run failure as a RuntimeError whose message starts with grade.py's label.
+
+    credit_run.run raises PoolsExhausted (no named pool may take the call) or
+    CreditRunError, whose message starts with its own label: `refused`,
+    `cli_exit_N`, `run_contract`, `outcome_<quotapick outcome>`, `model_mismatch`
+    or `not_served_as_asked`. Each maps onto one label here; an outcome with no
+    entry in FABLE_POOL_OUTCOMES is E_POOL_REFUSED, never guessed. The mapping is
+    the only thing this module adds to credit_run's checks (BACKLOG VI-5: one
+    call path, so a served-field check cannot drift between two copies).
+    """
+    detail = str(exc)
+    if isinstance(exc, credit_run.PoolsExhausted):
+        return RuntimeError(f"{E_POOL_EXHAUSTED}: quotapick {detail[:400]}")
+    head = detail.split(":", 1)[0].strip()
+    if head == "not_served_as_asked":
+        label = E_IDENTITY
+    elif head == "model_mismatch":
+        label = E_MODEL_MISMATCH
+    elif head.startswith("cli_exit_"):
+        label = E_CLI
+    elif head.startswith("outcome_"):
+        label = FABLE_POOL_OUTCOMES.get(head[len("outcome_"):], E_POOL_REFUSED)
+    else:  # refused, run_contract, anything new
+        label = E_POOL_REFUSED
+    return RuntimeError(f"{label}: quotapick {detail[:400]}")
+
+
 def call_fable_pool(prompt: str, pool: str, timeout: int, *, request_id: str,
                     expected_cost_usd: float, raw_response_path: Path | None = None,
                     binary: str = "quotapick", spent=None) -> tuple[str, dict]:
@@ -1171,76 +1214,52 @@ def call_fable_pool(prompt: str, pool: str, timeout: int, *, request_id: str,
     pool's API key: tools absent rather than denied, no session transcript, no
     subscription. Same model, same effort, same prompt. Every grade it makes says
     so in `telemetry.harness` and `telemetry.credit_pool`, and grade.py writes such
-    grades only under an experiments directory, never into the published corpus.
+    grades under an experiments directory, or into the study's grades/ with
+    `--credit-production` (operator decision 2026-10-18, VI-14).
 
-    `--only <pool>` means a call never falls back to a subscription. `spent`, when
-    given, is called with every cost the response reports, a failed call's
-    included: a timed-out call is still billed.
+    `pool` is one pool or a comma-separated list; `--only <pools>` means a call
+    never falls back to a subscription, and quotapick picks among the named pools
+    and retries an empty one on the next. The call itself is credit_run.run, the
+    one credit path in this repository (VI-5); this wrapper only fixes the model
+    and effort, maps credit_run's failures onto grade.py's labels (pool_error)
+    and shapes the telemetry block the grade record carries. `spent`, when
+    given, receives the sum of every attempt's cost, a failed call's included:
+    a timed-out call is still billed.
     """
     if timeout > FABLE_POOL_MAX_TIMEOUT:
         raise ValueError(f"quotapick run accepts at most {FABLE_POOL_MAX_TIMEOUT}s, not {timeout}s")
-    request = {"model": FABLE_POOL_SERVED["model"], "effort": FABLE_POOL_SERVED["effort"],
-               "prompt": prompt, "timeout_s": timeout, "expected_cost_usd": expected_cost_usd,
-               # One attempt: with --only naming one pool there is nowhere else to
-               # retry, and a second attempt on the same key would double-bill.
-               "max_attempts": 1, "client": "verbatim-index", "request_id": request_id}
-    # The child's own timeout ends the call; this one only catches a wedged router.
-    proc = subprocess.run([binary, "run", "--only", pool], input=json.dumps(request),
-                          capture_output=True, text=True, timeout=timeout + 300)
-    if raw_response_path is not None:
-        from atomicio import write_atomic
-        write_atomic(raw_response_path, json.dumps({"returncode": proc.returncode, "stdout": proc.stdout,
-                                                    "stderr": proc.stderr}, ensure_ascii=False) + "\n")
-    if proc.returncode == 2:
-        raise RuntimeError(f"{E_POOL_REFUSED}: quotapick refused before spending: "
-                           f"{(proc.stderr or proc.stdout).strip()[:400]}")
-    if proc.returncode != 0:
-        raise RuntimeError(f"{E_CLI}: quotapick exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[:400]}")
-    resp = json.loads(proc.stdout)
-    if spent is not None and isinstance(resp.get("cost_usd"), (int, float)):
-        spent(resp["cost_usd"])
-    if resp.get("run_contract") != 1:
-        raise RuntimeError(f"{E_POOL_REFUSED}: run_contract {resp.get('run_contract')!r}, this harness reads 1")
-    outcome = resp.get("outcome")
-    if outcome != "ok" or resp.get("ok") is not True:
-        label = FABLE_POOL_OUTCOMES.get(outcome, E_POOL_REFUSED)
-        detail = "; ".join(f"{a.get('account')}: {a.get('outcome')} {a.get('detail', '')}".strip()
-                           for a in resp.get("attempts") or [])
-        raise RuntimeError(f"{label}: quotapick outcome {outcome!r} on {pool}: {detail[:400]}")
-    served = resp.get("served") or {}
-    seen = served.get("models_seen") or []
-    if served.get("model") != FABLE_POOL_SERVED["model"] or not seen or any(m != served.get("model") for m in seen):
-        raise RuntimeError(f"{E_MODEL_MISMATCH}: served {served.get('model')!r}, models seen {seen}, "
-                           f"requested {FABLE_POOL_SERVED['model']!r}")
-    want = {**FABLE_POOL_SERVED, "account": pool}
-    wrong = {k: served.get(k) for k in ("effort", "pool_kind", "auth", "account") if served.get(k) != want[k]}
-    if wrong:
-        raise RuntimeError(f"{E_IDENTITY}: the call was not served as asked: got {wrong}, "
-                           f"wanted { {k: want[k] for k in wrong} }")
-    usage = resp.get("usage") or {}
-    durations = [a.get("duration_ms") for a in resp.get("attempts") or []]
+    pools = [p.strip() for p in (pool or "").split(",")]
+    if not pool or any(not p for p in pools):
+        raise ValueError(f"--fable-pool must name each pool, comma-separated, with no empty names: got {pool!r}")
+    try:
+        text, tel = credit_run.run(prompt, model=FABLE_POOL_SERVED["model"], effort=FABLE_POOL_SERVED["effort"],
+                                   pools=pools, timeout_s=timeout, expected_cost_usd=expected_cost_usd,
+                                   request_id=request_id, raw_path=raw_response_path, spent=spent, binary=binary)
+    except (credit_run.PoolsExhausted, credit_run.CreditRunError) as exc:
+        raise pool_error(exc) from exc
+    served = tel["served"]
     telemetry = {
-        "harness": "quotapick run",
+        "harness": tel["harness"],
         "requested_model": FABLE_POOL_SERVED["model"],
-        "telemetry_models": seen,
+        "telemetry_models": served.get("models_seen") or [],
         "judge_model": served["model"],
         "effort": served["effort"],
-        "credit_pool": served["account"],
+        "credit_pool": tel["credit_pool"],
+        "credit_pools_asked": pools,
         "pool_kind": served["pool_kind"],
         "auth": served["auth"],
-        "cost_usd": resp.get("cost_usd"),
-        # None, not a partial sum, when an attempt does not say how long it took.
-        "duration_ms": (sum(durations) if durations and all(isinstance(d, (int, float)) for d in durations)
-                        else None),
-        "thinking_tokens": (usage.get("output_tokens_details") or {}).get("thinking_tokens"),
-        "input_tokens": usage.get("input_tokens"),
-        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
-        "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
-        "request_id": resp.get("request_id"),
-        "served_at_utc": resp.get("generated_at"),
+        "cost_usd": tel["cost_usd"],
+        "duration_ms": tel["duration_ms"],
+        "attempts": tel["attempts"],
+        "thinking_tokens": tel["thinking_tokens"],
+        "input_tokens": tel["input_tokens"],
+        "cache_creation_input_tokens": tel["cache_creation_input_tokens"],
+        "cache_read_input_tokens": tel["cache_read_input_tokens"],
+        "output_tokens": tel["output_tokens"],
+        "request_id": tel["request_id"],
+        "served_at_utc": tel["served_at_utc"],
     }
-    return resp.get("text") or "", telemetry
+    return text, telemetry
 
 
 def astra_command(prompt: str, model: str, out_file: Path) -> list[str]:
@@ -2571,12 +2590,20 @@ def main() -> int:
                          "e.g. 'default' or 'default,.claude-b'. Use it when only some "
                          "accounts can serve Fable, such as when only one has paid usage "
                          "credits enabled. Overrides the measured-headroom ordering.")
-    ap.add_argument("--fable-pool", default=None, metavar="POOL",
-                    help="Send every Fable call through `quotapick run --only POOL`, on prepaid API "
-                         "credit. A different harness from the production one (see call_fable_pool), "
-                         "so it is refused unless --out is under the study's experiments/ directory, "
-                         "refused for a contract v2 study, and refused with --timeout over "
-                         f"{FABLE_POOL_MAX_TIMEOUT}.")
+    ap.add_argument("--fable-pool", default=None, metavar="POOLS",
+                    help="Send every Fable call through `quotapick run --only POOLS`, on prepaid API "
+                         "credit; one pool or a comma-separated list the router picks among. A different "
+                         "harness from the production one (see call_fable_pool), so it is refused unless "
+                         "--out is under the study's experiments/ directory or is exactly the study's "
+                         "grades/ with --credit-production, refused for a contract v2 study, and refused "
+                         f"with --timeout over {FABLE_POOL_MAX_TIMEOUT}.")
+    ap.add_argument("--credit-production", action="store_true",
+                    help="with --fable-pool, allow --out to be the study's own grades/ directory, so credit "
+                         "grades join the published corpus (operator decision 2026-10-18, BACKLOG VI-14, on the "
+                         "CI-11 day-1 evidence: credit minus production -0.62 points, 95%% CI -1.7 to +0.47, "
+                         "n 34). Every such record still names harness 'quotapick run' and its pool, and "
+                         "aggregate.py reports the per-judge harness mix in diagnostics. Every other "
+                         "--fable-pool refusal still applies.")
     ap.add_argument("--fable-pool-expected-cost", type=float, default=5.0, metavar="USD",
                     help="expected_cost_usd for each credit-pool call; quotapick admits a call only while "
                          "the pool's balance covers this times its margin. Default 5.0: 715 leaders "
@@ -2709,13 +2736,15 @@ def main() -> int:
                          "--dangerously-skip-permissions, which lets the judge read the "
                          "roster it is blinded against. Use the plain claude CLI.")
     why = fable_pool_refusal(args.fable_pool, args.out, args.timeout, judges,
-                             prof["contract_version"], Path(link))
+                             prof["contract_version"], Path(link), args.credit_production)
     if why:
         raise SystemExit(f"REFUSING: {why}")
     if args.fable_pool:
         log(f"--fable-pool {args.fable_pool}: every Fable call goes through `quotapick run --only "
             f"{args.fable_pool}` (harness 'quotapick run', API credit, no subscription fallback); "
-            f"expected cost ${args.fable_pool_expected_cost:.2f} per call")
+            f"expected cost ${args.fable_pool_expected_cost:.2f} per call"
+            + ("; --credit-production: these grades land in the published corpus (VI-14)"
+               if args.credit_production else ""))
     # Route Fable by measured FABLE headroom. The general-pool number misleads:
     # an account can have plenty of general quota and no Fable weekly left, and
     # every Fable call there fails while Astra succeeds. Falling back to the

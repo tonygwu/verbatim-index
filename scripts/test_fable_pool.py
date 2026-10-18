@@ -7,8 +7,10 @@ through `quotapick run` (tonygwu/llm-quota-router), which runs one tool-less
 the production judge: tools absent instead of denied, no session transcript, no
 subscription. These checks hold the lines that keep it honest:
 
-  REQUEST    the request names Fable, effort max, the timeout, one attempt, and
-             `run --only <pool>`, so a call can never fall back to a subscription.
+  REQUEST    the request names Fable, effort max, the timeout, one attempt per
+             named pool, and `run --only <pools>`, so a call can never fall back
+             to a subscription. Since 2026-10-18 the pool is a comma list and the
+             call goes through credit_run.run, the one credit path (VI-5).
   IDENTITY   an answer counts only when `served` names Fable (every model seen),
              effort max, a credit pool, API-key auth and the pool asked for.
   OUTCOMES   each quotapick outcome maps to this repo's taxonomy; "exhausted" and
@@ -19,8 +21,10 @@ subscription. These checks hold the lines that keep it honest:
              "quotapick run" and the pool, and the pool's "empty" stops the
              next job before it is sent.
   GUARDS     --fable-pool is refused for contract v2, outside experiments/, over
-             1800 s, and without Fable; resolve_predictions refuses it for an
-             Astra stage and for a run the scores read.
+             1800 s, and without Fable; --credit-production admits exactly the
+             study's grades/ directory and nothing else (operator decision
+             2026-10-18, VI-14); resolve_predictions refuses it for an Astra
+             stage and for a run the scores read.
   CLASSIFY   resolve_predictions.classify reads the pool labels before its
              keyword rules.
 
@@ -76,6 +80,8 @@ elif scen == "contract2":
     resp["run_contract"] = 2
 elif scen == "no_duration":
     del resp["attempts"][0]["duration_ms"]
+for a in resp["attempts"]:
+    a["cost_usd"] = resp["cost_usd"]
 print(json.dumps(resp))
 '''
 
@@ -159,6 +165,55 @@ def main() -> int:
         except ValueError:
             check("a timeout over 1800 s is refused before any call", True)
 
+        print("\n[POOLS] a comma list names several pools, and any of them may serve")
+        out, cap, costs = run_call(tmp, "ok", account="anthropic_api_b", pool="anthropic_api_a,anthropic_api_b")
+        check("argv is `run --only a,b`", cap["argv"] == ["run", "--only", "anthropic_api_a,anthropic_api_b"],
+              f"{cap['argv']}")
+        check("the request asks one attempt per named pool", cap["request"]["max_attempts"] == 2,
+              f"{cap['request'].get('max_attempts')}")
+        check("an answer served by the second named pool is accepted and names it",
+              isinstance(out, tuple) and out[1].get("credit_pool") == "anthropic_api_b", f"{out!r}")
+        out, _, _ = run_call(tmp, "ok", account="anthropic_api_c", pool="anthropic_api_a,anthropic_api_b")
+        check("an answer from a pool outside the list is refused as account_identity_mismatch",
+              label_of(out) == G.E_IDENTITY, f"{out!r}")
+        for bad in ("", "anthropic_api_a,,anthropic_api_b", " ,"):
+            try:
+                G.call_fable_pool("p", bad, 300, request_id="x", expected_cost_usd=1.0, binary=str(tmp / "quotapick"))
+                check(f"a malformed pool list {bad!r} is refused before any call", False, "no exception")
+            except ValueError:
+                check(f"a malformed pool list {bad!r} is refused before any call", True)
+
+        print("\n[ONE PATH] call_fable_pool is credit_run.run with grade.py's labels (VI-5)")
+        # The module instance grade.py imported, not a second load: the mapping
+        # catches credit_run's exception classes by identity, as production does.
+        CR = G.credit_run
+        real_run = G.credit_run.run
+        try:
+            def stub(exc):
+                def _run(*a, **k):
+                    raise exc
+                return _run
+            for exc, want in ((CR.CreditRunError("not_served_as_asked: got {'effort': 'high'}"), G.E_IDENTITY),
+                              (CR.CreditRunError("model_mismatch: served 'claude-opus-5-5'"), G.E_MODEL_MISMATCH),
+                              (CR.PoolsExhausted("no_candidate: attempts []"), G.E_POOL_EXHAUSTED),
+                              (CR.CreditRunError("refused: quotapick refused before spending: x"), G.E_POOL_REFUSED),
+                              (CR.CreditRunError("cli_exit_1: boom"), G.E_CLI),
+                              (CR.CreditRunError("outcome_timeout: billed_usd 1.2; attempts []"), G.E_TIMEOUT),
+                              (CR.CreditRunError("outcome_auth: billed_usd None; attempts []"), G.E_AUTH),
+                              (CR.CreditRunError("outcome_zzz: billed_usd None; attempts []"), G.E_POOL_REFUSED)):
+                G.credit_run.run = stub(exc)
+                try:
+                    G.call_fable_pool("p", "anthropic_api_a", 300, request_id="x", expected_cost_usd=1.0)
+                    check(f"credit_run {str(exc)[:22]!r} -> {want}", False, "no exception")
+                except Exception as got:  # noqa: BLE001
+                    check(f"credit_run {str(exc)[:22]!r} -> {want}", G.classify_exception_detail(str(got)) == want,
+                          f"{got!r}")
+        finally:
+            G.credit_run.run = real_run
+        check("the same served-field mismatch is one label through credit_run.check_response itself",
+              G.classify_exception_detail(str(G.pool_error(CR.CreditRunError("not_served_as_asked: got {}"))))
+              == G.E_IDENTITY)
+
         print("\n[IDENTITY] an answer counts only when served as asked")
         for scen, want in (("wrong_model", G.E_MODEL_MISMATCH), ("mixed_models", G.E_MODEL_MISMATCH),
                            ("subscription", G.E_IDENTITY), ("effort_high", G.E_IDENTITY)):
@@ -239,6 +294,34 @@ def main() -> int:
                            ("--timeout 2400", ("p", ok_out, 2400, ["fable"], 1)),
                            ("judges without Fable", ("p", ok_out, 1800, ["astra"], 1))):
             check(f"refused: {name}", bool(G.fable_pool_refusal(*args, link)), f"{args}")
+
+        print("\n[PRODUCTION] --credit-production admits exactly the study's grades/ (VI-14)")
+        prod = str(link / "grades")
+        check("--credit-production admits <data>/grades",
+              G.fable_pool_refusal("a,b", prod, 1800, ["fable"], 1, link, credit_production=True) is None)
+        check("... written as a relative path too",
+              G.fable_pool_refusal("a,b", str(Path("grades")), 1800, ["fable"], 1, link, credit_production=True) is None
+              if Path.cwd() == link else True)
+        for name, args in (("a subdirectory of grades", ("p", str(link / "grades" / "fable"), 1800, ["fable"], 1)),
+                           ("a sibling grades_smoke", ("p", str(link / "grades_smoke"), 1800, ["fable"], 1)),
+                           ("contract v2 with the flag", ("p", prod, 1800, ["fable"], 2)),
+                           ("--timeout 2400 with the flag", ("p", prod, 2400, ["fable"], 1)),
+                           ("judges without Fable with the flag", ("p", prod, 1800, ["astra"], 1))):
+            check(f"still refused: {name}", bool(G.fable_pool_refusal(*args, link, credit_production=True)), f"{args}")
+        check("--credit-production without --fable-pool is refused",
+              bool(G.fable_pool_refusal(None, prod, 2400, ["fable"], 1, link, credit_production=True)))
+        check("without the flag the production grades dir is still refused",
+              bool(G.fable_pool_refusal("p", prod, 1800, ["fable"], 1, link)))
+        check("an experiments --out still passes with the flag",
+              G.fable_pool_refusal("p", ok_out, 1800, ["fable"], 1, link, credit_production=True) is None)
+
+        print("\n[MIX] aggregate.py counts grades per judge per harness (VI-14)")
+        AG = load("aggregate")
+        mix = AG.harness_counts([{"judge": "fable"}, {"judge": "fable", "harness": "quotapick run"},
+                                 {"judge": "fable", "harness": "quotapick run"}, {"judge": "astra"}])
+        check("a grade with no harness key is the production harness, a pool grade its own",
+              mix == {"astra": {"production": 1}, "fable": {"production": 1, "quotapick run": 2}}, str(mix))
+        check("an empty corpus counts nothing", AG.harness_counts([]) == {})
 
         RP = load("resolve_predictions")
         ns = lambda **k: argparse.Namespace(**{"fable_pool": "anthropic_api_c", "stage": "prior",  # noqa: E731
