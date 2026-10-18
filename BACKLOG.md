@@ -25,7 +25,7 @@ change to its file is an ordinary item.
 | Difficulty ladder | `low`, `medium`, `high`, `xhigh`; `ultra/workflows` is split into normal items when filing. The skill's § 5 maps the running model to a row; claim at or below it |
 | Agent handle | `#<n>` from a `repo-<n>` clone directory (`repo-0` is `#0`). Commit subjects: `claim: VI-n (#<n>)`, `backlog: delete VI-n (#<n>)` |
 | Priority | file order within `## Open items`: the first unclaimed, unblocked item in the file whose Background's first sentence does not name another clone's lane is the next one to take. Read that sentence before the claim, and never claim a lane item from another clone. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them. A lane item goes at the head of the unblocked run, so the one clone that can do it reaches it first and every other clone skips it in one read; any other new item goes at the end of the unblocked run unless it must be done sooner |
-| Validation gate | `bash scripts/run_tests.sh` from the clone root, the whole output kept, `failed: 0` required. Never pipe it through `tail -1`: the per-file `FAILED <path>` lines are the finding. `test_log_bloat.py` and the `LIVE DATA` checks in `test_render_integrity.py` read the leaders daemon's live checkout, so a red there is reported with its text, never retried until green (VI-12) |
+| Validation gate | `bash scripts/run_tests.sh` from the clone root, the whole output kept, `failed: 0` required. Never pipe it through `tail -1`: the per-file `FAILED <path>` lines are the finding, and each test's full output is in the printed `logs:` folder under `.gate/` (git-ignored, never pruned), so a red is reported with its log. `test_log_bloat.py` and the `LIVE DATA` checks in `test_render_integrity.py` read the leaders daemon's live checkout, so a red there is reported with its text, never retried until green (VI-12) |
 | Pre-push review | `adversarial-self-review` on `origin/main..HEAD` before every push, verdict `ship` required, two fix rounds at most |
 | Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Two kinds: an operator decision, or a measurement or event that has not happened. Nobody claims a blocked item, and the loop never lists one, so a lane is never a block: an item that only one clone can finish (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; AGENTS.md, "Clone roles") says so in the first sentence of its Background, and an agent on another clone skips it without claiming, and releases if it claimed before reading. Whoever lifts a block deletes the tag in its own commit and writes the lane sentence for the option chosen |
 | Completion | delete the item; git history is the record. A decision or measurement worth keeping goes in the `docs/agents/` file of its topic, under "Rules that exist because something broke" or "Experiments run", never back into this file |
@@ -298,18 +298,6 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-29. `run_tests.sh` discards every test's output, so an intermittent failure leaves no text  `[difficulty: low]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
-
-**Background:** `scripts/run_tests.sh:8` runs each test with `>/dev/null` and prints only `FAILED <path>`. On 2026-10-18 a full run in repo-1 printed `FAILED scripts/test_pundits_contract.py` and `failed: 1`; the same test then passed seven times on its own (`43/43 passed`) and a second full run printed `failed: 0`. Nothing of the failing check survived, and whether two gate runs overlapped in the clone is unknown. BACKLOG.md's own gate parameter says "the whole output kept".
-
-**Impact:** a flaky or load-dependent test cannot be diagnosed from the gate's output, so it gets re-run until green, which the protocol forbids.
-
-**Fix:** keep each test's output in a per-run directory (for example `.gate/<utc>/<test>.log`, git-ignored) and print the failing test's last lines beside `FAILED <path>`; a Node test the same way.
-
-**Touch points:** `scripts/run_tests.sh`, `.gitignore`.
-
----
-
 ### VI-30. The market consensus run summary files every market API error as `cli_nonzero_exit`  `[difficulty: medium]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/market_consensus.py:69` defines the error label `market_api_error`, which every HTTP failure's error text starts with (`:163` for a cached non-200 replay, `:176`, `:179`), and `:666` and `:682` label each failed record with `L.classify_exception_detail(error)`. That function, `scripts/predictions_lib.py:147-149`, matches the detail against `ALL_ERROR_TYPES` (`:95-97`), which does not name `market_api_error`, so it falls through to the grade taxonomy's default. Verified in repo-1 at `87c42e3` on 2026-10-18:
@@ -363,6 +351,18 @@ All three 2026-10-18 consensus manifests carry the mislabel. Read as `json.load(
 **Fix:** inside the lock, read the cache again before fetching. `http_get` (`:111-118`) returns only `(status, body)` and drops `exc.headers`, so first pass the `Retry-After` value through, as an optional third tuple element so the 2-tuple fake fetchers in `scripts/test_predictions_markets.py` and `scripts/test_market_consensus_cache.py` keep working. Then on a 429, sleep `min(Retry-After, 5)` seconds when the header is present, else 2 seconds, and retry exactly once before raising; the sleep runs inside the Kalshi lock on purpose (it is the one stream Kalshi sees), and the cap keeps a large `Retry-After` from stalling every worker. Add 408 to `transient_status`. Tests: six workers asking the same Kalshi URL make one fetch; a 429-then-200 fetcher gives a result within the same read (the existing `test_market_consensus_cache.py` check that the first 429 read raises changes to expect the retry); a `Retry-After: 600` sleeps 5 s at most (inject the sleep). Record in the docstring that the lock is per process. VI-25 step 2 adds its own retry for Polymarket; both should share one retry path in `get_json`.
 
 **Touch points:** `scripts/market_consensus.py:111-118`, `:121-130`, `:155-180`, `scripts/test_market_consensus_cache.py`, the fake fetchers in `scripts/test_predictions_markets.py`.
+
+---
+
+### VI-33. The gate's Node test passes without running: `test_site_tooltip.js` prints `SKIP` and exits 0 when jsdom is absent, and no clone has jsdom  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/test_site_tooltip.js:12-13` wraps `require("jsdom")` in a try and, when it is missing, prints `SKIP: jsdom not installed (npm install jsdom)` and exits 0. Its header (`:8-9`) says jsdom "is not a dependency of this repo". `scripts/run_tests.sh:40` counts the test as passed on exit 0, so every gate run reports it green. Verified in repo-1 on 2026-10-18: `node scripts/test_site_tooltip.js` printed the SKIP line and exited 0, and `node -e 'require.resolve("jsdom")'` fails with `MODULE_NOT_FOUND` (no `node_modules` in any of the five clones, nothing on `NODE_PATH`, nothing in the global npm root). Since VI-29 the SKIP line survives in `.gate/<run>/test_site_tooltip.js.log`, where nothing reads it.
+
+**Impact:** the tooltip test does not run in the gate in any clone today (whether it ever did cannot be shown: the old runner sent its output to `/dev/null`); a regression in the site tooltip would pass `failed: 0` in every clone.
+
+**Fix:** make the skip loud and counted: have the runner treat a Node exit code of its own (77, the usual skip code, set by the test on the missing module) as `SKIPPED test_site_tooltip.js (jsdom not installed)` and print a `skipped: N` line beside `failed: N`, still exiting 0, so the gate's output says what did not run; or add jsdom as a dev dependency (`package.json`; the repo has none and the setup block has no `npm install`) and drop the skip. Either way the test reads `site/index.html` (`:15`), a built page that git does not track (`.gitignore`), so a fresh clone has no page and a clone's page is as stale as its last build: option 2 turns a fresh clone's gate red with ENOENT, and the first real run may fail for old reasons because the test has not run in the gate. Decide one, say why in the runner header, and add a check to `scripts/test_run_tests_sh.py` with a fake Node test that exits 77.
+
+**Touch points:** `scripts/test_site_tooltip.js:8-15`, `scripts/run_tests.sh:40`, `scripts/test_run_tests_sh.py`.
 
 ---
 
