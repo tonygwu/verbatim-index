@@ -239,6 +239,89 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
+### VI-23. A Fable answer that overran one turn's output cap reaches the extractor as its last continuation chunk, and the failure is filed as `schema_validation_failed`  `[difficulty: high]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/credit_run.py:125` returns `resp.get("text")` from the `quotapick run` response as the whole answer; `quotapick run` starts one `claude -p` child and returns that child's final `result` field (it has no continuation code of its own); the subscription harness reads the same field (`scripts/grade.py:1145`), and `grade.call_fable_pool` (`scripts/grade.py:1163`, the priors' and credit grades' path) runs its own `quotapick run` and reads it too, so all three Fable paths share the exposure (VI-5, claimed by #2, is moving `call_fable_pool` onto `credit_run.run`). For pat-gelsinger/web-fool-com-335b172e (10,861 words) two credit extractions on 2026-10-18 returned a `text` of 652 and 11,400 characters that starts mid-string (`in the span.","resolution_cr...`): data `predictions/_raw/responses/pat-gelsinger/web-fool-com-335b172e__extract__20261018T053831Z-both-499ae6b1.json` ($4.81, pool c) and `...20261018T080210Z-both-b18c577b.json` ($5.03, pool b). In both, `usage.output_tokens` (64,247 and 68,707) minus the one `usage.iterations[].output_tokens` entry (247 and 4,707) is exactly 64,000, the child's `maxOutputTokens`: the first turn hit the cap and the child continued, and only the continuation's text came back. The extractor parsed a fragment (every schema error is at `$`, a missing top-level field) and failed; the third attempt on the subscription harness gave 21 candidates, 4 accepted.
+
+**Impact:** any Fable answer longer than one turn's cap fails after being paid for, and the failure names the model when the harness is at fault; a grade or a prior would fail the same way.
+
+**Fix:**
+1. In `credit_run.run`, after `check_response`, compute `usage.output_tokens` minus the sum of `usage.iterations[].output_tokens`; when the gap is at least the cap (64,000, or the response's own `maxOutputTokens` when present; two continuations leave 128,000) raise `CreditRunError("continuation_truncated: ...")`, counted under that taxonomy label by `extract_predictions.py` and `grade.py`.
+2. The same check in `grade.call_fable` for the subscription harness's `result` (`scripts/grade.py:1140-1150`) and in `grade.call_fable_pool` (`:1163`) until VI-5 routes it through `credit_run.run`.
+3. A test with a fake `quotapick` binary whose response carries a mid-string `text` and the 64,000-token gap; and one for `call_fable`.
+4. Name the label in `docs/agents/PREDICTIONS-PIPELINE.md` beside `credit_pool_exhausted`.
+5. Coordinate with VI-5, which edits the same served-block check in `credit_run.run`.
+
+*Risks and edge cases:* a prose answer must never be refused for not starting with `{`; the token-gap signal is the check, and a text-shape check only a hint. A response whose `usage` lacks `iterations` must pass as before.
+
+*Why high not medium:* two harnesses, a taxonomy label other scripts count, and an overlap with a claimed item.
+
+**Touch points:** `scripts/credit_run.py:96-140`, `scripts/grade.py:1140-1170`, `scripts/extract_predictions.py:250-272`, `scripts/test_credit_run.py`, `docs/agents/PREDICTIONS-PIPELINE.md`.
+
+---
+
+### VI-24. `market_consensus.py` caches a 429 or 403 and replays it on every later read  `[difficulty: medium]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/market_consensus.py:127-142` (`Cache.get_json`) writes every HTTP response to `predictions/_markets/<platform>/<sha>.json` whatever its status, and any later read raises `market_api_error: cached <status>` from the file without touching the network (`:134`); `--refresh-cache` is the only way out and it re-fetches every URL. The docstring at `:25-27` promises "Every HTTP response is cached ... so a rerun is free and reproducible". On 2026-10-18 the first consensus run over 25 people (data `predictions/_experiments/thin-supplement-20261018/market_consensus-1.log`, manifest `predictions/_runs/20261018T090006Z-consensus-fc6e8e7f.json`, 4 workers, 707 HTTP calls) failed 19 of 126 records: 14 Kalshi `too_many_requests`, 8 of them replayed from the cache within that same run (all the one `series_ticker=ECLIPSECOVER` URL, cached earlier in the same six-minute run) and 6 live; 2 Polymarket 403s; 3 Polymarket 400s (VI-25). The run's operator deleted the 8 cached 429/403 files by hand and re-ran with one worker, which recovered 14.
+
+**Impact:** a transient rate limit becomes a permanent failure for every record that shares the URL, within the run and across runs, until someone edits the cache by hand.
+
+**Fix:** do not write a 429, 403 or 5xx response into the cache (or treat a cached non-200 as a miss), default `--workers` to 1 for the Kalshi calls, and amend the docstring. Test: a fake fetcher that returns 429 once then 200 must give a result on the second read with no hand edit.
+
+**Touch points:** `scripts/market_consensus.py:25-27`, `:115-145`, `scripts/test_predictions_markets.py`.
+
+---
+
+### VI-25. Polymarket returns 400 for the 30-day `prices-history` window and 403 for some `public-search` queries, and the ladder stops at the first error  `[difficulty: high]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/market_consensus.py:349` is the 30-day step of a three-step window ladder (2 days, 30 days, then from the market's open) at `fidelity=60`; for that step Polymarket answers HTTP 400 `invalid filters: 'startTs' and 'endTs' interval is too long` (endTs minus startTs is 2,592,000 s), and the error aborts the ladder, so the daily step that may succeed is never tried. `:252` (`public-search`) gets an HTTP 403 Cloudflare page for some queries. Across the corpus 8 accepted records fail this way on every run that reaches them, each carrying a consensus block with `status: failed`: `prices-history` 400 for fa01d301325e4243, 2012463b3b01b93d, d13eb0f50e17ffea (this supplement), michael-saylor 9d2d817a08c94853 and bill-gates bfecb68972253ee1; `public-search` 403 for d4b463de73917226 and jensen-huang 22f49209e94ce62f and c023eff1328d99e3. Ledger VP-38 logged the same 400 on 2026-10-05. Logs: data `predictions/_experiments/thin-supplement-20261018/market_consensus-{1,2,3}.log`.
+
+**Impact:** eight accepted records can never get a market observation, and every consensus run counts them as failures.
+
+**Fix:**
+1. On a 400 from `prices-history`, fall through to the next ladder step instead of raising; record which step answered.
+2. On a 403 from `public-search`, retry once, then record `blocked_by_host` as a terminal status instead of `failed`; that status touches `prediction_record.schema.json`, `validate_predictions.py` and the page's rendering of a consensus block.
+3. Tests for both paths with a fake fetcher.
+
+*Risks and edge cases:* a daily-fidelity observation for an old market may be sparse; the cutoff rule (strictly before publication) must hold for every step.
+
+*Why high not medium:* a new terminal status crosses the schema, the validator and the site.
+
+**Touch points:** `scripts/market_consensus.py:245-260`, `:341-360`, `.agents/skills/prediction-extractor/prediction_record.schema.json`, `scripts/validate_predictions.py:205-225`, `scripts/build_predictions_site.py` (the consensus block), `scripts/test_predictions_markets.py`.
+
+---
+
+### VI-26. A dating run directory's `overrides.json`, `checks.json` and `queue.json` hold only the last merge's scope  `[difficulty: high]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/date_recordings.py:1017-1040` rewrites the three files for the transcripts in scope of the current merge, so a run directory used for several `--ids` waves keeps only the last wave's entries and queue rows, and `scripts/promote_dating_run.py` would miss the earlier waves. Found by the review of public 698cdee on `dating-thin-supplement-20261018`, which ran in waves; that run avoided the loss by passing the union of every wave's datable ids on the final merge (every id left out was a `stated_in_page` source, which the stage no longer dates). Also, the per-call progress lines go to stderr with `flush=True` (`:102-104`) but the stdout banner and summary are block-buffered under `nohup`: in `dating/run-wave2c.log` the `SPENDS QUOTA` banner is line 106 of 111, after every progress line.
+
+**Impact:** a promotion from a multi-wave run silently drops the earlier waves' confirmed dates, which decide eligibility and lead for their records.
+
+**Fix:**
+1. Merge over every transcript that has proposals on disk under the run directory, or refuse a `--stage merge` whose scope is narrower than the proposals directory; decide which (the first keeps old entries alive, the second makes the operator name the union).
+2. Print the stdout banner and summary with `flush=True`.
+3. Test: two merges with disjoint `--ids` into one run directory must leave both waves' entries on disk.
+
+*Risks and edge cases:* a transcript with proposals from a run whose daters differ is refused before any merge today; the union merge must keep that refusal.
+
+*Why high not medium:* two design options that change which dates reach production, across the merge, the promotion and the agreement text.
+
+**Touch points:** `scripts/date_recordings.py:905-926`, `:950-1045`, `:1055-1066`, `scripts/test_date_recordings.py`, `docs/agents/DATING.md`.
+
+---
+
+### VI-29. `run_tests.sh` discards every test's output, so an intermittent failure leaves no text  `[difficulty: low]`  `[filed: 2026-10-18]`
+
+**Background:** `scripts/run_tests.sh:8` runs each test with `>/dev/null` and prints only `FAILED <path>`. On 2026-10-18 a full run in repo-1 printed `FAILED scripts/test_pundits_contract.py` and `failed: 1`; the same test then passed seven times on its own (`43/43 passed`) and a second full run printed `failed: 0`. Nothing of the failing check survived, and whether two gate runs overlapped in the clone is unknown. BACKLOG.md's own gate parameter says "the whole output kept".
+
+**Impact:** a flaky or load-dependent test cannot be diagnosed from the gate's output, so it gets re-run until green, which the protocol forbids.
+
+**Fix:** keep each test's output in a per-run directory (for example `.gate/<utc>/<test>.log`, git-ignored) and print the failing test's last lines beside `FAILED <path>`; a Node test the same way.
+
+**Touch points:** `scripts/run_tests.sh`, `.gitignore`.
+
+---
+
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
@@ -464,99 +547,6 @@ pushed with `data_sync.py push --daemon`, and `adversarial-self-review` on the
 
 ---
 
-### VI-15. VP-41, the thin-people predictions supplement, is extracted but not dated, resolved, scored or published  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: the owner asks to continue verbatim-predictions; spends credit and Codex quota]`
-
-**Background:** Filed by repo-3; paused 2026-10-18 when the expiring credit ran out. The run folder is at data `6c64b2f6`, which is data `main`; a clone whose data checkout is behind it (repo-0's was at `3db9ba3e` on 2026-10-18) must `scripts/data_sync.py pull` before any command below runs. `scripts/deploy_predictions.sh:89` (`scores_asof_lag`, `scripts/data_clone_workflow.py:966`) is the refusal that waits on this item. The ledger entry, verbatim:
-
-Filed by repo-3. Ledger VP-41,
-decision VD-19. Everything is in data `6c64b2f6`, run folder
-`data/predictions/_experiments/thin-supplement-20261018/`: read its `README.md`
-first, then `summary.json` (re-derive it with
-`.venv/bin/python data/predictions/_experiments/thin-supplement-20261018/_driver/summarize.py`).
-State, attempted / succeeded / failed:
-
-- **Extracted and verified, unscored (65 accepted).** 26 transcripts, Fable on
-  pool c, Gemini verify, 129 candidates: pat-gelsinger 36, reed-hastings 15,
-  larry-ellison 6, evan-spiegel 4, dario-amodei 3, patrick-collison 1,
-  dylan-field 0. All 129 records name `served.model claude-fable-5-1`, effort
-  max, `pool_kind credit`. The records are in the production tree and their
-  transcripts in `data/transcripts_web/<slug>/`.
-- **Placed, not extracted (17).** amjad-masad 2, aravind-srinivas 5,
-  greg-brockman 2, tim-cook 6 and larry-ellison 1 failed
-  `credit_pool_exhausted`; pat-gelsinger `web-fool-com-335b172e` failed
-  `schema_validation_failed` (read its raw answer under
-  `data/predictions/_raw/extract/fable/pat-gelsinger/` first). Re-run one
-  person with `_driver/retry.py <slug>` (it takes finished transcripts as
-  cached), after setting `POOLS` in `_driver/pipeline.py` to pools that have
-  money (`quotapick credits --json`). Without credit, run the same
-  `extract_predictions.py` command with `--fable-credit-pools` and
-  `--credit-production` removed, which is the ordinary production harness.
-- **Fetched only (46), not placed or extracted.** alexandr-wang 1,
-  brian-armstrong 2, demis-hassabis 5, jeff-bezos 6, lip-bu-tan 4,
-  michael-dell 6, palmer-luckey 3, sam-altman 5, tim-sweeney 6, tobi-lutke 2,
-  tom-lee 6. Each passed the URL and text duplicate checks on 2026-10-18. To
-  extract one person: copy each `by_slug/<slug>/transcripts/<slug>/<sid>.json`
-  named in `by_slug/<slug>/kept.txt` into `data/transcripts_web/<slug>/` (never
-  over an existing file), list those paths in `by_slug/<slug>/extract_list.txt`,
-  and run `_driver/retry.py <slug>`. Re-run the text check first if that
-  person's corpus grew since.
-- **Nothing usable:** clem-delangue (changelog.com robots.txt), sergey-brin
-  (page too short to fetch), george-hotz.
-
-**Finishing steps, in order.** VP-40 is the worked example
-(`data/predictions/_experiments/nate-silver-supplement-20261012/NOTES.md`).
-Read docs/agents/PREDICTIONS-PIPELINE.md and DATING.md first.
-1. Dating: `scripts/date_recordings.py --run-dir
-   data/predictions/_experiments/dating-thin-supplement-<date> --ids <file of
-   slug/sid with accepted records> --run --router-exclude <your session's
-   account>` (daters astra and fable_web, subscription quota). Promote with
-   `scripts/promote_dating_run.py --against dating-run-20261001 --against
-   dating-astra-20261003`, then re-extract each re-dated recording with the
-   pair that extracted it (Fable extract, Gemini verify).
-2. `scripts/resolve_predictions.py --out <the run folder> --as-of <UTC date
-   of the commit that will carry the scores>`, stages `lead_test`, `resolve`
-   (Astra with web tools, Codex quota), `prior`, `early`; then market
-   consensus and year summaries, scoped to the people above. The stage refuses
-   an `--ids` file that names a record it will not run, so pass only eligible,
-   past-due ids. 4 reed-hastings priors from pool d are already in the run
-   folder (as_of 2026-10-18); redo them if dating moves their statement dates.
-3. Add the run folder to `runs` in `data/predictions/scoring.json`, move
-   `as_of` to the commit's UTC date, push with `scripts/data_sync.py push`,
-   deploy with `scripts/deploy_predictions.sh` (VD-10 standing
-   authorization), and send the owner the per-person before-and-after diff.
-
-**Until this is done, the next predictions deploy from ANY clone must first
-score these records:** `deploy_predictions.sh` refuses when `as_of` is older
-than the newest commit that added predictions data (`scores_asof_lag`).
-
-**More sources, for a second pass.** Runners-up cut by the 6-source cap are in
-each `findings/<slug>.json` summary: reed-hastings 4 more Netflix earnings
-calls (Q2 2010, Q3 2014, Q3 2016, Q4 2017), tim-cook 4, larry-ellison 4,
-tom-lee 2 plus about 30 CNBC Closing Bell episodes. Every sub-agent ran out of
-the session's shared web-search budget early, so spread discovery agents
-across sessions. Briefs must ask for a generic User-Agent: one agent sent the
-owner's email to SEC EDGAR.
-
-**Credit.** Pool c's 10/20 grant and pool d are spent. Pool c's org holds a
-second grant, $100 granted 2026-10-17, expiring 2026-11-20, $93.71 left at
-2026-10-18T05:51Z after in-flight calls took $6.29 and then about $1 more. It
-is NOT in quotapick, whose balance for c was set to $0; record it with
-`quotapick credits grant` when the owner wants it spent. Pools a ($182.03,
-expires 2026-11-16), b ($125.47, 2026-11-11) and e ($2.46, 2026-11-10) were
-not charged. Comes back when the owner asks to continue verbatim-predictions.
-
-**Impact:** 65 accepted records sit unscored in the production tree, and `scripts/deploy_predictions.sh` refuses every predictions deploy from any clone until they are scored (`scores_asof_lag`).
-
-**Fix:** the finishing steps above, in order, by any push-role clone (the records are shared paths); dating and resolution spend subscription and Codex quota, extraction of the 17 and 46 spends credit.
-
-*Risks and edge cases:* in the entry above; re-dating moves statement dates and so the 4 reed-hastings priors.
-
-*Why xhigh not high:* five pipeline stages, three quota pools and a public deploy, with judgment at each hand-off.
-
-**Touch points:** `data/predictions/_experiments/thin-supplement-20261018/` (the run folder and its `_driver/`), `data/predictions/scoring.json`, `scripts/date_recordings.py`, `scripts/promote_dating_run.py`, `scripts/resolve_predictions.py`, `scripts/market_consensus.py`, `scripts/deploy_predictions.sh`, `docs/LEDGER-predictions.md` (VP-41).
-
----
-
 ### VI-17. Pundits grading cannot run on prepaid API credit under contract v2 without re-grading the whole pilot  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks (A) or (B); CI-11 stopped after day 1, so its day-1 result is all that is coming]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish option (B): it pushes the re-graded cells; option (A) is a decision with no work. Filed by repo-3. `quotapick run` (the router's only way to spend a credit pool) runs Fable with tools removed, on an API key, with no sandbox wrapper. Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container` (`profiles/pundits.json:41-51`), `scripts/grade.py:998` refuses any other sandbox, and `judge_requests` is part of the hash that makes the contract ID. So a credit grade filed under today's contract ID would claim a sandbox it never ran in. If instead the contract is amended to name the credit harness, the contract ID changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as `stale_cache`, and `aggregate.py` refuses to mix contracts (`scripts/aggregate.py:1429`), so the whole pilot is graded again (about $380 by the 2026-10-18 estimate). That is more than pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's share into the pundits predictions scale-up, so a re-grade would run on the November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16). CI-11 (`data/experiments/fable-credit-drift-20261018/`) was to grade day 1 on d and day 2 on c; the operator stopped it after day 1 and cancelled day 2 (`docs/LEDGER-corpus-integrity.md:23`), with day 1 showing credit minus subscription -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman 0.939 (`results.md`).
@@ -638,5 +628,33 @@ not charged. Comes back when the owner asks to continue verbatim-predictions.
 **Fix:** When the operator says so: one manual pass from repo-0, `grade.py ... --modes blinded --regrade-invalid`, then aggregate and deploy; or add the flag to the loop's grade calls at `grade_loop.sh:205` and `:218` and change the pin at `test_leaders_regrade_invalid.py:150` in the same commit. Record the before-and-after board as a `CI-n` row in `docs/LEDGER-corpus-integrity.md`, the ledger that holds the leaders grade-validity items.
 
 **Touch points:** `scripts/grade_loop.sh:205`, `:218`, `scripts/test_leaders_regrade_invalid.py:147-150`, `scripts/grade.py:446-473` (read only), `docs/LEDGER-corpus-integrity.md`.
+
+---
+
+### VI-27. VP-41's scored board is not deployed  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[BLOCKED: the operator decides VD-20 (grants the predictions deploy); VD-10, decided 2026-09-29, covered the VP-31 rebuild only]`
+
+**Background:** Any push-role clone at origin/main can do this. The overnight run of 2026-10-18 finished VP-41 through scoring (data `6e142316`, derived `94dfc91f`, diff `225585e4`, notes `7e078af7`, readme `2537af7d`; ledger VP-41, decision VD-20): `scoring.json` names `predictions/_experiments/thin-supplement-20261018` with `as_of` 2026-10-18; `scores.json` has 569 scored rows and 49 ranked people where the live page (data `c553aed7`) has 528 and 46; the per-person table is `predictions/_experiments/thin-supplement-20261018/diff_board.md` (41 rows started scoring, 0 stopped; Tim Cook, Reed Hastings and Evan Spiegel newly ranked; Pat Gelsinger 6 -> 16 scored, rank 10 -> 14). The deploy was not authorized: the operator granted spend, and VD-10 (decided 2026-09-29 for the VP-31 rebuild, live 2026-10-03) says "Scope: this rebuild only"; VD-20 in the ledger asks for the grant. `scores_asof_lag` (`scripts/data_clone_workflow.py:966`) passes for as_of 2026-10-18 while no newer commit adds predictions data; after one does, `as_of` must move and the board re-score before any deploy.
+
+**Impact:** the live page shows a board that main has moved past, and every later predictions commit raises the cost of catching up.
+
+**Fix:** with the data and public checkouts at origin/main, `bash scripts/deploy_predictions.sh --production-data "$(cd data && pwd -P)" --data-revision "$(git -C data rev-parse HEAD)"`, then send the operator `diff_board.md`. No code changes.
+
+**Touch points:** none modified; runs `scripts/deploy_predictions.sh` and reads `data/predictions/_experiments/thin-supplement-20261018/diff_board.md`.
+
+---
+
+### VI-28. The second source pass for the thin predictions people is not run  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: the operator asks for the second pass; spends credit, Codex and subscription quota]`
+
+**Background:** Any push-role clone can do this. Runners-up cut by the 6-source cap of the 2026-10-18 discovery are in each `findings/<slug>.json` of `data/predictions/_experiments/thin-supplement-20261018/` (reed-hastings 4 Netflix earnings calls, tim-cook 4, larry-ellison 4, tom-lee 2 plus about 30 CNBC episodes). The discovery sub-agents shared one web-search budget and ran out early, so most people were searched thinly; `BRIEF.md` lacks the generic User-Agent line that the run's README asks for. Credit at 2026-10-18T13:00Z (`quotapick credits --json`): pool a $169.08 (expires 2026-11-16), b $16.83 (2026-11-11), e $2.46 (2026-11-10); pool c's second grant, $93.71 at 05:51Z, expires 2026-11-20 and is NOT recorded in quotapick (`quotapick credits grant` adds it). `NOTES.md` in that folder is the worked example for every stage.
+
+**Impact:** 22 of the 25 thinnest people are still ranked on fewer than 10 scored predictions or unranked (aravind-srinivas, clem-delangue, sergey-brin and tobi-lutke have no scored row).
+
+**Fix:** the whole pipeline, as in `NOTES.md`: (1) discovery with `BRIEF.md` plus a generic User-Agent line, spread across sessions; (2) `_driver/pipeline.py <slug>` with `POOLS` set to a pool that has money (URL and text duplicate checks, fetch, place, Fable extraction on credit, Gemini verify); (3) dating with `scripts/date_recordings.py --ids` over the datable recordings (stated_in_page sources are skipped), `scripts/promote_dating_run.py --against` the production runs, re-extraction of the re-dated recordings; (4) `worklists.py` in a NEW run folder named in `scoring.json` with `as_of` moved to the carrying commit's UTC date, then lead_test, resolve (Astra), prior (Fable on credit), market consensus and year summaries; (5) `data_sync.py push`, then the deploy and the per-person diff.
+
+*Risks and edge cases:* every hazard the 2026-10-18 run met and VI-23 to VI-26 record; a run folder named in `scoring.json` moves the as_of bar with every commit into it.
+
+*Why xhigh not high:* five pipeline stages, three quota pools and a deploy, with judgment at each hand-off (the rating VI-15 carried).
+
+**Touch points:** `data/predictions/_experiments/thin-supplement-20261018/` (`BRIEF.md`, `_driver/pipeline.py`, `findings/`), a new `data/predictions/_experiments/<run>/`, `data/predictions/scoring.json`.
 
 ---
