@@ -150,7 +150,7 @@ in a Background is provenance, not a claim and not a lane.
 
 ---
 
-### VI-5. `grade.call_fable_pool` and `credit_run.run` each check the served block, and two copies drift  `[difficulty: high]`  `[filed: 2026-10-18]`
+### VI-5. `grade.call_fable_pool` and `credit_run.run` each check the served block, and two copies drift  `[difficulty: high]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
 **Background:** Filed by repo-3. Both landed the same night from two concurrent sessions. `scripts/grade.py:1163` (`call_fable_pool`, repo-0) is the judge path: one pool, Fable at max effort, labels from grade.py's taxonomy, served checks at `:1211-1216`. `scripts/credit_run.py:96` (`run`, repo-3) is the general path for the pundits speaker drafts and `extract_predictions.py --fable-credit-pools`: a SET of pools for the router to choose among, any model and effort, its own labels, served checks in `check_response` (`:63-93`). They check the same `served` fields today. The ledger deferred this until the CI-11 drift experiment, which imported `grade.py` from repo-0's working tree, had finished; `docs/LEDGER-corpus-integrity.md:23` records CI-11 stopped after day 1 with its day-2 arms cancelled, and on 2026-10-18 no process from `data/experiments/fable-credit-drift-20261018/` was running.
 
