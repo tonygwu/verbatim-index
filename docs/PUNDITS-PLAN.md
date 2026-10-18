@@ -573,6 +573,8 @@ Stated choices in the manifest:
   node scripts/test_site_tooltip.js >/dev/null || { echo "FAILED test_site_tooltip.js"; fails=$((fails+1)); }
   echo "failed: $fails"; [ "$fails" -eq 0 ]
   ```
+  That is the original. Since VI-29 (2026-10-18) the runner keeps each test's output under
+  `.gate/` and prints a failing test's tail; `scripts/run_tests.sh` is the current text.
 - **Behavioural fixtures.** Each new test is shown failing on the pre-change code, then passing:
   - `test_study_isolation.py`: cross-study read, prune, overwrite and publish refusals;
   - `test_pundits_contract.py`: contract scope, stale-cache rejection, refusal of an all-obsolete

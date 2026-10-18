@@ -270,7 +270,13 @@ there. Add new material under the same headings.
   topped up. Proof: `.venv/bin/python scripts/test_pundits_label_kit.py`.
 
 - Pundits verification (plan, Verification section): `bash scripts/run_tests.sh` is the
-  fail-loud suite runner (globbed, exits nonzero on any failure).
+  fail-loud suite runner (globbed, exits nonzero on any failure). Since VI-29 it keeps every
+  test's stdout and stderr under `.gate/<utc>-<pid>/<test>.log` (git-ignored; never pruned,
+  about 1 MB a full run, delete the folders yourself) and prints only a failing test's last
+  20 lines under its `FAILED` line, so a warning a test printed to the terminal is now in its
+  log;
+  `bash scripts/run_tests.sh <test>...` runs only the named tests. Proof:
+  `scripts/test_run_tests_sh.py`.
   `scripts/test_private_label_leak.py` plants a lean-label canary and proves it is absent
   from both prompt modes, the blinded text and the page, and that only `schedule.py`,
   `pundits_roster.py` and the P3 probe name the private lean files; adding a reader fails it.

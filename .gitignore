@@ -37,3 +37,6 @@ site-predictions/predictions/
 
 # macOS Finder metadata. Every clone on this Mac grows one at its root.
 .DS_Store
+
+# Per-run test output kept by scripts/run_tests.sh (VI-29)
+/.gate/
