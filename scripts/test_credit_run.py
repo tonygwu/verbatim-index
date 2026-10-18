@@ -14,7 +14,7 @@
             timeout names none and reports none
   WHY       a failure's message carries each attempt, the router's reason and its warnings
   RAW       the full response is written to disk before any check runs
-  LIMITS    a timeout over 1800 s and a comma inside one pool name are refused before any call
+  LIMITS    a timeout over 1800 s, a comma inside one pool name and a repeated pool name are refused before any call
 
 No quota: a fake quotapick binary prints a canned response.
 
@@ -201,6 +201,7 @@ def main() -> int:
         print("\n[LIMITS]")
         for label, kwargs in (("a timeout over 1800 s", {"timeout_s": 1801}),
                               ("a comma inside one pool name", {"pools": ["anthropic_api_e,anthropic_api_d"]}),
+                              ("a repeated pool name", {"pools": ["anthropic_api_e", "anthropic_api_e"]}),
                               ("no pools", {"pools": []})):
             os.utime(tmp / "argv", ns=(0, 0))
             args = {"model": MODEL, "effort": "max", "pools": POOLS, "timeout_s": 1800, "expected_cost_usd": 3,

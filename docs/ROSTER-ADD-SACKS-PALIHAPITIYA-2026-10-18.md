@@ -11,9 +11,9 @@ Prepared in repo-2 under the one-committer protocol the Nate Silver precedent
 used (`docs/ROSTER-ADD-NATE-SILVER-2026-10-11.md`): the owner paths were
 prepared in repo-2's contributor data clone and applied into the daemon
 checkout, with repo-0's session's written agreement to write nothing there
-meanwhile. Grading ran from repo-2 on prepaid API credit (Fable) and on the
-Astra and Gemini subscriptions, with the grade files applied into the daemon
-checkout afterwards.
+meanwhile. Grading runs from repo-2 on prepaid API credit (Fable) and on the
+Astra and Gemini subscriptions, and the grade files are applied into the daemon
+checkout afterwards (see Outcome, which is pending until they land).
 
 ## Decisions taken while adding them
 

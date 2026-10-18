@@ -180,8 +180,9 @@ def main() -> int:
             try:
                 G.call_fable_pool("p", bad, 300, request_id="x", expected_cost_usd=1.0, binary=str(tmp / "quotapick"))
                 check(f"a malformed pool list {bad!r} is refused before any call", False, "no exception")
-            except ValueError:
-                check(f"a malformed pool list {bad!r} is refused before any call", True)
+            except Exception as exc:  # noqa: BLE001
+                # A ValueError is the refusal; anything else means the call was sent.
+                check(f"a malformed pool list {bad!r} is refused before any call", isinstance(exc, ValueError), repr(exc))
 
         print("\n[ONE PATH] call_fable_pool is credit_run.run with grade.py's labels (VI-5)")
         # The module instance grade.py imported, not a second load: the mapping
