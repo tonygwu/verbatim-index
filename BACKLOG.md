@@ -791,6 +791,23 @@ they were filed (50aeaac).
 
 ## Verbatim Pundits
 
+- **Pundits predictions scale-up: three follow-ups.** Filed 2026-10-18 by repo-3.
+  The scale-up finished 257 of 261 recordings (pundits data 089ac14,
+  `experiments/predictions-pilot-20261018/README.md`).
+  1. Re-verify `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and
+     `jordan-b-peterson-rkt9up`: Gemini returned `empty_response` after a denied
+     `RunCommand` on every pass. It costs Gemini quota only. `bret-weinstein-bmwp9g`
+     cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5`
+     three times, and credit_run refuses a mixed-model answer. Why is not known.
+  2. Install the speaker-check page with the model drafts: rebuild
+     `data-pundits/logs/p6b/speaker_check.html` with `pundits_verify_page.py build`
+     and `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` plus the same
+     `--grades` and `--quote-key` as before, then push the pundits data. 65 flagged
+     recordings list first.
+  3. Review nits from 2026-10-18 round 4: `main()`'s call to `code_revision_of` has
+     no test (dropping `skill` passes), and `speaker_audit_page.py` and
+     `speaker_segment_probe.py` still record HEAD without a `+dirty` mark.
+
 - **Pundits grading on prepaid API credit waits on the operator.** Filed
   2026-10-18 by repo-3. `quotapick run` (the router's only way to spend a credit
   pool) runs Fable with tools removed, on an API key, with no sandbox wrapper.
