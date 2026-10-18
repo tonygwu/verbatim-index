@@ -26,8 +26,8 @@ Each can be reversed.
 - **Company strings stay accurate: `Social Capital` and `Craft Ventures`.**
   The roster rationales asked for this to be revisited before promotion
   because the production blinder redacts the bare parts of a company name.
-  Measured on the kept transcripts (see Blinding): 157 bare ordinary-word
-  redactions for Chamath, 6 for Sacks. There is no accurate alternative name
+  Measured on the 21 pre-sweep transcripts (see Blinding): 157 bare
+  ordinary-word redactions for Chamath, 6 for Sacks. There is no accurate alternative name
   for either firm, and production blinding is kept byte-identical on purpose
   (a blinding change makes new grades incomparable with the corpus), so the
   cost is recorded rather than fixed. Same class as Nate Silver's inherent
@@ -112,10 +112,18 @@ chamath-palihapitiya   social 63   capital 94   (157 across 11 transcripts)
 david-sacks            craft 4     ventures 2   (6 across 10 transcripts)
 ```
 
+The count is whole-word and case-insensitive, less occurrences inside the
+full company phrase; a different counting rule gives different numbers (a
+post-push review counted 61/79 on the 10 graded chamath transcripts with a
+lowercase-only rule), so the rule is stated here with the figures.
+
 Name variants surviving in the blinded text before the alias additions:
 `chamat` and `chamathie` once each (icon-kcwbys), `sax` once ("David sax",
 anthony-pompliano-l7zxa5); "goldman sachs" is left alone, correctly. After the
-additions, 0 survive.
+additions, 0 survive. Not fixed here, and pre-existing for every leader: the
+blinder applies only the subject's own alias list, so David Sacks' name forms
+("sax", "David sacks") survive inside Chamath's transcripts (5, 5 and 2
+occurrences across three of his recordings), as any co-host's name does.
 
 ## The landing order
 
