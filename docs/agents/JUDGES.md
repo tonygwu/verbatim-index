@@ -239,6 +239,31 @@ the mix even.
   which is the operator's and repo-0's call. Contract v2 (pundits) does this
   always. Guarded by `scripts/test_leaders_regrade_invalid.py`.
 
+- **Fable on prepaid API credit is a DIFFERENT HARNESS, kept out of the
+  corpus (2026-10-18).** `grade.py --fable-pool POOL` and
+  `resolve_predictions.py --fable-pool POOL` send each Fable call through
+  `quotapick run --only POOL` (`grade.call_fable_pool`), the only route to a
+  credit pool. quotapick runs `claude -p --bare --tools "" --safe-mode
+  --strict-mcp-config --no-session-persistence --max-budget-usd` from an empty
+  directory with the pool's API key. So tools are absent rather than denied,
+  there is no session transcript, and no subscription is involved. The model,
+  effort and prompt are the same. The leaders contract hashes the rubric and
+  schema, not the harness, so these grades carry the production `contract_id`.
+  For that reason every record also names `harness: "quotapick run"` and
+  `credit_pool`, and grade.py refuses `--fable-pool` unless `--out` is under
+  `data/experiments/`. It refuses a contract v2 study (pundits hashes
+  `sandbox_exec_deny_container`, which quotapick cannot give), and it refuses
+  `--timeout` over 1800, quotapick's limit: a longer call is cut off and still
+  billed. An answer counts only when `served` names `claude-fable-5-1` for
+  every model seen, effort max, a credit pool, API-key auth and the pool asked
+  for. When quotapick answers `exhausted` or `no_candidate`, the run stops
+  sending, as `credit_pool_exhausted`. With many workers, `no_candidate` can
+  come from the holds of calls still in flight while money remains, so re-run
+  with `--workers 1` to drain. Whether this harness grades like the production
+  one is what `data/experiments/fable-credit-drift-20261018/` measures (ledger
+  CI-11). Until that says so, do not pool these grades with the corpus.
+  Guarded by `scripts/test_fable_pool.py`.
+
 ## Experiments run, and what they showed
 
 **Do the judges have tools?** (2026-09-07) Asked each judge directly, with the

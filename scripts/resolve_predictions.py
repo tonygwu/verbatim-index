@@ -391,8 +391,8 @@ def run_one(job: dict) -> dict:
             workdir.mkdir(parents=True, exist_ok=True)
             if args.fable_pool:
                 if args.pool_state["exhausted"].is_set():
-                    raise RuntimeError(f"{E_POOL_EXHAUSTED}: {args.fable_pool} reported empty earlier in "
-                                       f"this run; not sent")
+                    raise RuntimeError(f"{E_POOL_EXHAUSTED}: {args.fable_pool} answered exhausted or "
+                                       f"no_candidate earlier in this run; not sent")
                 text, tel = call_fable_pool(prompt, args.fable_pool, args.timeout,
                                             request_id=f"{slug}/{pid}/{stage}",
                                             expected_cost_usd=args.fable_pool_expected_cost,
@@ -750,8 +750,10 @@ def main(argv: list[str] | None = None) -> int:
         tax[r["error_type"]] = tax.get(r["error_type"], 0) + 1
     log(f"\nattempted {len(results)}  succeeded {len(ok)}  failed {len(bad)}")
     if args.fable_pool:
-        log(f"credit pool {args.fable_pool}: {len(pool_spent)} billed call(s), ${sum(pool_spent):.4f} spent"
-            + ("; stopped because the pool reported empty" if args.pool_state["exhausted"].is_set() else ""))
+        log(f"credit pool {args.fable_pool}: {sum(1 for c in pool_spent if c > 0)} billed call(s), "
+            f"${sum(pool_spent):.4f} spent"
+            + ("; stopped on exhausted or no_candidate (with several workers, in-flight holds can cause "
+               "the latter: re-run with --workers 1 to drain)" if args.pool_state["exhausted"].is_set() else ""))
     log(f"error_taxonomy: {json.dumps(tax, sort_keys=True) if tax else '{}'}")
 
     if args.errors and bad:
@@ -770,9 +772,9 @@ def main(argv: list[str] | None = None) -> int:
                "left_out_ineligible": dict(sorted(left_out.items())),
                "ids_file": str(args.ids) if args.ids is not None else None,
                "ids_sha256": ids_sha,
-               "credit_pool": ({"pool": args.fable_pool, "billed_calls": len(pool_spent),
+               "credit_pool": ({"pool": args.fable_pool, "billed_calls": sum(1 for c in pool_spent if c > 0),
                                 "spent_usd": round(sum(pool_spent), 4),
-                                "stopped_empty": args.pool_state["exhausted"].is_set()}
+                                "stopped_exhausted_or_no_candidate": args.pool_state["exhausted"].is_set()}
                                if args.fable_pool else None),
                "finished_at_utc": utc_now()}
     sp = out_root / "_runs" / f"{args.run_id}.json"

@@ -34,6 +34,14 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
 
 ## Where things are
 
+- Fable priors and lead tests on prepaid API credit: `resolve_predictions.py --stage prior
+  --fable-pool POOL` (or `--stage lead_test`) runs each Fable call through `quotapick run --only
+  POOL`. It is a different harness from the production prior, recorded as `harness:
+  fable_quotapick_run` with the pool as `account`. It refuses `--out` set to a run that
+  `scoring.json` reads, and refuses the Astra stages. The rules and the reason are in
+  [JUDGES.md](JUDGES.md), "Fable on prepaid API credit". First use: the prior re-run in
+  `data/predictions/_experiments/fable-prior-retest-20261018/` (2026-10-18).
+
 - Verbatim Predictions (extract, verify, market consensus, validate, aggregate, page): skill in
   `.claude/skills/prediction-extractor/`, records in `data/predictions/<slug>/<sid>.jsonl`, design and limits in
   `docs/PREDICTIONS.md`, page built by `scripts/build_predictions_site.py` and deployed with

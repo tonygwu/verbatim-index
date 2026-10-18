@@ -111,8 +111,12 @@ E_IDENTITY = "account_identity_mismatch"
 # is the silent gap that rule exists to close.
 E_AGY_VERSION = "agy_version_unreadable"
 # A credit-pool call (`--fable-pool`, through `quotapick run`) found the pool
-# empty, or no candidate it may use. The call cost nothing, and the run stops
-# dispatching to that pool rather than failing every remaining job one by one.
+# empty ("exhausted") or was not admitted ("no_candidate"). The call cost nothing,
+# and the run stops dispatching to that pool rather than failing every remaining
+# job one by one. "no_candidate" is ambiguous: quotapick admits a call only while
+# the balance, LESS the holds of calls still in flight, covers expected cost times
+# its margin, so a run with many workers is refused while money remains. Re-run the
+# same command with --workers 1 to drain it; finished grades are cache hits.
 E_POOL_EXHAUSTED = "credit_pool_exhausted"
 # `quotapick run` refused the request before spending anything (exit 2), or
 # answered with an outcome this harness has no label for.
@@ -1214,6 +1218,7 @@ def call_fable_pool(prompt: str, pool: str, timeout: int, *, request_id: str,
         raise RuntimeError(f"{E_IDENTITY}: the call was not served as asked: got {wrong}, "
                            f"wanted { {k: want[k] for k in wrong} }")
     usage = resp.get("usage") or {}
+    durations = [a.get("duration_ms") for a in resp.get("attempts") or []]
     telemetry = {
         "harness": "quotapick run",
         "requested_model": FABLE_POOL_SERVED["model"],
@@ -1224,7 +1229,9 @@ def call_fable_pool(prompt: str, pool: str, timeout: int, *, request_id: str,
         "pool_kind": served["pool_kind"],
         "auth": served["auth"],
         "cost_usd": resp.get("cost_usd"),
-        "duration_ms": sum(a.get("duration_ms") or 0 for a in resp.get("attempts") or []),
+        # None, not a partial sum, when an attempt does not say how long it took.
+        "duration_ms": (sum(durations) if durations and all(isinstance(d, (int, float)) for d in durations)
+                        else None),
         "thinking_tokens": (usage.get("output_tokens_details") or {}).get("thinking_tokens"),
         "input_tokens": usage.get("input_tokens"),
         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
@@ -2376,7 +2383,7 @@ def grade_one(job: dict) -> dict:
     pool = job.get("fable_pool")
     if pool and job["pool_state"]["exhausted"].is_set():
         return {"status": "skipped", "id": tid, "judge": job["judge"], "mode": job["mode"], "run": job["run"],
-                "error_type": E_POOL_EXHAUSTED, "detail": f"{pool} reported empty earlier in this run; not sent"}
+                "error_type": E_POOL_EXHAUSTED, "detail": f"{pool} answered exhausted or no_candidate earlier in this run; not sent"}
     t0 = time.time()
     try:
         if job["judge"] == "fable":
@@ -2971,9 +2978,9 @@ def main() -> int:
         "median_elapsed_sec": sorted(r["elapsed"] for r in ok)[len(ok) // 2] if ok else None,
         "gemini_identities": gemini_ids,
         "stale_cache": len(stale),
-        "credit_pool": ({"pool": args.fable_pool, "billed_calls": len(pool_spent),
+        "credit_pool": ({"pool": args.fable_pool, "billed_calls": sum(1 for c in pool_spent if c > 0),
                          "spent_usd": round(sum(pool_spent), 4),
-                         "stopped_empty": pool_state["exhausted"].is_set()}
+                         "stopped_exhausted_or_no_candidate": pool_state["exhausted"].is_set()}
                         if args.fable_pool else None),
     }, indent=2))
     if stale:

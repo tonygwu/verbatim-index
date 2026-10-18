@@ -74,6 +74,8 @@ elif scen in ("exhausted", "no_candidate", "timeout_billed", "weird"):
     resp["attempts"][0].update(outcome=resp["outcome"], detail="pool says no")
 elif scen == "contract2":
     resp["run_contract"] = 2
+elif scen == "no_duration":
+    del resp["attempts"][0]["duration_ms"]
 print(json.dumps(resp))
 '''
 
@@ -146,6 +148,10 @@ def main() -> int:
               == (40, 2.5, "2026-10-18T03:00:00Z"), f"{tel}")
         check("the full response is saved before parsing", (tmp / "raw" / "r.response.json").exists())
         check("an ok call's cost is tallied", costs == [2.5], f"{costs}")
+        check("an ok call's duration is the attempts' sum", tel.get("duration_ms") == 1234, f"{tel}")
+        out, _, _ = run_call(tmp, "no_duration")
+        check("a missing attempt duration is None, not 0",
+              isinstance(out, tuple) and out[1].get("duration_ms") is None, f"{out!r}")
         try:
             G.call_fable_pool("p", "anthropic_api_d", 2400, request_id="x", expected_cost_usd=1.0,
                               binary=str(tmp / "quotapick"))
