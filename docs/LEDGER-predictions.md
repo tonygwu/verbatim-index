@@ -8,6 +8,34 @@ VD-3 decided 2026-09-13 (no market-surprise column, 0 exact matches of 475).
 
 Status words: `succeeded`, `attempted` (with what ran), `failed`, `blocked-on-<artifact>`.
 
+## Launch review, 2026-10-19 (VP-43)
+
+**Attempted:** the operator assigned a Luckey exclusion correction to a fresh
+`verbatim-9` chat and the 17 missing short-lead labels to `verbatim-8`; both
+were created and observed active. This checkout owns the combined deployment.
+The operator explicitly asked to retain the presentation and investigate
+additional samples rather than add exploratory framing.
+
+**Succeeded, code verified; publication pending:** the scoring explanation now
+covers both baseline-only points and stated-probability log ratios. A correct
+80% forecast against an 83% baseline earns −0.0531, rather than the positive
+points the old universal explanation implied. The methodology now describes
+the scored board, exact versus uncertain dates, and the short-lead exception.
+No scoring formula or score changed. Site checks240/240, policy34 and scoring
+arithmetic24 pass; independent adversarial review returned ship.
+
+**Succeeded, review only:** all58 scored records flagged for already-public
+date review were inspected exactly once:19 support evidence/date corrections,
+14 support current treatment,25 retain evidence gaps. These are not19
+established incorrect scores. Production records are unchanged. Full private
+reports, retrieval limits, frozen inputs and task receipts live in data
+`predictions/_experiments/launch-review-20261019/`. The14 capped sources are
+being assessed against current scores and duplicate events; source expansion
+itself is already tracked by VI-28.
+
+Verify: focused site and policy test scripts; the private run's `STATUS.md`;
+`curl -s https://verbatim-predictions.tonygwu.com/revision.json`.
+
 ## Items
 
 | ID | What it is, in one line | Status | Verify |

@@ -495,8 +495,7 @@ __OMITTED__
   shared by all rows: <i class="k q1"></i>&nbsp;1 &nbsp; <i class="k q2"></i>&nbsp;2&ndash;3 &nbsp;
   <i class="k q3"></i>&nbsp;4&ndash;7 &nbsp; <i class="k q4"></i>&nbsp;8 or more. An empty square is a
   year with none. Hover or tap a square to see its year and count; from the keyboard, tab to a row's
-  squares and use the arrow keys. The statement date is the recording's
-  publication date, an upper bound on when it was said.</span>
+  squares and use the arrow keys. __STATEMENT_DATE_NOTE__</span>
 </div>
 
 <div class="sec"><h2>How this was built</h2></div>
@@ -570,9 +569,7 @@ const INFO = {
     row. The shading is how many of this person's accepted predictions carry a statement date in that
     year, banded 1, 2&ndash;3, 4&ndash;7, 8 or more on a scale shared by every row. Hover or tap a
     square for its year and count.</p>
-    <p>The statement date is the recording's <b>publication</b> date, an upper bound on when the words
-    were said. A talk uploaded years after it was given sits in the upload year, so a square can be
-    later than the event. Predictions from a recording with no date sit in no year and are counted
+    <p>__STATEMENT_DATE_NOTE__ Predictions from a recording with no date sit in no year and are counted
     beneath the squares.</p>
     <p>Sorting this column sorts by the earliest statement date; people with no dated prediction sort
     last.</p>`,
@@ -1586,13 +1583,14 @@ def run_dirs(scores_doc: dict, scores_path: str) -> list[Path]:
     return out
 
 
-def stage_models(scores_doc: dict, scores_path: str) -> dict:
+def stage_models(scores_doc: dict, scores_path: str, listed: set[str] | None = None) -> dict:
     """Which model set the prior, and which decided the outcome, for every SCORED prediction.
 
     Read from the sidecars the scorer joined, never typed here. The prior's p
     must equal the p in scores.json, or these are not the records it scored.
     A prior model counts as served, not merely requested, only when the call's
-    own telemetry lists it."""
+    own telemetry lists it. Validate every scored row, but count only listed
+    people when supplied, so the model counts describe the same set as the page."""
     dirs = run_dirs(scores_doc, scores_path)
     # Sidecars a statement-date override made stale (priced or resolved under the
     # old date) were dropped by the scorer, and are dropped here the same way.
@@ -1662,13 +1660,14 @@ def stage_models(scores_doc: dict, scores_path: str) -> dict:
         m = t.get("canonical_model") or t.get("requested_model")
         if not m:
             raise SystemExit(f"REFUSING: the prior record for {pid} names no model")
-        unverified += m not in (t.get("telemetry_models") or [])
-        prior_m[model_label(m)] += 1
         rt = res.get("telemetry") or {}
         rm = rt.get("served_model") or rt.get("requested_model")
         if not rm:
             raise SystemExit(f"REFUSING: the resolution record for {pid} names no model")
-        resolve_m[model_label(rm)] += 1
+        if listed is None or row["leader_slug"] in listed:
+            unverified += m not in (t.get("telemetry_models") or [])
+            prior_m[model_label(m)] += 1
+            resolve_m[model_label(rm)] += 1
     return {"prior": prior_m, "resolve": resolve_m, "prior_unverified": unverified}
 
 
@@ -1680,6 +1679,30 @@ def _model_phrase(c: collections.Counter) -> str:
 
 def signed(x: float) -> str:
     return ("+" if x >= 0 else "\u2212") + f"{abs(x):.2f}"
+
+
+def scoring_rules() -> str:
+    """One explanation for the visible method and the Score help panel.
+
+    The correct-but-negative example exercises the same function as real scores;
+    it must not imply that every correct prediction receives positive points.
+    """
+    example = PS.score(True, 0.83, 0.80)["points"]
+    return (
+        "<p><b>Without a stated probability</b>, a prediction that came true earns "
+        '<span class="f">&minus;log&#8322;(p)</span> points. One that did not earns '
+        '<span class="f">(p/(1&minus;p))&middot;log&#8322;(p)</span>, a negative number. '
+        "A correct long shot earns more than a correct near-certainty; missing a near-certainty "
+        "costs more than missing a long shot. Expected points are zero when events occur at the "
+        "baseline rate p.</p>"
+        "<p><b>With a stated probability q</b>, points compare the speaker's probability with the "
+        'baseline: <span class="f">log&#8322;(q/p)</span> if the event happened, or '
+        '<span class="f">log&#8322;((1&minus;q)/(1&minus;p))</span> if it did not. '
+        "Matching the baseline (q = p) earns zero either way. Assigning more probability than "
+        "the baseline to the outcome that happened earns positive points; assigning less loses points. "
+        "For example, an 80% prediction of an event with an 83% baseline earns "
+        f'<span class="f">log&#8322;(0.80/0.83) = &minus;{abs(example):.4f}</span> points when it comes true. '
+        "The event happened, but the speaker was less confident in it than the baseline was.</p>")
 
 
 def howscore(models: dict, n_scored: int) -> str:
@@ -1710,11 +1733,9 @@ def howscore(models: dict, n_scored: int) -> str:
         "still remember some events from its training, and nothing here removes that. A different "
         f"model ({e_html(_model_phrase(models['resolve']))}) searches the web, decides what happened "
         f"and must cite a source.{served}</p>"
-        "<p>A prediction that came true earns <span class=\"f\">&minus;log&#8322;(p)</span> points. One "
-        "that did not costs <span class=\"f\">(p/(1&minus;p))&middot;log&#8322;(1/p)</span> points. The "
-        "two are set so that a person who only repeats the odds of the day averages zero, whatever "
-        "they predict. Calling a near-certainty earns little; calling a long shot earns a lot.</p>"
-        "<table><tr><th>If p was</th><th>Came true</th><th>Did not</th></tr>"
+        + scoring_rules()
+        + "<table><caption>Examples without a stated probability</caption>"
+        "<tr><th>If p was</th><th>Came true</th><th>Did not</th></tr>"
         + "".join(rows) + "</table></div>")
 
 
@@ -2028,12 +2049,12 @@ def state_words(st: dict, rec: dict, row: "dict | None", scored_page: bool) -> d
     elif s == "awaiting":
         line, price = f"{past}; not checked yet.", "Not priced yet: a price is set when it is checked."
     elif s == "scored" and st.get("already_public"):
-        # Scored, with an open question: the recording is dated by an upload or a
-        # publication, so an earlier report proves nothing about the day of speech.
+        # Scored, with an open question: this date basis does not establish an
+        # exact day of speech, so the earlier report cannot settle the ordering.
         ap = st["already_public"]
         line = f"{past}; checked and scored."
         note = (f"under review: a report dated {ap['date']} may show it was public before it was said, but the "
-                f"recording's date is an upload or publication date, so that is not decided")
+                f"statement date is not established as an exact day, so that is not decided")
     elif s == "scored" and imp:
         line = f"Judged over an implied window of {imp['window_words']}, to {d}; checked and scored."
     elif s == "scored":
@@ -2381,14 +2402,14 @@ def accepted_info(u: dict, as_of: str, min_lead_days: int, open_unfit: int = 0,
         "a count of what was said. Sorting this column sorts by the total.</p>"
         f"<p>The lines under it say where each prediction stood as of {as_of}, the date of the last "
         "scoring run. They always add up to the total, and a line at zero is left out.</p>"
-        f"<p><b>{lab['scored']}</b>: past due, checked against a cited source, and given points. "
+        f"<p><b>{lab['scored']}</b>: checked against a cited source and given points. "
         f"<b>{lab['not_due']}</b>: its deadline is after {as_of}.{unfit} "
         f"<b>{lab['no_deadline']}</b>: it names no date this pipeline can read, or the recording has no "
         f"known date to count from, so it has no deadline to fall due on.{later} "
         f"<b>{lab['awaiting']}</b>: past due, but not checked yet. "
-        f"<b>{lab['not_testable']}</b>: past due, but too vague, said less than {min_lead_days} days "
-        "before its own deadline, from a recording with no known date, or with a deadline before the day "
-        "it was said. Some were checked anyway; the card says what happened, and it does not count. "
+        f"<b>{lab['not_testable']}</b>: past due, but too vague, failing the {min_lead_days}-day lead policy, "
+        "from a recording with no known date, with a deadline before the day it was said, or already public "
+        "before an exact statement date. Some were checked anyway; the card says what happened, and it does not count. "
         f"<b>{lab['unresolvable']}</b>: past due, testable and looked at, but nothing public settles it"
         + (f" (for the people listed: {split})" if split else "")
         + ". Hover that line for one person's split. "
@@ -2502,8 +2523,8 @@ def thesis(c: dict, n_people: int) -> str:
     return (f"<!-- score:start -->Who in tech or finance is best at predicting the future? We track what {n_people} "
             f"tech leaders predicted in public, quoted <strong>word for word</strong> from their own talks "
             f"and interviews. When a deadline passes, we check what happened and score the call against "
-            f"how likely it looked on the day it was said. A long shot that comes true earns far more "
-            f"than a safe bet. So far {c['scored'] - c.get('early_before', 0)} of {c['past_due']} past-due predictions could be "
+            f"how likely it looked on the day it was said. Points compare each call with those baseline odds. "
+            f"So far {c['scored'] - c.get('early_before', 0)} of {c['past_due']} past-due predictions could be "
             f"checked and scored, and {k} {'person has' if k == 1 else 'people have'} enough of them to "
             f'carry a Score. The method and the code are open on <a href="{REPO_URL}">GitHub</a>.'
             f"<!-- score:end -->")
@@ -2540,7 +2561,7 @@ def came_true_info(c: dict) -> str:
         "nobody expected. The fraction is the raw record; Score is what the record was "
         "worth against how likely each call looked at the time.</p>"
         "<p>Only scored predictions are counted. The ones that could not be resolved, "
-        "or that were too vague or too close to their own deadline to test, are in "
+        "or that failed the eligibility checks, are in "
         "neither number.</p>"
         f"<p>The fraction has no floor: it appears for anyone with at least one scored "
         f"prediction, greyed when there are fewer than {MIN_SCORED}. Score needs the "
@@ -2568,9 +2589,8 @@ def score_legend(c: dict) -> str:
             + (f", and {early} more called early, when a dated source showed the outcome before the deadline "
                f"({c['scored']} scored in all)" if early else ""))
     return (f"<b>Score</b> is the mean points per resolved prediction, over the "
-            f"{over}. Getting a likely thing right earns "
-            f"little and getting an unlikely thing right earns a lot, so the expected score of "
-            f"someone with no foresight is zero, whatever they predict. A row shows no number "
+            f"{over}. Points compare each call with its baseline odds and, when supplied, the speaker's "
+            f"stated probability. <a href=\"#howscore\">Both scoring rules are explained below.</a> A row shows no number "
             f"below {MIN_SCORED} resolved predictions.")
 
 
@@ -2594,22 +2614,26 @@ def score_info(c: dict, rule: dict) -> str:
         + (f", and {m} more time{'' if m == 1 else 's'} on {'a prediction that was' if m == 1 else 'predictions that were'} "
            f"not testable anyway, which it counts as {lab['not_testable']}" if m else "")
         + ".")
+    lead = (
+        f"A prediction said less than {rule['min_lead_days']} days before its deadline can still qualify "
+        "when an outcome-blind check labels it a forecast about the world or the speaker's own results. "
+        "Announcements of the speaker's own plans, relayed claims and records awaiting that label stay out."
+        if rule.get("lead_test") else
+        f"This scoring run excludes predictions said less than {rule['min_lead_days']} days before "
+        "their deadline; it does not apply the separate short-lead forecast check."
+    )
     return (
-        "score: `<p><b>Score is the mean points a person earned per resolved prediction.</b> Zero is "
-        "the score of someone with no foresight at all, not the bottom of a range. A negative number "
-        "means the person did worse than the base rate of the things they were predicting.</p>"
-        "<p>Each prediction is worth <b>&minus;log&#8322;(p)</b> points when it came true, where p is "
-        "how likely it looked on the day it was said. Calling a 50/50 right earns 1 point; calling a "
-        "1-in-20 right earns 4.3. Getting it wrong costs (p/(1&minus;p))&middot;log&#8322;(p), which "
-        "is small for a long shot and large for a near-certainty. The two are chosen so that the "
-        "expected points are exactly zero at every p, which is why predicting lots of safe things "
-        "cannot lift the number and spraying long shots cannot either.</p>"
-        f"<p>Two separate passes produce each score, and neither sees the other. {resolver} The other "
+        "score: `<p><b>Score is the mean points a person earned per scored prediction.</b> A negative "
+        "number means the scored calls lost points overall against their baseline odds. "
+        "Here p is the baseline chance of the event, assessed as of the statement date.</p>"
+        + scoring_rules()
+        + f"<p>Two separate passes produce each score, and neither sees the other. {resolver} The other "
         "estimates p from the quote, the date and the surrounding words, and is never told what happened.</p>"
         f"<p>{c['scored'] - c.get('early_before', 0)} of {c['past_due']} past-due predictions carry a score. A prediction is left "
-        "out when it could not be resolved, when it is too vague to test, or when it was said less "
-        f"than {rule['min_lead_days']} days before its own deadline, which the pipeline treats as an "
-        "announcement; a few are real forecasts and are excluded by the same rule. "
+        "out when it could not be resolved, is too vague to test, lacks a usable statement date or "
+        f"coherent deadline, or is withdrawn. {lead} "
+        "A claim already public before an exact statement date is excluded; an earlier report against "
+        "an upload date, publication date or date range alone does not establish that exclusion. "
         f"{c['leaders_ranked']} people have the {MIN_SCORED} resolved predictions a number needs.</p>"
         + (f"<p>{c['restated']} more past-due statement{'s restate' if c['restated'] != 1 else ' restates'} "
            "a prediction already counted: the same claim, said again on another day. Each prediction is "
@@ -2620,13 +2644,14 @@ def score_info(c: dict, rule: dict) -> str:
            "either way. Each is checked again when its deadline passes, and that answer replaces the early one; "
            f"{c['early_before']} of them {'are' if c['early_before'] != 1 else 'is'} still before the deadline.</p>"
            if c.get("early_scored") else "")
-        + ("<p>A prediction that names no date is judged over an implied window, fixed by a table before any "
+        + ("<p>An eligible prediction that names no date can be judged over an implied window, fixed by a table before any "
            "such prediction was checked: its own vague words when it has them ('soon' is a year, 'in the coming "
            "months' a year, 'eventually' five years), else what it is about (a company's own plans one year, "
-           "another company or a policy three years, anything else five). Hover a Score for the same person at "
+           "another company or a policy three years, anything else five). Conditional, ordering, recurring and "
+           "event-anchored claims receive no implied window. Hover a Score for the same person at "
            "half and at double those windows.</p>" if rule.get("implied") else "")
-        + f"<p>The rule is {rule['baseline_only']}, with p held inside [{rule['clamp']}, "
-        f"{1 - rule['clamp']:.2f}] so a stated certainty cannot score infinitely.</p>`,")
+        + f"<p>Both p and q are held inside [{rule['clamp']}, {1 - rule['clamp']:.2f}] "
+        "so a stated certainty cannot score infinitely.</p>`,")
 
 
 def score_why(sc: "dict | None", min_lead_days: int) -> "str | None":
@@ -2648,7 +2673,7 @@ def score_why(sc: "dict | None", min_lead_days: int) -> "str | None":
     if sc["n_scored"] == 0:
         if sc["eligible"] == 0:
             return (f"{sc['past_due']} past due, none eligible: a scored prediction must be specific, "
-                    f"reach at least {min_lead_days} days out, and have a coherent window")
+                    "meet the lead-time policy, and have a coherent window")
         return f"{sc['eligible']} eligible and past due, {sc['unresolvable']} of them could not be resolved"
     return (f"{sc['n_scored']} scored, below the floor of {MIN_SCORED}; "
             f"a number on so few is a placeholder, not a score")
@@ -2796,7 +2821,14 @@ def nice_date(iso: str) -> str:
     return datetime.strptime(iso[:10], "%Y-%m-%d").strftime("%-d %B %Y")
 
 
-def build_method(index: dict, loaded: dict) -> str:
+STATEMENT_DATE_NOTE = (
+    "The timeline uses a sourced recording date when available, or the last day of a sourced date range. "
+    "An upload or publication date alone is an upper bound on when the words were said. "
+    "Each prediction labels the basis of its date."
+)
+
+
+def build_method(index: dict, loaded: dict, scored: dict | None = None) -> str:
     c, cov = index["corpus"], index["coverage"]
     ex = ", ".join(model_label(m) for m in c["extractor_models"]) or "unknown"
     ve = ", ".join(model_label(m) for m in c["verifier_models"]) or "unknown"
@@ -2830,8 +2862,8 @@ def build_method(index: dict, loaded: dict) -> str:
         f"{e(c['by_horizon'].get('none', 0))}), and the speaker's own confidence: a stated number for "
         f"{e(c['explicit_probability'])}, words of likelihood for {e(c['qualitative_confidence'])}, nothing for the rest. "
         f"Categories observed: {e(cats)}.</p>",
-        f"<p>The statement date is the recording's publication date, which is an upper bound on when the words were said; "
-        f"{e(dated)} of {e(c['accepted'])} accepted predictions carry one. Predictions under the speaker's own control "
+        f"<p>{STATEMENT_DATE_NOTE} {e(dated)} of {e(c['accepted'])} accepted predictions carry a date. "
+        f"Predictions under the speaker's own control "
         f"(roadmaps, guidance) are kept and tagged ({e(c['by_subject_control'].get('own', 0))} of them) so a reader can set them aside.</p>",
     ]
     pairs = c.get("verifier_acceptance_by_contract_pair", [])
@@ -2853,13 +2885,23 @@ def build_method(index: dict, loaded: dict) -> str:
             f"as the latest observation strictly before the publication date, never a current price. Only an exact match shows a "
             f"number; related markets are linked without one. Results: "
             + e(", ".join(f"{k.replace('_', ' ')} {v}" for k, v in sorted(cons.items()))) + ". The speaker's stated confidence is never changed by a market.</p>")
-    parts.append(
-        "<!-- disclaimer:start -->"
-        "<div class=\"callout\"><b>What this page is not.</b> No prediction here has been resolved against what happened. "
+    callout = (
+        f"<b>What has been checked.</b> For the people listed, {scored['scored']} predictions have a sourced "
+        f"outcome and a baseline probability, and {scored['leaders_ranked']} "
+        f"{'person has' if scored['leaders_ranked'] == 1 else 'people have'} enough scored predictions to rank. "
+        "Open a prediction to inspect its outcome, sources, baseline probability and points. "
+        "Accepted prediction counts measure what was said; the extractor and verifier agreeing that a "
+        "sentence is a prediction does not establish that it came true. The outcome check is a separate stage."
+        if scored is not None else
+        "<b>What this page is not.</b> No prediction here has been resolved against what happened. "
         "There is no accuracy figure, no Brier score, no market edge and no ranking of forecasters, and none will be "
         "read into these counts: a person with more long-form appearances has more predictions. The extractor and the "
         "verifier are language models; their agreement is evidence that a sentence is a prediction, not that it is "
-        "right. Resolution and any scoring are separate, later work.</div>"
+        "right. Resolution and any scoring are separate, later work."
+    )
+    parts.append(
+        "<!-- disclaimer:start -->"
+        f"<div class=\"callout\">{callout}</div>"
         "<!-- disclaimer:end -->")
     return "\n".join(parts)
 
@@ -2978,7 +3020,7 @@ def main(argv: list[str] | None = None) -> int:
     open_states = [states[r["prediction_id"]] for slug in listed for r in by_slug.get(slug, [])]
     open_unfit = sum(1 for s in open_states if s["state"] == "not_due" and s["reason"])
     trend_later = sum(1 for s in open_states if s["state"] == "no_deadline" and s["reason"] == "trend_later")
-    models = stage_models(scores_doc, args.scores) if scores_doc else None
+    models = stage_models(scores_doc, args.scores, listed) if scores_doc else None
     n_outcomes = attach_outcomes(pred, scores_doc)
     src = src_map(loaded["accepted"])
     check_no_entities(pred, src, rows)
@@ -3029,7 +3071,8 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__SCORE_LEGEND__", score_legend(cl) if scores_doc else SCORE_LEGEND_EMPTY)
         .replace("__SCORE_INFO__", score_info(cl, scores_doc["rule"]) if scores_doc
                  else SCORE_INFO_EMPTY)
-        .replace("__METHOD__", build_method(index, loaded))
+        .replace("__METHOD__", build_method(index, loaded, cl))
+        .replace("__STATEMENT_DATE_NOTE__", STATEMENT_DATE_NOTE)
         .replace("__GENDATE__", nice_date(args.data_date))
         .replace("__N_PEOPLE__", str(len(rows)))
         .replace("__N_TX__", str(index["coverage"]["extract"].get("ok", 0)))

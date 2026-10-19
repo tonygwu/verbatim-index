@@ -802,12 +802,17 @@ def card_states(L, A, B) -> None:
                          "by_outcome": {"unresolvable": 3},
                          "unresolvable_split": {"eligible": {"n": 3, "reasons": {}}, "not_eligible": {"n": 0, "reasons": {}}}},
                         {"min_lead_days": 60, "baseline_only": "x", "clamp": 0.01})
-    check("COPY: the lead-floor rule is not called an announcement in every case",
-          "announcement rather than a forecast" not in info and "treats as an announcement" in info
-          and "a few are real forecasts" in info, info[-500:])
+    check("COPY: without the lead-test policy, the floor is explicit without guessing the claim type",
+          "excludes predictions said less than 60 days" in info
+          and "does not apply the separate short-lead forecast check" in info
+          and "treats as an announcement" not in info, info[-1500:])
 
 
 def main() -> int:
+    B0 = load("build_predictions_site")
+    why = B0.score_why({"ranked": False, "n_scored": 0, "eligible": 0, "past_due": 4}, 60)
+    check("COPY: an unranked row describes the lead policy without excluding its forecast exceptions",
+          "meet the lead-time policy" in why and "reach at least 60 days" not in why, why)
     L = load("predictions_lib")
     A = load("aggregate_predictions")
     B = load("build_predictions_site")
@@ -1193,6 +1198,20 @@ def main() -> int:
               [l for l in h2.splitlines() if "could not be resolved" in l][:2])
         check("SCORE: with no scores file the page still says everything is pending",
               "Every item pending" in html and "every item is" in html)
+        check("METHOD: the scored page replaces the unscored-only disclaimer with derived coverage",
+              "8 predictions have a sourced outcome and a baseline probability" in h2
+              and "1 person has enough scored predictions to rank" in h2
+              and "No prediction here has been resolved" not in h2
+              and "no ranking of forecasters" not in h2
+              and "scoring are separate, later work" not in h2)
+        check("METHOD: the unscored page keeps its unscored disclaimer and omits the scoring formulas",
+              "No prediction here has been resolved" in html and "no ranking of forecasters" in html
+              and "With a stated probability q" not in html)
+        check("METHOD: dates distinguish sourced recording dates, ranges, and publication upper bounds",
+              h2.count("The timeline uses a sourced recording date when available") == 3
+              and "last day of a sourced date range" in h2
+              and "An upload or publication date alone is an upper bound" in h2
+              and "The statement date is the recording's publication date" not in h2)
 
         check("SCORE: the page reports the corpus figures from the file, not typed numbers",
               "8 of 9 past-due predictions" in h2 and "did so 1 time" in h2,
@@ -1365,6 +1384,25 @@ def main() -> int:
         want = [f2(PS.score(True, pp)["points"]) for pp in (0.9, 0.1)] + [f2(PS.score(False, pp)["points"]) for pp in (0.9, 0.1)]
         check("PRIOR: the worked example prints the scoring function's own numbers",
               bool(hb) and all(w in hb for w in want), f"{want} in {hb[-700:]}")
+        speaker_example = f"&minus;{abs(PS.score(True, 0.83, 0.80)['points']):.4f}"
+        check("RULES: visible explanation and Score help both explain the two rules and correct negative points",
+              h2.count("Without a stated probability</b>") == 2
+              and h2.count("With a stated probability q</b>") == 2
+              and h2.count("log&#8322;(q/p)") == 2
+              and h2.count("log&#8322;((1&minus;q)/(1&minus;p))") == 2
+              and h2.count("log&#8322;(0.80/0.83) = " + speaker_example) == 2
+              and "when it comes true" in hb and "less confident" in hb, hb)
+        check("RULES: zero expectation is qualified and both p and q clamps are explained",
+              "Expected points are zero when events occur at the baseline rate p" in hb
+              and "Matching the baseline (q = p) earns zero either way" in hb
+              and "Both p and q are held inside [0.01, 0.99]" in h2
+              and "no foresight is zero, whatever they predict" not in h2)
+        check("PRIOR: the model-memory limit remains explicit",
+              "still remember some events from its training, and nothing here removes that" in hb)
+        no_models = B.stage_models(json.loads(scores.read_text()), str(scores), {"alan"})
+        check("PRIOR: model attribution counts only the listed people's scored calls",
+              not no_models["prior"] and not no_models["resolve"] and no_models["prior_unverified"] == 0,
+              str(no_models))
         nodir = td / "nodir.json"
         ndoc = json.loads(scores.read_text())
         ndoc["run_dirs"] = [str(td / "no-such-run")]

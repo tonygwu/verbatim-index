@@ -56,7 +56,7 @@ def main() -> int:
         td = Path(t)
         pred = td / "predictions"
         (pred / "dora").mkdir(parents=True)
-        q = lambda sid: f"we will ship the {sid.replace('-', ' ')} widget"  # noqa: E731
+        q = lambda sid: ("there is an 80% chance " if sid == "stated" else "") + f"we will ship the {sid.replace('-', ' ')} widget"  # noqa: E731
         spec = [  # sid, srec kwargs
             ("imp-scored", dict(target=None, horizon="none", upload="20210301", claim="Acme will acquire Widgetco.")),
             ("imp-open", dict(target=None, horizon="none", claim="Acme will acquire Gizmoco.")),
@@ -70,7 +70,8 @@ def main() -> int:
             ("wd-open", dict(target="2030", target_text="by 2030")),
             ("lead-fc", dict(target="2025-03-20", target_text="this month")),
             ("lead-ann", dict(target="2025-03-25", target_text="this month")),
-            ("stated", dict(target="2025-10", target_text="by October")),
+            ("stated", dict(target="2025-10", target_text="by October", conf={"type": "explicit_probability",
+                             "probability": 0.80, "verbatim_confidence_language": "80%"})),
             # Not yet due, said 46 days before their deadline: the lead test decides them before they fall due.
             ("lead-open-new", dict(target="2026-10", target_text="next month", upload="20260915")),
             ("lead-open-fc", dict(target="2026-10", target_text="next month", upload="20260915")),
@@ -126,6 +127,8 @@ def main() -> int:
         for sid in ("imp-scored", "pub", "pub-rev", "wd", "lead-fc", "lead-ann", "stated"):
             side(board, sid, "resolve", dl[sid])
             side(board, sid, "prior", dl[sid])
+        # A correct forecast can lose points when its stated confidence is below the baseline.
+        side(board, "stated", "prior", dl["stated"], p=0.83, p_raw=0.83)
         side(board, "pub", "resolve", dl["pub"], policy_release=REL, already_public={
             "date": "2025-02-20", "where": "https://example.com/already", "what_it_shows": "the launch date was set"})
         # The same report against an UPLOAD date proves nothing about the day of speech: scored, sent to review.
@@ -195,6 +198,21 @@ def main() -> int:
 
         print("the lead test on records not yet due (review 2026-09-30, item 12c)")
         sdoc = json.loads((pred / "scores.json").read_text())
+        stated_score = next(r for r in sdoc["predictions"] if r["prediction_id"] == pid["stated"])
+        check("RULES: a correct 80% forecast against an 83% baseline renders the scorer's negative points",
+              stated_score["rule"] == "speaker_probability" and stated_score["points"] == -0.0531
+              and pub["stated"]["probability"] == 0.80 and pub["stated"]["outcome"]["p"] == 0.83
+              and pub["stated"]["outcome"]["points"] == -0.0531
+              and "log&#8322;(0.80/0.83) = &minus;0.0531" in page)
+        check("METHOD: scored coverage includes early calls and the current lead and date policies",
+              "6 predictions have a sourced outcome and a baseline probability" in page
+              and "5 of 8 past-due predictions carry a score" in page
+              and "less than 60 days before its deadline can still qualify" in page
+              and "forecast about the world or the speaker's own results" in page
+              and "Announcements of the speaker's own plans, relayed claims and records awaiting that label stay out" in page
+              and "an earlier report against an upload date, publication date or date range alone" in page
+              and "Conditional, ordering, recurring and event-anchored claims receive no implied window" in page
+              and "<b>Scored</b>: past due" not in page)
         check("LABELS: scores.json carries every lead-test label it read, due or not",
               (sdoc.get("lead_test_labels") or {}).get(pid["lead-open-fc"]) == "world_forecast"
               and sdoc["lead_test_labels"].get(pid["lead-open-ann"]) == "own_plan_announcement"
@@ -265,6 +283,18 @@ def main() -> int:
               st["pub-rev"]["state"] == "scored" and "review" in (st["pub-rev"]["verdict_note"] or "")
               and pub["pub-rev"].get("already_public", {}).get("date") == "2025-02-20",
               json.dumps(st["pub-rev"])[:400])
+        # The same review state can arise from a sourced range or a two-model date,
+        # not just a publication/upload date. Exercise card text on both bases.
+        B = load("build_predictions_site")
+        for basis, first in (("source_check", "2025-02-25"), ("two_agent_agreement", "2025-03-01")):
+            dated_rec = json.loads(json.dumps(recs["pub-rev"]))
+            dated_rec["source"]["statement_date_basis"] = "sourced_override"
+            dated_rec["source"]["statement_date_override"] = {
+                "statement_date_earliest": first, "statement_date": "2025-03-01", "confirmed_by": basis, "verdict": "dated"}
+            card_state = dict(st["pub-rev"], trend_years=None, already_public=pub["pub-rev"]["already_public"])
+            text = B.state_words(card_state, dated_rec, None, True)["verdict_note"]
+            check(f"CARD: {basis} review does not claim the date is an upload or publication",
+                  "not established as an exact day" in text and "upload or publication date" not in text, text)
         check("CARD: a withdrawn prediction gives the reason and the detail, with the evidence on the record",
               "Withdrawn" in st["wd"]["line"] and "not a forecast" in st["wd"]["line"]
               and pub["wd"].get("withdrawn", {}).get("evidence") == ["https://example.com/news"], st["wd"]["line"])
