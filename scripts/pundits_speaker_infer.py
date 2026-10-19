@@ -9,10 +9,10 @@ model is unsure about instead of all 104. So:
            venue) plus a confidence. Written to its own file, never into the
            human labels file. --set picks the recordings: the 104-row pilot, or
            the 218-row P6b checklist of the other 29 people.
-  review   compares every draft with the operator's labels where both exist
-           (agreement per field is the calibration), and lists the rows a
-           person should still check: confidence below high, subject absent,
-           or any disagreement with an existing human label.
+  review   compares every draft with the operator's blind answers where both
+           exist (the calibration), and lists the rows a person should still
+           check: confidence below high, subject absent, or any disagreement
+           with an existing human label.
 
 A draft is not a human label. When drafts are merged into the labels file for
 rows nobody reviewed, each carries `drafted_by_model: true` and `checked_by`

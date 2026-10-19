@@ -169,6 +169,16 @@ def main() -> int:
                               "answers_before_draft": {**blind, "venue": "solo"}}})
         kept = json.loads(answers.read_text())["labels"]["p/b"]
         check("the first blind answers stored win over a later copy", kept.get("answers_before_draft") == blind, str(kept))
+        # A label marked draft_shown with no blind copy (the older page marked every
+        # save) has no blind answers; a copy sent later would hold assisted ones.
+        assisted = {"key": "p/a", "subject_present": True, "venue": "reaction", "political_content": True,
+                    "checked_by": "operator"}
+        post(base, {"kind": "labels", "id": "p/a", "value": {**assisted, "draft_shown": "claude-fable-5-1"}})
+        post(base, {"kind": "labels", "id": "p/a", "value": {**assisted, "draft_shown": "claude-fable-5-1",
+                                                             "answers_before_draft": blind}})
+        kept = json.loads(answers.read_text())["labels"]["p/a"]
+        check("a label marked draft_shown with no blind answers never gains any",
+              kept.get("draft_shown") == "claude-fable-5-1" and "answers_before_draft" not in kept, str(kept))
 
         print("\n[DERIVED]")
         before = answers.read_text()

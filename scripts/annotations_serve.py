@@ -42,8 +42,17 @@ STICKY_LABEL_FIELDS = ("draft_shown", "answers_before_draft")
 
 
 def keep_assisted(value: dict, stored: dict | None) -> dict:
-    """`value`, with any sticky field the stored label already has."""
-    return {**value, **{f: stored[f] for f in STICKY_LABEL_FIELDS if stored and f in stored}}
+    """`value`, with any sticky field the stored label already has.
+
+    A stored label marked draft_shown with no blind answers has none to keep: the
+    older page marked every save. A copy sent later would hold answers given with
+    the draft on screen, so it is dropped.
+    """
+    stored = stored or {}
+    new = {**value, **{f: stored[f] for f in STICKY_LABEL_FIELDS if f in stored}}
+    if stored.get("draft_shown") and "answers_before_draft" not in stored:
+        new.pop("answers_before_draft", None)
+    return new
 
 
 class Mounted:

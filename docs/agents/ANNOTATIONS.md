@@ -232,8 +232,15 @@ three at once, from a clone that has both data checkouts:
   was confident" is one where the model judged, with high confidence, that the
   subject is present and the main speaker. Hiding that would mean giving up the
   check-first order, so calibration reports presence agreement for that section
-  separately (`subject_present_by_section`). Format and political content do not
-  leak.
+  separately (`subject_present_by_section`). The split goes by the draft's section,
+  not by what the person saw: a label saved before the drafts existed (all 11 p6b
+  labels, 2026-09-20) never saw a section, so only labels saved on a drafts page say
+  anything about the hint. Format and political content do not leak.
+- `changed_after_draft` compares the final answer with the blind one, so it counts
+  net change: a change and a change back count as none. It names "to the model"
+  against the drafts `review` reads, so it means what it says only for the model
+  whose draft was on screen (`draft_shown` names it), not for `review --model`
+  run on another model's drafts.
 - The page sends a whole label on each save. A second tab still showing an older
   copy of a recording replaces that label's answers with its own when it saves;
   only `draft_shown` and `answers_before_draft` are protected. Keep one tab per

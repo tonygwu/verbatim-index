@@ -169,22 +169,30 @@ def main() -> int:
           cal8["changed_after_draft"]["labels"] == 4
           and cal8["changed_after_draft"]["venue"] == {"changed": 4, "to_model": 4}
           and cal8["changed_after_draft"]["subject_present"] == {"changed": 0, "to_model": 0}, str(cal8))
-    cal10 = S.calibration({"a": model}, {"a": {**blind_ok, "venue": "solo", "draft_shown": "claude-fable-5-1",
-                                                "answers_before_draft": blind_ok}})
-    check("a change away from the model's answer is counted as a change, not as one to the model",
-          cal10["changed_after_draft"]["venue"] == {"changed": 1, "to_model": 0} and cal10["venue"] == {"agree": 1, "of": 1},
-          str(cal10))
+    cal10 = S.calibration({"a": model}, {"a": {**blind_ok, "venue": "solo", "political_content": False,
+                                                "draft_shown": "claude-fable-5-1", "answers_before_draft": blind_ok}})
+    check("a change away from the model's answer is counted as a change, not as one to the model, for format "
+          "and for political content",
+          cal10["changed_after_draft"]["venue"] == {"changed": 1, "to_model": 0}
+          and cal10["changed_after_draft"]["political_content"] == {"changed": 1, "to_model": 0}
+          and cal10["venue"] == {"agree": 1, "of": 1}, str(cal10))
     check("political content is calibrated like the other answers",
           cal8["political_content"] == {"agree": 10, "of": 10, "draft_missing": 0}, str(cal8))
     unsure = {**model, "confidence": "medium"}
-    cal9 = S.calibration({"c": model, "u": unsure, "x": {k: v for k, v in model.items() if k != "political_content"}},
-                         {"c": blind_ok, "u": {**blind_ok, "subject_present": False}, "x": blind_ok})
+    # Confident but absent: the page lists it under Check first, as needs_review does.
+    absent_sure = {**model, "subject_present": False}
+    cal9 = S.calibration({"c": model, "u": unsure, "a": absent_sure,
+                          "x": {k: v for k, v in model.items() if k != "political_content"}},
+                         {"c": blind_ok, "u": {**blind_ok, "subject_present": False},
+                          "a": {**blind_ok, "subject_present": False}, "x": blind_ok})
     check("presence is also reported for the page's 'Model was confident' section alone, which hints the model's "
-          "answer, and for the rest",
-          cal9["subject_present_by_section"] == {"model_confident": {"agree": 2, "of": 2}, "check_first": {"agree": 0, "of": 1}},
+          "answer, and for the rest; a confident draft that needs review is in the rest",
+          cal9["subject_present_by_section"] == {"model_confident": {"agree": 2, "of": 2}, "check_first": {"agree": 1, "of": 2}},
           str(cal9.get("subject_present_by_section")))
     check("a draft with no political_content is counted as missing, not compared",
-          cal9["political_content"] == {"agree": 2, "of": 2, "draft_missing": 1}, str(cal9["political_content"]))
+          cal9["political_content"] == {"agree": 3, "of": 3, "draft_missing": 1}, str(cal9["political_content"]))
+    check("high-confidence agreement is also counted on the blind answers",
+          cal8["high_confidence"] == {"rows": 10, "all_three_agree": 6}, str(cal8["high_confidence"]))
 
     print("\n[SETS]")
     import tempfile

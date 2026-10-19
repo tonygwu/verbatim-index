@@ -130,8 +130,10 @@ def answered(field: dict, value) -> bool:
 def to_labels(docs: list[dict], keys, checklist: dict) -> dict:
     """Complete checklist answers, in the shape `pundits_pilot.py report` reads.
 
-    Refuses a document whose key is not on the checklist, and reports rather than
-    guesses a missing field: a partly answered recording is left out, not filled.
+    Refuses a document whose key is not on the checklist, and one whose
+    answers_before_draft is not a complete, valid set beside draft_shown. Reports
+    rather than guesses a missing field: a partly answered recording is left out,
+    not filled.
     """
     fields = checklist["fields"]
     required = [f for f in fields if f.get("required")]

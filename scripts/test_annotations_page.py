@@ -456,7 +456,9 @@ def main() -> int:
           and post.get("value", {}).get("subject_present") is True and "draft_shown" not in post["value"],
           str(r["posts"]))
     full = {"subject_present": False, "venue": "solo", "political_content": True}
-    rv = run_page(rows, {"labels": {"p/absent": full}, "attribution": {}}, start="p/absent")
+    # Notes and bookkeeping beside the answers, so the blind copy must pick the answers alone.
+    rv = run_page(rows, {"labels": {"p/absent": {**full, "notes": "n0", "checked_by": "operator", "key": "p/absent"}},
+                         "attribution": {}}, start="p/absent")
     check("once every question has an answer the draft shows, with its reasons, evidence and a model tag "
           "on each drafted answer",
           "<b>Model draft</b>" in rv["detail"] and "Model draft hidden" not in rv["detail"]
