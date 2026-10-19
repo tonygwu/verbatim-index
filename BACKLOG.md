@@ -622,7 +622,9 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ---
 
-### VI-28. The second source pass for the thin predictions people is not run  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: the operator asks for the second pass; spends credit, Codex and subscription quota]`
+### VI-28. The second source pass for the thin predictions people is not run  `[difficulty: xhigh]`  `[filed: 2026-10-18]`
+
+The operator asked for the second pass on 2026-10-19, after VI-23 is fixed ("run a second source search for the thinnest people, but fix VI-23 first"). Start it only once VI-23 is on origin/main.
 
 **Background:** Any push-role clone can do this. Runners-up cut by the 6-source cap of the 2026-10-18 discovery are in each `findings/<slug>.json` of `data/predictions/_experiments/thin-supplement-20261018/` (reed-hastings 4 Netflix earnings calls, tim-cook 4, larry-ellison 4, tom-lee 2 plus about 30 CNBC episodes). The discovery sub-agents shared one web-search budget and ran out early, so most people were searched thinly; `BRIEF.md` lacks the generic User-Agent line that the run's README asks for. Credit at 2026-10-18T13:00Z (`quotapick credits --json`): pool a $169.08 (expires 2026-11-16), b $16.83 (2026-11-11), e $2.46 (2026-11-10); pool c's second grant, $93.71 at 05:51Z, expires 2026-11-20 and is NOT recorded in quotapick (`quotapick credits grant` adds it). `NOTES.md` in that folder is the worked example for every stage.
 
