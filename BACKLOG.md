@@ -622,7 +622,7 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ---
 
-### VI-28. The second source pass for the thin predictions people is not run  `[difficulty: xhigh]`  `[filed: 2026-10-18]`
+### VI-28. The second source pass for the thin predictions people is not run  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
 
 The operator asked for the second pass on 2026-10-19, after VI-23 is fixed ("run a second source search for the thinnest people, but fix VI-23 first"). Start it only once VI-23 is on origin/main.
 
