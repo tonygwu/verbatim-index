@@ -200,6 +200,9 @@ def build(args) -> int:
                          "this tool; adopt it with `annotations.py migrate` first, then build")
     previous = Session.open(out) if (out / MANIFEST).exists() else None
     files = dict(previous.manifest["files"]) if previous else dict(DEFAULT_FILES)
+    # The export files `migrate` found describe the page it adopted; a new build
+    # re-selects quotes (and tags them with a project), so they no longer apply.
+    files.pop("exports", None)
     name = args.name or (previous.name if previous else out.resolve().name)
     if not NAME.fullmatch(name):
         raise SystemExit(f"REFUSING: session name {name!r} must match {NAME.pattern}")

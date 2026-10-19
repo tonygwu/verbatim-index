@@ -81,6 +81,7 @@ setTimeout(() => {
   const projects = nodes.projects && !nodes.projects.hidden ? nodes.projects.innerHTML : "";
   const keyhelp = nodes.keyhelp && nodes.keyhelp.innerHTML, count = nodes.count && nodes.count.textContent;
   const status = nodes.status && nodes.status.textContent;
+  const allPressed = String(nodes["f-all"] && nodes["f-all"]["aria-pressed"]);
   let picked = "";
   if (PICK && nodes.projects && nodes.projects.onclick) {
     nodes.projects.onclick({target: {closest: () => ({dataset: {project: PICK}})}});
@@ -91,7 +92,7 @@ setTimeout(() => {
     picked = nodes.list.innerHTML;
   }
   if (keydown) keydown({key: "y", target: {tagName: "BODY", closest: () => null}, preventDefault() {}});
-  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp, count, picked, status})), 20);
+  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp, count, picked, status, allPressed})), 20);
 }, 20);
 """
 
@@ -120,7 +121,7 @@ def run_page(rows: list[dict], saved: dict | None = None, sess: dict | None = No
         return {"list": "", "detail": "", "posts": [], "threw": n.stderr[-400:]}
     out = json.loads(n.stdout.strip().splitlines()[-1])
     return {k: out.get(k) or ("" if k != "posts" else []) for k in
-            ("list", "detail", "posts", "threw", "projects", "keyhelp", "count", "picked", "status")}
+            ("list", "detail", "posts", "threw", "projects", "keyhelp", "count", "picked", "status", "allPressed")}
 
 
 def pundits_data(td: Path, transcripts: dict, roster: list[dict]) -> Path:
@@ -142,11 +143,11 @@ def pundits_data(td: Path, transcripts: dict, roster: list[dict]) -> Path:
     return root
 
 
-def build_pundits(root: Path, checklist: dict, drafts: Path | None = None, mode=None) -> str:
+def build_pundits(root: Path, checklist: dict, drafts: Path | None = None, mode=None, grades: bool = False) -> str:
     import annotations as C
     (root.parent / "c.json").write_text(json.dumps(checklist))
     C.build(SimpleNamespace(project=["pundits"], data=str(root), out=str(root / "session"), name=None, keys=None,
-                            reasons=None, cap=None, checklist=str(root.parent / "c.json"), grades=False,
+                            reasons=None, cap=None, checklist=str(root.parent / "c.json"), grades=grades,
                             drafts=str(drafts) if drafts else None, mode=mode, allow_off_page=False))
     return (root / "session" / "annotations.html").read_text()
 
@@ -362,6 +363,15 @@ def main() -> int:
         page = build_pundits(root, cl, td / "d.jsonl")
         got = {r["key"]: r for r in page_data(page)["rows"]}
         man = json.loads((root / "session" / "manifest.json").read_text())
+        gdir = root / "grades" / "j" / "p"
+        gdir.mkdir(parents=True)
+        (gdir / "conf__j__blinded__r0.json").write_text(json.dumps({
+            "leader_slug": "p", "source_id": "conf", "judge": "j", "mode": "blinded", "run": 0,
+            "grade": {"dimensions": {"d1": {"evidence": []}}}}))
+        build_pundits(root, cl, td / "d.jsonl", grades=True)
+        gman = json.loads((root / "session" / "manifest.json").read_text())
+        check("with --grades every grade file read is pinned in inputs_sha256",
+              "grades/j/p/conf__j__blinded__r0.json" in gman["inputs_sha256"], str(sorted(gman["inputs_sha256"])[:6]))
         check("a session that shows model drafts is not blind, and the drafts file is pinned",
               man["blind"] is False and "d.jsonl" in man["inputs_sha256"], str((man["blind"], sorted(man["inputs_sha256"])[:3])))
         try:
@@ -496,7 +506,7 @@ def main() -> int:
           cap["threw"] == "" and "QUOTE-I" not in cap["detail"] and "Correct the captions of this recording" in cap["detail"]
           and cap["count"] == "0 of 1 recordings have caption corrections" and 'data-k="p/q"' in cap["list"]
           and "nothing else to answer" in cap["status"] and "0 of 1 corrected" in cap["list"]
-          and "quotes answered" not in cap["list"],
+          and "quotes answered" not in cap["list"] and cap["allPressed"] == "true",
           f"{cap['threw']} {cap['count']!r} {cap['status']!r} {cap['list'][:160]}")
     capd = run_page([], sess=session(("insights",), ("captions",)), quote_rows=[{**qrow, "projects": ["insights"]}], filt="done")
     check("and its Done filter lists nothing, because nothing in it can be done",

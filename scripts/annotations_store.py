@@ -156,12 +156,12 @@ def manifest_errors(manifest: dict) -> list[str]:
     """Everything wrong with a version-2 manifest; empty when it is sound."""
     if not isinstance(manifest, dict):
         return ["the manifest is not an object"]
+    if manifest.get("schema_version") != SCHEMA_VERSION or manifest.get("tool") != "annotations":
+        return [f"this is not a version-{SCHEMA_VERSION} annotations manifest (schema_version "
+                f"{manifest.get('schema_version')!r}); adopt the session with `annotations.py migrate`"]
     errs = [f"missing `{k}`" for k in REQUIRED if k not in manifest]
     if errs:
         return errs
-    if manifest["schema_version"] != SCHEMA_VERSION or manifest["tool"] != "annotations":
-        errs.append(f"schema_version {manifest['schema_version']!r} / tool {manifest['tool']!r} is not "
-                    f"{SCHEMA_VERSION} / 'annotations'; adopt it with `annotations.py migrate`")
     if not manifest["projects"] or set(manifest["projects"]) - set(PROJECTS):
         errs.append(f"projects {manifest['projects']} must be a non-empty subset of {sorted(PROJECTS)}")
     if not manifest["modes"] or set(manifest["modes"]) - set(MODES):

@@ -129,6 +129,9 @@ def main() -> int:
         sidecars = sha(sidecar_path(s / "speaker_check.html", "jane-roe/talk-1"))
 
         print("\n[MIGRATE]")
+        code, out = run(["verify", "--session", str(s)])
+        check("opening a session that still has its version-1 manifest says to migrate it",
+              code != 0 and "annotations.py migrate" in out and "missing" not in out, out)
         code, out = run(["migrate", "--session", str(s)])
         changed = git(root, "status", "--porcelain").split()
         check("migrate adopts the session", code == 0, out)
@@ -225,6 +228,15 @@ def main() -> int:
         check("and with it, adopts the session", code == 0 and json.loads(
             (bare / "manifest.json").read_text())["projects"] == ["predictions"], out)
 
+        print("\n[MIGRATE a checklist page]")
+        cl = root / "cl"
+        (cl / "speaker_check.transcripts").mkdir(parents=True)
+        cl_data = {"rows": [{"key": "p/a"}], "quote_rows": [], "venues": ["solo", "debate"], "transcript_index": {}}
+        (cl / "speaker_check.html").write_text("<script>\nconst D = " + page_payload(cl_data) + ";\n</script>\n")
+        code, out = run(["migrate", "--session", str(cl), "--project", "pundits"])
+        check("a checklist page whose venues differ from the pundits spec is refused, not adopted",
+              code != 0 and "venues" in out and not (cl / "manifest.json").exists(), out)
+
     with tempfile.TemporaryDirectory() as td:
         loose = Path(td) / "loose"
         loose.mkdir()
@@ -311,6 +323,17 @@ def main() -> int:
               code != 0 and "would cover other words" in out, out)
         check("and nothing was written", all((shift / f).read_bytes() == b for f, b in before.items()))
         g.write_bytes(g_orig)
+        page_bytes = (shift / "annotations.html").read_bytes()
+        contra = json.loads((shift / "human_answers.json").read_text())
+        q0 = next(iter(contra["attribution"]))
+        contra["attribution"][q0]["answer"] = "other"
+        (shift / "human_answers.json").write_text(json.dumps(contra, indent=1) + "\n")
+        (shift / "annotations.html").unlink()
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(shift)])
+        check("with no old page to compare, a stored quote result the new page would change refuses the build",
+              code != 0 and "change their result" in out and q0 in out, out)
+        (shift / "annotations.html").write_bytes(page_bytes)
         legacy_dir = lead / "unmigrated"
         legacy_dir.mkdir()
         (legacy_dir / "human_answers.json").write_text('{"labels": {}, "attribution": {}}\n')
@@ -318,6 +341,19 @@ def main() -> int:
                          "--out", str(legacy_dir)])
         check("a folder with answers but no version-2 manifest is refused until it is migrated",
               code != 0 and "migrate" in out and sorted(p.name for p in legacy_dir.iterdir()) == ["human_answers.json"], out)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            C.main(["export", "quotes", "--session", str(lead / "shift"), "--out", str(lead / "shift" / "quote_results.json")])
+        man = json.loads((lead / "shift" / "manifest.json").read_text())
+        man["files"]["exports"] = {"quotes": "quote_results.json"}
+        (lead / "shift" / "manifest.json").write_text(json.dumps(man))
+        page_doc = json.loads((lead / "shift" / "human_answers.json").read_text())
+        page_doc["attribution"][q0]["answer"] = "subject"
+        (lead / "shift" / "human_answers.json").write_text(json.dumps(page_doc, indent=1) + "\n")
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(lead / "shift")])
+        check("a new build drops the export files an adopted page listed, since its quote key changes",
+              code == 0 and "exports" not in json.loads((lead / "shift" / "manifest.json").read_text())["files"], out)
 
         print("\n[FLAGS]")
         code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",

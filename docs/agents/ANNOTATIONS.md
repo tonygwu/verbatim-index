@@ -144,16 +144,26 @@ and `test_play_time.py`.
 
 ## The sessions on disk
 
-| Session | Data repo, path | Project | Answers sha256 on 2026-10-18 | Contents |
+| Session name | Data repo, path | Project | Answers sha256 | State |
 |---|---|---|---|---|
-| `leaders` | leaders data, `predictions/_experiments/speaker-audit-20260927/leaders` | insights | `4a505bc4…3853` | 5 recordings, 30 quote results, 37 ranges, 2 corrected recordings |
-| `predictions` | leaders data, `predictions/_experiments/speaker-audit-20260927/predictions` | predictions | `e7cb1c41…b27c` | 5 recordings, 9 quote results, 22 ranges, 2 corrected recordings |
-| `p6b` | pundits data, `logs/p6b` | pundits | `2e2327ff…e6e3` | 239 recordings, 11 checklist labels, 6 quote results, 11 ranges, 1 corrected recording |
+| `insights-20260927` | leaders data, `predictions/_experiments/speaker-audit-20260927/leaders` | insights | `4a505bc4…3853` | migrated and rebuilt 2026-10-18 (data `e4a68376`): 5 recordings, 30 quote results, 37 ranges, 2 corrected recordings |
+| `predictions-20260927` | leaders data, `predictions/_experiments/speaker-audit-20260927/predictions` | predictions | `e7cb1c41…b27c` | migrated and rebuilt 2026-10-18 (data `e4a68376`): 5 recordings, 9 quote results, 22 ranges, 2 corrected recordings |
+| `p6b` | pundits data, `logs/p6b` | pundits | `2e2327ff…e6e3` | not yet migrated (BACKLOG.md VI-40, repo-3's lane): 239 recordings, 11 checklist labels, 6 quote results, 11 ranges, 1 corrected recording |
 
-The pundits session is repo-3's to migrate, because the pundits data repository
-is owner-only. Its migration was proven on a copy on 2026-10-18 (every `verify`
-check passed before and after `rebuild`); the command is in the backlog item
-that carries it.
+Both leaders-data sessions passed every `verify` check, with `--data data`, before
+and after the rebuild; their answers, sidecars and keys are byte-identical to the
+pre-migration files. The pundits session is repo-3's to migrate, because the
+pundits data repository is owner-only. Its migration was proven on a copy on
+2026-10-18 (every check passed before and after `rebuild`, and with `--data`
+against repo-3's `data-pundits`); VI-40 carries the command and the expected
+counts. To annotate all three at once:
+
+```
+.venv/bin/python scripts/annotations.py serve \
+    --session data/predictions/_experiments/speaker-audit-20260927/leaders \
+    --session data/predictions/_experiments/speaker-audit-20260927/predictions \
+    --session data-pundits/logs/p6b      # once VI-40 has migrated it
+```
 
 ## Rules that exist because something broke
 
