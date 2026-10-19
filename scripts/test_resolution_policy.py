@@ -44,7 +44,7 @@ import test_predictions_release23 as T23  # noqa: E402 -- builds records the way
 
 FAILED = []
 
-PINNED_RELEASE = ("resolution-2026-10-11", "599e9e939b6dea51c0ca21c9bfa63cd04577a13f392e2144454168217fe52979")
+PINNED_RELEASE = ("resolution-2026-10-19", "8709e7124d9cce90d56581a64131dec68f2f7e87daccceb565a259d24c60756b")
 
 
 def check(label, ok, detail=""):

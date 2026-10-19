@@ -126,7 +126,7 @@ PRIOR_SCHEMA = {
 # What each stage is allowed to see
 # ---------------------------------------------------------------------------
 
-def prompt_facts(rec: dict, deadline: "dt.date | None") -> dict:
+def prompt_facts(rec: dict, deadline: "dt.date | None", *, release: str | None = None) -> dict:
     """The fields BOTH stages may read, pulled off the record in one place.
 
     Nothing here touches `rec["resolution"]` or any sidecar. Adding a field is a
@@ -168,7 +168,7 @@ def prompt_facts(rec: dict, deadline: "dt.date | None") -> dict:
         "category": pred.get("category") or "",
         # Authored here, from the record's own fields, and identical in every stage
         # that reads prompt_facts. Empty for a record with no trigger.
-        "judged": judged_block(rec),
+        "judged": judged_block(rec, release=release),
     }
 
 
@@ -190,6 +190,7 @@ _NUM = (r"(?:\$|US\$|€|£)?(?:\d|one\b|two\b|three\b|four\b|five\b|six\b|seven
         r"thirty\b|forty\b|fifty\b|a hundred|a thousand|a million|a billion|half\b|a third|a quarter)")
 _FIGURE = (r"\b(?:revenue|revenues|sales|profit|profits|profitable|profitability|margin|margins|earnings|income|"
            r"EBITDA|cash flow|growth|GDP|bookings|shipments|deliveries|share of)\b")
+PRE_SEQUENCE_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11")
 JUDGED_RULES = {
     "implied": {
         "text": ("AN IMPLIED WINDOW. The speaker named no date. This pipeline judges the claim over a fixed "
@@ -216,6 +217,28 @@ JUDGED_RULES = {
                  "not merely the end state. Everything released at once, early or late, meets the end state "
                  "and breaks the schedule."),
     },
+    "sequence": {
+        "fields": ["quote", "claim", "criterion"],
+        # Event order, not an ordinary absolute deadline or a cohort label such
+        # as "post-Kickstarter". Limit the event search to this clause.
+        "pattern": (r"\b(?:before|after|prior to)\s+"
+                    r"(?!(?:(?:the\s+)?(?:end|start|beginning)\s+of\b|\d|"
+                    r"January\b|February\b|March\b|April\b|May\b|June\b|July\b|August\b|"
+                    r"September\b|October\b|November\b|December\b|"
+                    r"(?:the\s+)?(?:deadline|year|month|quarter|week|day)\b))"
+                    r"(?=[^.!?;\n]{0,120}\b(?:ships?|shipped|shipping|shipments?|"
+                    r"launch(?:es|ed|ing)?|releas(?:e[sd]?|ing)|deliver(?:s|ed|ing|ies|y)?|"
+                    r"complet(?:e[sd]?|ing|ion)|fulfil(?:l(?:s|ed|ing|ment)?|s|led|ling|ment)?|"
+                    r"starts?|started|starting|begins?|began|beginning|ends?|ended|ending)\b)"),
+        "text": ("A STATED SEQUENCE. Preserve every material condition in the speaker's words: "
+                 "before or after another event, all rather than some, and any stated time window "
+                 "such as late April. Judge and price the whole conjunction. One shipment by a "
+                 "deadline cannot stand in for shipments in the stated window after the stated "
+                 "earlier milestone is complete. Dispatch and delivery are different milestones. "
+                 "An announcement of access alone does not establish access "
+                 "before shipments. The quote is the authority if a recorded claim or criterion "
+                 "drops a condition; do not silently replace the sequence with eventual availability."),
+    },
     "period": {
         "fields": ["claim", "criterion"],
         "pattern": (r"(?=[\s\S]*" + _FIGURE + r")[\s\S]*\b(?:fiscal|FY\s?'?\d{2,4}|full[- ]year|annual|"
@@ -238,7 +261,7 @@ JUDGED_RULES = {
 _JUDGED_RE = {k: re.compile(v["pattern"], re.I) for k, v in JUDGED_RULES.items() if "pattern" in v}
 
 
-def judged_block(rec: dict) -> str:
+def judged_block(rec: dict, *, release: str | None = None) -> str:
     """The HOW THIS RECORD IS JUDGED text for one record, or '' when no rule applies.
 
     Pure: reads the record's own fields and `_implied`, the implied-window row
@@ -254,7 +277,9 @@ def judged_block(rec: dict) -> str:
         why = (f"from the speaker's words '{imp['matched']}'" if imp.get("matched")
                else "the claim is about " + row.split(": ", 1)[1])
         out.append(JUDGED_RULES["implied"]["text"].format(window=imp["window_words"], why=why))
-    for key in ("approximate", "pace", "period"):
+    for key in ("approximate", "pace", "sequence", "period"):
+        if key == "sequence" and release in PRE_SEQUENCE_RELEASES:
+            continue
         if any(_JUDGED_RE[key].search(fields[f]) for f in JUDGED_RULES[key]["fields"]):
             out.append(JUDGED_RULES[key]["text"])
     fy = JUDGED_RULES["fiscal"]
@@ -333,7 +358,10 @@ ALREADY_PUBLIC_NOT_A_PRECURSOR = (
     "   several); a related but different product, capability or measure (a one-off\n"
     "   figure that is not the measure the prediction names); a vision or aim with no\n"
     "   decision behind it; and a forecast, by anyone and the speaker included, that\n"
-    "   reports no decision, agreement or schedule.\n")
+    "   reports no decision, agreement or schedule. The report must establish the FULL\n"
+    "   claim, including its time window, sequence, and quantities such as all rather\n"
+    "   than some. Announcing access does not establish access before shipments; a\n"
+    "   schedule for a different shipping month does not establish a revised window.\n")
 
 RESOLVER_TASK = """You are resolving a dated public prediction. Decide whether the thing
 described by the resolution criterion actually happened by the deadline.
@@ -671,13 +699,15 @@ the same thing, price that thing.
 """
 
 
-def build_prior_prompt(rec: dict, deadline: dt.date) -> str:
+def build_prior_prompt(rec: dict, deadline: dt.date, *, release: str | None = None) -> str:
     """Blind by construction: it reads `prompt_facts`, which cannot see a resolution.
 
     There is deliberately no `today` argument. Telling this stage the current date
     invites it to reason forward to what it knows happened since.
+    `release` reconstructs a historical prompt for the scorer's hash check only;
+    callers making new priors always use the current policy and repaired criterion.
     """
-    f = prompt_facts(rec, deadline)
+    f = prompt_facts(rec, deadline, release=release)
     task = PRIOR_TASK + (PRIOR_TREND_RULE if str(rec.get("_basis") or "").startswith("trend") else "")
     return (f"{task}\n{'=' * 70}\n{_block(f)}{'=' * 70}\n\n"
             f"Stand on {f['statement_date']}. Answer with the JSON object now.\n")
@@ -1165,6 +1195,10 @@ def load_repairs(root: Path) -> dict[str, dict]:
         pid = obj["prediction_id"]
         if pid in out:
             raise ValueError(f"duplicate repair for {pid}: {fp}")
+        answer = {key: obj[key] for key in REPAIR_SCHEMA["properties"] if key in obj}
+        errors = L.check_schema(answer, REPAIR_SCHEMA) + validate_repair(answer, pid)
+        if errors:
+            raise ValueError(f"invalid criteria repair {fp}: {'; '.join(errors)}")
         out[pid] = obj
     return out
 
@@ -1180,6 +1214,10 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
         rep = repairs.get(r["prediction_id"])
         if not rep:
             continue
+        if ("criterion_original" in rep
+                and rep["criterion_original"] != r["prediction"]["resolution_criteria"]):
+            raise ValueError(f"stale criteria repair for {r['prediction_id']}: criterion_original does not "
+                             "match the record's resolution_criteria")
         if rep["verdict"] == "repaired":
             r["prediction"]["resolution_criteria_original"] = r["prediction"]["resolution_criteria"]
             r["prediction"]["resolution_criteria"] = rep["criterion"]
@@ -1211,11 +1249,13 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # resolution-2026-10-11 (VP-32): an already-public report must show the predicted event itself, never a
 # precursor; text added to the resolver and early-call prompts only. The prior and lead-test prompts are
 # byte-identical to resolution-2026-09-30, so no prior priced under it goes stale.
-POLICY_RELEASE = ("resolution-2026-10-11", "599e9e939b6dea51c0ca21c9bfa63cd04577a13f392e2144454168217fe52979")
+# resolution-2026-10-19: full-claim equivalence includes event order, quantities
+# and time windows. Only records triggering the sequence rule change prior text.
+POLICY_RELEASE = ("resolution-2026-10-19", "8709e7124d9cce90d56581a64131dec68f2f7e87daccceb565a259d24c60756b")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.
-KNOWN_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11")
+KNOWN_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11", "resolution-2026-10-19")
 
 
 def _policy_fixture() -> dict:
@@ -1227,6 +1267,7 @@ def _policy_fixture() -> dict:
                    "context_before": "B", "context_after": "A"},
         "prediction": {"normalized_claim": "Revenue will be about 5 billion for fiscal 2020.",
                        "resolution_criteria": "Revenue for fiscal 2020 will be about 5 billion.",
+                       "resolution_criteria_original": "Revenue will be 5 billion.",
                        "target_date": "2020", "target_date_text": "this year", "category": "company_business",
                        "subject_control": "own"},
         "_implied": {"row": "words: soon", "window_words": "1 year", "matched": "soon"},
@@ -1239,9 +1280,14 @@ def _policy_parts() -> dict:
         "early_task": EARLY_TASK, "lead_test_task": LEAD_TEST_TASK, "lead_test_labels": list(LEAD_TEST_LABELS),
         "forecast_labels": list(FORECAST_LABELS),
         "judged_rules": JUDGED_RULES, "min_searches": MIN_SEARCHES, "leak_words": list(_LEAK_WORDS),
+        "pre_sequence_releases": list(PRE_SEQUENCE_RELEASES),
         "schemas": {"resolution": RESOLUTION_SCHEMA, "prior": PRIOR_SCHEMA, "early": EARLY_SCHEMA,
                     "lead_test": LEAD_TEST_SCHEMA},
         "block": _block(prompt_facts(_policy_fixture(), dt.date(2020, 12, 31))),
+        # A historical policy may omit later rules, never a newly repaired
+        # criterion. Pin that distinction as well as the current block.
+        "historical_repaired_block": _block(prompt_facts(_policy_fixture(), dt.date(2020, 12, 31),
+                                                        release=PRE_SEQUENCE_RELEASES[-1])),
     }
 
 

@@ -58,11 +58,13 @@ if isinstance(rule, str):
 check("the early-call prompt says a forecast is not enough, as the resolver's does",
       "another person's forecast, is not" in R.EARLY_TASK, R.EARLY_TASK[R.EARLY_TASK.find("ALREADY PUBLIC"):][:500])
 
-check("the release is resolution-2026-10-11", R.POLICY_RELEASE[0] == "resolution-2026-10-11", str(R.POLICY_RELEASE))
+check("the sequence release retains the precursor rule", R.POLICY_RELEASE[0] == "resolution-2026-10-19",
+      str(R.POLICY_RELEASE))
 check("the release hash matches the texts", R.policy_release()[1] == R.POLICY_RELEASE[1],
       f"{R.policy_release()[1]} vs {R.POLICY_RELEASE[1]}")
 check("the 2026-09-30 release stays known, so its sidecars still load",
-      R.KNOWN_RELEASES == ("resolution-2026-09-30", "resolution-2026-10-11"), str(R.KNOWN_RELEASES))
+      R.KNOWN_RELEASES == ("resolution-2026-09-30", "resolution-2026-10-11", "resolution-2026-10-19"),
+      str(R.KNOWN_RELEASES))
 
 prior = R.build_prior_prompt(R._policy_fixture(), dt.date(2020, 12, 31))
 check("the prior prompt is unchanged, so no existing prior turns stale",

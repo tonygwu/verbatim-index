@@ -264,6 +264,23 @@ def lead_labels_across(runs: list[Path], date_overrides: "dict | None" = None) -
     return out
 
 
+def repairs_across(runs: list[Path], date_overrides: "dict | None" = None) -> dict[str, dict]:
+    """Read the scorer's criterion overlays before any stage builds a prompt.
+
+    Repeated paths (the output run may already be scored) are read once; repairs
+    for one id in different runs are refused by the scorer's existing loader.
+    A repair under a replaced statement date is stale, as for resolutions.
+    """
+    from score_predictions import load_across  # local: the scorer imports select
+
+    def fresh(run):
+        return {pid: obj for pid, obj in R.load_repairs(run).items()
+                if (obj.get("transcript_id") not in (date_overrides or {})
+                    or obj.get("statement_date") == date_overrides[obj["transcript_id"]]["statement_date"])}
+
+    return load_across(list(dict.fromkeys(Path(run).resolve() for run in runs)), fresh)
+
+
 def read_ids(path: Path) -> list[str]:
     """The prediction ids in an --ids file, one per line, in file order.
 
@@ -673,6 +690,9 @@ def main(argv: list[str] | None = None) -> int:
     rows = select(args.predictions, cutoff, args.min_lead_days, trend=args.trend,
                   resolutions=resolutions, window_conflicts=clash,
                   date_overrides=date_overrides if ov_path else None, implied=implied, due=due, lead_labels=labels)
+    repairs = repairs_across(freeze_runs + [out_root], date_overrides if ov_path else None)
+    applied, unrepairable = R.apply_repairs(rows, repairs)
+    log(f"criteria repairs: {applied} applied, {unrepairable} unrepairable")
     if args.implied_scale:
         # A sensitivity run judges the implied records only; every other record's
         # window does not depend on the scale.

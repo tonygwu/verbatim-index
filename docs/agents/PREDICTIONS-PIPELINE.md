@@ -34,6 +34,17 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
 
 ## Where things are
 
+- Resolution release `resolution-2026-10-19` preserves event order, quantities
+  such as **all**, and the stated time window in resolver, prior and early-call
+  prompts. An `already_public` source must establish that whole claim. The runner
+  reads validated `criteria_repairs/` overlays from the scoring config's runs and
+  `--out` before building prompts; an overlay never rewrites the extracted record,
+  and a mismatched `criterion_original` is refused. The scorer checks a prior's
+  hash against its resolution's policy: unchanged older pairs retain their
+  historical rules, but a material criterion repair invalidates a prior that
+  priced the original criterion. A new resolution also needs a prior pricing
+  its new rules. Proof: `scripts/test_resolution_sequence.py`.
+
 - Fable priors and lead tests on prepaid API credit: `resolve_predictions.py --stage prior
   --fable-pool POOL` (or `--stage lead_test`) runs each Fable call through `quotapick run --only
   POOL`. It is a different harness from the production prior, recorded as `harness:

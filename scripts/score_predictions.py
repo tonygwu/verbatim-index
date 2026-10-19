@@ -518,9 +518,12 @@ def prior_prompt_stale(rows: list[dict], resolutions: dict[str, dict], priors: d
     two then price and settle different questions (review 2026-09-30, item 3: 21
     eligible unresolvable rows carry a block their legacy prior never saw). So the
     prior's recorded prompt_sha256 must equal the prompt build_prior_prompt makes
-    today, or the row is stale. `rows` must not yet carry criteria repairs, since
-    the prior stage never applied them. A legacy resolution is not checked, so a
-    board of legacy sidecars is unchanged."""
+    under that resolution's policy, or the row is stale. `rows` carry criterion
+    repairs; old releases omit only rules introduced later. A material repair
+    changes the question under every release and invalidates a prior that priced
+    the original criterion. A new resolution likewise requires a newly priced
+    prior when its policy changed the question. A legacy resolution is not
+    checked, so a board of legacy sidecars is unchanged."""
     import hashlib
     out = []
     for r in rows:
@@ -528,7 +531,7 @@ def prior_prompt_stale(rows: list[dict], resolutions: dict[str, dict], priors: d
         res, pri = resolutions.get(pid), priors.get(pid)
         if res is None or pri is None or (res.get("policy_release") or R.LEGACY_RELEASE) == R.LEGACY_RELEASE:
             continue
-        now = hashlib.sha256(R.build_prior_prompt(r, r["_deadline"]).encode()).hexdigest()
+        now = hashlib.sha256(R.build_prior_prompt(r, r["_deadline"], release=res["policy_release"]).encode()).hexdigest()
         if pri.get("prompt_sha256") != now:
             out.append({"prediction_id": pid, "stage": "prior", "why": "prior_prompt_changed",
                         "sidecar_prompt_sha256": pri.get("prompt_sha256"), "prompt_sha256": now})
@@ -1174,11 +1177,10 @@ def main(argv: list[str] | None = None) -> int:
                                         lead_labels=labels)
                       if r["prediction_id"] in decided]
         early_used.update({r["prediction_id"]: {"not_due": True} for r in early_rows})
-    # Before repairs: the prior stage built its prompt from the unrepaired record.
-    paired_stale = prior_prompt_stale(rows + early_rows, {**resolutions, **{p: decided[p] for p in early_used}},
-                                      priors)
     repairs = load_across(args.run, fresh(R.load_repairs, "criteria_repair"))
     applied, unrepairable = R.apply_repairs(rows + early_rows, repairs)
+    paired_stale = prior_prompt_stale(rows + early_rows, {**resolutions, **{p: decided[p] for p in early_used}},
+                                      priors)
     stages = {"resolve": resolutions, "prior": priors}
     if args.early_calls:
         stages["early"] = earlies
