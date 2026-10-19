@@ -76,18 +76,6 @@ skips.
 
 ## Open items
 
-### VI-40. The pundits `logs/p6b` speaker-check session predates the annotations tool and has no manifest, so `annotations.py serve` cannot open it  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
-
-**Background:** Only the pundits daemon clone, repo-3, can finish this: `logs/p6b` is a pundits data path, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. VI-39 replaced `pundits_verify_page.py` and `pundits_verify_serve.py` with `scripts/annotations.py`, which opens a session only through its `manifest.json` (`scripts/annotations_store.py:112` "has no {MANIFEST}"). `data-pundits/logs/p6b/` holds `speaker_check.html`, `speaker_check.transcripts/`, `human_answers.json`, `quote_check_key.json` and no manifest. On 2026-10-18 repo-2 ran the migration on a copy of that directory at pundits data `089ac14`: every `verify` check passed before and after `rebuild`, including `--data` against repo-3's `data-pundits`, and `export labels` and `export corrections` reproduced `human_labels.json` and `human_text_corrections.json`.
-
-**Impact:** Until it runs, the P6b answers (11 checklist labels, 11 speaker ranges over 2 recordings, 1 corrected recording) open only with the old tools in git history, and VI-16's `--drafts` rebuild cannot start.
-
-**Fix:** In repo-3, at public `b970946` or later (VI-39's last code commit): `.venv/bin/python scripts/annotations.py migrate --session data-pundits/logs/p6b --project pundits`; then `verify --session data-pundits/logs/p6b --expect-answers-sha256 2e2327ffe9e57776df222cdbb2e8f7f5575e2c85722739573b9bb388eeb0e6e3 --data data-pundits` and expect `"ok": true`; then `rebuild --session data-pundits/logs/p6b` and the same `verify` again; then `git -C data-pundits add logs/p6b/manifest.json logs/p6b/speaker_check.html`, commit, and `data_sync.py push --daemon`. The copy gave: labels 11; attribution 6 (5 `range_review_v2`, 1 legacy); spans 2 recordings, 11 ranges; corrections 1 recording, 1 edit; 239 recordings on the page. If `human_answers.json` changed after `089ac14`, drop `--expect-answers-sha256` and read the counts instead. `migrate` writes `manifest.json` and nothing else; `rebuild` writes the page and nothing else.
-
-**Touch points:** `data-pundits/logs/p6b/manifest.json` (new), `data-pundits/logs/p6b/speaker_check.html`.
-
----
-
 ### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/annotations.py build --project pundits` takes `--drafts` (`load_drafts` in `scripts/annotations_page.py`), to be run on the `logs/p6b` session, once VI-40 has migrated it, with `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` and `--grades` as before, then the pundits data pushed; 65 flagged recordings list first.
