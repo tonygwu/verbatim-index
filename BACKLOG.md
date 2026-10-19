@@ -76,18 +76,6 @@ skips.
 
 ## Open items
 
-### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
-
-**Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/annotations.py build --project pundits` takes `--drafts` (`load_drafts` in `scripts/annotations_page.py`), to be run on the `logs/p6b` session, once VI-40 has migrated it, with `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` and `--grades` as before, then the pundits data pushed; 65 flagged recordings list first.
-
-**Impact:** Three recordings have extractions nobody verified, one person has none, and the labelling page does not show the drafts that were paid for.
-
-**Fix:** From the pundits daemon clone: re-run verify on the three (Gemini quota only); record the `bret-weinstein-bmwp9g` refusal with its raw answers in the run's README rather than retrying blind; after VI-40, rebuild the `data-pundits/logs/p6b` session with `annotations.py build --data data-pundits --project pundits --checklist data-pundits/logs/p6b/human_checklist.json --grades --drafts data-pundits/logs/p6b/speaker_inference.jsonl --out data-pundits/logs/p6b`, run `annotations.py verify` on it, and push with `data_sync.py push --daemon`. The review nits that came with this entry are VI-3.
-
-**Touch points:** `data-pundits/experiments/predictions-pilot-20261018/` (README and the three records), `data-pundits/logs/p6b/speaker_check.html`, `scripts/annotations.py` (read only).
-
----
-
 ### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-11]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
