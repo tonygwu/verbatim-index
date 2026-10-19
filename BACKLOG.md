@@ -83,7 +83,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/annotations.py build --project pundits` takes `--drafts` (`load_drafts` in `scripts/annotations_page.py`), to be run on the `logs/p6b` session, once VI-40 has migrated it, with `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` and `--grades` as before, then the pundits data pushed; 65 flagged recordings list first.
 
