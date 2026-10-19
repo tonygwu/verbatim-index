@@ -15,6 +15,12 @@
   WHY       a failure's message carries each attempt, the router's reason and its warnings
   RAW       the full response is written to disk before any check runs
   LIMITS    a timeout over 1800 s, a comma inside one pool name and a repeated pool name are refused before any call
+  TRUNCATED an answer whose earlier turn hit the output cap (usage.output_tokens minus the
+            usage.iterations it kept is at least the cap) is refused as continuation_truncated,
+            after its cost is reported; a gap below the cap, a prose answer and a usage with no
+            iterations pass (VI-23)
+  CAP       quotapick, and so its `claude -p` child, gets CLAUDE_CODE_MAX_OUTPUT_TOKENS set to
+            Fable's maximum, over any value the caller's environment holds
 
 No quota: a fake quotapick binary prints a canned response.
 
@@ -65,6 +71,7 @@ def fake_binary(tmp: Path, resp: dict | None, exit_code: int = 0) -> Path:
     b = tmp / "quotapick"
     b.write_text("#!/bin/sh\n"
                  f"printf '%s\\n' \"$@\" > '{tmp}/argv'\n"
+                 f"printf '%s' \"${{CLAUDE_CODE_MAX_OUTPUT_TOKENS-UNSET}}\" > '{tmp}/cap_env'\n"
                  f"cat > '{tmp}/stdin'\n"
                  f"cat '{tmp}/resp.json'\n"
                  f"[ {exit_code} -eq 2 ] && echo 'refused: bad request' >&2\n"
@@ -213,6 +220,63 @@ def main() -> int:
                 refused = True
             called = (tmp / "argv").stat().st_mtime_ns != 0
             check(f"{label} is refused before any call", refused and not called, f"refused={refused} called={called}")
+
+        print("\n[TRUNCATED]")
+        # The shape of data predictions/_raw/responses/pat-gelsinger/web-fool-com-335b172e__extract__
+        # 20261018T053831Z-both-499ae6b1.json: the text starts mid-string, and output_tokens (64,247)
+        # minus the one iteration kept (247) is exactly the 64,000-token turn cap.
+        fragment = 'in the span.","resolution_criteria":"By 2023-12-31, the price premium"}]}'
+
+        def cut(total, kept, text=fragment, cost=4.81):
+            return good(text=text, cost_usd=cost,
+                        usage={"input_tokens": 8, "output_tokens": total,
+                               "output_tokens_details": {"thinking_tokens": 53449},
+                               "iterations": [{"type": "message", "output_tokens": n} for n in kept]},
+                        attempts=[{"account": "anthropic_api_e", "outcome": "ok", "duration_ms": 705472,
+                                   "cost_usd": cost}])
+
+        seen = []
+        cut_raw = tmp / "raw" / "cut.json"
+        try:
+            call(tmp, cut(64247, [247]), spent=seen.append, raw=cut_raw)
+            got = "returned normally"
+        except Exception as exc:  # noqa: BLE001 -- the test inspects the type and label
+            got = f"{type(exc).__name__}: {exc}"
+        check("an answer whose first turn hit the 64,000 cap is refused as continuation_truncated",
+              got.startswith("CreditRunError: continuation_truncated"), got)
+        check("the message names the gap and the cap", "64000" in got and "247" in got, got)
+        check("its cost still reaches spent", seen == [4.81], str(seen))
+        check("its raw response is stored", cut_raw.exists() and "resolution_criteria" in cut_raw.read_text())
+        ok, detail = raises(tmp, cut(128_000 + 900, [900]), "CreditRunError", "continuation_truncated")
+        check("two capped turns (a gap of 128,000) are refused too", ok, detail)
+        for label, resp in (("a single turn whose iterations sum to output_tokens",
+                             cut(64_000, [64_000], text='{"candidates": []}')),
+                            ("a gap below the cap (an earlier turn that did not hit it)",
+                             cut(9_000 + 63_999, [9_000], text='{"candidates": []}')),
+                            ("a prose answer that does not start with {",
+                             cut(900, [900], text="The answer is no.")),
+                            ("a usage with no iterations, as before", good())):
+            try:
+                text = call(tmp, resp)[0]
+                passed = text == resp["text"]
+            except Exception as exc:  # noqa: BLE001
+                passed, text = False, f"{type(exc).__name__}: {exc}"
+            check(f"{label} passes", passed, text)
+
+        print("\n[CAP]")
+        os.environ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = "1000"
+        try:
+            call(tmp, good())
+        finally:
+            del os.environ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]
+        cap_env = (tmp / "cap_env").read_text()
+        check("quotapick gets CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000 over the caller's own 1000",
+              cap_env == "128000", cap_env)
+        check("the cap is one named constant, Fable's maximum output of 128,000 tokens",
+              getattr(C, "FABLE_MAX_OUTPUT_TOKENS", None) == 128_000, str(getattr(C, "FABLE_MAX_OUTPUT_TOKENS", None)))
+        call(tmp, good())
+        check("with nothing in the caller's environment the child still gets it",
+              (tmp / "cap_env").read_text() == "128000", (tmp / "cap_env").read_text())
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

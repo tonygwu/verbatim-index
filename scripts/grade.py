@@ -126,6 +126,12 @@ E_POOL_EXHAUSTED = "credit_pool_exhausted"
 # `quotapick run` refused the request before spending anything (exit 2), or
 # answered with an outcome this harness has no label for.
 E_POOL_REFUSED = "credit_pool_refused"
+# A Fable answer whose earlier turn hit the output cap: `claude -p` continued in a
+# new turn and returned only that turn's text, so the answer is a fragment. The
+# call was paid for, and it fails because of the harness, not the model, so it is
+# not a schema failure (VI-23). Raised by call_fable and, through credit_run, by
+# call_fable_pool.
+E_TRUNCATED = credit_run.E_CONTINUATION_TRUNCATED
 
 # A judge can return valid JSON that is not a grade. GPT-6 Astra declined to
 # score a Palantir CEO transcript, saying it "cannot assign the requested
@@ -153,7 +159,7 @@ REFUSAL_TEXT_KEYS = ("reason", "status", "note", "error", "message", "explanatio
 ALL_ERROR_TYPES = (E_CLI, E_TIMEOUT, E_EMPTY, E_NOJSON, E_BADJSON, E_SCHEMA,
                    E_MODEL_MISMATCH, E_AUTH, E_REFUSED, E_TOOL_ATTEMPT, E_TRANSIENT,
                    E_STALE_CACHE, E_NO_TRANSCRIPT, E_IDENTITY, E_AGY_VERSION,
-                   E_POOL_EXHAUSTED, E_POOL_REFUSED)
+                   E_POOL_EXHAUSTED, E_POOL_REFUSED, E_TRUNCATED)
 
 
 def classify_exception_detail(detail: str) -> str:
@@ -1106,8 +1112,12 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
     launcher) would override that choice, and `cl` also injects
     --dangerously-skip-permissions, which hands the judge tool access to the
     repository it is being blinded against.
+
+    The child runs under Fable's full output cap (credit_run.child_env), and an
+    answer whose earlier turn hit the cap anyway is refused as E_TRUNCATED: the
+    CLI returns only the last turn's text (VI-23).
     """
-    env = dict(os.environ)
+    env = credit_run.child_env()
     if config_dir == "__DEFAULT__":
         env.pop("CLAUDE_CONFIG_DIR", None)
     else:
@@ -1131,6 +1141,18 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
     judge_models = [m for m in used if "fable" in m.lower()]
     if not judge_models:
         raise RuntimeError(f"{E_MODEL_MISMATCH}: telemetry names {list(used)} with no Fable model")
+    # Judged against the cap this call set, not a lower one: this harness offers
+    # tools, a tool call ends a turn early, and MEASURED 2026-10-19 over the Fable
+    # predictions sessions on this machine, 3 of 442 had earlier turns of 64,868 to
+    # 73,007 output tokens in all and a whole answer after them. Not against
+    # modelUsage's `maxOutputTokens` either: Claude Code 2.1.303 fills it with the
+    # model's default (`gle(model).default`), not the cap in effect. MEASURED
+    # 2026-10-19 with the variable at 1000: the first turn stopped at 1,000 tokens
+    # and the field still said 64000.
+    cut = credit_run.truncation_detail(payload.get("usage") or {}, credit_run.FABLE_MAX_OUTPUT_TOKENS,
+                                       payload.get("result") or "")
+    if cut:
+        raise RuntimeError(f"{E_TRUNCATED}: {cut}")
     telemetry = {
         "harness": f"{binary} -p",
         "requested_model": "claude-fable-5-1",
@@ -1180,9 +1202,10 @@ def pool_error(exc: Exception) -> RuntimeError:
 
     credit_run.run raises PoolsExhausted (no named pool may take the call) or
     CreditRunError, whose message starts with its own label: `refused`,
-    `cli_exit_N`, `run_contract`, `outcome_<quotapick outcome>`, `model_mismatch`
-    or `not_served_as_asked`. Each maps onto one label here; an outcome with no
-    entry in FABLE_POOL_OUTCOMES is E_POOL_REFUSED, never guessed. The mapping is
+    `cli_exit_N`, `run_contract`, `outcome_<quotapick outcome>`, `model_mismatch`,
+    `not_served_as_asked` or `continuation_truncated`. Each maps onto one label
+    here; an outcome with no entry in FABLE_POOL_OUTCOMES is E_POOL_REFUSED,
+    never guessed. The mapping is
     the only thing this module adds to credit_run's checks (BACKLOG VI-5: one
     call path, so a served-field check cannot drift between two copies).
     """
@@ -1194,6 +1217,8 @@ def pool_error(exc: Exception) -> RuntimeError:
         label = E_IDENTITY
     elif head == "model_mismatch":
         label = E_MODEL_MISMATCH
+    elif head == credit_run.E_CONTINUATION_TRUNCATED:
+        label = E_TRUNCATED
     elif head.startswith("cli_exit_"):
         label = E_CLI
     elif head.startswith("outcome_"):

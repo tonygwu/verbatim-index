@@ -207,6 +207,31 @@ the mix even.
   router's patterns are tuned to Claude and Codex wordings. Transient failures
   land in the taxonomy as `transient_retryable`, never as `auth_or_quota`.
 
+- **A Fable answer longer than one turn's output cap came back as its last
+  part only, and is now refused as `continuation_truncated` (VI-23,
+  2026-10-19).** When a `claude -p` turn hits its output cap, the CLI starts a
+  new turn that continues the answer, and it returns only the last turn's text.
+  On 2026-10-18 two credit extractions of pat-gelsinger/web-fool-com-335b172e
+  ($4.81 and $5.03) returned a fragment that starts mid-string, and the
+  extractor filed it as a schema failure, which blames the model. The signal is
+  in `usage`: `output_tokens` counts every turn and `iterations` only the last,
+  and in both answers the difference was exactly 64,000, the cap.
+  `credit_run.truncation_detail` refuses a difference at least as large as the
+  cap. Both paths run the child with `CLAUDE_CODE_MAX_OUTPUT_TOKENS` set to
+  `credit_run.FABLE_MAX_OUTPUT_TOKENS`, 128,000, Fable 5.1's maximum output, so
+  such an answer now fits one turn. The model is not told the cap, so an
+  answer under 64,000 tokens is unchanged. The credit path (`credit_run.run`)
+  refuses a difference of 64,000 or more: quotapick has no tools, so only a cut
+  turn leaves a difference, and 64,000 still catches a cut if the variable
+  ever stops reaching the child. The subscription path (`grade.call_fable`)
+  refuses 128,000 or more, because a tool call there also ends a turn: 3 of
+  442 Fable sessions had earlier turns of 64,868 to 73,007 tokens and a whole
+  answer. Do not read the cap from modelUsage's `maxOutputTokens`: the CLI
+  fills it with the model's default. MEASURED 2026-10-19 with the variable at
+  1000, the first turn stopped at 1,000 tokens, the text came back starting
+  mid-list, and that field said 64000. Guarded by
+  `scripts/test_continuation_truncated.py` and `scripts/test_credit_run.py`.
+
 ## Measurement decisions, and why
 
 - **A refusal is retried on the same model, three times, and that is all.**

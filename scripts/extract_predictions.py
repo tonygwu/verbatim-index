@@ -267,6 +267,10 @@ def call_fable_credit(pools: list[str], prompt: str, timeout: int,
     except credit_run.PoolsExhausted as exc:
         raise RuntimeError(f"{L.E_CREDIT_EXHAUSTED}: {exc}") from exc
     except credit_run.CreditRunError as exc:
+        if str(exc).startswith(L.E_CONTINUATION_TRUNCATED):
+            # Its own label at the front, so the taxonomy counts it apart from
+            # credit_run_failed: the answer was paid for and came back cut (VI-23).
+            raise RuntimeError(str(exc)) from exc
         raise RuntimeError(f"{L.E_CREDIT_FAILED}: {exc}") from exc
     # normalise_provenance reads a Fable answer's served model from judge_model.
     return text, {**tel, "requested_model": FABLE_MODEL, "judge_model": tel["served"]["model"]}, tel["credit_pool"]

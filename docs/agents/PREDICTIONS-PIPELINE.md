@@ -70,7 +70,9 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   harness and pool. With `--credit-production` a Fable verify stage is refused, because VD-19
   covers extraction, lead tests and priors, not verification. Failures are `credit_pool_exhausted` (no named pool would admit the call: each is
   empty, or held by calls in flight, or unpriced; re-run with `--workers 1` to spend what holds
-  left) and `credit_run_failed: <label>`. A credit answer's cache audit names `fable_harness:
+  left), `continuation_truncated` (an earlier turn hit the output cap, so only the last part of
+  the answer came back; paid for, and the harness's fault, not the model's; VI-23, see
+  [JUDGES.md](JUDGES.md)) and `credit_run_failed: <label>`. A credit answer's cache audit names `fable_harness:
   "quotapick run"`, so a run without the pools never takes it as cached, nor the other way round.
   Credit answers written before 328566c lack that key; the cache check
   (`extract_predictions.saved_model_request`) still knows them by the pool they name, in

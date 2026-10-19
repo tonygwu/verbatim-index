@@ -55,7 +55,7 @@ import phase2_resolvability as P2  # noqa: E402
 import resolution_lib as R  # noqa: E402
 from data_clone_workflow import load_scoring_config  # noqa: E402
 from grade import (  # noqa: E402
-    E_CLI, E_IDENTITY, E_MODEL_MISMATCH, E_POOL_EXHAUSTED, E_POOL_REFUSED, E_TIMEOUT,
+    E_CLI, E_IDENTITY, E_MODEL_MISMATCH, E_POOL_EXHAUSTED, E_POOL_REFUSED, E_TIMEOUT, E_TRUNCATED,
     FABLE_POOL_MAX_TIMEOUT, account_label, call_astra, call_fable, call_fable_pool, extract_json,
 )
 
@@ -66,10 +66,11 @@ E_SCHEMA = "schema_violation"
 E_RULES = "rule_violation"
 E_LEAK = "prior_prompt_leak"
 ERROR_TYPES = (E_CLI, E_TIMEOUT, E_NOJSON, E_SCHEMA, E_RULES, E_LEAK, "auth_or_quota",
-               E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY, "other")
+               E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY, E_TRUNCATED, "other")
 # The labels call_fable_pool puts at the front of its message. Read before the
 # keyword rules below, whose "timeout" and "auth" would otherwise claim them.
-POOL_LABELS = (E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY)
+# E_TRUNCATED comes from call_fable too, the subscription prior (VI-23).
+POOL_LABELS = (E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY, E_TRUNCATED)
 
 
 def log(msg: str) -> None:

@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomicio import write_atomic  # noqa: E402
 from grade import (  # noqa: E402
     ALL_ERROR_TYPES as _GRADE_ERROR_TYPES,
-    E_BADJSON, E_NOJSON, E_SCHEMA, classify_exception_detail as _classify_grade_detail,
+    E_BADJSON, E_NOJSON, E_SCHEMA, E_TRUNCATED, classify_exception_detail as _classify_grade_detail,
     extract_json, stamp_failure, utcnow,
 )
 
@@ -92,6 +92,10 @@ E_POLICY = "policy_release_mismatch"
 # grade.py's credit path uses the same exhaustion label, hence the dedupe below.
 E_CREDIT_EXHAUSTED = "credit_pool_exhausted"
 E_CREDIT_FAILED = "credit_run_failed"
+# A Fable answer, on credit or on a subscription, whose earlier turn hit the output
+# cap, so only its last part came back (VI-23). grade.py's label, named here because
+# call_fable_credit keeps it at the front instead of credit_run_failed.
+E_CONTINUATION_TRUNCATED = E_TRUNCATED
 # market_consensus.py: an HTTP failure from a market host, and a matcher failure whose
 # message carried no label of its own (a labelled one keeps its label at the front).
 # Defined here, not there, because this module cannot import that one; until VI-30
@@ -100,7 +104,7 @@ E_MARKET_HTTP = "market_api_error"
 E_MATCHER = "matcher_error"
 ALL_ERROR_TYPES = tuple(dict.fromkeys(tuple(_GRADE_ERROR_TYPES) + (
     E_ROUTER, E_VERIFIER_SAME, E_UNGROUNDED, E_TRANSCRIPT_MISSING, E_CACHE_STALE, E_POLICY,
-    E_CREDIT_EXHAUSTED, E_CREDIT_FAILED, E_MARKET_HTTP, E_MATCHER)))
+    E_CREDIT_EXHAUSTED, E_CREDIT_FAILED, E_CONTINUATION_TRUNCATED, E_MARKET_HTTP, E_MATCHER)))
 
 
 

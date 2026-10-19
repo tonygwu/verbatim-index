@@ -20,10 +20,18 @@ the --effort flag it passed, so that check proves the flag, not the model's use.
 `spent` receives the sum of every attempt's cost, a failed call's included: the
 response's own top-level cost_usd is the LAST attempt's only. An attempt that
 timed out names no cost; quotapick books an estimate in its own ledger instead.
+
+An answer longer than one turn's output cap comes back cut (VI-23). `claude -p`
+continues in a new turn when a turn hits its cap, and returns only the last
+turn's text. So this module raises the child's cap to Fable's maximum
+(FABLE_MAX_OUTPUT_TOKENS), and refuses an answer whose earlier turn hit the cap
+anyway (truncation_detail). grade.call_fable, the subscription harness, does both
+through the same names.
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -33,6 +41,88 @@ MAX_TIMEOUT_S = 1800
 
 #: quotapick's own ceiling on attempts per request.
 MAX_ATTEMPTS = 3
+
+#: The environment variable that sets the output cap of one `claude -p` turn.
+#: Confirmed in the installed binary, Claude Code 2.1.303: its error text says "To
+#: configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment
+#: variable". MEASURED 2026-10-19: with it at 1000, a `claude -p` turn stopped at
+#: 1,000 output tokens and the CLI continued in a second turn. quotapick passes
+#: its own environment to the child, less proxy and auth variables
+#: (quota_router/run.py, child_env), so it reaches the credit child too. Do not
+#: read the cap back from modelUsage's `maxOutputTokens`: the CLI fills that
+#: field with the model's default, so it said 64000 in that same call.
+MAX_OUTPUT_TOKENS_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+
+#: The output cap every Fable child runs under: Claude Fable 5.1's maximum output.
+#: Sources, 2026-10-19: the claude-api skill (shared/models.md, "Max Output 128K"
+#: for claude-fable-5-1), and Claude Code 2.1.303's model table,
+#: `max_output_tokens:{default:64000,upper:128000}` for claude-fable-5-1. The CLI
+#: caps a larger value to that upper limit and only logs it, so a higher number
+#: here would buy nothing. The model is not told the cap, so an answer that fits
+#: the old 64,000 is the same answer under this one.
+FABLE_MAX_OUTPUT_TOKENS = 128_000
+
+#: The cap a `claude -p` child runs under when the variable above does not reach
+#: it: Claude Code 2.1.303's default for claude-fable-5-1, and the cap the two cut
+#: answers of 2026-10-18 hit (each lost exactly 64,000 tokens).
+CLI_DEFAULT_MAX_OUTPUT_TOKENS = 64_000
+
+#: The label of an answer whose earlier turn hit the output cap (VI-23). grade.py,
+#: extract_predictions.py and resolve_predictions.py file it under this name.
+E_CONTINUATION_TRUNCATED = "continuation_truncated"
+
+
+def child_env(base: dict | None = None) -> dict:
+    """`base` (the process environment by default) with the output cap set to Fable's maximum.
+
+    Set over any value the caller holds, so every call runs under the one cap
+    this module names.
+    """
+    return {**(os.environ if base is None else base), MAX_OUTPUT_TOKENS_ENV: str(FABLE_MAX_OUTPUT_TOKENS)}
+
+
+def continuation_gap(usage: dict) -> int | None:
+    """Output tokens of the turns before the last one; None when `usage` has no iterations.
+
+    `usage.output_tokens` counts every turn of the call; `usage.iterations` holds
+    only the last turn's. A missing per-iteration count counts as 0, so it can
+    only widen the gap and make truncation_detail refuse, never hide a cut.
+    """
+    iterations = usage.get("iterations")
+    total = usage.get("output_tokens")
+    if not isinstance(iterations, list) or not iterations or not isinstance(total, int):
+        return None
+    kept = sum(i["output_tokens"] for i in iterations
+               if isinstance(i, dict) and isinstance(i.get("output_tokens"), int))
+    return total - kept
+
+
+def truncation_detail(usage: dict, cap: int, text: str) -> str | None:
+    """Why `text` is only the last part of a longer answer, or None when no earlier turn hit `cap`.
+
+    MEASURED 2026-10-18 (pat-gelsinger/web-fool-com-335b172e, two credit
+    extractions): output_tokens minus the one iteration kept was exactly 64,000,
+    the turn cap, and the text started mid-string. The token gap is the check.
+    The text's shape is never one: a prose answer must not be refused for not
+    starting with `{`. A gap below the cap is a turn that ended on its own, such
+    as a denied tool call on the subscription harness, and passes.
+
+    Two known false refusals, both of a whole answer. First, when a turn hits
+    the cap while still thinking, the CLI drops that reasoning and asks for a
+    fresh answer, so the gap is the cap; at 128,000 that needs 128,000 tokens of
+    thinking. Second, run() tests against 64,000 while its child runs under
+    128,000, so an earlier turn of 64,000 or more that ended on its own, such as
+    one with no visible text that the CLI asks to continue, is refused too. The
+    message names the thinking tokens, so a reader can tell these cases apart.
+    """
+    gap = continuation_gap(usage)
+    if gap is None or gap < cap:
+        return None
+    kept = usage["output_tokens"] - gap
+    thinking = (usage.get("output_tokens_details") or {}).get("thinking_tokens")
+    return (f"usage.output_tokens {usage['output_tokens']} minus usage.iterations {kept} leaves {gap}, "
+            f"at least the {cap}-token turn cap, so an earlier turn was cut off and the {len(text)}-character "
+            f"text is only the continuation (thinking_tokens {thinking}; text starts {text[:60]!r})")
 
 
 class PoolsExhausted(RuntimeError):
@@ -108,7 +198,7 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
                       expected_cost_usd=expected_cost_usd, request_id=request_id, pools=pools)
     # The child's own timeout ends the call; this one only catches a wedged router.
     proc = subprocess.run([binary, "run", "--only", ",".join(pools)], input=json.dumps(req),
-                          capture_output=True, text=True, timeout=timeout_s + 300)
+                          capture_output=True, text=True, timeout=timeout_s + 300, env=child_env())
     if raw_path is not None:
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         from atomicio import write_atomic
@@ -124,6 +214,17 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
         spent(billed)
     served = check_response(resp, model=model, effort=effort, pools=pools)
     usage = resp.get("usage") or {}
+    # The response does not say which cap the child ran under, so the threshold is
+    # the smallest it could have been: the CLI default, which applies when the
+    # variable does not reach the child. If a quotapick release stopped passing it
+    # on, answers would be cut at 64,000 again, and a 128,000 threshold would let
+    # those fragments through as schema failures, the bug VI-23 fixes. With no
+    # tools, an earlier turn is almost always a capped one. MEASURED 2026-10-19:
+    # of 158 saved credit responses with iterations, the 2 cut answers have a gap
+    # of exactly 64,000 and the other 156 a gap of 0.
+    cut = truncation_detail(usage, CLI_DEFAULT_MAX_OUTPUT_TOKENS, resp.get("text") or "")
+    if cut:
+        raise CreditRunError(f"{E_CONTINUATION_TRUNCATED}: {cut}; billed_usd {billed!r}")
     durations = [a.get("duration_ms") for a in resp.get("attempts") or []]
     return resp.get("text") or "", {
         "harness": "quotapick run", "credit_pool": served["account"], "served": served,
