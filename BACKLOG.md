@@ -378,6 +378,37 @@ skips.
 
 ---
 
+### VI-42. Three Fable `claude -p` harnesses still run under the 64,000-token default cap, with no check for a cut answer  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-19]`
+
+**Background:** since VI-23 (2026-10-19), `credit_run.run` and `grade.call_fable` give their child `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at 128,000 through `credit_run.child_env`, and refuse a cut answer as `continuation_truncated` through `credit_run.truncation_detail`. Three other harnesses start a Fable `claude -p` of their own and copy the environment as it is: `scripts/date_recordings.py:452` "env = dict(os.environ)" (`call_fable_web`, the production `fable_web` dater, which has WebSearch and WebFetch), `scripts/speaker_segment_probe.py:97` "env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir)", and `scripts/p3_judge_probe.py:107` "def run_fable(". MEASURED 2026-10-19: the speaker-audit raw file `data/predictions/_experiments/speaker-audit-20260927/segmentation/leaders-r2/raw/fable__michael-dell__david-senra-9wssls__r1__a2.json` has `usage.output_tokens` 256,000 and one iteration of 64,000, a gap of 192,000, and its result is the CLI's text "API Error: Claude's response exceeded the 64000 output token maximum". The VI-23 review counted 22 cut `seg-work-*-fable` sessions from 2026-09-28. Found by the VI-23 review.
+
+**Impact:** a long answer from one of these harnesses is cut at 64,000 tokens and comes back as its last part, or as an error text, with no label that names the cause. Dating answers are short, so the dater's exposure is small; the speaker-segmentation probe has already lost answers this way.
+
+**Fix:** build each harness's environment with `credit_run.child_env()` (the speaker probe then adds its `CLAUDE_CONFIG_DIR`). Add `credit_run.truncation_detail(usage, credit_run.FABLE_MAX_OUTPUT_TOKENS, text, cut_at=credit_run.CLI_DEFAULT_MAX_OUTPUT_TOKENS)` to the two probes, whose tools are removed or denied. Leave the check out of `call_fable_web` until VI-43 can tell its web tool turns from cut turns, and say so in a comment there. Tests, failing first: for each of the three, a fake `claude` that records the variable sees 128000; for each probe, a cut payload is refused as `continuation_truncated`.
+
+**Touch points:** `scripts/date_recordings.py:452` "env = dict(os.environ)", `scripts/speaker_segment_probe.py:97` "env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir)", `scripts/p3_judge_probe.py:107` "def run_fable(", `scripts/test_dating_fable_web.py`, and a new test for the two probes.
+
+---
+
+### VI-43. `grade.call_fable` refuses a whole answer whose earlier tool turns total 128,000 output tokens or more, because the token gap cannot tell a tool turn from a cut turn  `[capability: premium]`  `[priority: P3]`  `[filed: 2026-10-19]`
+
+**Background:** `grade.call_fable` refuses an answer as `continuation_truncated` when `usage.output_tokens` minus `usage.iterations` is at least 128,000, or an exact multiple of 64,000 (`scripts/grade.py:1158` "cut_at=credit_run.CLI_DEFAULT_MAX_OUTPUT_TOKENS)"). On this subscription harness a tool call, denied or not, also ends a turn, and its tokens land in the same gap. The VI-23 work and its review measured on this machine's transcripts (2026-10-19): earlier tool turns of 64,868 to 73,007 tokens came before a whole answer in 3 of 442 Fable predictions sessions, and of 75,382 and 101,698 in 2 of 434 `fable` dating sessions. The 101,698 one, the session for chamath-palihapitiya/axios-qly04q in dating run `20261002T033749Z` (Claude Code 2.1.287), had turns of 3,486, 226 and 97,986 tokens, each ending in `tool_use`, then 1,962 ending in `end_turn`. With the turn cap now 128,000, one long tool turn can reach the threshold alone. The session transcript says which turn was cut: a cut turn's assistant message has `stop_reason` `max_tokens`, and `call_fable` already reads that transcript through `scripts/grade.py:1065` "def fable_transcript_tool_calls(" when `require_no_tools` is set.
+
+**Impact:** a paid, whole subscription answer is refused as `continuation_truncated`. The failure is loud and costs one call of subscription quota and a retry; it falls on long transcripts, where tool turns run longest.
+
+**Fix:**
+1. In `call_fable`, when `truncation_detail` refuses, read the session transcript (the same lookup as `fable_transcript_tool_calls`) and keep the refusal only if an assistant message before the last one has `stop_reason == "max_tokens"`. A missing transcript, or a message with no `stop_reason`, keeps the refusal, and the message says which.
+2. Tests in `scripts/test_continuation_truncated.py`, failing first: tool turns totalling 130,000 with no `max_tokens` pass; a `max_tokens` turn is refused; a missing transcript is refused.
+3. Update the VI-23 rule in `docs/agents/JUDGES.md`.
+
+*Risks and edge cases:* the transcript is Claude Code's private format and can change, so missing evidence must keep the refusal rather than accept the answer. The credit path keeps the token rule: it runs `--no-session-persistence` and has no transcript. A cut turn after which the model restarted its answer whole is still refused; that is the token rule's known limit and is out of scope here.
+
+*Why premium not standard:* it changes when a paid answer counts on the judge harness, reads a private transcript format, and its failure direction must stay loud.
+
+**Touch points:** `scripts/grade.py:1158` "cut_at=credit_run.CLI_DEFAULT_MAX_OUTPUT_TOKENS)", `scripts/grade.py:1065` "def fable_transcript_tool_calls(", `scripts/test_continuation_truncated.py`, `docs/agents/JUDGES.md`.
+
+---
+
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
