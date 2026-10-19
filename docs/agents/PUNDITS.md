@@ -177,6 +177,14 @@ there. Add new material under the same headings.
   recordings gave 14 candidates and 4 accepted predictions for $18.72. An experiment only: the
   extractor has no `--study` yet (BACKLOG.md VI-1), so pass the pundits transcripts,
   roster and an `--out` under that folder by hand.
+  FOUND 2026-10-18 in the scale-up of 261 more recordings: `bret-weinstein-bmwp9g` cannot be
+  extracted on credit. In all three attempts quotapick reported Fable as served, but its
+  `models_seen` also named `claude-opus-5` and the usage showed the whole prompt sent twice, so
+  `credit_run` refused each answer as mixed-model. Why the CLI calls a second model is not
+  known. A retry costs about $1.40 of credit and has failed every time, so do not retry it
+  until something explains or prevents the second call. The raw answers are listed in the
+  pilot README. One more recording, `conversations-with-tyler-cusdy0`, has no verification
+  (BACKLOG.md VI-41).
 
 - P6 speaker check (human labels for the full roster): an annotation session of the `pundits`
   project, built and served by `scripts/annotations.py`. The tool, its modes, storage, commands
@@ -200,9 +208,10 @@ there. Add new material under the same headings.
   data-pundits/logs/p6b/human_labels.json` writes what `pundits_pilot.py report` and
   `pundits_speaker_infer.py review` read; a partly answered recording is left out and
   counted, never filled. The session built before 2026-10-18 (`speaker_check.html`,
-  `quote_check_key.json`, no manifest) is adopted with `annotations.py migrate --session
-  data-pundits/logs/p6b --project pundits`, which writes `manifest.json` only; repo-3 runs it,
-  because this data repository is owner-only.
+  `quote_check_key.json`, no manifest) was adopted on 2026-10-19 with `annotations.py migrate
+  --session data-pundits/logs/p6b --project pundits`, which writes `manifest.json` only, and
+  built again with `build --grades --drafts` (pundits data `c01764f`). Only repo-3 pushes it, because this data
+  repository is owner-only.
 
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
   people who label in `docs/PUNDITS-LABELLING-GUIDE.md`. Windows are cut only from recordings a

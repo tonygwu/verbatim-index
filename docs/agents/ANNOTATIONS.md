@@ -148,21 +148,26 @@ and `test_play_time.py`.
 |---|---|---|---|---|
 | `insights-20260927` | leaders data, `predictions/_experiments/speaker-audit-20260927/leaders` | insights | `4a505bc4…3853` | migrated and rebuilt 2026-10-18 (data `e4a68376`): 5 recordings, 30 quote results, 37 ranges, 2 corrected recordings |
 | `predictions-20260927` | leaders data, `predictions/_experiments/speaker-audit-20260927/predictions` | predictions | `e7cb1c41…b27c` | migrated and rebuilt 2026-10-18 (data `e4a68376`): 5 recordings, 9 quote results, 22 ranges, 2 corrected recordings |
-| `p6b` | pundits data, `logs/p6b` | pundits | `2e2327ff…e6e3` | not yet migrated (BACKLOG.md VI-40, repo-3's lane): 239 recordings, 11 checklist labels, 6 quote results, 11 ranges, 1 corrected recording |
+| `p6b` | pundits data, `logs/p6b` | pundits | `2e2327ff…e6e3` | migrated, rebuilt and built with the model drafts 2026-10-19 (pundits data `c01764f`): 239 recordings, 11 checklist labels, 6 quote results, 11 ranges, 1 corrected recording |
 
 Both leaders-data sessions passed every `verify` check, with `--data data`, before
 and after the rebuild; their answers, sidecars and keys are byte-identical to the
-pre-migration files. The pundits session is repo-3's to migrate, because the
-pundits data repository is owner-only. Its migration was proven on a copy on
-2026-10-18 (every check passed before and after `rebuild`, and with `--data`
-against repo-3's `data-pundits`); VI-40 carries the command and the expected
-counts. To annotate all three at once:
+pre-migration files. The pundits session passed every check, with `--data
+data-pundits`, after `migrate`, after `rebuild` and after `build --grades --drafts`.
+Its answers file did not change. The drafts build added `project: "pundits"` to
+each entry of `quote_check_key.json` and changed nothing else in it. It also moved
+the play times of 39 of the 40 quotes, by -5 to +54 seconds, because the old page
+was built before `8ffa7d6` started each play link at the quote; `rebuild` keeps a
+page's times, and only `build` computes them again. Answers are word offsets, so no
+answer moved. Only repo-3
+can push it, because the pundits data repository is owner-only. To annotate all
+three at once, from a clone that has both data checkouts:
 
 ```
 .venv/bin/python scripts/annotations.py serve \
     --session data/predictions/_experiments/speaker-audit-20260927/leaders \
     --session data/predictions/_experiments/speaker-audit-20260927/predictions \
-    --session data-pundits/logs/p6b      # once VI-40 has migrated it
+    --session data-pundits/logs/p6b
 ```
 
 ## Rules that exist because something broke
