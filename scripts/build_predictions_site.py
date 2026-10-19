@@ -2680,7 +2680,7 @@ def score_why(sc: "dict | None", min_lead_days: int) -> "str | None":
     if sc["n_scored"] == 0:
         if sc["eligible"] == 0:
             return (f"{sc['past_due']} past due, none eligible: a scored prediction must be specific, "
-                    "meet the lead-time policy, and have a coherent window")
+                    f"meet the lead-time policy of {min_lead_days} days, and have a coherent window")
         return f"{sc['eligible']} eligible and past due, {sc['unresolvable']} of them could not be resolved"
     return (f"{sc['n_scored']} scored, below the floor of {MIN_SCORED}; "
             f"a number on so few is a placeholder, not a score")
