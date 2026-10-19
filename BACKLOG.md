@@ -214,26 +214,6 @@ skips.
 
 ---
 
-### VI-23. A Fable answer that overran one turn's output cap reaches the extractor as its last continuation chunk, and the failure is filed as `schema_validation_failed`  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
-
-**Background:** `scripts/credit_run.py:128` returns `resp.get("text")` from the `quotapick run` response as the whole answer; `quotapick run` starts one `claude -p` child and returns that child's final `result` field (it has no continuation code of its own); the subscription harness reads the same field (`scripts/grade.py:1160`, in `call_fable`), and `grade.call_fable_pool` (`scripts/grade.py:1206`, the priors' and credit grades' path) has called `credit_run.run` (`:1235`) since VI-5 (`9a2e8ea`), so all three Fable paths share the exposure. For pat-gelsinger/web-fool-com-335b172e (10,861 words) two credit extractions on 2026-10-18 returned a `text` of 652 and 11,400 characters that starts mid-string (`in the span.","resolution_cr...`): data `predictions/_raw/responses/pat-gelsinger/web-fool-com-335b172e__extract__20261018T053831Z-both-499ae6b1.json` ($4.81, pool c) and `...20261018T080210Z-both-b18c577b.json` ($5.03, pool b). In both, `usage.output_tokens` (64,247 and 68,707) minus the one `usage.iterations[].output_tokens` entry (247 and 4,707) is exactly 64,000, the child's `maxOutputTokens`: the first turn hit the cap and the child continued, and only the continuation's text came back. The extractor parsed a fragment (every schema error is at `$`, a missing top-level field) and failed; the third attempt on the subscription harness gave 21 candidates, 4 accepted.
-
-**Impact:** any Fable answer longer than one turn's cap fails after being paid for, and the failure names the model when the harness is at fault; a grade or a prior would fail the same way.
-
-**Fix:**
-1. In `credit_run.run`, after `check_response`, compute `usage.output_tokens` minus the sum of `usage.iterations[].output_tokens`; when the gap is at least the cap (64,000, or the response's own `maxOutputTokens` when present; two continuations leave 128,000) raise `CreditRunError("continuation_truncated: ...")`, counted under that taxonomy label by `extract_predictions.py` and `grade.py`.
-2. The same check in `grade.call_fable` for the subscription harness's `result` (`scripts/grade.py:1127-1160`). `grade.call_fable_pool` gets step 1 through `credit_run.run`, but `grade.pool_error` (`:1178-1203`) files a label it does not know as `credit_pool_refused` (`:1201-1202`), so the new label needs its own entry there. The extractor relabels it too: `call_fable_credit` (`scripts/extract_predictions.py:269-270`) wraps every `CreditRunError` as `credit_run_failed: ...`, and `classify_exception_detail` (`scripts/predictions_lib.py:153-155`) files it under that prefix, so the label also needs its own branch there and a place in `ALL_ERROR_TYPES` (`:101-103`). That list includes grade.py's own `ALL_ERROR_TYPES` (`scripts/grade.py:153-156`), which `grade.classify_exception_detail` reads with a `cli_nonzero_exit` fallback (`:170`), so the label goes in grade.py's list first.
-3. A test with a fake `quotapick` binary whose response carries a mid-string `text` and the 64,000-token gap; and one for `call_fable`.
-4. Name the label in `docs/agents/PREDICTIONS-PIPELINE.md` beside `credit_pool_exhausted`.
-
-*Risks and edge cases:* a prose answer must never be refused for not starting with `{`; the token-gap signal is the check, and a text-shape check only a hint. A response whose `usage` lacks `iterations` must pass as before.
-
-*Why premium not standard:* two harnesses, and a taxonomy label that both scripts relabel and count.
-
-**Touch points:** `scripts/credit_run.py:96-140`, `scripts/grade.py:153-170`, `:1127-1160`, `:1178-1203`, `scripts/extract_predictions.py:253-272`, `scripts/predictions_lib.py:101-103`, `:153-155`, `scripts/test_credit_run.py`, `docs/agents/PREDICTIONS-PIPELINE.md`.
-
----
-
 ### VI-25. Polymarket returns 400 for the 30-day `prices-history` window and 403 for some `public-search` queries, and the ladder stops at the first error  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/market_consensus.py:387` is the 30-day step of a three-step window ladder (2 days, 30 days, then from the market's open) at `fidelity=60`; for that step Polymarket answers HTTP 400 `invalid filters: 'startTs' and 'endTs' interval is too long` (endTs minus startTs is 2,592,000 s), and the error aborts the ladder, so the daily step that may succeed is never tried. `:290` (`public-search`) gets an HTTP 403 Cloudflare page for some queries. Across the corpus 8 accepted records fail this way on every run that reaches them, each carrying a consensus block with `status: failed`: `prices-history` 400 for fa01d301325e4243, 2012463b3b01b93d, d13eb0f50e17ffea (this supplement), michael-saylor 9d2d817a08c94853 and bill-gates bfecb68972253ee1; `public-search` 403 for d4b463de73917226 and jensen-huang 22f49209e94ce62f and c023eff1328d99e3. Ledger VP-38 logged the same 400 on 2026-10-05. Logs: data `predictions/_experiments/thin-supplement-20261018/market_consensus-{1,2,3}.log`.
