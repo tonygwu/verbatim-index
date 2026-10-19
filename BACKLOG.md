@@ -76,7 +76,7 @@ skips.
 
 ## Open items
 
-### VI-44. The predictions hover no longer names the run's lead time, so `test_lead_time_text.py` is red in every clone  `[capability: fast]`  `[priority: P1]`  `[filed: 2026-10-19]`
+### VI-44. The predictions hover no longer names the run's lead time, so `test_lead_time_text.py` is red in every clone  `[capability: fast]`  `[priority: P1]`  `[filed: 2026-10-19]`  `[claimed by: #1]`
 
 **Background:** public `44d06de` ("Clarify prediction scoring and eligibility explanations") changed the hover for a row with nothing eligible from "reach at least {min_lead_days} days out" to `scripts/build_predictions_site.py:2683` "meet the lead-time policy, and have a coherent window", which names no number. `scripts/test_lead_time_text.py:58` "hover states the run's own lead time" wants the run's own lead time in that text, so the check fails at `44d06de` and at every later head (`87ffba9` passes). The change itself is right: with the short-lead check, a prediction said under the bar can still qualify, so "at least N days" is false.
 
