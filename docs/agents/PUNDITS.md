@@ -166,8 +166,9 @@ there. Add new material under the same headings.
   rows a person should still check. A P6b label has no `main_speaker`, because the guide stopped
   asking on 2026-09-15, so review and calibration compare only the fields a person labelled. A
   draft is never a label: `merge` marks each one `drafted_by_model`. The review page shows the
-  drafts when built with `--drafts` (next item). Calibration counts only blind labels: one saved
-  with a draft on screen carries `draft_shown` and is left out, and counted as
+  drafts when built with `--drafts` (next item), each one only after every question of its
+  recording has an answer. Calibration counts only blind labels: one with an answer changed
+  while the draft was on screen carries `draft_shown` and is left out, and counted as
   `assisted_labels_left_out`. Proof: `scripts/test_pundits_speaker_infer.py`,
   `scripts/test_credit_run.py`.
 
@@ -202,8 +203,10 @@ there. Add new material under the same headings.
   rates describe FLAGGED quotes only and do not replace the P7 random quote audit.
   With `--drafts` each recording also shows the model's draft and the list puts first every
   recording that `pundits_speaker_infer.needs_review` flags, then the confident ones, then
-  quote-only recordings. A draft is never an answer; a label saved while a draft was on
-  screen records `draft_shown` with the model's name, and calibration leaves it out.
+  quote-only recordings. A draft is never an answer. It stays hidden until the three
+  questions of its recording have answers, so those answers are blind; an answer changed
+  after it shows records `draft_shown` with the model's name, and calibration leaves the
+  label out.
   `annotations.py export labels --session data-pundits/logs/p6b --out
   data-pundits/logs/p6b/human_labels.json` writes what `pundits_pilot.py report` and
   `pundits_speaker_infer.py review` read; a partly answered recording is left out and

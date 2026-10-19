@@ -25,8 +25,10 @@ passed through would be a guessed label. So this checks the importer against
              reasons; a draft for a recording off the checklist stops the build; without
              --drafts the rows are as before; draft_shown survives the import
   RENDER     run by node against a stub page: flagged recordings come first, each under
-             its own section, the draft card and its tags show, and a saved answer
-             carries draft_shown; a page without drafts has no sections
+             its own section; the draft stays hidden until every question has an
+             answer, so those answers carry no draft_shown; then the card and its tags
+             show, and only a changed answer (not notes) carries draft_shown; a page
+             without drafts has no sections
   MODES      the page follows its session, not its study: a session without the
              checklist mode shows no checklist and binds no checklist key; a recording
              tagged with two projects shows both tags, and the page offers a project
@@ -55,7 +57,8 @@ def check(name, ok, detail=""):
 
 
 #: A stub page for node: enough DOM for the script to render, a local server that
-#: answers with SAVED and records each save, and one "y" key press.
+#: answers with SAVED and records each save, the page opened at START when given,
+#: NOTES typed into the notes box when given, and then one KEY press.
 PAGE_HARNESS = r"""
 const nodes = {};
 const mk = id => nodes[id] ||= {id, innerHTML: "", textContent: "", className: "", hidden: false, style: {},
@@ -66,7 +69,7 @@ const posts = [];
 global.document = {getElementById: mk, querySelector() { return null; }, querySelectorAll() { return []; },
   addEventListener(type, fn) { if (type === "keydown") keydown = fn; }, createElement: () => mk("x" + Math.random())};
 global.window = {open() {}, addEventListener() {}, removeEventListener() {}};
-global.location = {hash: ""};
+global.location = {hash: START ? "#" + encodeURIComponent(START) : ""};
 global.history = {replaceState() {}};
 global.CSS = {escape: s => s};
 global.fetch = async (url, opt) => {
@@ -91,8 +94,11 @@ setTimeout(() => {
     nodes["f-" + FILTER].onclick();
     picked = nodes.list.innerHTML;
   }
-  if (keydown) keydown({key: "y", target: {tagName: "BODY", closest: () => null}, preventDefault() {}});
-  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp, count, picked, status, allPressed})), 20);
+  // The page saves notes 700 ms after the last keystroke.
+  if (NOTES !== null && nodes.notes && nodes.notes.oninput) { nodes.notes.value = NOTES; nodes.notes.oninput(); }
+  if (keydown && KEY) keydown({key: KEY, target: {tagName: "BODY", closest: () => null}, preventDefault() {}});
+  setTimeout(() => console.log(JSON.stringify({list, detail, posts, threw, projects, keyhelp, count, picked, status, allPressed})),
+             NOTES !== null ? 800 : 20);
 }, 20);
 """
 
@@ -106,7 +112,8 @@ def session(projects=("pundits",), modes=("checklist", "speakers", "captions")) 
 
 
 def run_page(rows: list[dict], saved: dict | None = None, sess: dict | None = None,
-             quote_rows: list[dict] | None = None, pick: str | None = None, filt: str | None = None) -> dict:
+             quote_rows: list[dict] | None = None, pick: str | None = None, filt: str | None = None,
+             start: str | None = None, key: str | None = "y", notes: str | None = None) -> dict:
     """The page's own script run by node on `rows`, starting from the `saved` answers; what it rendered and saved."""
     import annotations_page as V
     page = V.render_page({"rows": rows, "quote_rows": quote_rows or [], "transcript_index": {},
@@ -114,7 +121,8 @@ def run_page(rows: list[dict], saved: dict | None = None, sess: dict | None = No
     script = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
     # On stdin, not -e: a real page is about 1 MB, past the argument-length limit.
     head = (f"const SCRIPT = {json.dumps(script)};\nconst SAVED = {json.dumps(saved or {'labels': {}, 'attribution': {}})};\n"
-            f"const PICK = {json.dumps(pick)};\nconst FILTER = {json.dumps(filt)};\n")
+            f"const PICK = {json.dumps(pick)};\nconst FILTER = {json.dumps(filt)};\n"
+            f"const START = {json.dumps(start)};\nconst KEY = {json.dumps(key)};\nconst NOTES = {json.dumps(notes)};\n")
     n = subprocess.run(["node", "-"], input=head + PAGE_HARNESS,
                        capture_output=True, text=True, timeout=60)
     if n.returncode != 0 or not n.stdout.strip():
@@ -420,14 +428,49 @@ def main() -> int:
     check("flagged recordings come first under their own section, whatever the surname, and one person's "
           "confident recording stays in the confident section",
           order == ["Check first", "p/absent", "p/unsure", "Model was confident", "p/conf"], f"{order} {r.get('threw', '')}")
-    check("the first recording shown is the flagged one, with the draft card and a model tag on each drafted answer",
-          "Model draft" in r["detail"] and "model says the subject is absent" in r["detail"]
-          and r["detail"].count('class="mtag"') == 3, r["detail"][:300])
+    check("the first recording shown is the flagged one, and until its questions are answered the draft is "
+          "hidden: no answer, reason, evidence, model name or model tag",
+          'data-id="p/absent"' in r["detail"] and "Model draft hidden" in r["detail"]
+          and "<b>Model draft</b>" not in r["detail"] and "model says the subject is absent" not in r["detail"]
+          and "<blockquote>" not in r["detail"] and "claude-fable-5-1" not in r["detail"]
+          and 'class="mtag"' not in r["detail"], re.sub(r"\s+", " ", r["detail"])[:900])
     post = r["posts"][0] if r["posts"] else {}
-    check("an answer saved with a draft on screen carries draft_shown",
+    check("an answer given while the draft is hidden is blind: it carries no draft_shown",
           post.get("kind") == "labels" and post.get("id") == "p/absent"
-          and post.get("value", {}).get("draft_shown") == "claude-fable-5-1"
-          and post["value"].get("subject_present") is True, str(r["posts"]))
+          and post.get("value", {}).get("subject_present") is True and "draft_shown" not in post["value"],
+          str(r["posts"]))
+    full = {"subject_present": False, "venue": "solo", "political_content": True}
+    rv = run_page(rows, {"labels": {"p/absent": full}, "attribution": {}}, start="p/absent")
+    check("once every question has an answer the draft shows, with its reasons, evidence and a model tag "
+          "on each drafted answer",
+          "<b>Model draft</b>" in rv["detail"] and "Model draft hidden" not in rv["detail"]
+          and "model says the subject is absent" in rv["detail"] and "<blockquote>E1</blockquote>" in rv["detail"]
+          and rv["detail"].count('class="mtag"') == 3 and rv["threw"] == "", re.sub(r"\s+", " ", rv["detail"])[:900])
+    pv = rv["posts"][0] if rv["posts"] else {}
+    check("an answer changed after the draft is shown carries draft_shown",
+          pv.get("id") == "p/absent" and pv.get("value", {}).get("subject_present") is True
+          and pv["value"].get("draft_shown") == "claude-fable-5-1", str(rv["posts"]))
+    rs = run_page(rows, {"labels": {"p/absent": {**full, "subject_present": True}}, "attribution": {}}, start="p/absent")
+    ps = rs["posts"][0] if rs["posts"] else {}
+    check("the same answer given again after the draft is shown changes nothing and adds no draft_shown",
+          ps.get("id") == "p/absent" and ps.get("value", {}).get("subject_present") is True
+          and "draft_shown" not in ps["value"], str(rs["posts"]))
+    rl = run_page(rows, {"labels": {"p/absent": {"venue": "solo", "political_content": True}}, "attribution": {}},
+                  start="p/absent")
+    pl = rl["posts"][0] if rl["posts"] else {}
+    check("the answer that completes the checklist is given blind and carries no draft_shown",
+          "Model draft hidden" in rl["detail"] and pl.get("id") == "p/absent"
+          and pl.get("value", {}).get("subject_present") is True and pl["value"].get("political_content") is True
+          and "draft_shown" not in pl["value"], str(rl["posts"]))
+    rn = run_page(rows, {"labels": {"p/absent": full}, "attribution": {}}, start="p/absent", key=None, notes="n1")
+    pn = rn["posts"][0] if rn["posts"] else {}
+    check("notes typed after the draft is shown add no draft_shown",
+          pn.get("id") == "p/absent" and pn.get("value", {}).get("notes") == "n1" and "draft_shown" not in pn["value"],
+          str(rn["posts"]))
+    rk = run_page(rows, {"labels": {"p/absent": {"subject_present": True, "draft_shown": "claude-fable-5-1"}},
+                         "attribution": {}}, start="p/absent", key=None)
+    check("a label that already says the draft was shown keeps the draft on screen",
+          "<b>Model draft</b>" in rk["detail"] and rk["threw"] == "", re.sub(r"\s+", " ", rk["detail"])[:600])
     r0 = run_page([{k: v for k, v in x.items() if k not in ("draft", "doubt")} for x in rows])
     order0 = [a or b for a, b in re.findall(r'class="sec"[^>]*>([^<]+?) <small|data-k="([^"]+)"', r0["list"])]
     check("a page without drafts has no sections and keeps surname order, and saves no draft_shown",
@@ -439,7 +482,7 @@ def main() -> int:
           "Check first <small>· 0 of 2 checked</small>" in r["list"]
           and "Model was confident <small>· 0 of 1 checked</small>" in r["list"],
           str(re.findall(r'class="sec"[^>]*>(.*?)</div>', r["list"])))
-    check("the draft card quotes the draft's evidence", "<blockquote>E1</blockquote>" in r["detail"], r["detail"][:600])
+    check("the draft card quotes the draft's evidence", "<blockquote>E1</blockquote>" in rv["detail"], rv["detail"][:600])
     done = {"subject_present": True, "venue": "solo", "political_content": True}
     # p/absent stays to do, so the Check first header still renders with a numerator of 1.
     rc = run_page(rows, {"labels": {"p/unsure": done}, "attribution": {}})
@@ -447,17 +490,20 @@ def main() -> int:
           "Check first <small>· 1 of 2 checked</small>" in rc["list"]
           and "Model was confident <small>· 0 of 1 checked</small>" in rc["list"] and rc["threw"] == "",
           str(re.findall(r'class="sec"[^>]*>(.*?)</div>', rc["list"])))
-    ev = run_page([{**rows[2], "draft": {**rows[2]["draft"], "evidence": ["E1 <i>&"]}}])
+    ev = run_page([{**rows[2], "draft": {**rows[2]["draft"], "evidence": ["E1 <i>&"]}}],
+                  {"labels": {"p/absent": full}, "attribution": {}}, start="p/absent")
     check("the draft's evidence is escaped on the page", "<blockquote>E1 &lt;i&gt;&amp;</blockquote>" in ev["detail"],
           ev["detail"][:600])
     other = next(v for v in P.VENUES if v != "solo")
-    # Partial answers, so the recording stays first in the to-do list and its card is the one shown.
-    rd = run_page(rows, {"labels": {"p/absent": {"subject_present": True, "venue": other}}, "attribution": {}})
+    # Every question answered, so the draft shows; the page is opened at that recording.
+    rd = run_page(rows, {"labels": {"p/absent": {"subject_present": True, "venue": other, "political_content": True}},
+                         "attribution": {}}, start="p/absent")
     check("where a saved answer differs from the draft, the card names each field that differs, and only those",
           "model says the subject is absent" in rd["detail"]
           and "differs from the model's on: subject present, format</div>" in rd["detail"] and rd["threw"] == "",
           re.sub(r"\s+", " ", rd["detail"])[:900])
-    ra = run_page(rows, {"labels": {"p/absent": {"subject_present": False, "venue": other}}, "attribution": {}})
+    ra = run_page(rows, {"labels": {"p/absent": {"subject_present": False, "venue": other, "political_content": True}},
+                         "attribution": {}}, start="p/absent")
     check("where the person also says the subject is absent, a different format is no disagreement (as in needs_review)",
           "model says the subject is absent" in ra["detail"] and "Model draft" in ra["detail"]
           and "differs" not in ra["detail"] and ra["threw"] == "", re.sub(r"\s+", " ", ra["detail"])[:900])

@@ -15,8 +15,10 @@ each recording and quote.
 
 The page holds transcript text, so it lives in a data checkout and is served from
 this machine only (`scripts/annotations.py serve`). Answers are never stored in the
-page. Model drafts (`--drafts`) are shown as suggestions; a checklist answer saved
-with one on screen records `draft_shown`, so calibration can leave it out.
+page. Model drafts (`--drafts`) stay hidden until every checklist question of a
+recording has an answer, so those answers are blind; the draft then shows as a
+suggestion, and a checklist answer changed while it is on screen records
+`draft_shown`, so calibration can leave it out.
 """
 from __future__ import annotations
 
@@ -461,6 +463,10 @@ function recState(r){
   return "done";}
  return (labels[r.key]||spanAnswers[r.key]?.ranges.length||r.quotes.some(c=>(attrib[c.qid]||{}).answer)) ? "part" : "todo";}
 const outstanding = r => askLeft(r) + openQuotes(r).length;
+// The model's draft stays hidden until every checklist question has an answer, so
+// those answers are blind and calibration can use them. A label that already says
+// the draft was shown keeps it on screen.
+const draftOpen = r => !!r?.draft && (askDone(r) || !!(labels[r.key]||{}).draft_shown);
 
 function fmtT(s){if(s==null)return "";const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0");}
 function fmtDate(d){return d&&d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`:"unknown";}
@@ -504,17 +510,20 @@ function renderList(){
 
 function opt(store, id, field, value, label, key, cls=""){
  const on=(store[id]||{})[field]===value;
- const fab = store===labels && REC[id]?.draft?.[field]===value ? ` <span class="mtag" title="the model's draft answer">model</span>` : "";
+ const fab = store===labels && draftOpen(REC[id]) && REC[id].draft[field]===value ? ` <span class="mtag" title="the model's draft answer">model</span>` : "";
  return `<button type="button" class="opt ${cls}" data-id="${esc(id)}" data-f="${field}" data-v='${JSON.stringify(value)}' aria-pressed="${on}" ${writable?"":"disabled"}>${esc(label)}${fab} <kbd>${key}</kbd></button>`;}
 
-// The model's draft, shown as a suggestion beside the questions. Where the person's
-// saved answer differs, the card says so, so a slip is caught before moving on.
+// The model's draft, shown as a suggestion once the questions are answered. Where the
+// person's saved answer differs, the card says so, so a slip is caught before moving on.
 const YN = v => v===true?"yes":v===false?"no":"?";
 function draftCard(r){
  if(!HAS_DRAFTS || !r.ask) return "";
  const why=(r.doubt||[]).map(w=>`<span class="chip">${esc(w)}</span>`).join("");
  const d=r.draft;
  if(!d) return `<div class="mdraft"><div class="hd"><b>No usable model draft</b></div>${why?`<div class="chips">${why}</div>`:""}</div>`;
+ // Hidden: the reasons too, since "the subject is absent" gives the answer away.
+ if(!draftOpen(r)) return `<div class="mdraft"><div class="hd"><b>Model draft hidden</b><span>until every question below has an answer</span></div>
+  <p>Answers given before the draft appears are blind and can measure the model. The draft then appears here to compare; an answer you change after that is marked as made with the draft on screen.</p></div>`;
  const l=labels[r.key]||{};
  // A field marked differs_only_if counts only once that other answer is true, as in needs_review.
  const differ=FIELDS.filter(f=>f.name in l && l[f.name]!==d[f.name] && !(f.differs_only_if && !l[f.differs_only_if])).map(f=>f.draft_label);
@@ -581,9 +590,11 @@ function step(d){const vis=visible(), order=vis.length?vis:recs; let i=order.fin
 const queue={};
 function setField(store, id, f, v, quiet){
  if(!writable) return;
- const next={...(store[id]||{}), key:id, [f]:v, checked_by:"operator", updated_at:new Date().toISOString()};
- // Saved while a draft was on screen: an assisted label, and it says so.
- if(store===labels && REC[id]?.draft) next.draft_shown=REC[id].draft.model;
+ const prev=store[id]||{};
+ const next={...prev, key:id, [f]:v, checked_by:"operator", updated_at:new Date().toISOString()};
+ // A checklist answer changed while the draft is on screen is assisted, and says so.
+ // Answers given before the draft appears are blind, and notes are not an answer.
+ if(store===labels && draftOpen(REC[id]) && FIELDS.some(x=>x.name===f) && prev[f]!==v) next.draft_shown=REC[id].draft.model;
  store[id]=next;
  if(!quiet){renderList();renderDetail();}
  const st=el("status");st&&(st.textContent="Saving…",st.className="status");

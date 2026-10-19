@@ -213,9 +213,18 @@ three at once, from a clone that has both data checkouts:
 
 - The quote results of a pundits session describe FLAGGED quotes only; they do
   not replace the P7 random quote audit.
-- An answer saved with a model draft on screen records `draft_shown` and is left
-  out of calibration; an assisted range (`origin: model_confirmed`) cannot count
-  as a blind audit label.
+- A recording's model draft stays hidden until every checklist question has an
+  answer, so those answers are blind (owner decision 2026-10-19: format and
+  political content are judgments a visible draft can pull, and political content
+  decides which recordings count). Then the draft shows. A checklist answer changed
+  while it is on screen records `draft_shown` and is left out of calibration;
+  notes and an unchanged answer do not. An assisted range (`origin:
+  model_confirmed`) cannot count as a blind audit label; ranges are not hidden,
+  because who said which words is an observation, not a judgment.
+- The hidden draft still leaks through the list order: a recording under "Model
+  was confident" is one where the model judged, with high confidence, that the
+  subject is present and the main speaker. Hiding that would mean giving up the
+  check-first order. Format and political content do not leak.
 - Only one person per machine can annotate, because the server binds to
   loopback. Two independent labellers (the P7 rule) need two machines or a remote
   `Store`.
