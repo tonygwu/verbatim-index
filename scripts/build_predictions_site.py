@@ -767,6 +767,13 @@ function alsoSaid(r, all){
       <span class="why">&mdash; ${where}</span></span></li>`;
   }).join("") + `</ul>`;
 }
+function criteriaRows(r){
+  if (!r.criterion_repaired) return `<dt>Resolves if</dt><dd>${esc(r.resolution_criteria)}<br><span class="why">Verifier's reading: ${esc(r.verifier_criteria)}</span></dd>`;
+  return `<dt>Resolves if</dt><dd>${esc(r.resolution_criteria)}<br><span class="why">Corrected criterion used for scoring.</span>
+    <details class="ctx"><summary>Original readings (superseded)</summary>
+      <p>Extractor's original reading: ${esc(r.criterion_original)}</p>
+      <p>Verifier's original reading: ${esc(r.verifier_criteria)}</p></details></dd>`;
+}
 function predCard(r, all){
   const s = SRC[r.transcript_id] || {};
   const link = ytLink(s.video_id, r.t);
@@ -786,7 +793,7 @@ function predCard(r, all){
       <dt>Target</dt><dd>${esc(r.target)}</dd>
       <dt>Confidence</dt><dd>${conf}</dd>
       <dt>Category</dt><dd>${esc(CAT[r.category] || r.category)} &middot; ${esc(TYPE[r.prediction_type] || r.prediction_type)} &middot; ${esc(CTRL[r.subject_control] || r.subject_control)}</dd>
-      <dt>Resolves if</dt><dd>${esc(r.resolution_criteria)}<br><span class="why">Verifier's reading: ${esc(r.verifier_criteria)}</span></dd>
+      ${criteriaRows(r)}
       ${outcomeRows(r)}
       <dt>Source</dt><dd>${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || r.transcript_id)}</a>` : esc(s.title || r.transcript_id)}${s.venue ? ` &middot; ${esc(s.venue)}` : ""}</dd>
     </dl>
@@ -2696,7 +2703,19 @@ def attach_outcomes(pred: dict, scores_doc: dict | None) -> int:
     for recs in pred.values():
         for r in recs:
             row = by_id.get(r["prediction_id"])
-            if not row or not row.get("outcome"):
+            if not row:
+                continue
+            # The scorer applies reviewed criterion repairs without rewriting the
+            # original extraction. Its criterion must travel with its verdict;
+            # otherwise the card invites readers to judge a different event.
+            if row.get("criterion_repaired"):
+                criterion = row.get("criterion")
+                if not isinstance(criterion, str) or not criterion.strip():
+                    raise SystemExit(f"REFUSING: repaired prediction {r['prediction_id']} has no scoring criterion")
+                r["criterion_original"] = r["resolution_criteria"]
+                r["resolution_criteria"] = criterion
+                r["criterion_repaired"] = True
+            if not row.get("outcome"):
                 continue
             r["outcome"] = {
                 "verdict": row["outcome"],

@@ -18,6 +18,8 @@
   CARD       each state's Outcome line; never "Not yet resolved" for a record no stage will resolve; a record
              with no scores row takes its eligibility from phase2_resolvability.funnel_flags (SHARED); a
              directional claim the scorer's trend rule judges later gives the date, never "Never checked"
+  CRITERION  a repaired card shows the scored criterion; its original extraction and verification are
+             labeled superseded, and unrepaired cards keep their original criterion presentation
   PRICED     a card with no price says why; a price is dated "as of" the statement date, and its reason
              follows the state
   SAID       the statement date is labelled by its basis (stated, sourced, upload, publication, unknown);
@@ -477,6 +479,56 @@ def card_states(L, A, B) -> None:
             shutil.copytree(td / "new", Path(os.environ["VI_KEEP_STATE_SITE"]), dirs_exist_ok=True)
         # Every check below reads the new-strings build, or the old one if only that built.
         pub, row, page = built.get("new") or built["old"]
+        # A reviewed criterion repair lives in the scorer's row, while the
+        # extracted record remains intact. Exercise the full render and then
+        # the page's actual card function, so retaining the old criterion in
+        # either the payload or the visible card fails this regression.
+        repaired = dora_scores(recs, run, True)
+        corrected = "Website orders ship in late April, after ALL campaign rewards have been delivered."
+        scored_row = next(r for r in repaired["predictions"] if r["prediction_id"] == by_sid["scored"])
+        scored_row.update(criterion_repaired=True, criterion=corrected)
+        p = render(repaired, "repaired")
+        check("CRITERION: the page builds with a scored criterion repair", p.returncode == 0, p.stderr[-600:])
+        if p.returncode == 0:
+            repaired_pub = {r["transcript_id"].split("/")[1]: r
+                            for r in records(td / "repaired" / "index.html")["dora"]}
+            r = repaired_pub["scored"]
+            check("CRITERION: the payload uses the scorer's repaired criterion and retains original readings",
+                  r["resolution_criteria"] == corrected and r.get("criterion_repaired") is True
+                  and r.get("criterion_original") == recs["scored"]["prediction"]["resolution_criteria"]
+                  and r["verifier_criteria"] == recs["scored"]["verification"]["verifier_resolution_criteria"])
+            check("CRITERION: the repaired card retains the source quote and scoring outcome",
+                  r["quote"] == pub["scored"]["quote"] and r["outcome"] == pub["scored"]["outcome"])
+            check("CRITERION: every unrepaired record is unchanged",
+                  all(r == pub[sid] for sid, r in repaired_pub.items() if sid != "scored"))
+            functions = page[page.index("function criteriaRows(r){"):page.index("function options(recs, key, labels){")]
+            escape = re.search(r"^const esc = .*;$", page, re.M).group(0)
+            probe = escape + "\n" + functions + """
+const SRC = {}, CAT = {}, TYPE = {}, CTRL = {};
+const ytLink = () => null, pct = p => p, alsoSaid = () => '', outcomeRows = () => '', marketLine = () => '';
+console.log(JSON.stringify(""" + json.dumps([r, pub["scored"]]) + ".map(r => predCard(r, []))));"
+            n = subprocess.run(["node", "-e", probe], capture_output=True, text=True)
+            cards = json.loads(n.stdout) if n.returncode == 0 else ["", ""]
+            check("CRITERION: repaired and unrepaired cards render through the shipped JavaScript",
+                  n.returncode == 0, n.stderr[-600:])
+            active = cards[0].split('<dt>Resolves if</dt><dd>')[-1].split('<details')[0]
+            old_extraction = recs["scored"]["prediction"]["resolution_criteria"]
+            old_verifier = recs["scored"]["verification"]["verifier_resolution_criteria"]
+            check("CRITERION: only the complete repaired criterion is presented as active",
+                  corrected in active and old_extraction not in active and old_verifier not in active, active)
+            provenance = re.search(r'<details class="ctx"><summary>Original readings \(superseded\)</summary>(.*?)</details>',
+                                   cards[0], re.S)
+            check("CRITERION: both superseded readings are explicitly labeled as original provenance",
+                  bool(provenance) and "Extractor's original reading: " + old_extraction in provenance.group(1)
+                  and "Verifier's original reading: " + old_verifier in provenance.group(1))
+            check("CRITERION: an unrepaired card keeps the original active reading and verifier markup",
+                  f'<dt>Resolves if</dt><dd>{old_extraction}<br><span class="why">Verifier\'s reading: {old_verifier}</span></dd>'
+                  in cards[1] and "superseded" not in cards[1] and "Corrected criterion" not in cards[1])
+        scored_row["criterion"] = ""
+        p = render(repaired, "missing-repaired-criterion")
+        check("CRITERION: a repair without its active criterion refuses instead of showing the old one",
+              p.returncode != 0 and "has no scoring criterion" in p.stderr and by_sid["scored"] in p.stderr,
+              p.stderr[-600:])
         st = {sid: r.get("state") or {} for sid, r in pub.items()}
         sid_of = {pid: sid for sid, pid in by_sid.items()}
         got = {sid: (s.get("state"), sid_of.get(s.get("reason"), s.get("reason"))) for sid, s in st.items()}
