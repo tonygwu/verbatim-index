@@ -610,25 +610,13 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ---
 
-### VI-27. VP-41's scored board is not deployed  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[BLOCKED: the operator decides VD-20 (grants the predictions deploy); VD-10, decided 2026-09-29, covered the VP-31 rebuild only]`
-
-**Background:** Any push-role clone at origin/main can do this. The overnight run of 2026-10-18 finished VP-41 through scoring (data `6e142316`, derived `94dfc91f`, diff `225585e4`, notes `7e078af7`, readme `2537af7d`; ledger VP-41, decision VD-20): `scoring.json` names `predictions/_experiments/thin-supplement-20261018` with `as_of` 2026-10-18; `scores.json` has 569 scored rows and 49 ranked people where the live page (data `c553aed7`) has 528 and 46; the per-person table is `predictions/_experiments/thin-supplement-20261018/diff_board.md` (41 rows started scoring, 0 stopped; Tim Cook, Reed Hastings and Evan Spiegel newly ranked; Pat Gelsinger 6 -> 16 scored, rank 10 -> 14). The deploy was not authorized: the operator granted spend, and VD-10 (decided 2026-09-29 for the VP-31 rebuild, live 2026-10-03) says "Scope: this rebuild only"; VD-20 in the ledger asks for the grant. `scores_asof_lag` (`scripts/data_clone_workflow.py:966`) passes for as_of 2026-10-18 while no newer commit adds predictions data; after one does, `as_of` must move and the board re-score before any deploy.
-
-**Impact:** the live page shows a board that main has moved past, and every later predictions commit raises the cost of catching up.
-
-**Fix:** with the data and public checkouts at origin/main, `bash scripts/deploy_predictions.sh --production-data "$(cd data && pwd -P)" --data-revision "$(git -C data rev-parse HEAD)"`, then send the operator `diff_board.md`. No code changes.
-
-**Touch points:** none modified; runs `scripts/deploy_predictions.sh` and reads `data/predictions/_experiments/thin-supplement-20261018/diff_board.md`.
-
----
-
 ### VI-28. The second source pass for the thin predictions people is not run  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
 
 The operator asked for the second pass on 2026-10-19, after VI-23 is fixed ("run a second source search for the thinnest people, but fix VI-23 first"). Start it only once VI-23 is on origin/main.
 
 **Background:** Any push-role clone can do this. Runners-up cut by the 6-source cap of the 2026-10-18 discovery are in each `findings/<slug>.json` of `data/predictions/_experiments/thin-supplement-20261018/` (reed-hastings 4 Netflix earnings calls, tim-cook 4, larry-ellison 4, tom-lee 2 plus about 30 CNBC episodes). The discovery sub-agents shared one web-search budget and ran out early, so most people were searched thinly; `BRIEF.md` lacks the generic User-Agent line that the run's README asks for. Credit at 2026-10-18T13:00Z (`quotapick credits --json`): pool a $169.08 (expires 2026-11-16), b $16.83 (2026-11-11), e $2.46 (2026-11-10); pool c's second grant, $93.71 at 05:51Z, expires 2026-11-20 and is NOT recorded in quotapick (`quotapick credits grant` adds it). `NOTES.md` in that folder is the worked example for every stage.
 
-**Impact:** 22 of the 25 thinnest people are still ranked on fewer than 10 scored predictions or unranked (aravind-srinivas, clem-delangue, sergey-brin and tobi-lutke have no scored row).
+**Impact:** 22 of the 25 thinnest people are still ranked on fewer than 10 scored predictions or unranked (clem-delangue and sergey-brin have no scored row; aravind-srinivas and tobi-lutke have one each, in `scores.json` at data `e4a68376`).
 
 **Fix:** the whole pipeline, as in `NOTES.md`: (1) discovery with `BRIEF.md` plus a generic User-Agent line, spread across sessions; (2) `_driver/pipeline.py <slug>` with `POOLS` set to a pool that has money (URL and text duplicate checks, fetch, place, Fable extraction on credit, Gemini verify); (3) dating with `scripts/date_recordings.py --ids` over the datable recordings (stated_in_page sources are skipped), `scripts/promote_dating_run.py --against` the production runs, re-extraction of the re-dated recordings; (4) `worklists.py` in a NEW run folder named in `scoring.json` with `as_of` moved to the carrying commit's UTC date, then lead_test, resolve (Astra), prior (Fable on credit), market consensus and year summaries; (5) `data_sync.py push`, then the deploy and the per-person diff.
 
