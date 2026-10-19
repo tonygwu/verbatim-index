@@ -352,8 +352,22 @@ def main() -> int:
         (lead / "shift" / "human_answers.json").write_text(json.dumps(page_doc, indent=1) + "\n")
         code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
                          "--out", str(lead / "shift")])
-        check("a new build drops the export files an adopted page listed, since its quote key changes",
+        check("a new build drops the quote-results export an adopted page listed, since its quote key changes",
               code == 0 and "exports" not in json.loads((lead / "shift" / "manifest.json").read_text())["files"], out)
+        man = json.loads((lead / "shift" / "manifest.json").read_text())
+        man["files"]["exports"] = {"quotes": "quote_results.json", "corrections": "c.json"}
+        (lead / "shift" / "manifest.json").write_text(json.dumps(man))
+        code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",
+                         "--out", str(lead / "shift")])
+        check("but keeps the exports that come from the answers alone, so verify still checks them",
+              code == 0 and json.loads((lead / "shift" / "manifest.json").read_text())["files"].get("exports")
+              == {"corrections": "c.json"}, out)
+        man = json.loads((lead / "shift" / "manifest.json").read_text())
+        del man["tool"]
+        (lead / "shift" / "manifest.json").write_text(json.dumps(man))
+        code, out = run(["verify", "--session", str(lead / "shift")])
+        check("a version-2 manifest that lost a key names the key, and does not send the person to migrate",
+              code != 0 and "missing `tool`" in out and "migrate" not in out, out)
 
         print("\n[FLAGS]")
         code, out = run(["build", "--project", "insights", "--data", str(lead), "--keys", "jane-roe/talk-1",

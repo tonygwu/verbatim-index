@@ -200,6 +200,9 @@ counts. To annotate all three at once:
   `--allow-off-page` keeps answers for a recording deliberately dropped from the
   checklist, and nothing overrides a changed transcript. `rebuild` never re-selects
   quotes, so it is always safe.
+  On a migrated session a new `build` stops listing the old `quote_results.json`
+  among the exports `verify` compares, because the rebuilt quote key tags each quote
+  with its project; the labels and corrections exports stay listed and checked.
 
 ## Known limits
 
