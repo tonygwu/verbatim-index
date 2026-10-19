@@ -16,7 +16,7 @@ were created and observed active. This checkout owns the combined deployment.
 The operator explicitly asked to retain the presentation and investigate
 additional samples rather than add exploratory framing.
 
-**Succeeded, code verified; publication pending:** the scoring explanation now
+**Succeeded, code verified:** the scoring explanation now
 covers both baseline-only points and stated-probability log ratios. A correct
 80% forecast against an 83% baseline earns −0.0531, rather than the positive
 points the old universal explanation implied. The methodology now describes
@@ -33,7 +33,8 @@ reports, retrieval limits, frozen inputs and task receipts live in data
 being assessed against current scores and duplicate events; source expansion
 itself is already tracked by VI-28.
 
-Verify: focused site and policy test scripts; the private run's `STATUS.md`;
+Deployment status and exact revisions are maintained in the private run's
+`STATUS.md`. Verify: focused site and policy test scripts;
 `curl -s https://verbatim-predictions.tonygwu.com/revision.json`.
 
 ## Items
