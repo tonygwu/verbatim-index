@@ -274,9 +274,11 @@ def main() -> int:
               cap_env == "128000", cap_env)
         check("the cap is one named constant, Fable's maximum output of 128,000 tokens",
               getattr(C, "FABLE_MAX_OUTPUT_TOKENS", None) == 128_000, str(getattr(C, "FABLE_MAX_OUTPUT_TOKENS", None)))
-        call(tmp, good())
+        tel = call(tmp, good())[1]
         check("with nothing in the caller's environment the child still gets it",
               (tmp / "cap_env").read_text() == "128000", (tmp / "cap_env").read_text())
+        check("the telemetry records the cap it asked for", tel.get("max_output_tokens_requested") == 128_000,
+              str(tel))
 
     print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
     if FAIL:

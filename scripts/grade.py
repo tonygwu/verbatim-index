@@ -1142,15 +1142,20 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
     if not judge_models:
         raise RuntimeError(f"{E_MODEL_MISMATCH}: telemetry names {list(used)} with no Fable model")
     # Judged against the cap this call set, not a lower one: this harness offers
-    # tools, a tool call ends a turn early, and MEASURED 2026-10-19 over the Fable
-    # predictions sessions on this machine, 3 of 442 had earlier turns of 64,868 to
-    # 73,007 output tokens in all and a whole answer after them. Not against
-    # modelUsage's `maxOutputTokens` either: Claude Code 2.1.303 fills it with the
-    # model's default (`gle(model).default`), not the cap in effect. MEASURED
-    # 2026-10-19 with the variable at 1000: the first turn stopped at 1,000 tokens
-    # and the field still said 64000.
+    # tools, and a tool call ends a turn early. MEASURED 2026-10-19 on this
+    # machine's transcripts: 3 of 442 Fable predictions sessions had earlier turns
+    # of 64,868 to 73,007 output tokens in all and a whole answer after them, and
+    # 2 of 434 `fable` dating sessions had 75,382 and 101,698. A whole answer after
+    # tool turns of 128,000 or more is refused, loudly; BACKLOG has the transcript
+    # check that would tell it apart. A gap that is an exact multiple of the CLI's
+    # 64,000 default is refused too (cut_at): it is a cut at the old cap, which
+    # means the variable did not reach the child. Not judged against modelUsage's
+    # `maxOutputTokens`: Claude Code 2.1.303 fills it with the model's default
+    # (`gle(model).default`), not the cap in effect. MEASURED 2026-10-19 with the
+    # variable at 1000: the first turn stopped at 1,000 tokens and the field said 64000.
     cut = credit_run.truncation_detail(payload.get("usage") or {}, credit_run.FABLE_MAX_OUTPUT_TOKENS,
-                                       payload.get("result") or "")
+                                       payload.get("result") or "",
+                                       cut_at=credit_run.CLI_DEFAULT_MAX_OUTPUT_TOKENS)
     if cut:
         raise RuntimeError(f"{E_TRUNCATED}: {cut}")
     telemetry = {
@@ -1166,6 +1171,9 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
         "thinking_tokens": (payload.get("usage") or {}).get("output_tokens_details", {}).get("thinking_tokens"),
         "input_tokens": used[judge_models[0]].get("inputTokens"),
         "output_tokens": used[judge_models[0]].get("outputTokens"),
+        # The cap this call asked the child for (VI-23). Asked, not confirmed:
+        # modelUsage's maxOutputTokens is the model's default, not the cap in force.
+        "max_output_tokens_requested": credit_run.FABLE_MAX_OUTPUT_TOKENS,
     }
     if require_no_tools:
         # Tools were removed, so ANY recorded call, denied or not, means the
@@ -1281,6 +1289,7 @@ def call_fable_pool(prompt: str, pool: str, timeout: int, *, request_id: str,
         "cache_creation_input_tokens": tel["cache_creation_input_tokens"],
         "cache_read_input_tokens": tel["cache_read_input_tokens"],
         "output_tokens": tel["output_tokens"],
+        "max_output_tokens_requested": tel["max_output_tokens_requested"],
         "request_id": tel["request_id"],
         "served_at_utc": tel["served_at_utc"],
     }

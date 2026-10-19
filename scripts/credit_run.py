@@ -58,13 +58,16 @@ MAX_OUTPUT_TOKENS_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
 #: for claude-fable-5-1), and Claude Code 2.1.303's model table,
 #: `max_output_tokens:{default:64000,upper:128000}` for claude-fable-5-1. The CLI
 #: caps a larger value to that upper limit and only logs it, so a higher number
-#: here would buy nothing. The model is not told the cap, so an answer that fits
-#: the old 64,000 is the same answer under this one.
+#: here would buy nothing. The model is not told the cap today: no Fable
+#: transcript on this machine held an `output_limit_note` on 2026-10-19. Claude
+#: Code 2.1.303 can add one behind a server flag (`tengu_jaunty_plum`); its text
+#: then names this cap, and the prompt changes with it.
 FABLE_MAX_OUTPUT_TOKENS = 128_000
 
 #: The cap a `claude -p` child runs under when the variable above does not reach
-#: it: Claude Code 2.1.303's default for claude-fable-5-1, and the cap the two cut
-#: answers of 2026-10-18 hit (each lost exactly 64,000 tokens).
+#: it: the default observed for claude-fable-5-1 in Claude Code 2.1.303, and the
+#: cap the two cut answers of 2026-10-18 hit (each lost exactly 64,000 tokens).
+#: Server config can move a CLI default, so this is an observation, not a law.
 CLI_DEFAULT_MAX_OUTPUT_TOKENS = 64_000
 
 #: The label of an answer whose earlier turn hit the output cap (VI-23). grade.py,
@@ -97,8 +100,8 @@ def continuation_gap(usage: dict) -> int | None:
     return total - kept
 
 
-def truncation_detail(usage: dict, cap: int, text: str) -> str | None:
-    """Why `text` is only the last part of a longer answer, or None when no earlier turn hit `cap`.
+def truncation_detail(usage: dict, cap: int, text: str, *, cut_at: int | None = None) -> str | None:
+    """Why `text` is only the last part of a longer answer, or None when no earlier turn was cut.
 
     MEASURED 2026-10-18 (pat-gelsinger/web-fool-com-335b172e, two credit
     extractions): output_tokens minus the one iteration kept was exactly 64,000,
@@ -106,6 +109,12 @@ def truncation_detail(usage: dict, cap: int, text: str) -> str | None:
     The text's shape is never one: a prose answer must not be refused for not
     starting with `{`. A gap below the cap is a turn that ended on its own, such
     as a denied tool call on the subscription harness, and passes.
+
+    `cut_at` also refuses a gap that is a positive multiple of it. A cut turn
+    stops at exactly its cap, so the cut answers left 64,000, and Fable raw files
+    in the speaker audit left 128,000 and 192,000; the whole answers after tool
+    turns left 64,868, 69,491 and 73,007. So a cap of `cut_at` that was still in
+    force, because the variable did not reach the child, is caught below `cap`.
 
     Two known false refusals, both of a whole answer. First, when a turn hits
     the cap while still thinking, the CLI drops that reasoning and asks for a
@@ -116,12 +125,18 @@ def truncation_detail(usage: dict, cap: int, text: str) -> str | None:
     message names the thinking tokens, so a reader can tell these cases apart.
     """
     gap = continuation_gap(usage)
-    if gap is None or gap < cap:
+    if gap is None or gap <= 0:
+        return None
+    if gap >= cap:
+        why = f"at least the {cap}-token turn cap"
+    elif cut_at and gap % cut_at == 0:
+        why = f"an exact multiple of the {cut_at}-token default turn cap"
+    else:
         return None
     kept = usage["output_tokens"] - gap
     thinking = (usage.get("output_tokens_details") or {}).get("thinking_tokens")
     return (f"usage.output_tokens {usage['output_tokens']} minus usage.iterations {kept} leaves {gap}, "
-            f"at least the {cap}-token turn cap, so an earlier turn was cut off and the {len(text)}-character "
+            f"{why}, so an earlier turn was cut off and the {len(text)}-character "
             f"text is only the continuation (thinking_tokens {thinking}; text starts {text[:60]!r})")
 
 
@@ -219,9 +234,10 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
     # variable does not reach the child. If a quotapick release stopped passing it
     # on, answers would be cut at 64,000 again, and a 128,000 threshold would let
     # those fragments through as schema failures, the bug VI-23 fixes. With no
-    # tools, an earlier turn is almost always a capped one. MEASURED 2026-10-19:
-    # of 158 saved credit responses with iterations, the 2 cut answers have a gap
-    # of exactly 64,000 and the other 156 a gap of 0.
+    # tools, an earlier turn is almost always a capped one. That rests on
+    # request_for never sending a `json_schema`: quotapick answers one in two
+    # turns. MEASURED 2026-10-19: of 158 saved credit responses with iterations,
+    # the 2 cut answers have a gap of exactly 64,000 and the other 156 a gap of 0.
     cut = truncation_detail(usage, CLI_DEFAULT_MAX_OUTPUT_TOKENS, resp.get("text") or "")
     if cut:
         raise CreditRunError(f"{E_CONTINUATION_TRUNCATED}: {cut}; billed_usd {billed!r}")
@@ -234,6 +250,9 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
         "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
         "thinking_tokens": (usage.get("output_tokens_details") or {}).get("thinking_tokens"),
+        # The cap this call asked the child for. Asked, not confirmed: the
+        # response does not report the cap a turn ran under.
+        "max_output_tokens_requested": FABLE_MAX_OUTPUT_TOKENS,
         # None, not a partial sum, when any attempt does not say how long it took.
         "duration_ms": sum(durations) if durations and all(isinstance(d, int) for d in durations) else None,
     }

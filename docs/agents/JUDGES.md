@@ -217,20 +217,35 @@ the mix even.
   in `usage`: `output_tokens` counts every turn and `iterations` only the last,
   and in both answers the difference was exactly 64,000, the cap.
   `credit_run.truncation_detail` refuses a difference at least as large as the
-  cap. Both paths run the child with `CLAUDE_CODE_MAX_OUTPUT_TOKENS` set to
+  cap. Two harnesses run the child with `CLAUDE_CODE_MAX_OUTPUT_TOKENS` set to
   `credit_run.FABLE_MAX_OUTPUT_TOKENS`, 128,000, Fable 5.1's maximum output, so
-  such an answer now fits one turn. The model is not told the cap, so an
-  answer under 64,000 tokens is unchanged. The credit path (`credit_run.run`)
-  refuses a difference of 64,000 or more: quotapick has no tools, so only a cut
-  turn leaves a difference, and 64,000 still catches a cut if the variable
-  ever stops reaching the child. The subscription path (`grade.call_fable`)
-  refuses 128,000 or more, because a tool call there also ends a turn: 3 of
-  442 Fable sessions had earlier turns of 64,868 to 73,007 tokens and a whole
-  answer. Do not read the cap from modelUsage's `maxOutputTokens`: the CLI
-  fills it with the model's default. MEASURED 2026-10-19 with the variable at
-  1000, the first turn stopped at 1,000 tokens, the text came back starting
-  mid-list, and that field said 64000. Guarded by
-  `scripts/test_continuation_truncated.py` and `scripts/test_credit_run.py`.
+  such an answer now fits one turn: `credit_run.run`, which every credit call
+  uses, and `grade.call_fable`, the subscription judge harness that grades,
+  extraction, priors, year summaries and the `fable` dater use. Both record
+  the cap they asked for as `telemetry.max_output_tokens_requested`. The other
+  Fable harnesses (`date_recordings.call_fable_web`,
+  `speaker_segment_probe.py`, `p3_judge_probe.py`) get neither the cap nor the
+  check: BACKLOG VI-42. The model is not told the cap today, so an answer under
+  64,000 tokens is unchanged; Claude Code 2.1.303 can add an
+  `output_limit_note` that names the cap behind a server flag, and none was in
+  any Fable transcript on 2026-10-19.
+  The credit path refuses a difference of 64,000 or more. quotapick offers no
+  tools, so a difference there is almost always a cut turn, and 64,000 still
+  catches a cut if the variable ever stops reaching the child. The one other
+  source is a turn with no visible text that the CLI asks to continue, which
+  is refused as well. The subscription path refuses 128,000 or more, because a
+  tool call there also ends a turn: earlier tool turns of 64,868 to 73,007
+  tokens came before a whole answer in 3 of 442 Fable predictions sessions,
+  and of 75,382 and 101,698 tokens in 2 of 434 `fable` dating sessions. It also
+  refuses a difference that is an exact multiple of 64,000, the old cap, since
+  a cut turn stops at exactly its cap. A whole answer after 128,000 tokens of
+  tool turns is refused, loudly; VI-43 would confirm a cut from the session
+  transcript instead. Do not read the cap from modelUsage's
+  `maxOutputTokens`: the CLI fills it with the model's default. MEASURED
+  2026-10-19 with the variable at 1000, the first turn stopped at 1,000
+  tokens, the text came back starting mid-list, and that field said 64000.
+  Guarded by `scripts/test_continuation_truncated.py` and
+  `scripts/test_credit_run.py`.
 
 ## Measurement decisions, and why
 

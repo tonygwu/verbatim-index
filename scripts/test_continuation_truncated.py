@@ -11,11 +11,12 @@ turn was cut off.
 
   SUBSCRIPTION  grade.call_fable refuses the gap as continuation_truncated, judged against
                 the 128,000 cap it sets, never modelUsage's maxOutputTokens (the CLI fills
-                that with the model's default, 64,000); an earlier tool turn below the cap
-                (measured 2026-10-02: 73,007 tokens and a whole answer) passes; a single
+                that with the model's default, 64,000), and refuses a gap that is an exact
+                multiple of 64,000 (a cut at the old cap); earlier tool turns below the cap
+                (measured: 73,007 and 64,868 tokens and a whole answer) pass; a single
                 turn and a usage with no iterations pass
   CAP           the `claude -p` child gets CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000 over the
-                caller's own value
+                caller's own value, and both telemetry blocks record the cap they asked for
   POOL          grade.call_fable_pool files it as continuation_truncated, not credit_pool_refused
   EXTRACT       extract_predictions.call_fable_credit keeps the label at the front instead of
                 credit_run_failed, so predictions_lib.classify_exception_detail files it
@@ -125,6 +126,12 @@ def main() -> int:
         got, err = sub(cli_payload(73_007 + 21_167, [21_167], '{"candidates": []}', 64_000))
         check("an earlier tool turn of 73,007 tokens passes, though modelUsage says maxOutputTokens 64000",
               err is None and got[0] == '{"candidates": []}', str(err or got))
+        got, err = sub(cli_payload(64_868 + 900, [900], '{"candidates": []}', 64_000))
+        check("earlier tool turns of 64,868 tokens, not a multiple of 64,000, pass",
+              err is None and got[0] == '{"candidates": []}', str(err or got))
+        got, err = sub(cli_payload(68_707, [4_707], FRAGMENT, 64_000))
+        check("a gap of exactly 64,000, a cut at the old default cap, is refused below the 128,000 threshold",
+              err is not None and LABEL in err and "exact multiple" in err, str(err or got))
         got, err = sub(cli_payload(49_159, [49_159], "A prose answer.", 64_000))
         check("a single turn passes, prose or not", err is None and got[0] == "A prose answer.", str(err or got))
         got, err = sub(cli_payload(49_159, None, '{"candidates": []}', 64_000))
@@ -139,6 +146,8 @@ def main() -> int:
         cap_env = (tmp / "claude_cap_env").read_text()
         check("the subscription child gets CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000 over the caller's 1000",
               err is None and cap_env == "128000", f"{cap_env} {err}")
+        check("the subscription telemetry records the cap it asked for",
+              err is None and got[1].get("max_output_tokens_requested") == 128_000, str(err or got[1]))
 
         print("\n[POOL]")
         qp = fake_quotapick(tmp)
@@ -151,8 +160,14 @@ def main() -> int:
         check("call_fable_pool files it as continuation_truncated, not credit_pool_refused",
               err is not None and G.classify_exception_detail(err.split(": ", 1)[1]) == LABEL, str(err or got))
         check("and the cost of the lost answer is still counted", spent == [5.03], str(spent))
+        qp_file.write_text(json.dumps(credit_payload(50_049, [50_049], '{"candidates": []}')))
+        got, err = outcome(lambda: G.call_fable_pool("PROMPT", "anthropic_api_a", 300, request_id="y",
+                                                     expected_cost_usd=3.0, binary=str(qp)))
+        check("a whole credit grade passes, and its telemetry records the cap it asked for",
+              err is None and got[1].get("max_output_tokens_requested") == 128_000, str(err or got[1]))
 
         print("\n[EXTRACT]")
+        qp_file.write_text(json.dumps(credit_payload(68_707, [4_707], FRAGMENT)))
         path = os.environ["PATH"]
         os.environ["PATH"] = f"{tmp}{os.pathsep}{path}"
         try:
