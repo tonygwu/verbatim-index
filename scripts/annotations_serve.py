@@ -34,6 +34,16 @@ MAX_BODY = 256 * 1024
 # client then sees ECONNRESET instead of the 400 (3 of 60 test runs, 2026-10-11).
 # Past this bound the connection is simply closed; nothing on this page sends that.
 DRAIN_LIMIT = 16 * MAX_BODY
+#: Once a label records that its draft was on screen, and the blind answers it had
+#: before, no later save drops or replaces either. The page sends the whole label, so
+#: a second tab still showing an older copy would otherwise turn an assisted label
+#: back into a blind one.
+STICKY_LABEL_FIELDS = ("draft_shown", "answers_before_draft")
+
+
+def keep_assisted(value: dict, stored: dict | None) -> dict:
+    """`value`, with any sticky field the stored label already has."""
+    return {**value, **{f: stored[f] for f in STICKY_LABEL_FIELDS if stored and f in stored}}
 
 
 class Mounted:
@@ -195,6 +205,8 @@ def make_handler(mounts: dict[str, Mounted]):
                 new = value
                 if kind == "corrections":
                     new = update_corrections(value, answers["corrections"].get(ident), transcript)
+                if kind == "labels":
+                    new = keep_assisted(value, answers["labels"].get(ident))
                 stored["value"] = new
                 return m.reviewed({**answers, kind: {**answers[kind], ident: new}})
 

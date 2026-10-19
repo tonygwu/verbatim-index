@@ -216,15 +216,28 @@ three at once, from a clone that has both data checkouts:
 - A recording's model draft stays hidden until every checklist question has an
   answer, so those answers are blind (owner decision 2026-10-19: format and
   political content are judgments a visible draft can pull, and political content
-  decides which recordings count). Then the draft shows. A checklist answer changed
-  while it is on screen records `draft_shown` and is left out of calibration;
-  notes and an unchanged answer do not. An assisted range (`origin:
-  model_confirmed`) cannot count as a blind audit label; ranges are not hidden,
-  because who said which words is an observation, not a judgment.
+  decides which recordings count). Then the draft shows. The first checklist answer
+  changed while it is on screen marks the whole label `draft_shown` and keeps the
+  answers it had before in `answers_before_draft` (owner decision 2026-10-19,
+  option A); notes and an unchanged answer do neither. Calibration compares those
+  blind answers with the model, and counts what changed after the draft and how
+  much of it moved to the model's answer. Leaving a corrected label out instead
+  would drop exactly the recordings where the person first disagreed with the
+  model, and raise the agreement. A label marked `draft_shown` with no blind
+  answers kept is left out. The server keeps both fields once a label has them, so
+  a second tab with an older copy cannot turn the label blind again. An assisted
+  range (`origin: model_confirmed`) cannot count as a blind audit label; ranges are
+  not hidden, because who said which words is an observation, not a judgment.
 - The hidden draft still leaks through the list order: a recording under "Model
   was confident" is one where the model judged, with high confidence, that the
   subject is present and the main speaker. Hiding that would mean giving up the
-  check-first order. Format and political content do not leak.
+  check-first order, so calibration reports presence agreement for that section
+  separately (`subject_present_by_section`). Format and political content do not
+  leak.
+- The page sends a whole label on each save. A second tab still showing an older
+  copy of a recording replaces that label's answers with its own when it saves;
+  only `draft_shown` and `answers_before_draft` are protected. Keep one tab per
+  recording.
 - Only one person per machine can annotate, because the server binds to
   loopback. Two independent labellers (the P7 rule) need two machines or a remote
   `Store`.

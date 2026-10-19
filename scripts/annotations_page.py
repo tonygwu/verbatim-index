@@ -17,8 +17,9 @@ The page holds transcript text, so it lives in a data checkout and is served fro
 this machine only (`scripts/annotations.py serve`). Answers are never stored in the
 page. Model drafts (`--drafts`) stay hidden until every checklist question of a
 recording has an answer, so those answers are blind; the draft then shows as a
-suggestion, and a checklist answer changed while it is on screen records
-`draft_shown`, so calibration can leave it out.
+suggestion. The first checklist answer changed while it is on screen marks the label
+`draft_shown` and keeps the blind answers in `answers_before_draft`, which
+calibration compares instead of the corrected ones.
 """
 from __future__ import annotations
 
@@ -133,21 +134,35 @@ def to_labels(docs: list[dict], keys, checklist: dict) -> dict:
     guesses a missing field: a partly answered recording is left out, not filled.
     """
     fields = checklist["fields"]
-    out, partial, unknown = {}, [], []
+    required = [f for f in fields if f.get("required")]
+    out, partial, unknown, bad_blind = {}, [], [], []
     for d in docs:
         key = d.get("key")
         if key not in keys:
             unknown.append(key)
             continue
-        if not all(answered(f, d.get(f["name"])) for f in fields if f.get("required")):
+        if not all(answered(f, d.get(f["name"])) for f in required):
             partial.append(key)
+            continue
+        # The blind answers kept when a label was first changed with the draft on
+        # screen: all of them, each valid, and only beside draft_shown.
+        before = d.get("answers_before_draft")
+        if before is not None and not (isinstance(before, dict) and d.get("draft_shown")
+                                       and set(before) == {f["name"] for f in required}
+                                       and all(answered(f, before[f["name"]]) for f in required)):
+            bad_blind.append(key)
             continue
         out[key] = {**{f["name"]: d.get(f["name"]) for f in fields},
                     "checked_by": d.get("checked_by") or "operator", "notes": d.get("notes") or "",
-                    # An assisted label says so, so calibration can leave it out.
-                    **({"draft_shown": d["draft_shown"]} if d.get("draft_shown") else {})}
+                    # An assisted label says so, and keeps the answers it had before,
+                    # so calibration compares those instead.
+                    **({"draft_shown": d["draft_shown"]} if d.get("draft_shown") else {}),
+                    **({"answers_before_draft": before} if before is not None else {})}
     if unknown:
         raise SystemExit(f"REFUSING: {len(unknown)} labels name recordings not on the checklist, e.g. {unknown[:3]}")
+    if bad_blind:
+        raise SystemExit(f"REFUSING: {len(bad_blind)} labels carry answers_before_draft that is not a complete, valid "
+                         f"set of answers beside draft_shown, e.g. {bad_blind[:3]}")
     return {"labels": out, "partial": sorted(partial), "unlabelled": sorted(set(keys) - set(out) - set(partial))}
 
 
@@ -593,8 +608,12 @@ function setField(store, id, f, v, quiet){
  const prev=store[id]||{};
  const next={...prev, key:id, [f]:v, checked_by:"operator", updated_at:new Date().toISOString()};
  // A checklist answer changed while the draft is on screen is assisted, and says so.
- // Answers given before the draft appears are blind, and notes are not an answer.
- if(store===labels && draftOpen(REC[id]) && FIELDS.some(x=>x.name===f) && prev[f]!==v) next.draft_shown=REC[id].draft.model;
+ // The first such change keeps the blind answers beside the label, so calibration can
+ // still compare them with the model. Answers given before the draft appears are
+ // blind, and notes are not an answer.
+ if(store===labels && draftOpen(REC[id]) && FIELDS.some(x=>x.name===f) && prev[f]!==v){
+  if(!prev.draft_shown) next.answers_before_draft=Object.fromEntries(FIELDS.filter(x=>x.name in prev).map(x=>[x.name,prev[x.name]]));
+  next.draft_shown=REC[id].draft.model;}
  store[id]=next;
  if(!quiet){renderList();renderDetail();}
  const st=el("status");st&&(st.textContent="Saving…",st.className="status");

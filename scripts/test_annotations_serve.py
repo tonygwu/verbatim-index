@@ -10,6 +10,8 @@ so that one is read off the listening socket rather than off the constant.
   PAGE       / redirects to the only session, and /s/<name>/ serves its page
   ROUNDTRIP  a saved answer comes back from GET api/answers and is on disk
   MERGE      a second answer replaces its own entry and leaves the others alone
+  ASSISTED   once a label has draft_shown and its blind answers, no later save drops
+             or replaces them (a second tab with an older copy would)
   DERIVED    a quote result cannot be posted: it follows the word ranges
   FOREIGN    an id the page does not carry is refused, and nothing is written
   KIND       a kind that is no answers section is refused
@@ -149,6 +151,24 @@ def main() -> int:
         check("and leaves the other recording alone", on_disk["labels"]["p/b"]["venue"] == "debate")
         check("the file keeps all four sections", set(on_disk) == {"labels", "attribution", "spans", "corrections"},
               str(sorted(on_disk)))
+
+        print("\n[ASSISTED]")
+        blind = {"subject_present": False, "venue": "debate", "political_content": True}
+        post(base, {"kind": "labels", "id": "p/b",
+                    "value": {"key": "p/b", **blind, "subject_present": True, "checked_by": "operator",
+                              "draft_shown": "claude-fable-5-1", "answers_before_draft": blind}})
+        # A second tab still showing the older copy of the label saves without either field.
+        post(base, {"kind": "labels", "id": "p/b",
+                    "value": {"key": "p/b", **blind, "political_content": False, "checked_by": "operator"}})
+        kept = json.loads(answers.read_text())["labels"]["p/b"]
+        check("a save without draft_shown or the blind answers keeps both, and still applies its answers",
+              kept.get("draft_shown") == "claude-fable-5-1" and kept.get("answers_before_draft") == blind
+              and kept.get("political_content") is False, str(kept))
+        post(base, {"kind": "labels", "id": "p/b",
+                    "value": {"key": "p/b", **blind, "checked_by": "operator", "draft_shown": "claude-fable-5-1",
+                              "answers_before_draft": {**blind, "venue": "solo"}}})
+        kept = json.loads(answers.read_text())["labels"]["p/b"]
+        check("the first blind answers stored win over a later copy", kept.get("answers_before_draft") == blind, str(kept))
 
         print("\n[DERIVED]")
         before = answers.read_text()

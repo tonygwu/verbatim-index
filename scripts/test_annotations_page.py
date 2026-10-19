@@ -27,8 +27,9 @@ passed through would be a guessed label. So this checks the importer against
   RENDER     run by node against a stub page: flagged recordings come first, each under
              its own section; the draft stays hidden until every question has an
              answer, so those answers carry no draft_shown; then the card and its tags
-             show, and only a changed answer (not notes) carries draft_shown; a page
-             without drafts has no sections
+             show, and only a changed answer (not notes) carries draft_shown, with the
+             blind answers kept beside it once (answers_before_draft), which the import
+             passes on and checks; a page without drafts has no sections
   MODES      the page follows its session, not its study: a session without the
              checklist mode shows no checklist and binds no checklist key; a recording
              tagged with two projects shows both tags, and the page offers a project
@@ -413,6 +414,20 @@ def main() -> int:
     lab0 = V.to_labels([{"key": "p/a", "subject_present": True, "venue": "solo", "political_content": True}],
                        {"p/a"}, SPEC)["labels"]["p/a"]
     check("a blind label gains no draft_shown", "draft_shown" not in lab0, str(lab0))
+    before = {"subject_present": True, "venue": "debate", "political_content": False}
+    labb = V.to_labels([{"key": "p/a", "subject_present": True, "venue": "solo", "political_content": True,
+                         "draft_shown": "claude-fable-5-1", "answers_before_draft": before}], {"p/a"}, SPEC)["labels"]["p/a"]
+    check("a corrected label keeps its blind answers through the import, and report still accepts it",
+          labb.get("answers_before_draft") == before and P.human_errors(labb) == [], str(labb))
+    for why, doc in (("a partial set", {"draft_shown": "claude-fable-5-1", "answers_before_draft": {"subject_present": True}}),
+                     ("an invalid format", {"draft_shown": "claude-fable-5-1", "answers_before_draft": {**before, "venue": "x"}}),
+                     ("no draft_shown beside it", {"answers_before_draft": before})):
+        try:
+            V.to_labels([{"key": "p/a", "subject_present": True, "venue": "solo", "political_content": True, **doc}],
+                        {"p/a"}, SPEC)
+            check(f"blind answers with {why} stop the import", False, "imported")
+        except SystemExit as exc:
+            check(f"blind answers with {why} stop the import", "answers_before_draft" in str(exc), str(exc))
 
     print("\n[RENDER]")
     base = {"slug": "p", "role": "", "title": "T", "channel": "c", "url": "", "video_id": "v", "duration": 600,
@@ -433,6 +448,7 @@ def main() -> int:
           'data-id="p/absent"' in r["detail"] and "Model draft hidden" in r["detail"]
           and "<b>Model draft</b>" not in r["detail"] and "model says the subject is absent" not in r["detail"]
           and "<blockquote>" not in r["detail"] and "claude-fable-5-1" not in r["detail"]
+          and "confidence high" not in r["detail"]
           and 'class="mtag"' not in r["detail"], re.sub(r"\s+", " ", r["detail"])[:900])
     post = r["posts"][0] if r["posts"] else {}
     check("an answer given while the draft is hidden is blind: it carries no draft_shown",
@@ -447,14 +463,29 @@ def main() -> int:
           and "model says the subject is absent" in rv["detail"] and "<blockquote>E1</blockquote>" in rv["detail"]
           and rv["detail"].count('class="mtag"') == 3 and rv["threw"] == "", re.sub(r"\s+", " ", rv["detail"])[:900])
     pv = rv["posts"][0] if rv["posts"] else {}
-    check("an answer changed after the draft is shown carries draft_shown",
+    check("an answer changed after the draft is shown carries draft_shown, and the label keeps the blind "
+          "answers it had before",
           pv.get("id") == "p/absent" and pv.get("value", {}).get("subject_present") is True
-          and pv["value"].get("draft_shown") == "claude-fable-5-1", str(rv["posts"]))
+          and pv["value"].get("draft_shown") == "claude-fable-5-1" and pv["value"].get("answers_before_draft") == full,
+          str(rv["posts"]))
+    first = {"subject_present": True, "venue": "debate", "political_content": False}
+    r2 = run_page(rows, {"labels": {"p/absent": {**full, "draft_shown": "claude-fable-5-1", "answers_before_draft": first}},
+                         "attribution": {}}, start="p/absent")
+    p2 = r2["posts"][0] if r2["posts"] else {}
+    check("a second change keeps the blind answers of the first, not the corrected ones",
+          p2.get("value", {}).get("subject_present") is True and p2["value"].get("answers_before_draft") == first,
+          str(r2["posts"]))
+    rold = run_page(rows, {"labels": {"p/absent": {**full, "draft_shown": "claude-fable-5-1"}}, "attribution": {}},
+                    start="p/absent")
+    pold = rold["posts"][0] if rold["posts"] else {}
+    check("a label already marked draft_shown with no blind answers gains none: its answers were not blind",
+          pold.get("value", {}).get("subject_present") is True and "answers_before_draft" not in pold["value"],
+          str(rold["posts"]))
     rs = run_page(rows, {"labels": {"p/absent": {**full, "subject_present": True}}, "attribution": {}}, start="p/absent")
     ps = rs["posts"][0] if rs["posts"] else {}
     check("the same answer given again after the draft is shown changes nothing and adds no draft_shown",
           ps.get("id") == "p/absent" and ps.get("value", {}).get("subject_present") is True
-          and "draft_shown" not in ps["value"], str(rs["posts"]))
+          and "draft_shown" not in ps["value"] and "answers_before_draft" not in ps["value"], str(rs["posts"]))
     rl = run_page(rows, {"labels": {"p/absent": {"venue": "solo", "political_content": True}}, "attribution": {}},
                   start="p/absent")
     pl = rl["posts"][0] if rl["posts"] else {}
@@ -465,8 +496,8 @@ def main() -> int:
     rn = run_page(rows, {"labels": {"p/absent": full}, "attribution": {}}, start="p/absent", key=None, notes="n1")
     pn = rn["posts"][0] if rn["posts"] else {}
     check("notes typed after the draft is shown add no draft_shown",
-          pn.get("id") == "p/absent" and pn.get("value", {}).get("notes") == "n1" and "draft_shown" not in pn["value"],
-          str(rn["posts"]))
+          pn.get("id") == "p/absent" and pn.get("value", {}).get("notes") == "n1" and "draft_shown" not in pn["value"]
+          and "answers_before_draft" not in pn["value"], str(rn["posts"]))
     rk = run_page(rows, {"labels": {"p/absent": {"subject_present": True, "draft_shown": "claude-fable-5-1"}},
                          "attribution": {}}, start="p/absent", key=None)
     check("a label that already says the draft was shown keeps the draft on screen",

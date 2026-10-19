@@ -274,23 +274,60 @@ def needs_review(draft: dict, human: dict | None) -> list[str]:
     return why
 
 
+def blind_answers(label: dict) -> dict | None:
+    """The answers a person gave before seeing the model's draft, or None if none survive.
+
+    The review page hides the draft until every question has an answer. A label first
+    changed after that carries draft_shown and keeps the earlier answers in
+    answers_before_draft. A label with draft_shown and no such copy was saved by the
+    older page, which showed the draft at once, so none of its answers are blind.
+    """
+    if "answers_before_draft" in label:
+        return label["answers_before_draft"]
+    return None if label.get("draft_shown") else label
+
+
+def _agreement(rows: list, blind: dict, drafts: dict, f: str) -> dict:
+    # A field counts only on rows where a person labelled it (P6b labels carry no
+    # main_speaker), and venue only where the subject is present.
+    rows = [k for k in rows if f in blind[k] and (f != "venue" or blind[k]["subject_present"])]
+    return {"agree": sum(blind[k][f] == drafts[k][f] for k in rows), "of": len(rows)}
+
+
 def calibration(drafts: dict, human: dict) -> dict:
-    # A label saved while the draft was on screen (draft_shown, set by the review
-    # page) is anchored on it, so it says nothing about the draft's accuracy.
-    assisted = [k for k in drafts if k in human and human[k].get("draft_shown")]
-    both = [k for k in drafts if k in human and not drafts[k].get("error") and not human[k].get("draft_shown")]
+    # Compared on blind answers only: an answer given with the draft on screen is
+    # anchored on it, so it says nothing about the draft's accuracy. Leaving a
+    # corrected label out instead would drop exactly the rows where the person first
+    # disagreed with the model, and raise the agreement.
+    blind = {k: blind_answers(human[k]) for k in drafts if k in human}
+    assisted = [k for k in blind if blind[k] is None]
+    both = [k for k in blind if blind[k] is not None and not drafts[k].get("error")]
     out = {"rows_compared": len(both), "assisted_labels_left_out": len(assisted)}
     for f in ("subject_present", "main_speaker", "venue"):
-        # A field counts only on rows where a person labelled it (P6b labels
-        # carry no main_speaker), and venue only where the subject is present.
-        rows = [k for k in both if f in human[k] and (f != "venue" or human[k]["subject_present"])]
-        agree = sum(human[k][f] == drafts[k][f] for k in rows)
-        out[f] = {"agree": agree, "of": len(rows)}
+        out[f] = _agreement(both, blind, drafts, f)
+    # Older drafts predate the political question; they are counted, not compared.
+    has_political = [k for k in both if isinstance(drafts[k].get("political_content"), bool)]
+    out["political_content"] = {**_agreement(has_political, blind, drafts, "political_content"),
+                                "draft_missing": len(both) - len(has_political)}
+    # The page lists a draft that needs no review under "Model was confident", which
+    # tells the person, before they answer, that the model found the subject present.
+    # So presence is also reported for that section alone, and for the rest.
+    confident = [k for k in both if not needs_review(drafts[k], None)]
+    out["subject_present_by_section"] = {
+        "model_confident": _agreement(confident, blind, drafts, "subject_present"),
+        "check_first": _agreement([k for k in both if k not in confident], blind, drafts, "subject_present")}
+    # What changed once the draft was on screen, and how much of it moved to the model.
+    changed = [k for k in both if "answers_before_draft" in human[k]]
+    out["changed_after_draft"] = {"labels": len(changed)}
+    for f in ("subject_present", "venue", "political_content"):
+        moved = [k for k in changed if f in blind[k] and human[k].get(f) != blind[k][f]]
+        out["changed_after_draft"][f] = {"changed": len(moved),
+                                         "to_model": sum(human[k].get(f) == drafts[k].get(f) for k in moved)}
     high = [k for k in both if drafts[k]["confidence"] == "high"]
     # "all three" means every one of the three a person labelled on that row.
     out["high_confidence"] = {"rows": len(high), "all_three_agree": sum(
-        all(human[k][f] == drafts[k][f] for f in ("subject_present", "main_speaker") if f in human[k]) and
-        (not human[k]["subject_present"] or human[k]["venue"] == drafts[k]["venue"]) for k in high)}
+        all(blind[k][f] == drafts[k][f] for f in ("subject_present", "main_speaker") if f in blind[k]) and
+        (not blind[k]["subject_present"] or blind[k]["venue"] == drafts[k]["venue"]) for k in high)}
     return out
 
 

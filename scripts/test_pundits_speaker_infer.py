@@ -11,7 +11,11 @@ Pundits plan, P6.
   VENUE      a venue disagreement on a row the operator marked absent is ignored
   CALIBRATE  agreement is counted per field, venue only where the subject is present
   UNLABELLED a field the operator did not label is neither queued nor counted, and a label
-             saved with the draft on screen (draft_shown) is left out of calibration
+             marked draft_shown with no blind answers kept is left out of calibration
+  BLIND      a corrected label is compared through the blind answers kept beside it
+             (answers_before_draft); changes after the draft are counted, with those
+             that moved to the model's answer; political content is calibrated; presence
+             is also reported for the page's "Model was confident" section alone
   SETS       a P6b row is its position in the checklist file; a pilot row is its key table's
   CREDIT     a credit draft asks for Fable at effort max, and each attempt keeps its own raw
              file and request id, counting a legacy `<sid>.json` as attempt 1
@@ -142,9 +146,45 @@ def main() -> int:
         check("calibration counts main_speaker only where a person labelled it", False, f"KeyError {exc}")
 
     cal7 = S.calibration({"a": d, "b": d}, {"a": p6b_human, "b": {**p6b_human, "draft_shown": "claude-fable-5-1"}})
-    check("a label made with the draft on screen is left out of calibration, and counted",
+    check("a label made with the draft on screen and no blind answers kept is left out of calibration, and counted",
           cal7["rows_compared"] == 1 and cal7["assisted_labels_left_out"] == 1
           and cal7["subject_present"] == {"agree": 1, "of": 1}, str(cal7))
+
+    print("\n[BLIND]")
+    # Ten recordings: the blind format agrees with the model on six; on the other four
+    # the person saw the draft and switched to the model's format.
+    model = {**d, "venue": "conversation", "political_content": True}
+    blind_ok = {"subject_present": True, "venue": "conversation", "political_content": True}
+    blind_no = {"subject_present": True, "venue": "debate", "political_content": True}
+    drafts10 = {f"r{i}": model for i in range(10)}
+    humans10 = {**{f"r{i}": dict(blind_ok) for i in range(6)},
+                **{f"r{i}": {**blind_ok, "draft_shown": "claude-fable-5-1", "answers_before_draft": blind_no}
+                   for i in range(6, 10)}}
+    cal8 = S.calibration(drafts10, humans10)
+    check("calibration compares the blind answers kept beside a corrected label, so a correction toward "
+          "the model does not raise the agreement",
+          cal8["rows_compared"] == 10 and cal8["assisted_labels_left_out"] == 0
+          and cal8["venue"] == {"agree": 6, "of": 10}, str(cal8))
+    check("calibration counts the answers changed after the draft was shown, and how many moved to the model's",
+          cal8["changed_after_draft"]["labels"] == 4
+          and cal8["changed_after_draft"]["venue"] == {"changed": 4, "to_model": 4}
+          and cal8["changed_after_draft"]["subject_present"] == {"changed": 0, "to_model": 0}, str(cal8))
+    cal10 = S.calibration({"a": model}, {"a": {**blind_ok, "venue": "solo", "draft_shown": "claude-fable-5-1",
+                                                "answers_before_draft": blind_ok}})
+    check("a change away from the model's answer is counted as a change, not as one to the model",
+          cal10["changed_after_draft"]["venue"] == {"changed": 1, "to_model": 0} and cal10["venue"] == {"agree": 1, "of": 1},
+          str(cal10))
+    check("political content is calibrated like the other answers",
+          cal8["political_content"] == {"agree": 10, "of": 10, "draft_missing": 0}, str(cal8))
+    unsure = {**model, "confidence": "medium"}
+    cal9 = S.calibration({"c": model, "u": unsure, "x": {k: v for k, v in model.items() if k != "political_content"}},
+                         {"c": blind_ok, "u": {**blind_ok, "subject_present": False}, "x": blind_ok})
+    check("presence is also reported for the page's 'Model was confident' section alone, which hints the model's "
+          "answer, and for the rest",
+          cal9["subject_present_by_section"] == {"model_confident": {"agree": 2, "of": 2}, "check_first": {"agree": 0, "of": 1}},
+          str(cal9.get("subject_present_by_section")))
+    check("a draft with no political_content is counted as missing, not compared",
+          cal9["political_content"] == {"agree": 2, "of": 2, "draft_missing": 1}, str(cal9["political_content"]))
 
     print("\n[SETS]")
     import tempfile
