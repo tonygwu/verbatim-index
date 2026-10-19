@@ -76,18 +76,6 @@ skips.
 
 ## Open items
 
-### VI-44. The predictions hover no longer names the run's lead time, so `test_lead_time_text.py` is red in every clone  `[capability: fast]`  `[priority: P1]`  `[filed: 2026-10-19]`  `[claimed by: #1]`
-
-**Background:** public `44d06de` ("Clarify prediction scoring and eligibility explanations") changed the hover for a row with nothing eligible from "reach at least {min_lead_days} days out" to `scripts/build_predictions_site.py:2683` "meet the lead-time policy, and have a coherent window", which names no number. `scripts/test_lead_time_text.py:58` "hover states the run's own lead time" wants the run's own lead time in that text, so the check fails at `44d06de` and at every later head (`87ffba9` passes). The change itself is right: with the short-lead check, a prediction said under the bar can still qualify, so "at least N days" is false.
-
-**Impact:** the validation gate (`bash scripts/run_tests.sh`) reports `failed: 1` in every clone, so every push either waits or ships with a known red; and the hover no longer tells a reader which lead time the run used.
-
-**Fix:** name the number without the "at least" claim, e.g. "meet the lead-time policy of {min_lead_days} days", which keeps `44d06de`'s meaning and the `test_predictions_site.py` check that the text says "meet the lead-time policy" and not "reach at least 60 days". The failing check is the red test.
-
-**Touch points:** `scripts/build_predictions_site.py:2683` "meet the lead-time policy, and have a coherent window".
-
----
-
 ### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-11]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
