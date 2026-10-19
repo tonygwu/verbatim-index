@@ -1148,8 +1148,11 @@ def call_fable(prompt: str, config_dir: str, timeout: int, binary: str = "claude
     # 2 of 434 `fable` dating sessions had 75,382 and 101,698. A whole answer after
     # tool turns of 128,000 or more is refused, loudly; BACKLOG has the transcript
     # check that would tell it apart. A gap that is an exact multiple of the CLI's
-    # 64,000 default is refused too (cut_at): it is a cut at the old cap, which
-    # means the variable did not reach the child. Not judged against modelUsage's
+    # 64,000 default is refused too (cut_at): it is a cut at the old cap, because
+    # the variable did not reach the child, or because the CLI fell back to a
+    # non-streaming request, whose cap the variable cannot raise (2.1.303's own
+    # error text says so). A cut after tool turns leaves a gap that is not a multiple, and only
+    # VI-43's transcript check would catch it. Not judged against modelUsage's
     # `maxOutputTokens`: Claude Code 2.1.303 fills it with the model's default
     # (`gle(model).default`), not the cap in effect. MEASURED 2026-10-19 with the
     # variable at 1000: the first turn stopped at 1,000 tokens and the field said 64000.

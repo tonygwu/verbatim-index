@@ -223,8 +223,9 @@ the mix even.
   uses, and `grade.call_fable`, the subscription judge harness that grades,
   extraction, priors, year summaries and the `fable` dater use. Both record
   the cap they asked for as `telemetry.max_output_tokens_requested`. The other
-  Fable harnesses (`date_recordings.call_fable_web`,
-  `speaker_segment_probe.py`, `p3_judge_probe.py`) get neither the cap nor the
+  Fable harnesses (`date_recordings.call_fable_web`, the subscription drafts in
+  `pundits_speaker_infer.call_model`, `speaker_segment_probe.py`,
+  `p3_judge_probe.py`) get neither the cap nor the
   check: BACKLOG VI-42. The model is not told the cap today, so an answer under
   64,000 tokens is unchanged; Claude Code 2.1.303 can add an
   `output_limit_note` that names the cap behind a server flag, and none was in
@@ -239,7 +240,12 @@ the mix even.
   and of 75,382 and 101,698 tokens in 2 of 434 `fable` dating sessions. It also
   refuses a difference that is an exact multiple of 64,000, the old cap, since
   a cut turn stops at exactly its cap. A whole answer after 128,000 tokens of
-  tool turns is refused, loudly; VI-43 would confirm a cut from the session
+  tool turns is refused, loudly. So is a whole answer after a turn cut while
+  still thinking: the CLI drops that reasoning and asks for a fresh answer,
+  but the gap is the cap. Of 24 subscription Fable sessions on this machine
+  with a cut turn, 22 were cut while thinking (the VI-23 review, 2026-10-19).
+  At the 128,000 cap that needs 128,000 tokens of thinking in one turn; the
+  2026-10-19 probe used 39,499. VI-43 would confirm a cut from the session
   transcript instead. Do not read the cap from modelUsage's
   `maxOutputTokens`: the CLI fills it with the model's default. MEASURED
   2026-10-19 with the variable at 1000, the first turn stopped at 1,000

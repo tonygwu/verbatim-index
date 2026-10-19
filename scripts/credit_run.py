@@ -236,8 +236,9 @@ def run(prompt: str, *, model: str, effort: str, pools: list[str], timeout_s: in
     # those fragments through as schema failures, the bug VI-23 fixes. With no
     # tools, an earlier turn is almost always a capped one. That rests on
     # request_for never sending a `json_schema`: quotapick answers one in two
-    # turns. MEASURED 2026-10-19: of 158 saved credit responses with iterations,
-    # the 2 cut answers have a gap of exactly 64,000 and the other 156 a gap of 0.
+    # turns. MEASURED 2026-10-19 (the VI-23 review's scan of the whole data
+    # checkout): of 197 saved quotapick responses with iterations, the 2 cut
+    # answers have a gap of exactly 64,000 and the other 195 a gap of 0.
     cut = truncation_detail(usage, CLI_DEFAULT_MAX_OUTPUT_TOKENS, resp.get("text") or "")
     if cut:
         raise CreditRunError(f"{E_CONTINUATION_TRUNCATED}: {cut}; billed_usd {billed!r}")
