@@ -71,7 +71,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ## Open items
 
-### VI-40. The pundits `logs/p6b` speaker-check session predates the annotations tool and has no manifest, so `annotations.py serve` cannot open it  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-40. The pundits `logs/p6b` speaker-check session predates the annotations tool and has no manifest, so `annotations.py serve` cannot open it  `[difficulty: low]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: `logs/p6b` is a pundits data path, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. VI-39 replaced `pundits_verify_page.py` and `pundits_verify_serve.py` with `scripts/annotations.py`, which opens a session only through its `manifest.json` (`scripts/annotations_store.py:112` "has no {MANIFEST}"). `data-pundits/logs/p6b/` holds `speaker_check.html`, `speaker_check.transcripts/`, `human_answers.json`, `quote_check_key.json` and no manifest. On 2026-10-18 repo-2 ran the migration on a copy of that directory at pundits data `089ac14`: every `verify` check passed before and after `rebuild`, including `--data` against repo-3's `data-pundits`, and `export labels` and `export corrections` reproduced `human_labels.json` and `human_text_corrections.json`.
 
