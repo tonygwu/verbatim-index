@@ -3,7 +3,7 @@
 Deferred work, one item per heading, in the format the `backlog-protocol`
 skill reads and `/run-backlog`, `/improve-code` and `/improve-data` work from.
 Items are independent: claim one, finish it, delete it. The protocol itself
-(claims, IDs, the difficulty ladder, deletion on completion, the pre-push
+(claims, IDs, the capability ladder, deletion on completion, the pre-push
 review) is that skill; this file holds the parameters that are specific to
 this project, and the items.
 
@@ -22,14 +22,15 @@ change to its file is an ordinary item.
 |---|---|
 | Item files | this file, `## Open items` below; shard into `backlog/<shard>.md` with a routing table in `backlog/README.md` when it passes a few dozen items |
 | ID scheme | `VI-<n>` (Verbatim Index), one counter for the file. Next ID = 1 + the highest `VI-` number in this file **and** its git history, because a deleted ID never returns; the command is under this table. Ledger IDs (`VP-`, `VD-`, `CI-`) are a different series, in `docs/LEDGER-*.md` |
-| Difficulty ladder | `low`, `medium`, `high`, `xhigh`; `ultra/workflows` is split into normal items when filing. The skill's § 5 maps the running model to a row; claim at or below it |
+| Capability ladder | `fast`, `standard`, `premium`, `frontier`, the quota router's capability names; orchestration-sized work is split into normal items when filing, never tagged `ultra/workflows`. The skill's § 5 maps the running model to a row by its family; claim at or below it. The optional `[effort: <level>]` tag never changes who may claim or the pick order. Every legacy `[difficulty: ...]` tag was rewritten through § 5's alias table on 2026-10-19 (`low` to `fast`, `medium` to `standard`, `high` to `premium`, `xhigh` to `frontier`) |
 | Agent handle | `#<n>` from a `repo-<n>` clone directory (`repo-0` is `#0`). Commit subjects: `claim: VI-n (#<n>)`, `backlog: delete VI-n (#<n>)` |
-| Priority | file order within `## Open items`: the first unclaimed, unblocked item in the file whose Background's first sentence does not name another clone's lane is the next one to take. Read that sentence before the claim, and never claim a lane item from another clone. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them. A lane item goes at the head of the unblocked run, so the one clone that can do it reaches it first and every other clone skips it in one read; any other new item goes at the end of the unblocked run unless it must be done sooner |
+| Pick order | file order within `## Open items`, not the skill's default of lowest priority, then highest capability, then file order (owner decision 2026-10-19): the first unclaimed, unblocked item in the file whose Background's first sentence does not name another clone's lane is the next one to take. Read that sentence before the claim, and never claim a lane item from another clone. Unblocked items come first and `[BLOCKED: ...]` items last, so the picker never reads past an eligible item to reach them. A lane item goes at the head of the unblocked run, so the one clone that can do it reaches it first and every other clone skips it in one read; any other new item goes at the end of the unblocked run unless it must be done sooner |
+| Priority | `[priority: P0]` to `P3` on every heading, required when filing (the skill's § 3); the 2026-10-19 migration gave every open item `P2`. The tag records urgency and does not reorder the pick: an item that must be done sooner (`P0`, `P1`) is placed earlier in the file, as Pick order says |
 | Validation gate | `bash scripts/run_tests.sh` from the clone root, the whole output kept, `failed: 0` required. Never pipe it through `tail -1`: the per-file `FAILED <path>` lines are the finding, and each test's full output is in the printed `logs:` folder under `.gate/` (git-ignored, never pruned), so a red is reported with its log. `test_log_bloat.py` and the `LIVE DATA` checks in `test_render_integrity.py` read the leaders daemon's live checkout, so a red there is reported with its text, never retried until green (VI-12) |
 | Pre-push review | `adversarial-self-review` on `origin/main..HEAD` before every push, verdict `ship` required, two fix rounds at most |
 | Blocked tag | `[BLOCKED: <what lifts it>]` on the heading. Two kinds: an operator decision, or a measurement or event that has not happened. Nobody claims a blocked item, and the loop never lists one, so a lane is never a block: an item that only one clone can finish (`repo-0` pushes the leaders data repo's owner paths and deploys the leaderboard; `repo-3` does the same for pundits; AGENTS.md, "Clone roles") says so in the first sentence of its Background, and an agent on another clone skips it without claiming, and releases if it claimed before reading. Whoever lifts a block deletes the tag in its own commit and writes the lane sentence for the option chosen |
 | Completion | delete the item; git history is the record. A decision or measurement worth keeping goes in the `docs/agents/` file of its topic, under "Rules that exist because something broke" or "Experiments run", never back into this file |
-| Doc-gap routing | a standalone `low` item |
+| Doc-gap routing | a standalone `fast` item |
 | Scan logs / ledgers | `backlog/scan-logs/improve-code/<shard>.md` and `backlog/scan-logs/improve-data/<domain>.md`, tracked, created when those modes first run here |
 | Data read path (`improve-data`) | none named: `improve-data` stops |
 | Names in items | roster slugs, recording ids and public figures named in the roster or the transcripts are the data's own keys and may appear; no email address, phone number, private person's handle or message text, ever |
@@ -45,33 +46,37 @@ The highest ID used so far, in this file and its history; the next ID is this pl
 The skill's § 3, repeated here so a filing agent has it in front of it:
 
 ```markdown
-### VI-<n>. <one-line problem statement>  `[difficulty: <level>]`  `[filed: YYYY-MM-DD]`  `[BLOCKED: <what lifts it>]`?  `[claimed by: <handle>]`?
+### VI-<n>. <one-line problem statement>  `[capability: <level>]`  `[priority: P<n>]`  `[filed: YYYY-MM-DD]`  `[effort: <level>]`?  `[BLOCKED: <what lifts it>]`?  `[claimed by: <handle>]`?
 
-**Background:** first sentence, when only one clone can finish the item: which clone, and why. Then what the code or data does today and where; at least one `file:line`. For a doc item, the stale sentence verbatim.
+**Background:** first sentence, when only one clone can finish the item: which clone, and why. Then what the code or data does today and where; at least one citation in the form `` `path:line` "phrase" ``, the phrase copied verbatim from that file and occurring in it exactly once. For a doc item, the stale sentence verbatim.
 
 **Impact:** the concrete consequence.
 
 *Root cause:* optional.
 
-**Fix:** `low`/`medium`: one paragraph. `high`+: numbered steps tied to files, tests included.
+**Fix:** `fast`/`standard`: one paragraph. `premium`+: numbered steps tied to files, tests included.
 
-*Risks and edge cases:* required for `high`+.
+*Risks and edge cases:* required for `premium`+.
 
-*Why <level> not <level-1>:* required for `high`+.
+*Why <level> not <level-1>:* required for `premium`+.
 
-**Touch points:** every `file:line` the fix will modify, tests included.
+**Touch points:** every `` `path:line` "phrase" `` the fix will modify, tests included.
 
 ---
 ```
 
 The `filed:` date is the UTC calendar date the item was first written down,
 kept from the ledger entry it came from, and never updated. Only the skill's
-`claim.py` writes the claim tag, and a blocked item never carries one.
+`claim.py` writes the claim tag, and a blocked item never carries one. The
+phrase is the anchor and the line only a hint, so a citation survives a push
+that moves lines; the skill's `check_citations.py` checks phrases before a
+push. Most items filed before 2026-10-19 cite bare `file:line`, which it
+skips.
 "Filed by repo-N" in a Background is provenance, not a claim and not a lane.
 
 ## Open items
 
-### VI-40. The pundits `logs/p6b` speaker-check session predates the annotations tool and has no manifest, so `annotations.py serve` cannot open it  `[difficulty: low]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
+### VI-40. The pundits `logs/p6b` speaker-check session predates the annotations tool and has no manifest, so `annotations.py serve` cannot open it  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: `logs/p6b` is a pundits data path, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. VI-39 replaced `pundits_verify_page.py` and `pundits_verify_serve.py` with `scripts/annotations.py`, which opens a session only through its `manifest.json` (`scripts/annotations_store.py:112` "has no {MANIFEST}"). `data-pundits/logs/p6b/` holds `speaker_check.html`, `speaker_check.transcripts/`, `human_answers.json`, `quote_check_key.json` and no manifest. On 2026-10-18 repo-2 ran the migration on a copy of that directory at pundits data `089ac14`: every `verify` check passed before and after `rebuild`, including `--data` against repo-3's `data-pundits`, and `export labels` and `export corrections` reproduced `human_labels.json` and `human_text_corrections.json`.
 
@@ -83,7 +88,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[difficulty: medium]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
+### VI-16. The pundits predictions scale-up left three recordings unverified, one unexplained, and the speaker-check page without the model drafts  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #2]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: it pushes `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends Gemini quota. Filed by repo-3. The scale-up finished 257 of 261 recordings (pundits data `089ac14`, `experiments/predictions-pilot-20261018/README.md`). (1) `brett-cooper-fxe9zz`, `conversations-with-tyler-cusdy0` and `jordan-b-peterson-rkt9up` need re-verifying: Gemini returned `empty_response` after a denied `RunCommand` on every pass. `bret-weinstein-bmwp9g` cannot be extracted on credit: the CLI also sent its prompt to `claude-opus-5` three times, and `credit_run` refuses a mixed-model answer; why is not known. (2) The speaker-check page should carry the model drafts: `scripts/annotations.py build --project pundits` takes `--drafts` (`load_drafts` in `scripts/annotations_page.py`), to be run on the `logs/p6b` session, once VI-40 has migrated it, with `--drafts data-pundits/logs/p6b/speaker_inference.jsonl` and `--grades` as before, then the pundits data pushed; 65 flagged recordings list first.
 
@@ -95,7 +100,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[difficulty: medium]`  `[filed: 2026-10-11]`
+### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-11]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
 
@@ -107,7 +112,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-1. `extract_predictions.py` takes no `--study`, so a pundits run can write into the leaders data repo  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-1. `extract_predictions.py` takes no `--study`, so a pundits run can write into the leaders data repo  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** Filed by repo-3. `scripts/extract_predictions.py:747-781` declares every argument and none is `--study`; `--out` defaults to `data/predictions` (`:749`), `--transcripts` to `data/transcripts_open` (`:747`) and `--roster` to `data/roster/final.json` (`:748`), all leaders paths. The speaker script has the guard this needs: `scripts/pundits_speaker_infer.py:337` calls `study_profile.add_study_arg` and `:344` calls `SP.guard(args.study, str(root))` (`scripts/study_profile.py:95` and `:146`). The pundits prediction pilot of 2026-10-18 was written to the leaders `predictions/_experiments/` and moved by hand to the pundits data repo's `experiments/predictions-pilot-20261018/`. `docs/agents/PUNDITS.md:178` tells a pundits extraction to pass every path by hand for this reason.
 
@@ -119,7 +124,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-2. `pundits_speaker_infer.py merge` writes `checked_by: model:<model>` for both harnesses, so the merged store hides which drafts ran on credit  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-2. `pundits_speaker_infer.py merge` writes `checked_by: model:<model>` for both harnesses, so the merged store hides which drafts ran on credit  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** Filed by repo-3, from the round-2 review of the credit runs. `infer` writes subscription drafts and `--credit-pools` drafts (`scripts/pundits_speaker_infer.py:331`) to the same `speaker_inference.jsonl`, and `merge_drafts` (`:297`) writes `"checked_by": f"model:{model}"` (`:315`) for both. Each draft's `telemetry` block (`:215`) does name the harness, `quotapick run` for a credit draft, so nothing is lost in the drafts file; the merged human store cannot tell them apart. All 218 P6b drafts are credit drafts today.
 
@@ -131,7 +136,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-3. `extract_predictions.main()`'s `code_revision_of` call is untested, and two speaker scripts record HEAD without a `+dirty` mark  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-3. `extract_predictions.main()`'s `code_revision_of` call is untested, and two speaker scripts record HEAD without a `+dirty` mark  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** Filed by repo-3 as the review nits of 2026-10-18 round 4. `scripts/extract_predictions.py:890` passes `L.REPO / "scripts"` and the skill directory to `code_revision_of` (`:813`), which appends `+dirty` when either path holds uncommitted changes. `scripts/test_predictions_credit.py:295` and `:305` test the function, but nothing tests the call, so dropping `skill` from it passes the suite. `scripts/annotations_select.py:343` (`git_revision`, used by `build` and `migrate` in `scripts/annotations.py`) and `scripts/speaker_segment_probe.py:176` record `git rev-parse HEAD` as `code_revision` with no dirty mark at all.
 
@@ -143,7 +148,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-4. `index.json` counts credit extractions as plain `fable`, so it cannot tell the two Fable harnesses apart  `[difficulty: high]`  `[filed: 2026-10-18]`
+### VI-4. `index.json` counts credit extractions as plain `fable`, so it cannot tell the two Fable harnesses apart  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** Filed by repo-3, from the adversarial review of `--credit-production` (e267bef). `scripts/aggregate_predictions.py:99-118` (`acceptance_by_harness_pair`) keys the extraction-harness breakdown on the record's `extraction.harness`, which stays `fable` for a credit call so that the different-family rule in verify still holds; the harness that actually ran is in `extraction.telemetry.harness` (`quotapick run`). On a copy of the pundits pilot, the 182 reviewed credit records (of 184; 2 have verification `not_run`) came out as one row, `extraction_harness: "fable"`. A second count has the same fault: `coverage.by_harness.extract`, which `summarise_meta` (`:130-138`) builds from each meta's `extract.harness`, read `{"fable": 280}` for the pilot's 280 credit transcripts. Meta files carry no telemetry, but their `router_account_id` starts with `credit:` for a credit run (260 of the 280).
 
@@ -157,13 +162,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* `test_predictions_policy.py`, `test_predictions_index_roster.py` and `test_predictions_site_policy.py` read `index.json` fixtures and may pin the old row shape. `build_predictions_site.py` may read `verifier_acceptance_by_harness_pair`; if it does, the page copy that names harnesses needs the new label.
 
-*Why high not medium:* the naming of the harness key is a judgment call that `docs/agents/PREDICTIONS-PIPELINE.md` and the site copy will quote, and the derived file is read by four test files and the site builder.
+*Why premium not standard:* the naming of the harness key is a judgment call that `docs/agents/PREDICTIONS-PIPELINE.md` and the site copy will quote, and the derived file is read by four test files and the site builder.
 
 **Touch points:** `scripts/aggregate_predictions.py:99-118`, `:130-138`, `scripts/test_predictions_aggregate.py`, `scripts/build_predictions_site.py` (if it reads the pair table), `docs/agents/PREDICTIONS-PIPELINE.md` (the index.json description).
 
 ---
 
-### VI-6. A Fable stage of `resolve_predictions.py` with no `--fable-accounts` runs on the default account  `[difficulty: high]`  `[filed: 2026-10-11]`
+### VI-6. A Fable stage of `resolve_predictions.py` with no `--fable-accounts` runs on the default account  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`
 
 **Background:** Filed by repo-0. `scripts/resolve_predictions.py:518` declares `--fable-accounts` with `default="default"`, and `:561-569` turns that into the account list for the `prior` and `lead_test` stages. `--stage lead_test` with no `--fable-accounts` ran its one call on `~/.claude` (`accounts=['default']` in `rebuild-20261011/lead_test-1.log`); it served `claude-fable-5-1` and cost $0.21. Nothing failed, but the operator has said account A has no Fable, and batch Fable work is meant to go to the accounts named for it. `scripts/grade.py:277` (`fable_accounts`) already routes by measured quota through `quota_router` when `FABLE_ACCOUNTS` is unset (`:2569`). The ledger deferred this to the next change to `resolve_predictions.py`.
 
@@ -177,13 +182,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* `--fable-pool` (`resolve_predictions.py:524`, `:590`) is a different path (API credit) and must still refuse the other stages. The `ambient` label at `:733` covers a call with no account; keep it honest.
 
-*Why high not medium:* the choice between refusing and routing is a policy decision, and the router import brings `grade.py`'s failure handling with it.
+*Why premium not standard:* the choice between refusing and routing is a policy decision, and the router import brings `grade.py`'s failure handling with it.
 
 **Touch points:** `scripts/resolve_predictions.py:518-524`, `:561-569`, `:733`, `scripts/grade.py:245-305` (read only), `scripts/test_predictions_driver.py`, `docs/agents/PREDICTIONS-PIPELINE.md`.
 
 ---
 
-### VI-7. `judge_searched` can count a local file read as a web search  `[difficulty: high]`  `[filed: 2026-10-12]`
+### VI-7. `judge_searched` can count a local file read as a web search  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-12]`
 
 **Background:** Filed from the independent review of the 2026-10-12 pundits commits; plausible, not seen in data. `scripts/grade.py:2027` (`count_gemini_tool_events`) puts any completed tool step with a `query`, `Query`, `url`, `Url` or `AbsolutePath` parameter (`:2055`) into `web_search_queries`, so a `view_file` step would count. The error runs toward disclosing more searches than happened, never fewer. The `tool_use_counts["web_search"]` branch (`:647`, `:700`) matches only the codex harness (Astra, dropped); agy names its tool `search_web` (`:2031-2035`).
 
@@ -196,13 +201,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* a transcript with a tool name agy has since renamed would then count zero searches; the check must fail loud on an unknown tool name with a `query` parameter rather than drop it.
 
-*Why high not medium:* the fixture has to be found in real logs and the rule changes a published disclosure.
+*Why premium not standard:* the fixture has to be found in real logs and the rule changes a published disclosure.
 
 **Touch points:** `scripts/grade.py:2027-2060`, `:647`, `:700`, `:1340-1343`, `:2231-2232`, `scripts/test_judge_web_search.py`, `docs/agents/JUDGES.md`.
 
 ---
 
-### VI-8. A `grade_loop.sh` render can replace `site-pundits/index.html` between the deploy's render and its upload  `[difficulty: high]`  `[filed: 2026-10-12]`
+### VI-8. A `grade_loop.sh` render can replace `site-pundits/index.html` between the deploy's render and its upload  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-12]`
 
 **Background:** `scripts/deploy_pundits.sh:60` renders into `SITE_DIR`, `:137` uploads it with `npx wrangler deploy`, and the loop's own render (`scripts/grade_loop.sh:244-252`, `$SITE_DIR/index.html`) can run between the two. Since 2026-10-12 the post-publish confirm (`deploy_pundits.sh:138-143`) fails loudly when it happens: the live page lacks the data revision's meta tag. So it is reported, not silent.
 
@@ -215,13 +220,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* `revision.json` and its `_headers` rule (`deploy_pundits.sh:117-123`) must land in the same directory the upload reads. The dry run (`:134`) must keep rendering into the visible directory so the operator can read it.
 
-*Why high not medium:* it changes the publication path of a live site and touches the deploy guard's assumptions about where the rendered page is.
+*Why premium not standard:* it changes the publication path of a live site and touches the deploy guard's assumptions about where the rendered page is.
 
 **Touch points:** `scripts/deploy_pundits.sh:60`, `:107-143`, `wrangler.pundits.toml`, `scripts/grade_loop.sh:244-252`, a new `scripts/test_deploy_pundits_render_dir.py`, `docs/agents/SITES.md`.
 
 ---
 
-### VI-9. The labelling guide does not state the "correct every caption error you notice" convention VI-13 depends on  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-9. The labelling guide does not state the "correct every caption error you notice" convention VI-13 depends on  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** VI-13 brings back the caption-correction work once 50 operator corrections exist across 10 recordings, made under the convention that every caption error noticed in a reviewed passage is corrected, so that a reviewed word left alone counts as correct. The 2026-10-11 re-check found that convention "written nowhere except this entry, so it has never been in force", and asked for it to go into `docs/PUNDITS-LABELLING-GUIDE.md` before the next session. That guide's "Rules for every label" section (`docs/PUNDITS-LABELLING-GUIDE.md:11-27`) has no rule about the page's "Correct text" field.
 
@@ -233,7 +238,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-23. A Fable answer that overran one turn's output cap reaches the extractor as its last continuation chunk, and the failure is filed as `schema_validation_failed`  `[difficulty: high]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
+### VI-23. A Fable answer that overran one turn's output cap reaches the extractor as its last continuation chunk, and the failure is filed as `schema_validation_failed`  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
 
 **Background:** `scripts/credit_run.py:128` returns `resp.get("text")` from the `quotapick run` response as the whole answer; `quotapick run` starts one `claude -p` child and returns that child's final `result` field (it has no continuation code of its own); the subscription harness reads the same field (`scripts/grade.py:1160`, in `call_fable`), and `grade.call_fable_pool` (`scripts/grade.py:1206`, the priors' and credit grades' path) has called `credit_run.run` (`:1235`) since VI-5 (`9a2e8ea`), so all three Fable paths share the exposure. For pat-gelsinger/web-fool-com-335b172e (10,861 words) two credit extractions on 2026-10-18 returned a `text` of 652 and 11,400 characters that starts mid-string (`in the span.","resolution_cr...`): data `predictions/_raw/responses/pat-gelsinger/web-fool-com-335b172e__extract__20261018T053831Z-both-499ae6b1.json` ($4.81, pool c) and `...20261018T080210Z-both-b18c577b.json` ($5.03, pool b). In both, `usage.output_tokens` (64,247 and 68,707) minus the one `usage.iterations[].output_tokens` entry (247 and 4,707) is exactly 64,000, the child's `maxOutputTokens`: the first turn hit the cap and the child continued, and only the continuation's text came back. The extractor parsed a fragment (every schema error is at `$`, a missing top-level field) and failed; the third attempt on the subscription harness gave 21 candidates, 4 accepted.
 
@@ -247,13 +252,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* a prose answer must never be refused for not starting with `{`; the token-gap signal is the check, and a text-shape check only a hint. A response whose `usage` lacks `iterations` must pass as before.
 
-*Why high not medium:* two harnesses, and a taxonomy label that both scripts relabel and count.
+*Why premium not standard:* two harnesses, and a taxonomy label that both scripts relabel and count.
 
 **Touch points:** `scripts/credit_run.py:96-140`, `scripts/grade.py:153-170`, `:1127-1160`, `:1178-1203`, `scripts/extract_predictions.py:253-272`, `scripts/predictions_lib.py:101-103`, `:153-155`, `scripts/test_credit_run.py`, `docs/agents/PREDICTIONS-PIPELINE.md`.
 
 ---
 
-### VI-25. Polymarket returns 400 for the 30-day `prices-history` window and 403 for some `public-search` queries, and the ladder stops at the first error  `[difficulty: high]`  `[filed: 2026-10-18]`
+### VI-25. Polymarket returns 400 for the 30-day `prices-history` window and 403 for some `public-search` queries, and the ladder stops at the first error  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/market_consensus.py:387` is the 30-day step of a three-step window ladder (2 days, 30 days, then from the market's open) at `fidelity=60`; for that step Polymarket answers HTTP 400 `invalid filters: 'startTs' and 'endTs' interval is too long` (endTs minus startTs is 2,592,000 s), and the error aborts the ladder, so the daily step that may succeed is never tried. `:290` (`public-search`) gets an HTTP 403 Cloudflare page for some queries. Across the corpus 8 accepted records fail this way on every run that reaches them, each carrying a consensus block with `status: failed`: `prices-history` 400 for fa01d301325e4243, 2012463b3b01b93d, d13eb0f50e17ffea (this supplement), michael-saylor 9d2d817a08c94853 and bill-gates bfecb68972253ee1; `public-search` 403 for d4b463de73917226 and jensen-huang 22f49209e94ce62f and c023eff1328d99e3. Ledger VP-38 logged the same 400 on 2026-10-05. Logs: data `predictions/_experiments/thin-supplement-20261018/market_consensus-{1,2,3}.log`.
 
@@ -266,13 +271,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* a daily-fidelity observation for an old market may be sparse; the cutoff rule (strictly before publication) must hold for every step.
 
-*Why high not medium:* a new terminal status crosses the schema, the validator and the site.
+*Why premium not standard:* a new terminal status crosses the schema, the validator and the site.
 
 **Touch points:** `scripts/market_consensus.py:283-298`, `:379-398`, `.agents/skills/prediction-extractor/prediction_record.schema.json`, `scripts/validate_predictions.py:205-225`, `scripts/build_predictions_site.py` (the consensus block), `scripts/test_predictions_markets.py`.
 
 ---
 
-### VI-26. A dating run directory's `overrides.json`, `checks.json` and `queue.json` hold only the last merge's scope  `[difficulty: high]`  `[filed: 2026-10-18]`
+### VI-26. A dating run directory's `overrides.json`, `checks.json` and `queue.json` hold only the last merge's scope  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/date_recordings.py:1017-1040` rewrites the three files for the transcripts in scope of the current merge, so a run directory used for several `--ids` waves keeps only the last wave's entries and queue rows, and `scripts/promote_dating_run.py` would miss the earlier waves. Found by the review of public 698cdee on `dating-thin-supplement-20261018`, which ran in waves; that run avoided the loss by passing the union of every wave's datable ids on the final merge (every id left out was a `stated_in_page` source, which the stage no longer dates). Also, the per-call progress lines go to stderr with `flush=True` (`:102-104`) but the stdout banner and summary are block-buffered under `nohup`: in `dating/run-wave2c.log` the `SPENDS QUOTA` banner is line 106 of 111, after every progress line.
 
@@ -285,13 +290,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* a transcript with proposals from a run whose daters differ is refused before any merge today; the union merge must keep that refusal.
 
-*Why high not medium:* two design options that change which dates reach production, across the merge, the promotion and the agreement text.
+*Why premium not standard:* two design options that change which dates reach production, across the merge, the promotion and the agreement text.
 
 **Touch points:** `scripts/date_recordings.py:905-926`, `:950-1045`, `:1055-1066`, `scripts/test_date_recordings.py`, `docs/agents/DATING.md`.
 
 ---
 
-### VI-31. A network error in a market fetch escapes `process_file`, fails the whole file with no error label, and loses every record already finished in it  `[difficulty: high]`  `[filed: 2026-10-18]`
+### VI-31. A network error in a market fetch escapes `process_file`, fails the whole file with no error label, and loses every record already finished in it  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/market_consensus.py:111-118` (`http_get`) catches only `urllib.error.HTTPError`. A `URLError`, a `TimeoutError`, a connection reset or an `http.client` error (`IncompleteRead`, `BadStatusLine`; neither is an `OSError`) is not a `RuntimeError`, so it passes `gather_candidates`'s handler at `:548`, the observation handler at `:588` and `process_file`'s handler at `:683`, up to `main`'s catch-all at `:761-762`, which records `{"status": "failed", "error": "<type>: ..."}` for the file with no `errors` list. `:769-772` builds `error_taxonomy` from `errors` only, so the failure is counted in `file_failures` (`:776`) and nowhere in the taxonomy. A second door: `Cache.get_json` writes the cache file at `:177` before it parses the body at `:180`, so a 200 whose body is not JSON is cached and replayed on every later read, and its `JSONDecodeError` escapes the same way. `process_file` writes the file once, at `:694`, after every record in it is done, so a network error on record 40 of 50 discards the 39 finished consensus blocks, including matcher calls that already spent model quota, and the next run redoes them.
 
@@ -307,13 +312,13 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 *Risks and edge cases:* a per-record write multiplies writes by the records per file (up to a few dozen); `write_prediction_file` is atomic, so a reader in another clone never sees a prefix, and the index's `files_read` and `inputs_sha256` fingerprints (written by `aggregate_predictions.py`, not by this run) already move on the final write. Today a `RefusedDataWrite` raised by the cache write is a `RuntimeError` and is swallowed into a record error at `:548` and again at `:588` (the `observe_*` calls write the cache too); the new catch must sit around the fetcher call only, so it does not widen that.
 
-*Why high not medium:* it changes when a record file is written, and the choice between per-record and batched writes is a judgment about cost against lost work.
+*Why premium not standard:* it changes when a record file is written, and the choice between per-record and batched writes is a judgment about cost against lost work.
 
 **Touch points:** `scripts/market_consensus.py:111-118`, `:155-180`, `:548`, `:652-695`, `:761-762`, `scripts/test_predictions_markets.py` or `scripts/test_market_consensus_cache.py`.
 
 ---
 
-### VI-32. The Kalshi lock serializes fetches but does not re-check the cache, back off, or retry, so one 429 still fails its record for the run  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-32. The Kalshi lock serializes fetches but does not re-check the cache, back off, or retry, so one 429 still fails its record for the run  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** since `87c42e3` (VI-24) `scripts/market_consensus.py:155-180` (`Cache.get_json`) fetches Kalshi under a per-process `threading.Semaphore(1)` (`:169-172`) and raises on a transient status (`:175-176`). Three things the lock does not do: (a) it does not look at the cache again after it is taken, so three workers that asked for the same URL at once make three back-to-back Kalshi calls (the one-popular-URL pattern of the `ECLIPSECOVER` incident); (b) it adds no gap between calls and reads no `Retry-After`, so whether one serialized stream stays under Kalshi's limit at the 707-call scale of the first 2026-10-18 run is unproven (the one-worker reruns made 17 and 62 calls); (c) a 429 fails the record for this run and only the next run retries it (`:655-657`). The lock is also per process, so two concurrent runs each have their own. 408 is not in `transient_status` (`:121-130`), so a 408 would be cached and replayed like the original bug.
 
@@ -325,7 +330,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-33. The gate's Node test passes without running: `test_site_tooltip.js` prints `SKIP` and exits 0 when jsdom is absent, and no clone has jsdom  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-33. The gate's Node test passes without running: `test_site_tooltip.js` prints `SKIP` and exits 0 when jsdom is absent, and no clone has jsdom  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/test_site_tooltip.js:12-13` wraps `require("jsdom")` in a try and, when it is missing, prints `SKIP: jsdom not installed (npm install jsdom)` and exits 0. Its header (`:8-9`) says jsdom "is not a dependency of this repo". `scripts/run_tests.sh:40` counts the test as passed on exit 0, so every gate run reports it green. Verified in repo-1 on 2026-10-18: `node scripts/test_site_tooltip.js` printed the SKIP line and exited 0, and `node -e 'require.resolve("jsdom")'` fails with `MODULE_NOT_FOUND` (no `node_modules` in any of the five clones, nothing on `NODE_PATH`, nothing in the global npm root). Since VI-29 the SKIP line survives in `.gate/<run>/test_site_tooltip.js.log`, where nothing reads it.
 
@@ -337,7 +342,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-34. A matcher answer with no JSON files as `matcher_error`, while the other three stages file the same failure as `no_json_in_response`  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-34. A matcher answer with no JSON files as `matcher_error`, while the other three stages file the same failure as `no_json_in_response`  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/market_consensus.py:568` calls `L.extract_json(text)` on the matcher's answer with no wrapper, so a `ValueError` ("no opening brace in response", `scripts/grade.py:901`) or a `json.JSONDecodeError` reaches the handler at `:577-582`, which since `f998861` (VI-30) prefixes an unlabelled message with `matcher_error: `. The other stages label that failure before it escapes: `scripts/extract_predictions.py:379-384` (`parse_model_output`) raises `no_json_in_response` or `json_parse_error`, `scripts/grade.py:2479-2483` picks between the two by the message, and `scripts/resolve_predictions.py:409-412` raises `no_json_in_response`. Today the corpus holds no matcher failure of this kind (the 8 failed consensus blocks in the data are all `market_api_error`), so the count is right by luck.
 
@@ -349,7 +354,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-35. `extract_predictions.parse_model_output` never files `json_parse_error`: it catches `ValueError` before `json.JSONDecodeError`  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-35. `extract_predictions.parse_model_output` never files `json_parse_error`: it catches `ValueError` before `json.JSONDecodeError`  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/extract_predictions.py:379-384` catches `ValueError` first and `json.JSONDecodeError` second. `json.JSONDecodeError` is a subclass of `ValueError`, so the second branch never runs: malformed JSON such as `{"a": 1,, }` raises `JSONDecodeError` from `L.extract_json` (`scripts/grade.py:922`) and is filed as `no_json_in_response`, the label for an answer with no JSON at all. A truncated answer, `{"a": 1, "b": [2, 3` (the output-cap case of VI-23), raises `ValueError("unbalanced braces in response")` at `grade.py:923` and is filed the same way, and swapping the two branches would not change that. `grade.py:2479-2483` picks the label by message instead: only "no opening brace" is `no_json_in_response`. `scripts/resolve_predictions.py:409-412` files every `extract_json` failure as `no_json_in_response` too, but it is left out of this item on purpose: it has its own error list (`:68-69`) and its own `classify` (`:335-347`), whose loop at `:344` knows a fixed set of labels and files any other as `other`, so a change there is a second classifier with its own test; that half is VI-38. Found by the VI-30 review on 2026-10-18 with those inputs.
 
@@ -361,7 +366,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-36. `sources_to_manifest.py` rewrites `sources/repairs.json` from discovery, so a hand-added ASR repair does not survive the next rebuild  `[difficulty: medium]`  `[filed: 2026-10-18]`
+### VI-36. `sources_to_manifest.py` rewrites `sources/repairs.json` from discovery, so a hand-added ASR repair does not survive the next rebuild  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** Filed by repo-2 while promoting david-sacks and chamath-palihapitiya (VI-14, closed). Three ASR name forms (`chamat`, `chamathie`, `David sax`) survived blinding and the natural fix was a pair in `sources/repairs.json` for `normalize_transcripts.py --repairs`. Rehearsed on scratch copies, `sources_to_manifest.py --sources ... --manifest ... --aliases ... --repairs ...` reported `repair_pairs: 0` and wrote the file back with every list empty, dropping the hand-added pairs, while it MERGED `aliases.json` (`alias_terms_preserved_by_merge: 17`). Every slug's repairs list is empty today, so nothing has been lost yet; the forms were put in `aliases.json` instead (they blind as `[SUBJECT]`, which is right for a name form). The script builds `repairs` from the discovery payload alone (`scripts/sources_to_manifest.py:57-71`) and writes it whole (`:182`), while `aliases` goes through a merge that keeps hand-added terms (`:130-172`). No loop runs the rebuild: it is stage 1 of `scripts/run_pipeline.sh` (`:36-42`), run by hand on the daemon clone, and the roster-add procedure runs it directly but sends `--repairs` to a scratch file for this reason (`docs/ROSTER-EXPANSION-2026-09-10.md:321-325`); neither `fetch_loop.sh` nor `grade_loop.sh` has ever called it.
 
@@ -373,19 +378,19 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-37. The blinder applies only the subject's own alias list, so a co-host leader's name forms survive in another leader's transcript  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-37. The blinder applies only the subject's own alias list, so a co-host leader's name forms survive in another leader's transcript  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** Found by the post-push review of the VI-14 data commit. `blind()` (`scripts/normalize_transcripts.py:402`; the live branch is `:427-430`, since no production caller passes a `wordlist`, and `:432-437` is the opt-in split) redacts the subject's name, company and aliases. Normalize passes it only the subject's alias list (`aliases.get(slug, [])`, `:962-963`), and passes `blind_study()` the same list (`:959-960`), so a second roster member named in the recording keeps every form. Measured on chamath-palihapitiya's 10 graded transcripts: `\bsax\b` 5, "David sacks" 5, "sacks" 2 across lex-fridman-kfqudc, mit-vcpe-club-q09n5t and tucker-carlson-erlkcr. The All-In hosts name each other constantly, so this pair is the sharpest case on the board, but it is pre-existing for every leader who appears in another's recording (the Nate Silver record notes the Risky Business co-host for the same reason).
 
 **Impact:** A judge blinded against the subject can still read the co-host's name, which narrows who the subject is (the other All-In host), and the identity-recognition rate the audit reports may be understated for exactly those recordings.
 
-**Fix:** Measure first: over `transcripts_blind/`, count surviving forms of every OTHER roster member's name and alias list per transcript, and report the leaders whose shelves carry the most. Then decide with the operator whether to blind every roster member's forms (changes blinding for the whole corpus, which makes new grades incomparable with old ones unless the corpus is re-blinded and re-graded) or to record it as a known limit in `docs/agents/BLINDING.md`. The measurement alone is the low item; the change is a separate, larger one.
+**Fix:** Measure first: over `transcripts_blind/`, count surviving forms of every OTHER roster member's name and alias list per transcript, and report the leaders whose shelves carry the most. Then decide with the operator whether to blind every roster member's forms (changes blinding for the whole corpus, which makes new grades incomparable with old ones unless the corpus is re-blinded and re-graded) or to record it as a known limit in `docs/agents/BLINDING.md`. The measurement alone is the `fast` item; the change is a separate, larger one.
 
 **Touch points:** `scripts/normalize_transcripts.py:402-437` (`blind()`, live branch `:427-430`) and `:959-963` (its call sites), read only for the measurement; `docs/agents/BLINDING.md`; a new measurement script under `scripts/`.
 
 ---
 
-### VI-38. `resolve_predictions.py` files broken or truncated JSON as `no_json_in_response`, and its classifier would file `json_parse_error` as `other`  `[difficulty: low]`  `[filed: 2026-10-18]`
+### VI-38. `resolve_predictions.py` files broken or truncated JSON as `no_json_in_response`, and its classifier would file `json_parse_error` as `other`  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** `scripts/resolve_predictions.py:409-412` catches `ValueError` and `json.JSONDecodeError` from `extract_json` together and raises `no_json_in_response` for both, so an answer with broken JSON (`{"a": 1,, }`, a `JSONDecodeError` at `scripts/grade.py:922`) or a truncated one (`{"a": 1, "b": [2, 3`, `ValueError("unbalanced braces in response")` at `grade.py:923`) is filed as an answer with no JSON at all. `grade.py:2479-2483` picks the label by message instead: only "no opening brace" (`grade.py:901`) is `no_json_in_response`, everything else is `json_parse_error`. Resolve's own error list `ERROR_TYPES` (`:68-69`) has no `json_parse_error`, and its own `classify` (`:335-347`) matches the label at the front of an error against a fixed set at `:344` (`E_NOJSON, E_SCHEMA, E_RULES, E_LEAK, E_CLI`) and files anything else as `other`. That check comes after a word scan (`:339-343`) that files any message containing "401" or "auth" as `auth_or_quota`, and a JSON error message carries column and character positions (`Expecting ',' delimiter: line 1 column 402 (char 401)`), so today `classify("no_json_in_response: ... (char 401)")` returns `auth_or_quota`. Resolve's own `rule_violation` messages (`:429`) quote text the model wrote, its `unresolvable_reason` and its search queries, so one that mentions "authority" or "FDA authorization" files as `auth_or_quota` and one that mentions "rate limit" as `cli_timeout`, for the same reason. Found by the VI-30 review on 2026-10-18; the same gap in the matcher and the extractor is VI-34 and VI-35. This item carries the resolve half that VI-35 names and leaves out.
 
@@ -397,7 +402,7 @@ kept from the ledger entry it came from, and never updated. Only the skill's
 
 ---
 
-### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
+### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
 
@@ -430,13 +435,13 @@ Comes back when the operator picks one.
 
 *Risks and edge cases:* the skip list must live where every clone's run can read it (the data repo's `logs/`), be reset by hand, and never hide the six from the coverage table.
 
-*Why high not medium:* a cross-run state file in a daemon's path and a change to what the run summary says a judge did.
+*Why premium not standard:* a cross-run state file in a daemon's path and a change to what the run summary says a judge did.
 
 **Touch points:** `scripts/grade.py:2062-2151`, the run summary writer, a new test file, `docs/agents/JUDGES.md:413-452`.
 
 ---
 
-### VI-11. `validate_grader.py` says it "mirrors aggregate.py's own gates" and no longer does  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: its V1-V5 figures are next quoted or re-run]`
+### VI-11. `validate_grader.py` says it "mirrors aggregate.py's own gates" and no longer does  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: its V1-V5 figures are next quoted or re-run]`
 
 **Background:** `scripts/validate_grader.py` was last changed on 2026-09-06, and its `load()` (`:88`) has drifted from `aggregate.py` in four ways since. (1) It drops a GRADE whose own subject share is under its `MIN_SUBJECT_SHARE` (`:37`, which is 15 while `scripts/aggregate.py:112` is 10), while `aggregate.filter_unscorable` (`aggregate.py:172`) drops a whole RECORDING when the judges' mean share is under the cutoff or any judge says 0, the rule `docs/agents/SCORING.md` records with its measured cost. (2) It skips `_raw/` (`:92`) and not `_obsolete/`, which `aggregate.load_grades` skips (`aggregate.py:232`). (3) It applies no board membership (`aggregate.py:1204-1206`, `:1396`). (4) It swallows any unreadable grade or transcript file (`except Exception` at `:96` and `:249`) and reports nothing. No test covers it and no loop runs it, so nothing published reads it today, but its V1-V5 figures are quoted as grader validation.
 
@@ -449,13 +454,13 @@ Comes back when the operator picks one.
 
 *Risks and edge cases:* the V1-V5 figures move; quote them with the date and the commit.
 
-*Why high not medium:* three loaders to replace and published figures to re-derive.
+*Why premium not standard:* three loaders to replace and published figures to re-derive.
 
 **Touch points:** `scripts/validate_grader.py:37`, `:88-110`, `:249`, `scripts/aggregate.py:172`, `:227-232`, `:1204-1206` (read only), a new `scripts/test_validate_grader.py`, `docs/agents/MAP.md`.
 
 ---
 
-### VI-12. `test_log_bloat.py` reads the leaders daemon's live checkout, so the suite goes red in every clone while repo-0 is mid-rebuild  `[difficulty: medium]`  `[filed: 2026-10-11]`  `[BLOCKED: a second red from it that is not a rebuild in progress]`
+### VI-12. `test_log_bloat.py` reads the leaders daemon's live checkout, so the suite goes red in every clone while repo-0 is mid-rebuild  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: a second red from it that is not a rebuild in progress]`
 
 **Background:** The market-cache section of `scripts/test_log_bloat.py` takes `production_path(REPO)` (`:58-60`), the shared `verbatim-index/data` the daemons write, not the clone's own `data` link, and asserts every accepted prediction carries market provenance (`:162-164`). At 04:00 PDT on 2026-10-11 the suite at `c323fb8` reported `FAILED scripts/test_log_bloat.py`: "9 of 1124 accepted records lack consensus status, cutoff or searched_at_utc", all in the shared checkout beside repo-0's uncommitted `_experiments/rebuild-20261011/`. That red was a TRUE POSITIVE: the 9 records were the VP-5 remainder that repo-0 integrated in data `a8212d25`, and the integration skipped `market_consensus.py`. Fixed by running `market_consensus.py --leaders jack-dorsey,bill-gurley --router-exclude claude,claude_e`: 9 attempted, 9 `no_match`, 0 errors, 5 Fable matcher calls; the test then printed `13 passed, 0 failed`. The gap is in the integration step: anything that adds accepted records must run market consensus before commit. `AGENTS.md` ("Setup in a fresh clone") names this test as the one that fails while repo-0 is mid-rebuild.
 
@@ -467,7 +472,7 @@ Comes back when the operator picks one.
 
 ---
 
-### VI-13. The speaker-segmentation call does not correct obvious caption errors, and there is too little ground truth to measure an attempt  `[difficulty: xhigh]`  `[filed: 2026-09-28]`  `[BLOCKED: at least 50 operator caption corrections across at least 10 recordings, made under the VI-9 convention]`
+### VI-13. The speaker-segmentation call does not correct obvious caption errors, and there is too little ground truth to measure an attempt  `[capability: frontier]`  `[priority: P2]`  `[filed: 2026-09-28]`  `[BLOCKED: at least 50 operator caption corrections across at least 10 recordings, made under the VI-9 convention]`
 
 **Background:** Re-checked 2026-10-11: still waiting, at 15 corrections over 5 recordings of the 50 over 10 it needs. Counted with the corrections export (since VI-39, `scripts/annotations.py export corrections`) over every speaker-check answers file on this Mac: leaders 9 edits over 2 recordings, predictions 5 over 2, pundits 1 over 1. The newest edit is from 2026-09-28T05:07Z, and no later session exists in either data repo. The ledger entry, verbatim:
 
@@ -520,13 +525,13 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 *Risks and edge cases:* the three constraints in the entry above; the prompt hash moves, so adoption is a new measured segmenter.
 
-*Why xhigh not high:* prompt design, a two-sided measurement and a schema that every published quote offset depends on.
+*Why frontier not premium:* prompt design, a two-sided measurement and a schema that every published quote offset depends on.
 
 **Touch points:** `scripts/speaker_turns.py:65-66` and `PROMPT`, `scripts/speaker_segment_probe.py`, `scripts/annotations_corrections.py:16-82`, their tests, `docs/agents/PUNDITS.md`.
 
 ---
 
-### VI-17. Pundits grading cannot run on prepaid API credit under contract v2 without re-grading the whole pilot  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks (A) or (B); CI-11 stopped after day 1, so its day-1 result is all that is coming]`
+### VI-17. Pundits grading cannot run on prepaid API credit under contract v2 without re-grading the whole pilot  `[capability: frontier]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[BLOCKED: operator picks (A) or (B); CI-11 stopped after day 1, so its day-1 result is all that is coming]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish option (B): it pushes the re-graded cells; option (A) is a decision with no work. Filed by repo-3. `quotapick run` (the router's only way to spend a credit pool) runs Fable with tools removed, on an API key, with no sandbox wrapper. Contract v2's `judge_requests.fable` names `sandbox_exec_deny_container` (`profiles/pundits.json:41-51`), `scripts/grade.py:998` refuses any other sandbox, and `judge_requests` is part of the hash that makes the contract ID. So a credit grade filed under today's contract ID would claim a sandbox it never ran in. If instead the contract is amended to name the credit harness, the contract ID changes, `grade.py` reads all 312 pundits grades (156 Fable, 156 Gemini) as `stale_cache`, and `aggregate.py` refuses to mix contracts (`scripts/aggregate.py:1429`), so the whole pilot is graded again (about $380 by the 2026-10-18 estimate). That is more than pools d and c hold, and on 2026-10-18 the owner put their spare beyond CI-11's share into the pundits predictions scale-up, so a re-grade would run on the November pools: e (expires 2026-11-10), b (2026-11-11) and a (2026-11-16). CI-11 (`data/experiments/fable-credit-drift-20261018/`) was to grade day 1 on d and day 2 on c; the operator stopped it after day 1 and cancelled day 2 (`docs/LEDGER-corpus-integrity.md:23`), with day 1 showing credit minus subscription -0.62 points, 95% CI -1.7 to +0.47, n 34, Spearman 0.939 (`results.md`).
 
@@ -536,13 +541,13 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 *Risks and edge cases:* a contract change invalidates every pundits grade at once; the daemon must be stopped first.
 
-*Why xhigh not high:* a contract hash, $380 of credit and the whole pundits corpus.
+*Why frontier not premium:* a contract hash, $380 of credit and the whole pundits corpus.
 
 **Touch points:** `profiles/pundits.json:41-51`, `scripts/grade.py:576-610`, `:998`, `scripts/aggregate.py:1429`, `docs/agents/PUNDITS.md`, `docs/PUNDITS-RELEASE-PLAN.md`.
 
 ---
 
-### VI-18. The pundits page has no evidence drawer  `[difficulty: high]`  `[filed: 2026-10-12]`  `[BLOCKED: the P7 quote audit (300 quotes, G-attribution-quotes) has run and decided the quote filter]`
+### VI-18. The pundits page has no evidence drawer  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-12]`  `[BLOCKED: the P7 quote audit (300 quotes, G-attribution-quotes) has run and decided the quote filter]`
 
 **Background:** The leaders page shows, per person, each judge's reasoning and evidence quotes for every graded transcript (`scripts/build_site.py:474-600`, the drawer). The pundits page (`scripts/build_study_site.py:429`, `render`) lists each board recording with its link, venue and score since 2026-10-12, but not what the judges wrote; the data is in `results_audit.json`. Not done, deliberately: the quotes would appear credited to a named political commentator, and attribution is not yet measured. VI-21 holds 89 judge quotes credited to the subject that do not place in the transcript, and the P7 quote audit has not run. Publishing the drawer first would put possibly misattributed words beside a person's name.
 
@@ -555,13 +560,13 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 *Risks and edge cases:* the page size limit in `docs/agents/SITES.md`; the leaders drawer is loaded from a separate audit file per person for that reason.
 
-*Why high not medium:* a port across two site builders plus a filter whose rule is a measurement result.
+*Why premium not standard:* a port across two site builders plus a filter whose rule is a measurement result.
 
 **Touch points:** `scripts/build_study_site.py:429`, `scripts/build_site.py:474-600` (read only), the pundits site tests, `docs/agents/SITES.md`.
 
 ---
 
-### VI-19. An unsupported dimension removes the whole recording, though the plan says it should still count toward the dimensions it supports  `[difficulty: high]`  `[filed: 2026-10-11]`  `[BLOCKED: the pundits full grade, or a second recording with an unsupported dimension]`
+### VI-19. An unsupported dimension removes the whole recording, though the plan says it should still count toward the dimensions it supports  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: the pundits full grade, or a second recording with an unsupported dimension]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: step 3 re-aggregates and deploys, and the item is deleted only after it; the code change in step 2 may be prepared on any clone. Found while asking why `asmongold/asmongold-tv-ks77-g` is missing from `results.json` despite four schema-valid grades. Three of its four grades mark `d1_steelmanning` `unsupported` (fable/blinded, gemini/blinded, gemini/open). `scripts/aggregate.py:1248` marks each such grade `_excluded = "unsupported_dimension"`, which removes the whole grade, and then `drop_partial_panels` (`:115`) drops the fourth, fully supported fable/open grade as an incomplete panel. The recording contributes to no dimension. `docs/PUNDITS-PLAN.md:241-246` ("Anchors and minimum evidence") says otherwise: a transcript with any unsupported dimension has no `overall`, still counts toward each dimension it supports, and ranking by overall uses only transcripts with all three supported. Re-running `aggregate.py --study pundits` on a scratch clone of data-pundits at `dced184` reproduces the committed result: 154 transcripts, the same one partial panel, and `grades_excluded_unsupported_dimension 3` (`:1696`), so the loss is counted rather than silent. The reporting half is done: `drop_partial_panels` names a cell removed earlier and why (`:164`), so the report reads "missing gemini/open (removed: unsupported_dimension)". `docs/PUNDITS-RELEASE-PLAN.md:198-201` asks the operator to choose one rule and delete the other sentence from the plan.
 
@@ -574,13 +579,13 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 *Risks and edge cases:* a per-dimension panel rule changes every pundits score's denominator, not just this recording's.
 
-*Why high not medium:* a scoring rule with a plan decision attached.
+*Why premium not standard:* a scoring rule with a plan decision attached.
 
 **Touch points:** `scripts/aggregate.py:115-164`, `:1248`, `:1696`, its pundits tests, `docs/PUNDITS-PLAN.md:241-246`, `docs/PUNDITS-RELEASE-PLAN.md:198-201`, `docs/agents/SCORING.md`.
 
 ---
 
-### VI-21. 89 judge quotes credited to the subject do not place in the open transcript, and nobody has said whether a tidied quote counts as verbatim  `[difficulty: high]`  `[filed: 2026-09-19]`  `[BLOCKED: operator decides whether a quote with fillers removed or a caption error corrected is verbatim under the rubric]`
+### VI-21. 89 judge quotes credited to the subject do not place in the open transcript, and nobody has said whether a tidied quote counts as verbatim  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-09-19]`  `[BLOCKED: operator decides whether a quote with fillers removed or a caption error corrected is verbatim under the rubric]`
 
 **Background:** Of 3,290 subject quotes in the 312 live pundits grades, `annotations_text.locate` (`scripts/annotations_text.py:148`) first failed to place 137. Re-measured 2026-10-11 after three matcher fixes (`[AFFILIATION]` as a placeholder for up to five words, `_norm` at `scripts/annotations_text.py:138` stripping edge quote marks and curly apostrophes, an empty quote counted as `empty`): against `transcripts_open/`, located 3,198, not located 89, empty 3 (`suspect_quotes` at `scripts/annotations_select.py:260`; the full re-measurement is the archived entry "RE-MEASURED AND PARTLY FIXED 2026-10-11", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits). Of the 89, 84 share at least 80% of their three-word sequences with the transcript and 5 share 73 to 77%; all 5 were read in context, and every one is a judge tidying the captions, never a paraphrase (a dropped filler, a joined caption-split number, a corrected typo). 86 of the 89 are Gemini. A matcher that also skipped fillers and immediate repeats would place 29 of the 89; not done, because it makes "located" fuzzier and the remaining 60 differ in more varied ways.
 
@@ -592,13 +597,13 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 *Risks and edge cases:* a fuzzier matcher hides real paraphrase; a stricter rubric penalises Gemini 86 to 3.
 
-*Why high not medium:* a rubric interpretation with a per-judge consequence.
+*Why premium not standard:* a rubric interpretation with a per-judge consequence.
 
 **Touch points:** `scripts/annotations_text.py:138-192`, `scripts/test_annotations_page.py`, `scripts/aggregate.py` (the quote report), `docs/agents/PUNDITS.md`.
 
 ---
 
-### VI-22. `grade.py --regrade-invalid` exists for leaders and is off, so 35 malformed leaders records stay as they are  `[difficulty: low]`  `[filed: 2026-10-11]`  `[BLOCKED: operator decides to turn it on; spends about 35 Fable calls and moves the published board]`
+### VI-22. `grade.py --regrade-invalid` exists for leaders and is off, so 35 malformed leaders records stay as they are  `[capability: fast]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: operator decides to turn it on; spends about 35 Fable calls and moves the published board]`
 
 **Background:** The manual pass is the leaders daemon clone's, repo-0; the loop-flag route is a code change any clone can make. Counted 2026-10-11 in the shared leaders data: 35 records failed validation while still carrying an attempt at scores, 26 with `dimensions` and 9 in a judge-invented shape with `overall`; six more failed as refusals or non-answers and stay put by the refusal rule in `docs/agents/JUDGES.md`. `scripts/grade.py:446-473` implements `--regrade-invalid` as an opt-in: a malformed record is moved under `grades/_obsolete/` byte for byte and graded again. `scripts/grade_loop.sh:205` and `:218` do not pass the flag, and `scripts/test_leaders_regrade_invalid.py:150` pins that they do not. It is opt-in because default-on would make repo-0's daemon spend about 35 calls and move the published board on its next code pull. The archived entry "LEADERS HALF FIXED 2026-10-11 as an opt-in" (`docs/BACKLOG-RESOLVED.md`, Verbatim Pundits) holds the count and the proof.
 
@@ -610,7 +615,7 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ---
 
-### VI-28. The second source pass for the thin predictions people is not run  `[difficulty: xhigh]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
+### VI-28. The second source pass for the thin predictions people is not run  `[capability: frontier]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
 
 The operator asked for the second pass on 2026-10-19, after VI-23 is fixed ("run a second source search for the thinnest people, but fix VI-23 first"). Start it only once VI-23 is on origin/main.
 
@@ -622,7 +627,7 @@ The operator asked for the second pass on 2026-10-19, after VI-23 is fixed ("run
 
 *Risks and edge cases:* every hazard the 2026-10-18 run met and VI-23 to VI-26 record; a run folder named in `scoring.json` moves the as_of bar with every commit into it.
 
-*Why xhigh not high:* five pipeline stages, three quota pools and a deploy, with judgment at each hand-off (the rating VI-15 carried).
+*Why frontier not premium:* five pipeline stages, three quota pools and a deploy, with judgment at each hand-off (the rating VI-15 carried).
 
 **Touch points:** `data/predictions/_experiments/thin-supplement-20261018/` (`BRIEF.md`, `_driver/pipeline.py`, `findings/`), a new `data/predictions/_experiments/<run>/`, `data/predictions/scoring.json`.
 

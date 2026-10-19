@@ -61,10 +61,10 @@ document that still cites it by name:
 
 Status and open work are not in this agreement. Deferred work is in
 `BACKLOG.md`, which follows the `backlog-protocol` skill since 2026-10-18:
-`### VI-n.` items with difficulty, filed and blocked tags, claimed through that
-skill's `claim.py` before work and deleted on completion. The settled entries
-of the old ledger are in `docs/BACKLOG-RESOLVED.md`. The status of each
-workstream is in its `docs/LEDGER-*.md`.
+`### VI-n.` items with capability, priority, filed and blocked tags, claimed
+through that skill's `claim.py` before work and deleted on completion. The
+settled entries of the old ledger are in `docs/BACKLOG-RESOLVED.md`. The
+status of each workstream is in its `docs/LEDGER-*.md`.
 
 **Adding to the agreement.** Put new text in the file of its topic, under the
 heading it fits. Add to this file only a rule that every agent needs on every
