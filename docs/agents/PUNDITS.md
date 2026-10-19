@@ -220,7 +220,7 @@ there. Add new material under the same headings.
   counted, never filled. The session built before 2026-10-18 (`speaker_check.html`,
   `quote_check_key.json`, no manifest) was adopted on 2026-10-19 with `annotations.py migrate
   --session data-pundits/logs/p6b --project pundits`, which writes `manifest.json` only, and
-  built again with `build --grades --drafts` (pundits data `c01764f`). Only repo-3 pushes it, because this data
+  built again with `build --grades --drafts` (pundits data `c01764f`), then rebuilt so each draft stays hidden until its recording is answered (`05df500`). Only repo-3 pushes it, because this data
   repository is owner-only.
 
 - P7 labelling kit: `scripts/pundits_label_kit.py windows | quotes`, with the rules for the
