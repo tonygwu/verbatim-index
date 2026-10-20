@@ -409,7 +409,7 @@ skips.
 
 ---
 
-### VI-48. The predictions deploy never passes `--public-revision` to its live-page check, so a deploy at the live data revision does not check the live code  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-19]`
+### VI-48. The predictions deploy never passes `--public-revision` to its live-page check, so a deploy at the live data revision does not check the live code  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-19]`  `[claimed by: #1]`
 
 **Background:** First written down on 2026-10-19 by the Luckey integration review, with a reproduction, in the data repo's private `predictions/_experiments/launch-review-20261019/LUCKEY-INTEGRATION-REVIEW.md`; found again by the pre-deploy review of VI-45 on 2026-10-20. `live_revision_error` refuses a deploy whose public code does not descend from the live page's code only when both its data revisions match and it is given our public HEAD (`scripts/data_clone_workflow.py:273` "if live == revision and public and live_public and live_public != public:"). The CLI accepts that HEAD as `--public-revision`, but the deploy's call omits it (`scripts/deploy_source.sh:73` "live-revision --production-data"), so `public` is always None and the check never runs.
 
