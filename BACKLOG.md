@@ -88,7 +88,7 @@ skips.
 
 ---
 
-### VI-54. The board scores Sweeney `5c16324b2d6126ea` as a miss under an operator ruling that the operator has reversed  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-20]`
+### VI-54. The board scores Sweeney `5c16324b2d6126ea` as a miss under an operator ruling that the operator has reversed  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-20]`  `[claimed by: #1]`
 
 **Background:** On 2026-10-20 the operator reversed their ruling of the same day that Tim Sweeney's prediction `5c16324b2d6126ea` is not already public (ledger VD-26; the decision is to be recorded as VD-27, Fix step 3). The Rule 8 re-check (VP-46) applied that ruling over Astra's answer under release `resolution-2026-10-20`, which cites Epic's own 2025-01-24 post as the earlier announcement: `apply_rulings.py` moved Astra's sidecar to `adjudicated/` and wrote a copy with `already_public` null in its place (`data/predictions/_experiments/rule8-recheck-20261020-repo1/apply_rulings.py:5` "Sweeney 5c16324b2d6126ea are NOT already public"). Since the deploy of VD-25 the row scores a miss at p 0.65, -1.15 points (`docs/LEDGER-predictions.md:97` "Reversing the ruling takes the row off the board").
 
