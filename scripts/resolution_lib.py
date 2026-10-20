@@ -348,6 +348,10 @@ The resolution criterion, as this pipeline recorded it:
 # EXPERIMENTAL malaria vaccine for "a malaria vaccine will be invented", the 2012 Baxter robot for "programs that can
 # think will do assembly-line work", one fire sale for several unicorn failures, the speaker's own earlier forecast
 # (data predictions/_experiments/already-public-20261011/).
+# VI-50 (2026-10-20, release resolution-2026-10-20, ledger VD-24): the operator's "Same outcome only". A plan or an
+# announcement excludes a prediction only when it states everything the prediction claims; the last paragraph and its
+# five examples are the operator's approved text, word for word, and each example is a row they ruled on. Those five
+# rows are therefore left out of any measurement of the resolver's accuracy.
 ALREADY_PUBLIC_NOT_A_PRECURSOR = (
     "   The report must be about the SAME event the prediction names. An announcement\n"
     "   that this event is agreed, decided or scheduled counts, including the speaker's\n"
@@ -361,7 +365,33 @@ ALREADY_PUBLIC_NOT_A_PRECURSOR = (
     "   reports no decision, agreement or schedule. The report must establish the FULL\n"
     "   claim, including its time window, sequence, and quantities such as all rather\n"
     "   than some. Announcing access does not establish access before shipments; a\n"
-    "   schedule for a different shipping month does not establish a revised window.\n")
+    "   schedule for a different shipping month does not establish a revised window.\n"
+    "   A plan, schedule or announcement makes a prediction already public only if it\n"
+    "   states everything the prediction claims: the same event, at least as large, by\n"
+    "   the same deadline or an earlier one, and against the same comparison. A\n"
+    "   schedule whose date passed before the statement, without the event, no longer\n"
+    "   counts: a new date given after a missed schedule is a forecast. Examples:\n"
+    "   - Not already public. Oracle's 2019-09-16 release planned 36 Oracle regions by\n"
+    "     the end of 2020. On 2020-06-16 Larry Ellison said \"Soon we will have more\n"
+    "     regions live than AWS\". The release names no AWS count, and Oracle could open\n"
+    "     all 36 while AWS opened 37.\n"
+    "   - Not already public. Bloomberg reported on 2020-06-09 that Apple would move\n"
+    "     the Mac to its own chips. On 2020-06-22 Tim Cook said \"we expect the\n"
+    "     transition to take about two years\". The report gave no timetable, so the two\n"
+    "     years is a forecast.\n"
+    "   - Not already public. Intel's 2006-09-07 release said its vPro features would\n"
+    "     reach laptops in 2007. On 2006-09-27 Pat Gelsinger said this would happen in\n"
+    "     the first half of 2007. A narrower window than the announcement is a\n"
+    "     forecast, even when the announcement makes it likely.\n"
+    "   - Not already public. Epic said on 2024-03-20 that its mobile store would\n"
+    "     launch later that year with self-publishing tools. That year ended without\n"
+    "     open self-publishing. On 2025-04-02 Tim Sweeney said developers could submit\n"
+    "     their games directly by the end of 2025. That is a new date after a missed\n"
+    "     schedule.\n"
+    "   - Already public. Netflix announced on 2019-08-27 that The Two Popes would open\n"
+    "     in theaters on November 27. On 2019-09-20 Reed Hastings said it was \"coming\n"
+    "     out this fall\". The announcement states everything he claimed, at a more\n"
+    "     precise date.\n")
 
 RESOLVER_TASK = """You are resolving a dated public prediction. Decide whether the thing
 described by the resolution criterion actually happened by the deadline.
@@ -1251,11 +1281,15 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # byte-identical to resolution-2026-09-30, so no prior priced under it goes stale.
 # resolution-2026-10-19: full-claim equivalence includes event order, quantities
 # and time windows. Only records triggering the sequence rule change prior text.
-POLICY_RELEASE = ("resolution-2026-10-19", "8709e7124d9cce90d56581a64131dec68f2f7e87daccceb565a259d24c60756b")
+# resolution-2026-10-20 (VI-50, ledger VD-24): a plan, schedule or announcement makes a prediction already public only
+# if it states everything the prediction claims; the operator's text and five examples, added to the resolver and
+# early-call prompts only. The prior and lead-test prompts are byte-identical to resolution-2026-10-19, so no prior or
+# lead test priced under it goes stale.
+POLICY_RELEASE = ("resolution-2026-10-20", "9f1fe156be814083db149be99fbd477867c27d8d425831096626d533d5cd29cc")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.
-KNOWN_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11", "resolution-2026-10-19")
+KNOWN_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11", "resolution-2026-10-19", "resolution-2026-10-20")
 
 
 def _policy_fixture() -> dict:

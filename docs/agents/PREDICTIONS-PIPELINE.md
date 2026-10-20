@@ -34,6 +34,19 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
 
 ## Where things are
 
+- Resolution release `resolution-2026-10-20` (operator decision VD-24, "Same outcome
+  only") adds one rule to the already-public text that the resolver's rule 8 and the
+  early call's rule 7 share: a plan, schedule or announcement makes a prediction
+  already public only if it states everything the prediction claims, the same
+  event, at least as large, by the same deadline or an earlier one, and against the
+  same comparison; a new date given after a missed schedule is a forecast. The
+  operator approved the text and its five worked examples word for word. The prior
+  and lead-test prompts are byte-identical to `resolution-2026-10-19`, so no prior
+  or lead test turns stale. The five example rows (Ellison `94522ddc8049659a`, Cook
+  `897e1fe74a77f88c`, Gelsinger `1e869ff2affb0357`, Sweeney `5c16324b2d6126ea`,
+  Hastings `9df7d48a5a1e187a`) are operator-adjudicated: leave them out of any
+  measurement of the resolver's accuracy. Proof: `scripts/test_already_public_plan.py`.
+
 - Resolution release `resolution-2026-10-19` preserves event order, quantities
   such as **all**, and the stated time window in resolver, prior and early-call
   prompts. An `already_public` source must establish that whole claim. The runner
