@@ -410,6 +410,30 @@ skips.
 
 ---
 
+### VI-52. The deploy's live-page code check is skipped, not refused, on an empty public revision, and it does not check that the live page's public revision is a full SHA  `[capability: fast]`  `[priority: P3]`  `[filed: 2026-10-20]`
+
+**Background:** VI-48 (2026-10-20) made the predictions deploy pass its public HEAD to `live_revision_error`, which compares it with the live page's code only when both are present (`scripts/data_clone_workflow.py:273` "if live == revision and public and live_public and live_public != public:"). An empty `--public-revision ""` is falsy, so the check is skipped without a word; the VI-48 review showed `--public-revision ''` exiting 0 on a live page that a real HEAD is refused against. The live page's `data_revision` must be a full SHA, but `public_revision` is read as it is (`scripts/data_clone_workflow.py:272` "live_public = doc.get('public_revision')"), so a value such as `main` would resolve as a branch name. The predictions test has no case where the live page used exactly our own public code; the pundits test has one. Found by the VI-48 review.
+
+**Impact:** none through today's callers: the predictions deploy always passes `git rev-parse HEAD`, and its origin check refuses an empty value first. A future caller that passes an empty value would pass the code check without it running, and a live page written with a symbolic revision such as `main` would be checked against whatever that name resolves to in this clone, not the commit the page was built from.
+
+**Fix:** test first. The empty-revision case cannot be reached through `deploy_predictions.sh`, whose origin check refuses an empty value before the live-page check runs, so call `data_clone_workflow.py live-revision --public-revision ''` (or `live_revision_error`) directly, beside `scripts/test_live_revision_ua.py`: an empty public revision at the live data revision refuses, and a live `public_revision` that is present but not a 40-hex SHA refuses. In `scripts/test_deploy_predictions_origin.py`, a live page at our own public HEAD deploys. A null or missing live `public_revision` keeps skipping the code check, as today: `deploy_pundits.sh` writes null when its tree has no commit, and pages from before the field existed carry none. Then make `live_revision_error` refuse an empty `public` when the CLI was given the flag, and a present but malformed `live_public`, with messages that name the value.
+
+**Touch points:** `scripts/data_clone_workflow.py:272` "live_public = doc.get('public_revision')", `scripts/data_clone_workflow.py:273` "if live == revision and public and live_public and live_public != public:", `scripts/test_deploy_predictions_origin.py`, a new or extended live-revision test beside `scripts/test_live_revision_ua.py`.
+
+---
+
+### VI-53. The four Fable harnesses VI-42 covered do not record the output cap they asked for, and no test checks that two of them drop the config folder for account A  `[capability: fast]`  `[priority: P3]`  `[filed: 2026-10-20]`
+
+**Background:** since VI-42 (2026-10-20), `date_recordings.call_fable_web`, `pundits_speaker_infer.call_model`, `speaker_segment_probe.call_claude` and `p3_judge_probe.run_fable` give their child the 128,000-token cap through `credit_run.child_env()`. `credit_run.run` and `grade.call_fable` also record it as `max_output_tokens_requested` (`scripts/credit_run.py:256` "max_output_tokens_requested"), but these four write no such field, so a dating record cannot show whether it ran at 64,000 or 128,000. `scripts/test_fable_child_env.py` checks only calls that name a config folder; the branches that drop `CLAUDE_CONFIG_DIR` for account A (the dater's `__DEFAULT__`, the drafts' empty `config_dir`) are untested, though the VI-42 review checked them by hand. Found by the VI-42 review.
+
+**Impact:** an answer cut before VI-42 cannot be told apart from one after it by its record, and a change that stopped the dater or the drafts dropping `CLAUDE_CONFIG_DIR` from the child's environment for account A would pass the suite. The routing to `__DEFAULT__` itself is tested (`scripts/test_dating_merge5.py:626` "def test_the_router_picks_among_the_claude_accounts_and_its_dir_reaches_the_call"); the child's environment is not.
+
+**Fix:** test first: extend `scripts/test_fable_child_env.py` with the two account-A calls (the child has no `CLAUDE_CONFIG_DIR` and has the cap) and with a check that each harness's telemetry names `max_output_tokens_requested` 128000; red today for the telemetry. For the dater, test the written dating record too: it copies a fixed list of telemetry keys (`scripts/date_recordings.py:656` "tel.get(k) for k in"), so the field must be added to that list as well as to `call_fable_web`'s telemetry. Then add the field at each site.
+
+**Touch points:** `scripts/date_recordings.py` (`call_fable_web` and the record's key list at `:656`), `scripts/pundits_speaker_infer.py`, `scripts/speaker_segment_probe.py`, `scripts/p3_judge_probe.py`, `scripts/test_fable_child_env.py`.
+
+---
+
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
