@@ -358,7 +358,7 @@ skips.
 
 ---
 
-### VI-42. Four Fable `claude -p` harnesses still run under the 64,000-token default cap, with no check for a cut answer  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-19]`
+### VI-42. Four Fable `claude -p` harnesses still run under the 64,000-token default cap, with no check for a cut answer  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-19]`  `[claimed by: #1]`
 
 **Background:** since VI-23 (2026-10-19), `credit_run.run` and `grade.call_fable` give their child `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at 128,000 through `credit_run.child_env`, and refuse a cut answer as `continuation_truncated` through `credit_run.truncation_detail`. Four other harnesses start a Fable `claude -p` of their own and copy the environment as it is: `scripts/date_recordings.py:452` "env = dict(os.environ)" (`call_fable_web`, the production `fable_web` dater, which has WebSearch and WebFetch), `scripts/pundits_speaker_infer.py:148` "def call_model(" (the P6b speaker drafts on a subscription; its credit drafts already go through `credit_run.run`), `scripts/speaker_segment_probe.py:97` "env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir)", and `scripts/p3_judge_probe.py:107` "def run_fable(". MEASURED 2026-10-19: the speaker-audit raw file `data/predictions/_experiments/speaker-audit-20260927/segmentation/leaders-r2/raw/fable__michael-dell__david-senra-9wssls__r1__a2.json` has `usage.output_tokens` 256,000 and one iteration of 64,000, a gap of 192,000, and its result is the CLI's text "API Error: Claude's response exceeded the 64000 output token maximum". The VI-23 review counted 22 cut `seg-work-*-fable` sessions from 2026-09-28. Found by the VI-23 review.
 
