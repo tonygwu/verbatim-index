@@ -5,7 +5,7 @@
 # WHY THIS EXISTS. `agy` keeps its credential in one Keychain item per macOS
 # user: service "gemini", account "antigravity". Two HOME directories under one
 # user therefore share one account, which is how all 567 Gemini grades in the
-# corpus came from gptwufamily@gmail.com while two profiles alternated. A
+# corpus came from Gemini account 2 while two profiles alternated. A
 # second macOS user has its own login Keychain and is the only real second
 # account on one machine.
 #

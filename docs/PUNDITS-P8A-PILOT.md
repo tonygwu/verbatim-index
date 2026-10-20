@@ -139,7 +139,7 @@ session transcript. Re-running the 28 after the reset is straightforward.
 Read in full on `ben-shapiro/ben-shapiro-ukzort__gemini__blinded__r0.json`:
 `served_model` equals `requested_model` (`gemini-3.8-flash-high`),
 `served_model_verified: true`, harness `agy -p`, profile identity recorded
-(gptwufamily@gmail.com, all 39 calls). Across all valid grades: **zero tool use
+(Gemini account 2, all 39 calls). Across all valid grades: **zero tool use
 and zero web searches**, so the P10 G-search exposure is 0 so far.
 
 ## Blinding does not hold, as on the leaders board

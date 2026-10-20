@@ -2,8 +2,8 @@
 """The Gemini rotation comes from the router config, and every call proves its account.
 
 CHANGED 2026-10-04: the machine gained a second real Antigravity account. The
-default macOS user serves tonygwu@gmail.com and the macOS user `tonyagents`
-serves gptwufamily@gmail.com. Before this, the rotation was the default HOME
+default macOS user serves Gemini account 1 and the macOS user `tonyagents`
+serves Gemini account 2. Before this, the rotation was the default HOME
 plus whatever GEMINI_USERS named, and the account a call reached was recorded
 but never checked. Three rules follow, and each has a check here:
 
@@ -44,10 +44,10 @@ def acct(id_, provider="antigravity", macos_user=None, email=None, env=None, ena
 MACHINE = {
     "claude": acct("claude", provider="claude", email="x@y"),
     "codex_b": acct("codex_b", provider="codex", email="x@y"),
-    "antigravity_gemini": acct("antigravity_gemini", email="tonygwu@gmail.com"),
-    "antigravity_claude": acct("antigravity_claude", email="tonygwu@gmail.com", env={"AGY_MODEL": "claude"}),
-    "antigravity_gemini_b": acct("antigravity_gemini_b", macos_user="tonyagents", email="gptwufamily@gmail.com"),
-    "antigravity_claude_b": acct("antigravity_claude_b", macos_user="tonyagents", email="gptwufamily@gmail.com",
+    "antigravity_gemini": acct("antigravity_gemini", email="gemini-account-1@example.com"),
+    "antigravity_claude": acct("antigravity_claude", email="gemini-account-1@example.com", env={"AGY_MODEL": "claude"}),
+    "antigravity_gemini_b": acct("antigravity_gemini_b", macos_user="tonyagents", email="gemini-account-2@example.com"),
+    "antigravity_claude_b": acct("antigravity_claude_b", macos_user="tonyagents", email="gemini-account-2@example.com",
                                  env={"AGY_MODEL": "claude"}),
 }
 
@@ -64,8 +64,8 @@ def raises(fn):
 print("1. the rotation is built from the router config")
 r = rotation(MACHINE)
 check("both Gemini-pool accounts, default HOME first, the macOS user as user:<name>",
-      r == [("/h/default", "tonygwu@gmail.com", "antigravity_gemini"),
-            ("user:tonyagents", "gptwufamily@gmail.com", "antigravity_gemini_b")], str(r))
+      r == [("/h/default", "gemini-account-1@example.com", "antigravity_gemini"),
+            ("user:tonyagents", "gemini-account-2@example.com", "antigravity_gemini_b")], str(r))
 check("the Claude pool (AGY_MODEL=claude) is not a Gemini profile, so no profile appears twice",
       len({p for p, _, _ in r}) == len(r) == 2, str(r))
 other = {**MACHINE, "antigravity_gemini_b": acct("antigravity_gemini_b", macos_user="someoneelse",
@@ -76,7 +76,7 @@ three = {**MACHINE, "antigravity_gemini_c": acct("antigravity_gemini_c", macos_u
 check("a third account joins with no code change", [p for p, _, _ in rotation(three)]
       == ["/h/default", "user:tonyagents", "user:third"], str(rotation(three)))
 off = {**MACHINE, "antigravity_gemini_b": acct("antigravity_gemini_b", macos_user="tonyagents",
-                                               email="gptwufamily@gmail.com", enabled=False)}
+                                               email="gemini-account-2@example.com", enabled=False)}
 check("a disabled account is not in the rotation", [p for p, _, _ in rotation(off)] == ["/h/default"])
 check("GEMINI_USERS that restates the config is accepted",
       rotation(MACHINE, users_env="tonyagents") == r)
@@ -126,25 +126,25 @@ import tempfile
 real_run = g.subprocess.run
 with tempfile.TemporaryDirectory() as td:
     try:
-        g.subprocess.run = fake_agy("tonygwu@gmail.com")
+        g.subprocess.run = fake_agy("gemini-account-1@example.com")
         text, tel = g.call_gemini("p", "/h/default", 120, workdir=str(Path(td) / "w1"),
-                                  expected_identity="tonygwu@gmail.com")
+                                  expected_identity="gemini-account-1@example.com")
         check("a matching identity returns the grade and says it was verified",
-              tel.get("profile_identity") == "tonygwu@gmail.com" and tel.get("profile_identity_verified") is True, str(tel))
-        g.subprocess.run = fake_agy("gptwufamily@gmail.com")
+              tel.get("profile_identity") == "gemini-account-1@example.com" and tel.get("profile_identity_verified") is True, str(tel))
+        g.subprocess.run = fake_agy("gemini-account-2@example.com")
         try:
             g.call_gemini("p", "/h/default", 120, workdir=str(Path(td) / "w2"),
-                          expected_identity="tonygwu@gmail.com"); err = None
+                          expected_identity="gemini-account-1@example.com"); err = None
         except RuntimeError as e:
             err = str(e)
         check("a mismatch raises, labelled as an identity failure",
               err is not None and g.classify_exception_detail(err) == getattr(g, "E_IDENTITY", "?"), str(err))
         check("and the message names both addresses",
-              err is not None and "gptwufamily@gmail.com" in err and "tonygwu@gmail.com" in err, str(err))
+              err is not None and "gemini-account-2@example.com" in err and "gemini-account-1@example.com" in err, str(err))
         g.subprocess.run = fake_agy(None)
         try:
             g.call_gemini("p", "/h/default", 120, workdir=str(Path(td) / "w3"),
-                          expected_identity="tonygwu@gmail.com"); err = None
+                          expected_identity="gemini-account-1@example.com"); err = None
         except RuntimeError as e:
             err = str(e)
         check("a log that names no account cannot prove the account, so it fails too",

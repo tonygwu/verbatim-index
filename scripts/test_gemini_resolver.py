@@ -67,7 +67,7 @@ def stream(*steps, model="gemini-4-argon-high", response='{"ok": 1}') -> str:
     return "\n".join(json.dumps(e) for e in ev) + "\n"
 
 
-def fake_agy(stdout: str, seen: dict, email="gptwufamily@gmail.com"):
+def fake_agy(stdout: str, seen: dict, email="gemini-account-2@example.com"):
     """subprocess.run stand-in: records the argv and what the jail held, writes the --log-file, answers."""
     def run(argv, **kw):
         log_path = Path(argv[argv.index("--log-file") + 1])
@@ -103,7 +103,7 @@ with tempfile.TemporaryDirectory() as td:
         calls: list = []
         raw = td / "raw" / "p.txt"
         text, tel = G.call_gemini("PROMPT", "user:someone", 120, workdir="run-p", model="gemini-4-argon-high",
-                                  binary="/usr/local/bin/agy", expected_identity="gptwufamily@gmail.com",
+                                  binary="/usr/local/bin/agy", expected_identity="gemini-account-2@example.com",
                                   shared_root=td / "resolver-root", extra_args=["--agent", "x", "--flag"],
                                   prepare_jail=lambda j: (calls.append(j), (j / "marker").write_text("m")),
                                   raw_response_path=raw)

@@ -393,7 +393,7 @@ when the Antigravity accounts silently left the router config:
 ```
 astra   real call on codex_b; raw response carries the answer
 gemini  served_model == requested_model == gemini-3.8-flash-high,
-        profile gptwufamily@gmail.com, zero tool calls
+        profile Gemini account 2, zero tool calls
 ```
 
 A trivial probe to Astra is REFUSED by the pipeline's own guard with

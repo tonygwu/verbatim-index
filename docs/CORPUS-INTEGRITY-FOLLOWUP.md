@@ -473,20 +473,20 @@ off the board, as repo-2 said in its withdrawal.
 
 ## 6. Found on the way: every Gemini grade came from one account
 
-Two Antigravity profiles are in rotation, `~` and
-`~/.agy-homes/gptwufamily`, and `grade.py` alternates them round-robin because
+Two Antigravity profiles are in rotation, `~` and a second HOME under
+`~/.agy-homes/`, and `grade.py` alternates them round-robin because
 `agy` exposes no usage to rank by. Every one of the 567 Gemini grades in the
-corpus records `profile_identity: gptwufamily@gmail.com`, 282 through the
+corpus records Gemini account 2 as its `profile_identity`, 282 through the
 default HOME and 285 through the other. The rotation was even, and it was
 alternating between two doors into the same account.
 
 The mechanism, verified 2026-09-10: `agy` stores its credential through the
 go-keyring library in the macOS Keychain under service `gemini`, account
 `antigravity`, one item per macOS user and not per HOME. The operator logged
-the default profile in as tonygwu@gmail.com at 08:25:19Z (the item's creation
+the default profile in as Gemini account 1 at 08:25:19Z (the item's creation
 time); a call under the other HOME refreshed at 08:56:09Z (the item's
 modification time) and every call under either HOME since reports
-gptwufamily@gmail.com. A second HOME on one macOS user therefore adds no quota,
+Gemini account 2. A second HOME on one macOS user therefore adds no quota,
 and the last refresh decides the account for both.
 
 Fix, shipped: `gemini_identity_report()` in `grade.py` tallies the identity
@@ -534,4 +534,4 @@ launched 07:20Z and finished 09:35Z. The first completed call of each judge was
 checked for identity from its own telemetry: `claude-fable-5-1` on `.claude-b`
 from the CLI's model usage; `gpt-6-astra` as requested, which is all `codex`
 reports; and `gemini-3.8-flash-high` from the stream's init event, served by
-gptwufamily@gmail.com under both profiles, per section 6.
+Gemini account 2 under both profiles, per section 6.

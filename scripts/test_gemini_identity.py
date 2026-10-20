@@ -2,7 +2,7 @@
 """Two Antigravity profiles that serve one account must be reported, not assumed apart.
 
 FOUND 2026-09-10: all 567 Gemini grades in the corpus were served by
-gptwufamily@gmail.com although two profile HOMEs were in rotation. `agy` keeps
+Gemini account 2 although two profile HOMEs were in rotation. `agy` keeps
 its credential in the macOS Keychain under one fixed service and account, so
 the HOMEs share it and the last refresh wins. Pure checks, no quota.
 

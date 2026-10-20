@@ -39,8 +39,8 @@ Two profiles are in rotation, and they are of two different KINDS:
 
 | Profile | Account | How the call is made |
 |---|---|---|
-| `/Users/tonygwu` | tonygwu@gmail.com | `HOME=...` on the subprocess |
-| `user:tonyagents` | gptwufamily@gmail.com | through the root-owned wrapper, in that user's login session |
+| `/Users/tonygwu` | Gemini account 1 | `HOME=...` on the subprocess |
+| `user:tonyagents` | Gemini account 2 | through the root-owned wrapper, in that user's login session |
 
 `grade.py` records which account served each grade in
 `telemetry.profile_identity`, read from that call's own log. VERIFIED
@@ -48,17 +48,17 @@ Two profiles are in rotation, and they are of two different KINDS:
 different account.
 
 An extra HOME under one macOS user is SKIPPED, loudly, and `agy-profiles` will
-still list it. `~/.agy-homes/gptwufamily` is such a directory and is no longer
-in the rotation.
+still list it. The extra HOME under `~/.agy-homes/`, named for Gemini account 2,
+is such a directory and is no longer in the rotation.
 
 **Two profiles do not mean two accounts.** MEASURED 2026-09-10: all 567 Gemini
-grades in the corpus were served by gptwufamily@gmail.com, 282 through `~`
+grades in the corpus were served by Gemini account 2, 282 through `~`
 and 285 through the other HOME. `agy` keeps its credential in the macOS
 Keychain under service `gemini`, account `antigravity`, one item per macOS
 user, so both HOMEs read and refresh the same credential and the last refresh
 decides the account for both. A `/login` under one HOME is overwritten by the
 next refresh under the other; the operator's re-login of `~` as
-tonygwu@gmail.com at 08:25Z lasted until 08:56Z. A second HOME on one macOS
+Gemini account 1 at 08:25Z lasted until 08:56Z. A second HOME on one macOS
 user adds no quota. `grade.py` now prints `gemini_identities` at the end of
 every run and warns when every profile served one address. A real second
 account is a second macOS user, which has its own login Keychain, and
@@ -66,8 +66,8 @@ account is a second macOS user, which has its own login Keychain, and
 the router config.
 
 **Since 2026-10-04 there are two real accounts, and every call proves its
-own.** The default macOS user serves tonygwu@gmail.com and `tonyagents` serves
-gptwufamily@gmail.com. `gemini_rotation_from_config()` builds the rotation,
+own.** The default macOS user serves Gemini account 1 and `tonyagents` serves
+Gemini account 2. `gemini_rotation_from_config()` builds the rotation,
 taking only the Gemini pool, because each macOS user also has a Claude-pool
 account on the same Keychain item. After each call `grade.py` compares the
 account named in that call's log with the config's `identity_email`. A
@@ -593,5 +593,5 @@ they are not exchangeable, which is all a hybrid needed them to be.
 
 - **Every Gemini grade came from one account.** See "Two profiles do not mean
   two accounts" above. The round-robin was even and both HOMEs resolved to
-  gptwufamily@gmail.com, so the arm's quota exposure is one account's, and the
+  Gemini account 2, so the arm's quota exposure is one account's, and the
   per-grade `profile_identity` is the record of it.

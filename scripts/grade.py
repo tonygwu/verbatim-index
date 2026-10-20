@@ -1423,7 +1423,7 @@ AGY_HOME_ROOT = Path.home() / ".agy-homes"
 #: second kind exists because two HOMEs under ONE macOS user share ONE Keychain
 #: item (service "gemini", account "antigravity"), so they were never two
 #: accounts: MEASURED 2026-09-10, all 567 Gemini grades in the corpus came from
-#: gptwufamily@gmail.com through both HOMEs. A second macOS user has its own
+#: Gemini account 2 through both HOMEs. A second macOS user has its own
 #: login Keychain, and the call runs there under `sudo -n -u <user> -H`.
 GEMINI_USER_PREFIX = "user:"
 #: Where a user-profile call keeps its jail and log. TMPDIR is per user and not
@@ -1670,8 +1670,8 @@ def gemini_rotation_from_config(accounts=None, default_home: str | None = None,
     `quotapick launch-plan` reads, so this pass and the router cannot disagree
     about which macOS user holds which account.
 
-    CHANGED 2026-10-04: the default macOS user moved to tonygwu@gmail.com and
-    the second macOS user kept gptwufamily@gmail.com, so the machine has two
+    CHANGED 2026-10-04: the default macOS user moved to Gemini account 1 and
+    the second macOS user kept Gemini account 2, so the machine has two
     real Antigravity accounts. Before this the rotation was the default HOME
     plus GEMINI_USERS, and a pass that forgot the variable ran on one account
     without saying so.
@@ -2051,7 +2051,7 @@ def gemini_identity_report(results: list[dict]) -> dict:
 
     Read from the grades this run wrote, each of which carries the identity its
     own call logged. MEASURED 2026-09-10: both profile HOMEs on this machine
-    served gptwufamily@gmail.com for all 567 Gemini grades in the corpus, and a
+    served Gemini account 2 for all 567 Gemini grades in the corpus, and a
     re-login of the default profile was overwritten 31 minutes later by a
     refresh under the other HOME. `agy` keeps its credential in the macOS
     Keychain under one fixed service and account name, so two HOMEs on one
