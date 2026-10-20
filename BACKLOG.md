@@ -409,6 +409,18 @@ skips.
 
 ---
 
+### VI-48. The predictions deploy never passes `--public-revision` to its live-page check, so a deploy at the live data revision does not check the live code  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-20]`
+
+**Background:** Found by the pre-deploy review of VI-45 on 2026-10-20; the gap was written down before only in the data repo's private `launch-review-20261019/STATUS.md`. `live_revision_error` refuses a deploy whose public code does not descend from the live page's code only when both its data revisions match and it is given our public HEAD (`scripts/data_clone_workflow.py:272` "if live == revision and public and live_public and live_public != public:"). The CLI accepts that HEAD as `--public-revision`, but the deploy's call omits it (`scripts/deploy_source.sh:73` "live-revision --production-data"), so `public` is always None and the check never runs.
+
+**Impact:** a deploy from a clone whose public code is older than the live page's, at the same data revision, replaces the newer code on the live page without a refusal. Nothing went wrong on 2026-10-20: the VI-45 deploy changed the data revision (`7e048231` to `cd68eedc`), so the check would not have applied.
+
+**Fix:** test first in `scripts/test_deploy_predictions_origin.py`: a live `revision.json` at our data revision whose `public_revision` is not an ancestor of our public HEAD must refuse, and one that is an ancestor must pass; red on today's script. Then add `--public-revision "$PUBLIC_REVISION"` to the `live-revision` call in `check_origin_before_publish`. Check that the leaderboard and pundits deploys, which source the same file, still pass their tests.
+
+**Touch points:** `scripts/deploy_source.sh:73` "live-revision --production-data", `scripts/test_deploy_predictions_origin.py`.
+
+---
+
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
