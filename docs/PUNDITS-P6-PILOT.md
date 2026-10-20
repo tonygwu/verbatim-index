@@ -30,9 +30,10 @@ candidates whose sources call them centrist or heterodox.
 
 ## Pilot people
 
-Left: Steven Bonnell (Destiny), Ezra Klein, Sam Seder, Hasan Piker. Right:
-Asmongold, Charlie Kirk (archival), Ben Shapiro, Matt Walsh. Heterodox: Coleman
-Hughes, Ana Kasparian. All ten are operator-named.
+Ana Kasparian, Asmongold, Ben Shapiro, Charlie Kirk (archival), Coleman Hughes,
+Ezra Klein, Hasan Piker, Matt Walsh, Sam Seder and Steven Bonnell (Destiny), in
+alphabetical order. All ten are operator-named. Their lean labels are held
+privately, with the roster's.
 
 ## Discovery
 
