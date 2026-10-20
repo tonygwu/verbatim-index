@@ -76,6 +76,26 @@ skips.
 
 ## Open items
 
+### VI-46. Every predictions deploy refuses on lead-missing17-20261019-repo8's two holds: Larry Ellison `94522ddc8049659a` (operator ruled "not already public" on 2026-10-20) and Tim Sweeney `5582364cb29bd2eb`'s double-window prior  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-20]`
+
+**Background:** `scripts/deploy_predictions.sh:85` "REFUSING: scores.json carries rows it could not score" fired in the dry run at data `88fc2dd3` (data `predictions/_experiments/thin-supplement2-20261019/deploy-dryrun.log`), and data `26d66982` leaves `predictions/scores.json` and `predictions/scoring.json` unchanged since then. The implied-window half and double scales miss a resolution or a prior for `94522ddc8049659a` and the double scale misses a prior for `5582364cb29bd2eb`. The resolver excluded the Ellison prediction as `already_public`, citing Oracle's 2019-09-16 plan for 36 regions by the end of 2020, and two independent reviews in that run folder rejected the exclusion. On 2026-10-20 (UTC) the operator ruled: "I ajudicate that it should be #1 (not already public)". The reasons given were that the release announces a plan to reach 36 regions, not that Oracle has passed AWS, and that it does not mention AWS at all. This supersedes the run's `adjudication-decision.md` ("Leave Ellison pending adjudication"). The Sweeney double prior stopped before dispatch at that run's quota reserve (`quota-hold.json`).
+
+**Impact:** no predictions deploy is possible: VI-45's board (586 scored) and every later one stay unpublished.
+
+**Fix:**
+1. In a new run folder under `data/predictions/_experiments/`, copy the board and half Ellison resolutions with only `already_public` set to null and the ruling quoted as provenance, through a script that refuses unless the bytes are the reviewed ones. Every original sidecar, raw response and prompt in the repo-8 folder stays unchanged.
+2. Run one bounded standard double-window resolution (Astra, released policy `resolution-2026-10-19`, `codex_b` first and `codex` only if that call returns no answer) into an unselected folder. Copy it into the selected double folder byte for byte if it does not exclude, or with the same correction if it repeats the exclusion from the same 2019 release with an occurred outcome supported inside the window.
+3. Run the board, half and double Ellison priors and the one Sweeney double prior through `resolve_predictions.py --stage prior` on account A. The operator chose that account for this work, at 97% Fable remaining at 06:12Z on 2026-10-20.
+4. Name the run in `scoring.json`, rebuild, run `bash scripts/run_tests.sh`, dry-run the deploy, correct VI-45's blocked tag, and record the work with the ruling quoted in `docs/LEDGER-predictions.md`.
+
+*Risks and edge cases:* if the double-window answer cites a different source for `already_public`, or its outcome is not occurred, it is not corrected: that is a new question for the operator, and the double scale stays incomplete. A call is never re-run to get a preferred answer, so a second Astra attempt is allowed only when the first returned no answer. A prior must price the same window and question as its resolution: the scorer's `prior_prompt_stale` checks the prior prompt against the resolution's policy release.
+
+*Why premium not standard:* it decides whether a model answer matches the operator's ruling, buys paid model calls under single-attempt rules, and changes the published board.
+
+**Touch points:** data `predictions/scoring.json` and a new `predictions/_experiments/` run folder; `BACKLOG.md` VI-45's heading; `docs/LEDGER-predictions.md`.
+
+---
+
 ### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-11]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
