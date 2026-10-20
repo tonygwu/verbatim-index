@@ -131,11 +131,9 @@ error_taxonomy: ip_blocked_or_ratelimited 202, video_unavailable 16
 ```
 
 The IP is still blocked. `scripts/fetch_loop.sh` records the repo's lesson
-here: the fix is a new IP, not patience, and probing through a block recovers
-windows that reopen within minutes. So a bounded background loop now sends one
-caption `fetch()` probe every 10 minutes. It runs the pilot fetch as soon as a
-probe clears, and it stops at 15:30Z. The operator can end the block at once by
-rotating the VPN to a new exit.
+here: probing through a block recovers windows that reopen within minutes. So a
+bounded background loop now sends one caption `fetch()` probe every 10 minutes.
+It runs the pilot fetch as soon as a probe clears, and it stops at 15:30Z.
 
 Retry 2: 32 probes from 09:49Z to 15:00Z were all BLOCKED. Probe 33 cleared at
 15:10:30Z, and the fetch ran until the circuit breaker opened again five minutes
@@ -151,8 +149,8 @@ records belong to three of the ten pilot people: asmongold 24, ana-kasparian 8
 and ben-shapiro 6. The other seven have none. Any yield measured now describes
 those three only.
 
-Retry 3, 2026-09-15 02:40Z, on a new VPN exit (187.15.80.120) after a probe
-cleared. YouTube blocked the new IP again after about 10 minutes:
+Retry 3, 2026-09-15 02:40Z, after a probe cleared. YouTube blocked requests
+again after about 10 minutes:
 
 ```
 attempted 240   newly_fetched 20   cached 38   succeeded 58   failed 182
@@ -160,14 +158,14 @@ error_taxonomy: ip_blocked_or_ratelimited 166, video_unavailable 16
 fetched by person: ben-shapiro 24, asmongold 24, ana-kasparian 8, charlie-kirk 2, the other six 0
 ```
 
-A fresh IP buys roughly 20 captions at 6 to 15 seconds between requests. The
-fetch fills one person at a time, so every block leaves the later people with
-nothing. The next run should pass `--target-per-leader` (the fetcher then walks
-people fewest-first and stops each at the target), for example 8, so each IP's
-captions spread across all ten people before anyone gets more.
+Each unblocked window bought roughly 20 captions at 6 to 15 seconds between
+requests. The fetch fills one person at a time, so every block leaves the later
+people with nothing. The next run should pass `--target-per-leader` (the fetcher
+then walks people fewest-first and stops each at the target), for example 8, so
+each window's captions spread across all ten people before anyone gets more.
 
-Retry 4, 2026-09-15 02:51Z, on an Atlanta VPN exit (186.247.181.144) with
-`--target-per-leader 8`. Blocked after about 6 minutes and 13 new captions:
+Retry 4, 2026-09-15 02:51Z, with `--target-per-leader 8`. Blocked after about
+6 minutes and 13 new captions:
 
 ```
 newly_fetched 13 (coleman-hughes 7, ezra-klein 6)   ip_blocked_or_ratelimited 3, then circuit open
@@ -179,8 +177,8 @@ The fetcher's summary reads `attempted 240, succeeded 13, failed 3`, which does
 not add up: in target mode, rows never reached after the circuit opens are
 neither succeeded nor failed. The per-person lines above are the true record.
 
-Retry 5, 2026-09-15 02:57Z, on an Albuquerque VPN exit (66.179.156.120), cap 8.
-Blocked after about 8 minutes and 21 new captions:
+Retry 5, 2026-09-15 02:57Z, cap 8. Blocked after about 8 minutes and 21 new
+captions:
 
 ```
 newly_fetched 21 (hasan-piker 8, matt-walsh 8, sam-seder 3, steven-bonnell 2)
@@ -188,8 +186,7 @@ on disk: ben-shapiro 24, asmongold 24, ana-kasparian 8, hasan-piker 8, matt-wals
          coleman-hughes 7, ezra-klein 6, sam-seder 3, charlie-kirk 2, steven-bonnell 2
 ```
 
-Retry 6, 2026-09-15 03:25Z, on an Anchorage VPN exit (209.46.39.46), cap 8.
-No throttling in 6 minutes:
+Retry 6, 2026-09-15 03:25Z, cap 8. No throttling in 6 minutes:
 
 ```
 newly_fetched 20, failed 0; every pilot person now has at least 8

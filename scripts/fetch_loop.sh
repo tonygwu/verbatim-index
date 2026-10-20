@@ -57,19 +57,20 @@ TARGET="${TARGET:-12}"
 BARREN_LIMIT="${BARREN_LIMIT:-3}"     # consecutive empty passes before giving up
 MIN_ACCEPT="${MIN_ACCEPT:-3}"         # below this a leader is reported as thin
 PROBE_VIDEO="${PROBE_VIDEO:-93piVCwqXz8}"
-# Pacing is deliberately AGGRESSIVE. The operator can rotate the VPN exit on
-# demand, so a block costs one manual switch rather than hours of waiting. That
-# inverts the economics: a 10s pace was right when an IP was irreplaceable, and
-# wasteful once it is not. Fetch fast, trip early, ask for a new IP.
+# Pacing is deliberately AGGRESSIVE: fetch fast and trip early. When YouTube
+# refuses requests, the loop stops fetching, waits, and probes again every
+# PROBE_EVERY seconds through the wait. A block often lifts within minutes
+# (measured at the probe loop below), so a short wait ceiling with frequent
+# probes recovers more than a long sleep.
 BASE_SLEEP="${BASE_SLEEP:-120}"       # 2 min between productive cycles
-MAX_SLEEP="${MAX_SLEEP:-900}"         # 15 min ceiling; the fix is a new IP, not patience
-PROBE_EVERY="${PROBE_EVERY:-60}"      # re-probe every minute so a rotation is seen fast
+MAX_SLEEP="${MAX_SLEEP:-900}"         # 15 min ceiling; the loop probes through the wait
+PROBE_EVERY="${PROBE_EVERY:-60}"      # re-probe every minute so a reopening is seen fast
 PACE="${PACE:-2}"                     # seconds between caption requests
-# Ceiling the fetcher's shared gap may widen to under throttling. Same economics
-# as MAX_SLEEP above: the fix is a new IP, not patience. Kept low on purpose so a
-# throttled pass stays uncomfortable, keeps tripping the circuit breaker, and
-# raises NEEDS_IP_ROTATION instead of grinding. It was hardcoded at 90s and
-# unreachable from here, which cost six hours on cycle 43 (2026-09-10).
+# Ceiling the fetcher's shared gap may widen to under throttling. Same reasoning
+# as MAX_SLEEP above: a refusing endpoint should trip, not crawl. Kept low on
+# purpose so a throttled pass stays uncomfortable, keeps tripping the circuit
+# breaker, and raises NEEDS_IP_ROTATION instead of grinding. It was hardcoded at
+# 90s and unreachable from here, which cost six hours on cycle 43 (2026-09-10).
 PACE_CEILING="${PACE_CEILING:-15}"    # widening stops here; then trip, do not crawl
 WORKERS="${WORKERS:-6}"
 STATE=$DATA/logs/fetch_loop_state.jsonl
@@ -172,8 +173,8 @@ while true; do
     printf '%s\n' "$(stamp) blocked on IP $ip" > "$ROTATE_FLAG"
     say "  ############################################################"
     say "  #  BLOCKED on IP ${ip}"
-    say "  #  ROTATE THE VPN TO A NEW EXIT. The loop re-probes every ${PROBE_EVERY}s"
-    say "  #  and resumes automatically the moment a new IP works."
+    say "  #  YOUTUBE IS REFUSING REQUESTS. The loop waits, re-probes every ${PROBE_EVERY}s"
+    say "  #  and resumes automatically the moment a probe passes."
     say "  ############################################################"
     printf '{"at":"%s","cycle":%s,"event":"blocked","sleep":%s}\n' "$(stamp)" "$cycle" "$sleep_for" >> "$STATE"
     # Poll THROUGH the backoff rather than sleeping it out. Measured over one

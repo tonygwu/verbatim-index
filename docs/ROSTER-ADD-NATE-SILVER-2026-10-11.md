@@ -140,7 +140,7 @@ predictions, a position resting on a very small sample (see the update below). D
 
 **Update 2026-10-12, ledger VP-40.** On the operator's choice, he got a predictions-only
 supplement of 35 older recordings (23 open web transcripts, 12 YouTube recordings; 19 more
-YouTube rows wait for a new IP). Accepted predictions went from 6 to 18 and scored from 3 to
+YouTube rows wait until YouTube stops refusing requests). Accepted predictions went from 6 to 18 and scored from 3 to
 15. With more of his record in view, his mean points went from +0.747 to -0.064 (hit rate
 0.73) and his rank from first to 29th of 46: his early lead rested on three calls. Details:
 `predictions/_experiments/nate-silver-supplement-20261012/NOTES.md` in the data repository.

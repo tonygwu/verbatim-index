@@ -72,7 +72,8 @@ def effective_rate(interval: float, workers: int) -> dict:
     caption endpoint. MEASURED 2026-09-17 at one request every 6 seconds, one
     worker: four IPs blocked after 60, 14, 14 and 9 fetches. That is a per-IP
     VOLUME budget, and slowing down does not buy more of it. fetch_loop.sh paces
-    fast on purpose for that reason: trip early, rotate the IP.
+    fast on purpose for that reason: trip early, then wait and probe until the
+    block lifts.
     """
     workers = max(1, int(workers))
     spr = float(interval) / workers
@@ -97,8 +98,8 @@ def pacing_warning(interval: float, workers: int) -> "str | None":
             f"(~1000/hour), so this is "
             f"{DOCUMENTED_GUEST_SECONDS_PER_REQUEST / r['seconds_per_request']:.1f}x that figure. "
             f"Informational: on the caption endpoint a block is a per-IP volume budget, measured "
-            f"at 60, 14, 14 and 9 fetches per IP even at 6s pacing, so the remedy for a block is "
-            f"a new IP, not a slower pace.")
+            f"at 60, 14, 14 and 9 fetches per IP even at 6s pacing, so a slower pace does not "
+            f"prevent a block. The loop trips early, waits and probes until the block lifts.")
 
 
 class Pacer:
@@ -137,9 +138,9 @@ class Pacer:
         times. Breaker never fired, because record_ok() clears its consecutive
         counter on every success and at 90s most requests do succeed. So a
         refusing endpoint read as slow rather than stopping, which is the exact
-        case Breaker exists to catch, and nobody was ever asked to rotate the IP.
+        case Breaker exists to catch, and the block was never reported as a block.
         A ceiling low enough to stay uncomfortable keeps the throttles coming
-        until Breaker trips and the loop asks for the cheap fix.
+        until Breaker trips and the loop reports the block and probes through it.
         """
         with self._lock:
             self.interval = min(self.interval * factor, self.max_interval)
@@ -180,8 +181,9 @@ PERMANENT_CLASSES = {
 }
 AMBIGUOUS_CLASSES = {"PoTokenRequired", "YouTubeRequestFailed"}
 
-# Retry is now cheap to abandon, because recovery is an IP rotation rather
-# than a wait. Trip fast and hand back rather than grinding through backoff.
+# Retry is cheap to abandon, because the loop probes through a block rather
+# than waiting it out here. Trip fast and hand back rather than grinding
+# through backoff.
 BACKOFF_BASE = 3
 BACKOFF_CAP = 20
 MAX_TRIES = 2
@@ -536,9 +538,9 @@ def main() -> int:
                          "The yt-dlp wiki suggests 5 to 10 seconds as the remedy for HTTP 429.")
     ap.add_argument("--max-interval", type=float, default=15.0,
                     help="Ceiling the shared gap may widen to when the endpoint pushes back. "
-                         "Deliberately LOW. Recovery here is an IP rotation, not patience, so a "
-                         "throttled pass should keep tripping the circuit breaker and ask for a "
-                         "new exit rather than grinding quietly at a comfortable pace.")
+                         "Deliberately LOW. A throttled pass should keep tripping the circuit "
+                         "breaker, so the loop reports the block and probes through it, rather "
+                         "than grinding quietly at a comfortable pace.")
     import study_profile as SP
     SP.add_study_arg(ap)
     args = ap.parse_args()

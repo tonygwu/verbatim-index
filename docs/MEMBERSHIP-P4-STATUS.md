@@ -44,15 +44,15 @@ had NO pacing, because `9925c0e` fixed `discover_pundits.py` and left this path
 at eight unpaced workers. That is fixed and the run used three workers at 1.5s.
 
 **FETCHING is still blocked.** `repo-3/data-pundits/logs/NEEDS_IP_ROTATION`
-exists and that loop's log reads:
+exists and that loop's log reads, with its network address removed:
 
 ```
-[2026-09-18T07:20:57Z]   #  BLOCKED on IP 187.14.233.80
-[2026-09-18T07:20:57Z]   #  ROTATE THE VPN TO A NEW EXIT. The loop re-probes every 60s
+[2026-09-18T07:20:57Z]   #  BLOCKED on IP <removed>
 ```
 
-Fetching is exactly the caption endpoint that is blocked, so it must wait for the
-rotation. repo-3's loop resumes by itself the moment a new exit works.
+Fetching is exactly the caption endpoint that is blocked, so it must wait until
+YouTube stops refusing requests. repo-3's loop re-probes every 60 seconds and
+resumes by itself the moment a probe passes.
 
 **If discovery is ever re-run, `--only` is mandatory.** Without it the other 50
 leaders' source lists are replaced by that run alone. `discover_sources.py` now

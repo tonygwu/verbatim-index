@@ -66,8 +66,8 @@ fi
 if [ "$YT_STATE" = "SKIPPED" ]; then
   printf '\n  youtube: NOT PROBED  (STATUS_SKIP_YT_PROBE=1)\n'
 elif [ "$YT_STATE" != "CLEAR" ]; then
-  printf '\n\033[1;31m  >>> ROTATE THE VPN — youtube is %s right now <<<\033[0m\n' "$YT_STATE"
-  printf '  (live probe, not the flag file. The loop resumes on its own within 60s of a new IP.)\n'
+  printf '\n\033[1;31m  >>> YOUTUBE IS REFUSING REQUESTS — probe result %s <<<\033[0m\n' "$YT_STATE"
+  printf '  (live probe, not the flag file. The fetch loop waits, re-probes every 60s and resumes on its own.)\n'
 else
   printf '\n\033[1;32m  youtube: CLEAR\033[0m  (live probe)\n'
 fi
@@ -75,7 +75,7 @@ fi
 if [ -f $DATA/logs/NEEDS_IP_ROTATION ]; then
   printf '  (loop also has a stale rotation flag from: '
   printf '  %s\n' "$(cat $DATA/logs/NEEDS_IP_ROTATION)"
-  printf '  The fetch loop re-probes every 60s and resumes on its own once the IP changes.\n'
+  printf '  The fetch loop re-probes every 60s and resumes on its own once a probe passes.\n'
 fi
 
 b "PROCESSES"
@@ -86,8 +86,8 @@ b "PROCESSES"
 # study's data are the authority for fetchers, and are what grade_loop reads.
 for L in fetch_loop happyscribe_loop grade_loop; do
   case "$L" in
-    fetch_loop)       desc="youtube captions (needs VPN)" ;;
-    happyscribe_loop) desc="happyscribe (no VPN needed)" ;;
+    fetch_loop)       desc="youtube captions" ;;
+    happyscribe_loop) desc="happyscribe" ;;
     grade_loop)       desc="grading + render" ;;
   esac
   if pgrep -f "$L.sh" >/dev/null; then

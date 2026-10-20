@@ -13,9 +13,9 @@ Nothing guarded that. The flag is one word on a command line and the damage is
 
 WHY THIS TEST MAKES NO NETWORK REQUEST. Real discovery searches YouTube, and at
 the time this was written repo-3's pundits fetcher was IP-blocked on this machine
-and waiting for a VPN rotation. `discover()` is therefore replaced by a stub and
-only the MERGE is exercised, which is the part with the defect in it. The search
-itself is not what this file is about.
+and waiting for YouTube to stop refusing requests. `discover()` is therefore
+replaced by a stub and only the MERGE is exercised, which is the part with the
+defect in it. The search itself is not what this file is about.
 
 Temporary files only. No network, no quota.
 """

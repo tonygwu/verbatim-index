@@ -79,8 +79,8 @@ nohup bash scripts/fetch_loop.sh > data/logs/fetch_loop.log 2>&1 &
 Runs on its own loop. Each cycle probes the endpoint, fetches whatever it can,
 and doubles its own sleep when blocked or when a pass gains nothing, up to a
 ceiling (`BASE_SLEEP` and `MAX_SLEEP` in `scripts/fetch_loop.sh`). While YouTube
-is refusing requests, the loop probes again every minute and resumes as soon as
-a probe passes. It returns to the base cadence as soon as a pass gains
+is refusing requests, the loop probes again every `PROBE_EVERY` seconds and
+resumes as soon as a probe passes. It returns to the base cadence as soon as a pass gains
 transcripts. Exits by itself once every leader has `TARGET` gradeable
 transcripts, or after `BARREN_LIMIT` passes in a row gain nothing. Safe to kill
 and restart at any point, since completed transcripts are skipped. It knows

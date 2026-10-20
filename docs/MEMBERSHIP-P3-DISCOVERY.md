@@ -94,8 +94,9 @@ for the rows that exist.
 
 ## What happens next
 
-1. Rotate the VPN; `repo-3/data-pundits/logs/NEEDS_IP_ROTATION` is the flag to
-   watch and repo-3's loop re-probes every 60 seconds.
+1. Wait until YouTube stops refusing requests.
+   `repo-3/data-pundits/logs/NEEDS_IP_ROTATION` is the flag to watch, and
+   repo-3's loop re-probes every 60 seconds.
 2. Fetch into `data/transcripts_web/<slug>/`, **never** `data/transcripts/`.
 3. Re-run the screen over the fetched transcripts, where `aboutness` gains its
    name-density signal and `own_voice` gains speaker labels if the captions carry

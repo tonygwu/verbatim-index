@@ -2,10 +2,10 @@
 """The pace ceiling is configurable, and the loop sets it.
 
 WHY THIS EXISTS. fetch_loop.sh states the operating economics in its own
-comment: "The operator can rotate the VPN exit on demand, so a block costs one
-manual switch rather than hours of waiting... Fetch fast, trip early, ask for a
-new IP." Every other knob honours that. PACE starts at 2s, BACKOFF_CAP is 20,
-MAX_SLEEP carries the comment "the fix is a new IP, not patience".
+comment: pacing is deliberately aggressive, "fetch fast and trip early", and the
+loop probes through a block rather than sleeping it out. Every other knob
+honours that. PACE starts at 2s, BACKOFF_CAP is 20, MAX_SLEEP is a 15 minute
+ceiling the loop probes through.
 
 Pacer did not. Its ceiling was hardcoded at 90.0s with no flag, so fetch_loop.sh
 could not reach it, and Pacer.slow_down widens permanently with no recovery. On
@@ -15,7 +15,7 @@ gap at 90s, and then ground for six hours on 6 of 14 leaders while throttling
 counter on every success, and at a 90s pace most requests do succeed. That is
 precisely the failure the Breaker docstring says it exists to prevent, "a hard
 block reads as slow for an hour instead of stopping", so nothing ever raised
-NEEDS_IP_ROTATION and the operator was never asked for the cheap fix.
+NEEDS_IP_ROTATION and the block was never reported as a block.
 
 What is asserted here:
 

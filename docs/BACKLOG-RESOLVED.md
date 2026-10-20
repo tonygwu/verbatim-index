@@ -644,7 +644,7 @@ _Open part: `BACKLOG.md` VI-14, step 3, carries the re-curation of the alias blo
   request ceiling."** Filed earlier the same day and wrong in its conclusion. It
   read the loop's `PACE=2 WORKERS=6` as a trap that caused the P6 pilot block.
   Two things contradict it. The loop's own comment says the pace is deliberate:
-  "Fetch fast, trip early, ask for a new IP." And the measurement taken after
+  fetch fast and trip early. And the measurement taken after
   filing: at one request every 6 seconds on one worker, four IPs still blocked
   after 60, 14, 14 and 9 fetches. The caption endpoint enforces a per-IP volume
   budget, so pace does not decide when a block arrives, and a fast pace simply
