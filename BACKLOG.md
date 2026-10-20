@@ -465,6 +465,18 @@ The approved text, word for word, which is appended to `ALREADY_PUBLIC_NOT_A_PRE
 
 ---
 
+### VI-51. A scored card whose resolution carries an operator ruling shows no note of it, so two ruled cards end by saying the prediction was already public  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-20]`
+
+**Background:** When the operator rules on a row, the resolution sidecar keeps the resolver's outcome, sources and reasoning, sets `already_public`, and adds an `adjudication` block (VD-22 for Ellison; VD-24 and VP-46 for Gelsinger `1e869ff2affb0357` and Sweeney `5c16324b2d6126ea`). The scorer copies the resolver's reasoning and `already_public` into the row (`scripts/score_predictions.py:168` "Only a sidecar under a release carries the field") but nothing from `adjudication`, and the page notes `already_public` only on a scored row whose date is not exact (`scripts/build_predictions_site.py:2059` "Scored, with an open question"). Since the 2026-10-20 deploy (VD-25), Sweeney's card scores -1.15 and its reasoning ends "Epic separately announced the matching 2025 rollout plan on January 24, before Sweeney spoke"; Gelsinger's ends "already publicly reported by eWeek on August 28, 2006". Found by the pre-deploy review of VD-25.
+
+**Impact:** a reader sees a scored card whose own text says it should have been excluded, with no sign that the operator ruled on it. The reviewer also counted 8 scored cards whose reasoning prints the field name `already_public`.
+
+**Fix:** test first: a fixture resolution with an `adjudication` block must give a row carrying the ruling (who, when, what changed), and the rendered card a one-line note such as "Operator ruling: not already public"; red today. Then carry a small `adjudication` summary into the scores row (score_predictions) and render it on the card (build_predictions_site). Regenerate with `data_sync.py push`; this changes `scores.json`, so it needs a deploy.
+
+**Touch points:** `scripts/score_predictions.py:168` "Only a sidecar under a release carries the field", `scripts/build_predictions_site.py:2059` "Scored, with an open question", their tests.
+
+---
+
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
