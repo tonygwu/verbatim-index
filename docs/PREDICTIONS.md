@@ -8,8 +8,22 @@ it came from, so a reader can audit the cut without re-running anything.
 V0 ends at a trustworthy corpus and a page to inspect it. It does not resolve
 outcomes, does not score, and does not rank anyone. Those are Phase 2.
 
+**Status, checked against the live page on 2026-10-20: Phase 2 is built and
+live.** When a prediction's deadline passes, a resolver with web search decides
+what happened and must cite a source. A separate call, which never sees the
+outcome, sets the baseline probability that the event would happen, judged as
+of the day the words were said. Each resolved prediction then earns points
+against that baseline, and the live page ranks people by Score, their mean
+points per resolved prediction, with no Score below 3 resolved predictions.
+This file still describes V0, the extraction corpus that Phase 2 reads. The
+scoring rule is in [PREDICTIONS-SCORING.md](PREDICTIONS-SCORING.md), the
+resolution and prior stages are in
+[PREDICTIONS-PHASE2-RESOLUTION.md](PREDICTIONS-PHASE2-RESOLUTION.md), and the
+current operations are in
+[agents/PREDICTIONS-PIPELINE.md](agents/PREDICTIONS-PIPELINE.md).
+
 Live page: `verbatim-predictions.tonygwu.com`. Records: `data/predictions/`.
-Skill and contracts: `.claude/skills/prediction-extractor/`.
+Skill and contracts: `.agents/skills/prediction-extractor/`.
 
 ## 1. What counts as a prediction
 
@@ -61,7 +75,7 @@ data/transcripts_open/<slug>/<sid>.json
         v
   build_predictions_site.py -> site-predictions/index.html -> deploy_predictions.sh
 
-  Phase 2, not built:  resolution -> consensus comparison -> scoring -> forecasting leaderboard
+  Phase 2, built since V0:  resolution -> prior -> scoring -> leaderboard (see the status note above)
 ```
 
 Stages are separate scripts with separate contracts. Extraction and
@@ -309,7 +323,13 @@ failing (9 accepted records on 2026-09-30).
 V0 delivers extraction, verification, validation, evals, descriptive
 statistics, contemporaneous market evidence on accepted records, and the page.
 
-Phase 2, explicitly not built here:
+The list below is the Phase 2 plan as it was written for V0. Phase 2 has since
+been built, and the scoring it uses is not the Brier score sketched here. It is
+the base-2 logarithmic rule in [PREDICTIONS-SCORING.md](PREDICTIONS-SCORING.md),
+with an ex-ante baseline probability set by a separate call that never sees the
+outcome.
+
+Phase 2, as planned at V0:
 
 - **Resolution.** Fill `resolution` with an outcome, a resolved date, evidence
   and notes, per record, from external sources. The `resolution_criteria`
