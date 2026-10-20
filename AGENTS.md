@@ -153,8 +153,8 @@ role spelled out; a checkout with no role can never run production work.
 exactly origin/main. The data and public checkouts must both be at their freshly
 fetched origin/main, with the published paths clean. The deploy refuses if either
 remote moves during rendering. It also refuses if the live page was built from a
-revision we do not descend from, read from its no-store `revision.json`, or, at the
-same data revision, from public code we do not descend from. The first
+revision we do not descend from, read from its no-store `revision.json`. At the
+same data revision, it refuses public code we do not descend from. The first
 deploy after that check existed needs `--first-revision-deploy` once. The
 leaderboard and pundits sites still deploy from the daemon clone only. Every
 deploy script requires `--production-data` and `--data-revision`. Never bypass
