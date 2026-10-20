@@ -270,7 +270,8 @@ the mix even.
   URL and path. And only a profile that runs as another macOS user may resolve,
   so the OS keeps the judge out of the operator's home. After every call
   `tool_audit` matches each finished tool step in the stream to an allow in the
-  hook's log and fails the call when one is missing. Guarded by
+  hook's log, and each tool step that ended in an error to an entry of any kind,
+  and fails the call when one is missing. Guarded by
   `scripts/test_gemini_resolver.py` (the grader's argv is unchanged) and
   `scripts/test_agy_resolver_gate.py`.
 

@@ -57,6 +57,11 @@ HOPS = {GROUND + "toOwn": "https://verbatim-predictions.tonygwu.com/p/1", GROUND
         "https://www.sec.gov/x": None, GROUND + "relative": "/elsewhere"}
 for i in range(7):
     HOPS[GROUND + f"loop{i}"] = GROUND + f"loop{i + 1}"
+for i in range(5):  # exactly five redirects, then a page
+    HOPS[GROUND + f"five{i}"] = GROUND + f"five{i + 1}"
+HOPS[GROUND + "five5"] = None
+HOPS[GROUND + "relative-ok"] = "/landing"            # a relative Location, resolved against the hop
+HOPS["https://vertexaisearch.cloud.google.com/landing"] = None
 FOLLOWED: list = []
 
 
@@ -153,6 +158,11 @@ check("and the hop was looked up", FOLLOWED[-2:] == [GROUND + "toSec", "https://
 d, why = url_call(GROUND + "toT")
 check("a chain through a second redirect host is followed to its end", d == "allow"
       and "https://t.co/abc" in FOLLOWED, f"{d} {why} {FOLLOWED}")
+d, why = url_call(GROUND + "five0")
+check("a chain of exactly MAX_HOPS redirects is allowed", d == "allow", f"{d} {why}")
+d, why = url_call(GROUND + "relative-ok")
+check("a relative Location is resolved against the hop it came from", d == "allow"
+      and "https://vertexaisearch.cloud.google.com/landing" in FOLLOWED, f"{d} {why} {FOLLOWED[-3:]}")
 for link, label in [(GROUND + "toOwn", "a search link that leads to the project's site"),
                     (GROUND + "toLocal", "a search link that leads to a loopback address"),
                     (GROUND + "loop0", "a chain of more than five redirects"),
@@ -319,8 +329,58 @@ groups = cfg[GATE.HOOK_NAME]["PreToolUse"]
 check("hooks.json gates every tool (matcher *)", [g["matcher"] for g in groups] == ["*"], str(groups))
 check("hooks.json runs this script with /usr/bin/python3 -I", groups[0]["hooks"][0]["command"]
       == f"/usr/bin/python3 -I ./{GATE.SCRIPT_NAME}", str(groups))
-check("hooks.json gives the gate time to follow five redirects", groups[0]["hooks"][0]["timeout"]
-      >= 6 * GATE.HOP_TIMEOUT_S, str(groups))
+check("hooks.json gives the gate time for its worst case: every hop, HEAD then GET, each timing out",
+      groups[0]["hooks"][0]["timeout"] >= (GATE.MAX_HOPS + 1) * 2 * GATE.HOP_TIMEOUT_S + 10, str(groups))
+
+# ---- follow_redirect against a real local server ----------------------------
+# Review round 2: a 503 or 429 to HEAD made the hook pass the link unchecked,
+# and agy's own fetch a moment later could follow the redirect. A redirect host
+# that will not say where a link leads is now a link the gate cannot see through.
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+
+def serve(head_code, get_code, location="https://verbatim-predictions.tonygwu.com/p"):
+    class H(http.server.BaseHTTPRequestHandler):
+        def _answer(self, code):
+            self.send_response(code)
+            if 300 <= code < 400:
+                self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_HEAD(self):
+            self._answer(head_code)
+
+        def do_GET(self):
+            self._answer(get_code)
+
+        def log_message(self, *a):
+            pass
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}/x"
+
+
+for head, get, want, label in [(302, 302, "location", "a redirect answers its Location"),
+                               (405, 302, "location", "a HEAD the host refuses is retried with GET"),
+                               (200, 302, None, "a page that answers is the end of the chain"),
+                               (404, 404, None, "a missing page is the end of the chain"),
+                               (503, 302, "location", "a 503 to HEAD is retried with GET, and its redirect is checked"),
+                               (503, 503, "raise", "a 503 to both is a link the gate cannot see through"),
+                               (429, 429, "raise", "a 429 is a link the gate cannot see through"),
+                               (500, 500, "raise", "a 500 is a link the gate cannot see through")]:
+    srv, url = serve(head, get)
+    try:
+        try:
+            got = GATE.follow_redirect(url)
+        except OSError as exc:
+            got = "raise"
+        if got not in (None, "raise"):
+            got = "location"
+        check(f"follow_redirect: {label}", got == want, f"HEAD {head} GET {get}: {got}")
+    finally:
+        srv.shutdown()
 check("hooks.json runs the Stop copy with the same script", [h["command"] for h in cfg[GATE.HOOK_NAME]["Stop"]]
       == [f"/usr/bin/python3 -I ./{GATE.SCRIPT_NAME} --stop"], str(cfg))
 

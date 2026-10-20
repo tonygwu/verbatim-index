@@ -185,6 +185,9 @@ transcript = [{"type": "GENERIC", "status": "DONE", "content": "results ... http
               {"type": "GENERIC", "status": "DONE", "content": "nothing here"}]
 check("a tool output naming the project's site is counted; refusals and the model's own words are not",
       GR.own_site_mentions(transcript) == 1, str(GR.own_site_mentions(transcript)))
+proxied = [{"type": "GENERIC", "status": "DONE", "content": "https://verbatim--predictions-tonygwu-com.translate.goog/"}]
+check("the dashed proxy form of the domain is counted too, as the gate matches it",
+      GR.own_site_mentions(proxied) == 1, str(GR.own_site_mentions(proxied)))
 
 # ---- 3b. GR.call: its refusals, and evidence kept either way ---------------
 print("3b. gemini_resolver.call")

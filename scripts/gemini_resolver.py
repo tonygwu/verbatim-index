@@ -164,7 +164,7 @@ def own_site_mentions(transcript: list[dict]) -> int:
     """Tool outputs (finished GENERIC steps) that name this project's own domain.
     A refusal message and the model's own words are not counted."""
     return sum(1 for row in transcript if row.get("type") == "GENERIC" and row.get("status") == "DONE"
-               and any(d in str(row.get("content") or "").lower() for d in GATE.OWN_DOMAINS))
+               and GATE._names_own(row.get("content") or ""))
 
 
 def collect(jail: Path, raw_dir: Path, stem: str) -> dict:

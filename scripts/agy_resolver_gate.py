@@ -81,7 +81,7 @@ OWN_DOMAINS = ("tonygwu.com",)
 REDIRECT_HOSTS = ("vertexaisearch.cloud.google.com", "www.google.com", "google.com", "t.co", "bit.ly",
                   "tinyurl.com", "lnkd.in", "ow.ly")
 MAX_HOPS = 5
-HOP_TIMEOUT_S = 8
+HOP_TIMEOUT_S = 6
 
 
 def hooks_config() -> dict:
@@ -89,7 +89,7 @@ def hooks_config() -> dict:
     and copies the transcript when the run stops."""
     return {HOOK_NAME: {
         "PreToolUse": [{"matcher": "*", "hooks": [
-            {"type": "command", "command": f"/usr/bin/python3 -I ./{SCRIPT_NAME}", "timeout": 60}]}],
+            {"type": "command", "command": f"/usr/bin/python3 -I ./{SCRIPT_NAME}", "timeout": 90}]}],
         "Stop": [{"type": "command", "command": f"/usr/bin/python3 -I ./{SCRIPT_NAME} --stop", "timeout": 30}]}}
 
 
@@ -124,9 +124,13 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def follow_redirect(url: str) -> "str | None":
     """Where `url` redirects, from its Location header, or None when it does not.
-    HEAD first, then GET, and no body is read. An HTTP error that is not a redirect
-    ends the chain: the address it answered for is the one already checked. A
-    network error raises, so the caller refuses a link it could not see through."""
+
+    HEAD first, then GET, and no body is read. A page that answers, or a 4xx that
+    is not about the method or the rate, ends the chain: the address it answered
+    for is the one already checked. A 429 or a 5xx, to GET as well as HEAD, and a
+    network error raise: a host that will not say where a link leads is a link the
+    gate cannot see through (review round 2: a HEAD 503 that ended the chain let a
+    link through that agy's own fetch could then follow)."""
     opener = urllib.request.build_opener(_NoRedirect)
     for method in ("HEAD", "GET"):
         try:
@@ -139,7 +143,12 @@ def follow_redirect(url: str) -> "str | None":
                 if not loc:
                     raise OSError(f"HTTP {exc.code} with no Location") from None
                 return loc
-            if method == "GET" or exc.code not in (403, 405, 501):
+            unsure = exc.code == 429 or exc.code >= 500
+            if method == "GET":
+                if unsure:
+                    raise OSError(f"HTTP {exc.code} from {urlsplit(url).hostname}") from None
+                return None
+            if not unsure and exc.code not in (403, 405):
                 return None
     return None
 
@@ -151,13 +160,15 @@ def _url_check(url, resolve, follow=follow_redirect) -> "tuple[str | None, str |
     if why or host not in REDIRECT_HOSTS:
         return why, host
     hop = url.strip()
-    for _ in range(MAX_HOPS):
+    for hops in range(MAX_HOPS + 1):
         try:
             nxt = follow(hop)
         except Exception as exc:  # noqa: BLE001 - a link that cannot be seen through is refused
             return f"could not see where the {host} link leads ({type(exc).__name__}); refused", host
         if nxt is None:
             return None, host
+        if hops == MAX_HOPS:
+            break
         nxt = urljoin(hop, nxt)
         why, _ = _one_url(nxt, resolve)
         if why:
