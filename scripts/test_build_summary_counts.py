@@ -34,17 +34,19 @@ def row(scored: bool, early: bool = False, not_due: bool = False) -> dict:
 def main() -> int:
     # 6 plain scored rows; 1 called early but past due by the as-of date, so it
     # counts as past due; 3 called early and still before their deadline; 1
-    # called early, not scored. Scored 10, of which 7 are past due.
+    # called early, not scored; 1 scored and not due without an early call,
+    # which is not an early call. Scored 11, early calls before the deadline 3.
     preds = ([row(True)] * 6 + [row(True, early=True)] + [row(True, early=True, not_due=True)] * 3
-             + [row(False, early=True, not_due=True)])
+             + [row(False, early=True, not_due=True), row(True, not_due=True)])
     scores_doc = {"as_of": "2026-10-20", "predictions": preds,
-                  "corpus": {"scored": 10, "past_due": 20, "leaders_ranked": 2}}
-    # What listed_corpus returns for the people the page lists.
-    cl = {"scored": 10, "past_due": 20, "early_before": 3, "leaders_ranked": 2}
+                  "corpus": {"scored": 11, "past_due": 20, "leaders_ranked": 2}}
+    # What listed_corpus returns for the people the page lists: deliberately not
+    # the whole-file figures, so a line that read the wrong source would fail.
+    cl = {"scored": 8, "past_due": 18, "early_before": 2, "leaders_ranked": 2}
 
     legend = B.score_legend(cl)
     m = re.search(r"(\d+) of (\d+) past-due", legend)
-    check("the legend prints scored minus early calls over past due", bool(m) and m.groups() == ("7", "20"),
+    check("the legend prints scored minus early calls over past due", bool(m) and m.groups() == ("6", "18"),
           legend[:200])
     page = m.groups() if m else None
 
@@ -52,13 +54,13 @@ def main() -> int:
     m = re.search(r"the page prints (\d+) of (\d+) past due", listed_line)
     check("the listed line's past-due scored count equals the legend's", bool(m) and m.groups() == page,
           listed_line)
-    check("the listed line names the early calls apart", "3 more called early" in listed_line
-          and "(10 scored in all)" in listed_line, listed_line)
+    check("the listed line names the listed people's early calls apart", "2 more called early" in listed_line
+          and "(8 scored in all)" in listed_line, listed_line)
     m = re.search(r"scores: (\d+) of (\d+) past due", scores_line)
     check("the scores line counts early calls over every row of scores.json the same way",
-          bool(m) and m.groups() == ("7", "20"), scores_line)
+          bool(m) and m.groups() == ("8", "20"), scores_line)
     check("the scores line names the early calls apart", "3 more called early" in scores_line
-          and "(10 scored in all)" in scores_line, scores_line)
+          and "(11 scored in all)" in scores_line, scores_line)
 
     print()
     print(f"FAILED: {len(FAILED)} failing check(s)" if FAILED else "OK: 0 failing check(s)")

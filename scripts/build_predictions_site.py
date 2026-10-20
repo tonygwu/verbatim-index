@@ -2612,8 +2612,9 @@ def scored_of_past_due(scored: int, past_due: int, early: int) -> str:
 def summary_lines(scores_doc: dict, cl: dict, n_listed: int, n_outcomes: int, models: dict) -> list[str]:
     """The build log's two score lines: the whole scores.json, then the people the page lists.
 
-    The corpus block has no early-call count, so the first line counts it over every row, the same
-    test listed_corpus applies to the listed people's rows."""
+    The first line counts early calls over every row with the same test listed_corpus applies to the
+    listed people's rows, so the two lines cannot count them differently. (The scorer's own
+    corpus.early_calls.scored_before_deadline holds the same number when early calls are on.)"""
     sc = scores_doc["corpus"]
     early_all = sum(1 for r in scores_doc.get("predictions", [])
                     if r.get("early_called") and r.get("not_due") and r.get("scored"))
