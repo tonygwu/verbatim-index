@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Draw the 1200x630 image Twitter and LinkedIn show for a link to one of the sites.
 
-Serves both published sites, named by --site: `leaderboard` draws site/og.png
-from results.json, and `predictions` draws site-predictions/og.png from the
-predictions index.json. The card carries counts, so it is rendered from the
-corpus rather than from numbers typed here, and it writes a sidecar recording
-what it drew. Each site's builder reads that sidecar and warns when the drawn
-counts no longer match the corpus.
+Serves the published sites, named by --site: `leaderboard` draws site/og.png
+from results.json, `predictions` draws site-predictions/og.png from the page's
+own board (index.json, scores.json, the roster and membership.json), and
+`pundits` draws site-pundits/og.png. The card carries figures, so it is rendered
+from the data rather than from numbers typed here, and it writes a sidecar
+recording what it drew. Each site's builder reads that sidecar and warns when
+the drawn figures no longer match the page.
 
 The card is a committed asset rather than something the render pipeline draws on
 every cycle. Drawing it needs a browser, and putting a browser in the grading
@@ -15,7 +16,8 @@ data. Re-run this by hand when the roster or the corpus moves.
 
 Usage:
   build_og_card.py --site leaderboard --results ../data/results.json --transcripts ../data/transcripts_blind
-  build_og_card.py --site predictions --index ../data/predictions/index.json
+  build_og_card.py --site predictions --index data/predictions/index.json \
+      --scores data/predictions/scores.json --roster data/roster/final.json
 """
 
 from __future__ import annotations
@@ -206,6 +208,102 @@ BOARD_CARD = """<!DOCTYPE html>
 # here is read at roughly two-fifths of the size it is drawn at.
 BOARD_ROWS = 3
 
+# The predictions site's card, in the leaderboard card's visual system: the top
+# of the page's own board, then a strip of the page's totals. Every figure is
+# card_figures() from build_predictions_site.py, the function the page checks
+# the card against, so the card prints exactly what the board prints: Score as
+# a signed mean with a true minus sign, Came true as hits over scored. Came true
+# is how the card shows each row's count, which matters because two of the
+# rows can rank on a handful of predictions.
+PRED_CARD = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  *{box-sizing:border-box; margin:0; padding:0}
+  html,body{width:1200px; height:630px}
+  body{
+    background:#F2F3F5; color:#15181D;
+    font-family:"IBM Plex Sans",-apple-system,sans-serif;
+    padding:44px 56px 40px; display:flex; flex-direction:column;
+    -webkit-font-smoothing:antialiased;
+  }
+  .top{display:flex; align-items:flex-end; justify-content:space-between; gap:40px}
+  h1{
+    font-family:"Instrument Serif",Georgia,serif; font-weight:400;
+    font-size:74px; line-height:.92; letter-spacing:-.018em; white-space:nowrap;
+  }
+  h1 em{font-style:italic; color:#BA5416}
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace; font-size:17px; letter-spacing:.15em;
+    text-transform:uppercase; color:#5B646F; margin-bottom:14px;
+  }
+  .thesis{font-size:25px; line-height:1.3; color:#3C4450; max-width:24ch; text-align:right;
+          text-wrap:balance}
+  .thesis b{color:#15181D; font-weight:600}
+
+  table{width:100%; border-collapse:collapse; margin-top:30px}
+  th{
+    font-family:"IBM Plex Mono",monospace; font-size:16px; font-weight:500;
+    letter-spacing:.11em; text-transform:uppercase; color:#8A929C;
+    text-align:left; padding:0 0 10px; border-bottom:1px solid #C3C8D1;
+  }
+  th.n{text-align:right}
+  td{padding:19px 0; border-bottom:1px solid #DCDFE5; vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .rk{
+    width:46px; font-family:"IBM Plex Mono",monospace; font-size:21px; color:#8A929C;
+    font-variant-numeric:tabular-nums;
+  }
+  .nm{font-size:34px; font-weight:600; letter-spacing:-.01em; line-height:1.1}
+  .rl{font-size:18px; color:#5B646F; margin-top:4px}
+  .org{font-size:22px; color:#3C4450; width:290px; padding-right:24px}
+  .sec{
+    display:block; font-family:"IBM Plex Mono",monospace; font-size:13px;
+    letter-spacing:.09em; text-transform:uppercase; color:#8A929C; margin-top:5px;
+  }
+  td.hit{width:170px; text-align:right; padding-right:30px;
+         font-family:"IBM Plex Mono",monospace; font-size:32px; font-weight:500;
+         font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+  td.hit .sl{color:#8A929C; padding:0 1px}
+  td.sc{background:#E9EBEF; width:160px; text-align:right; padding-right:24px}
+  .sc b{font-family:"IBM Plex Mono",monospace; font-size:40px; font-weight:600;
+        font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+  .sc .pos{color:#00875A} .sc .neg{color:#A33A2A}
+  th.hit{padding-right:30px} th.sc{padding-right:24px}
+
+  .strip{
+    margin-top:auto; padding-top:20px; display:flex; justify-content:space-between;
+    align-items:baseline; gap:24px; font-family:"IBM Plex Mono",monospace; font-size:18px;
+    letter-spacing:.02em; color:#5B646F; border-top:1px solid #C3C8D1; white-space:nowrap;
+  }
+  .strip b{color:#15181D; font-weight:600}
+  .strip .more{color:#8A929C}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <div class="eyebrow">__DOMAIN__</div>
+      <h1>Verbatim <em>__WORDMARK__</em></h1>
+    </div>
+    <p class="thesis">__TAGLINE__</p>
+  </div>
+  <table>
+    <thead><tr>
+      <th></th><th>Person</th><th>Organisation</th>
+      <th class="n hit">Came true</th><th class="n sc">Score</th>
+    </tr></thead>
+    <tbody>__ROWS__</tbody>
+  </table>
+  <div class="strip"><div>__STRIP__</div><div class="more">__MORE__</div></div>
+</body>
+</html>
+"""
+
 
 def meter(value: float, cls: str) -> str:
     """The site's own meter: the number, and a bar filled to it on a 0-100 scale."""
@@ -287,31 +385,46 @@ def leaderboard_counts(args) -> tuple[dict, list[tuple[str, str]]]:
     return counts, stats
 
 
-def predictions_counts(args) -> tuple[dict, list[tuple[str, str]]]:
-    """Every figure comes straight out of index.json.
-
-    The page's own "People" stat is deliberately NOT drawn here. That number is
-    person_rows()'s output, which filters the index against the roster and a
-    listing floor, so index.json alone cannot reproduce it and a card drawn
-    from the index would quietly disagree with the page beside it. The people
-    count goes in the card's DESCRIPTION instead, where the page substitutes
-    its own __N_PEOPLE__.
-    """
+def predictions_counts(args) -> tuple[dict, list]:
+    """The top of the page's board and its totals, from build_predictions_site's
+    own card_figures_for(): the same listing rules, membership, order, number
+    formats and totals the page prints. The page's build compares og.meta.json
+    with the same function's answer for the page it renders, and warns on any
+    difference, so the card cannot quietly disagree with the page beside it."""
+    import build_predictions_site as P
     index = json.loads(Path(args.index).read_text())
-    c = index["corpus"]
-    accepted = c["accepted"]
-    if not accepted:
-        sys.exit(f"REFUSING: {args.index} reports no accepted predictions")
-    dated = accepted - c["statement_date_unknown"]
-    counts = {
-        "predictions": accepted,
-        "transcripts_scanned": index["coverage"]["extract"].get("ok", 0),
-        "pct_dated": round(100 * dated / accepted),
-    }
-    stats = [("Predictions", str(counts["predictions"])),
-             ("Transcripts scanned", str(counts["transcripts_scanned"])),
-             ("With a date said", f"{counts['pct_dated']}%")]
-    return counts, stats
+    roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
+    scores_doc = json.loads(Path(args.scores).read_text())
+    figures = P.card_figures_for(index, roster, scores_doc, P.off_board_slugs(index, args.membership))
+    if len(figures["top"]) < P.CARD_ROWS:
+        sys.exit(f"REFUSING: the board ranks {len(figures['top'])} people, fewer than the "
+                 f"{P.CARD_ROWS} the card draws")
+    return figures, []
+
+
+def predictions_card_html(fig: dict) -> str:
+    """The card's HTML for card_figures(): what the board prints, laid out."""
+    rows = []
+    for t in fig["top"]:
+        hits, n = t["came_true"].split("/")
+        sign = "neg" if t["score"].startswith("\u2212") else "pos"
+        rows.append(
+            f'<tr><td class="rk">{t["rank"]}</td>'
+            f'<td><div class="nm">{esc(t["name"])}</div><div class="rl">{esc(t["role"])}</div></td>'
+            f'<td class="org">{esc(t["company"])}<span class="sec">{esc(t["sector"])}</span></td>'
+            f'<td class="hit">{esc(hits)}<span class="sl">/</span>{esc(n)}</td>'
+            f'<td class="sc"><b class="{sign}">{esc(t["score"])}</b></td></tr>')
+    strip = (f"<b>{fig['people_ranked']}</b> people ranked &middot; "
+             f"<b>{fig['scored']}</b> predictions scored &middot; "
+             f"<b>{fig['predictions']}</b> extracted &middot; as of <b>{esc(fig['as_of'])}</b>")
+    site = SITES["predictions"]
+    return (PRED_CARD
+            .replace("__DOMAIN__", site["domain"])
+            .replace("__WORDMARK__", site["wordmark"])
+            .replace("__TAGLINE__", site["tagline"])
+            .replace("__ROWS__", "".join(rows))
+            .replace("__STRIP__", strip)
+            .replace("__MORE__", f"and {fig['more']} more &rarr;"))
 
 
 def pundits_counts_from(results: dict) -> tuple[dict, list[tuple[str, str]]]:
@@ -355,10 +468,10 @@ SITES = {
         "out": REPO / "site-predictions" / "og.png",
         "domain": "verbatim-predictions.tonygwu.com",
         "wordmark": "Predictions",
-        "tagline": ("Forward-looking claims, quoted <b>verbatim</b> from "
-                    "what tech leaders said on the record, with the date."),
+        # The page's own opening question.
+        "tagline": "Who in tech or finance is best at <b>predicting the future</b>?",
         "counts": predictions_counts,
-        "requires": ("index",),
+        "requires": ("index", "scores", "roster"),
     },
 }
 
@@ -382,8 +495,11 @@ def main() -> int:
     ap.add_argument("--transcripts",
                     help="blinded transcripts dir; words are counted by build_site.words_graded()")
     ap.add_argument("--membership", default=None,
-                    help="membership.json for the leaders card's word count; defaults to the repo's copy")
+                    help="membership.json for the leaders card's word count and the predictions "
+                         "card's board; defaults to the repo's copy")
     ap.add_argument("--index", help="predictions index.json")
+    ap.add_argument("--scores", help="predictions scores.json, the one the page publishes")
+    ap.add_argument("--roster", help="roster/final.json, which the page reads each row's role from")
     ap.add_argument("--out")
     args = ap.parse_args()
 
@@ -407,6 +523,8 @@ def main() -> int:
                 .replace("__ROWS__", rows_html)
                 .replace("__STRIP__", strip)
                 .replace("__MORE__", f"and {more} more &rarr;"))
+    elif args.site == "predictions":
+        html = predictions_card_html(counts)
     else:
         cells = "".join(f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in stats)
         html = (CARD

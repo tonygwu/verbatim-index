@@ -1,9 +1,43 @@
 {
  "site": "predictions",
  "counts": {
+  "top": [
+   {
+    "rank": 1,
+    "slug": "michael-dell",
+    "name": "Michael Dell",
+    "role": "Chairman and CEO",
+    "company": "Dell Technologies",
+    "sector": "Hardware & Mobility",
+    "score": "+0.36",
+    "came_true": "5/7"
+   },
+   {
+    "rank": 2,
+    "slug": "dara-khosrowshahi",
+    "name": "Dara Khosrowshahi",
+    "role": "CEO",
+    "company": "Uber Technologies",
+    "sector": "Consumer Internet",
+    "score": "+0.31",
+    "came_true": "15/17"
+   },
+   {
+    "rank": 3,
+    "slug": "dario-amodei",
+    "name": "Dario Amodei",
+    "role": "Co-founder and CEO",
+    "company": "Anthropic",
+    "sector": "AI Labs",
+    "score": "+0.27",
+    "came_true": "3/5"
+   }
+  ],
+  "people_ranked": 49,
+  "more": 46,
+  "scored": 603,
   "predictions": 1289,
-  "transcripts_scanned": 1278,
-  "pct_dated": 99
+  "as_of": "2026-10-20"
  },
  "drawn_by": "scripts/build_og_card.py",
  "note": "The site builder warns when these counts or this label drift from the page."

@@ -44,3 +44,12 @@ there. Add new material under the same headings.
 
 - Published site: `site/index.html`, deployed with the guarded `scripts/deploy.sh` to
   `verbatim-index.tonygwu.com`
+- Social cards: `site/og.png` and `site-predictions/og.png`, drawn by
+  `scripts/build_og_card.py` and committed with an `og.meta.json` that records
+  every figure drawn. Both draw the top three rows of their board and a strip of
+  totals. Since 2026-10-20 the predictions card takes every figure from
+  `card_figures()` in `build_predictions_site.py`, the function the page build
+  compares the sidecar with. So a ranking, Score, Came true or total that moves
+  after the card was drawn prints a warning on the next render; redraw with
+  `build_og_card.py --site predictions --index ... --scores ... --roster ...`.
+  `scripts/test_predictions_og_card.py` guards it.

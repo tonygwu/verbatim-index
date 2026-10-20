@@ -40,6 +40,7 @@ import re
 import statistics
 import sys
 from datetime import date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -90,8 +91,13 @@ def og_version() -> str:
     return hashlib.sha256(OG_CARD.read_bytes()).hexdigest()[:12]
 
 
-def check_og_card(index: dict) -> None:
-    """Say so when the drawn card no longer matches the corpus it quotes.
+def check_og_card(now: "dict | None") -> None:
+    """Say so when the drawn card no longer matches the page being built.
+
+    `now` is card_figures() for this page, or None when the page has no Score
+    column. The card draws the top rows of the board, so it can disagree with
+    the page about who is first, or by how much, while every total still
+    matches; every figure it drew is compared, rows included.
 
     The card is a committed image rather than something this renderer draws, so
     nothing else would notice it going stale. This never blocks a render: a
@@ -103,22 +109,23 @@ def check_og_card(index: dict) -> None:
               file=sys.stderr)
         return
     if not OG_CARD_META.is_file():
-        print("WARNING: site-predictions/og.png has no .meta.json; its counts cannot be checked",
+        print("WARNING: site-predictions/og.png has no .meta.json; its figures cannot be checked",
               file=sys.stderr)
         return
-    c = index["corpus"]
-    accepted = c["accepted"]
     drawn = json.loads(OG_CARD_META.read_text()).get("counts", {})
-    now = {
-        "predictions": accepted,
-        "transcripts_scanned": index["coverage"]["extract"].get("ok", 0),
-        "pct_dated": round(100 * (accepted - c["statement_date_unknown"]) / accepted) if accepted else 0,
-    }
-    drift = {k: (drawn.get(k), v) for k, v in now.items() if drawn.get(k) != v}
+    rerun = "re-run scripts/build_og_card.py --site predictions"
+    if now is None:
+        if drawn.get("top"):
+            print(f"WARNING: site-predictions/og.png draws a ranking, but this page has no Score "
+                  f"column to rank by; {rerun} once scores are published", file=sys.stderr)
+        return
+    if drawn.get("top") != now["top"]:
+        print(f"WARNING: site-predictions/og.png is stale: it draws top {drawn.get('top')} and the "
+              f"board now reads {now['top']}; {rerun}", file=sys.stderr)
+    drift = {k: (drawn.get(k), v) for k, v in now.items() if k != "top" and drawn.get(k) != v}
     if drift:
-        detail = ", ".join(f"{k}: card says {a}, corpus has {b}" for k, (a, b) in drift.items())
-        print(f"WARNING: site-predictions/og.png is stale ({detail}); "
-              f"re-run scripts/build_og_card.py --site predictions", file=sys.stderr)
+        detail = ", ".join(f"{k}: card says {a}, page has {b}" for k, (a, b) in drift.items())
+        print(f"WARNING: site-predictions/og.png is stale ({detail}); {rerun}", file=sys.stderr)
 
 
 MODEL_LABELS = {
@@ -148,6 +155,8 @@ TEMPLATE = r"""<!DOCTYPE html>
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Verbatim Predictions. __SOCIAL_TITLE__">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@tonygwu">
+<meta name="twitter:creator" content="@tonygwu">
 <meta name="twitter:title" content="__SOCIAL_TITLE__">
 <!-- score:start --><meta name="twitter:description" content="__SOCIAL_DESC__"><!-- score:end -->
 <meta name="twitter:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
@@ -2479,6 +2488,68 @@ def person_rows(index: dict, roster: dict, hist: dict[str, dict], scores: dict,
     return default_order(rows, scored=bool(scores))
 
 
+def off_board_slugs(index: dict, membership: "str | None") -> frozenset:
+    """Everyone in the index whom membership.json leaves off the predictions board.
+
+    An index slug missing from membership.json refuses, never defaults to
+    listed. The page and its social card both ask this, so they list the same
+    people."""
+    try:
+        board = MB.load(membership)
+        return frozenset(l["slug"] for l in index.get("leaders", [])
+                         if not MB.on_board(board, l["slug"], "predictions"))
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSING: {exc}")
+
+
+# The social card (build_og_card.py --site predictions) draws this many rows from
+# the top of the board, as the leaderboard's card does.
+CARD_ROWS = 3
+
+
+def score_text(score: float) -> str:
+    """Score as the board's scoreCell() prints it: a sign, U+2212 for minus, then
+    Math.abs(score).toFixed(2). toFixed rounds an exact half up, where Python's
+    format rounds it to even (0.125 prints as 0.13 on the page and as 0.12 from
+    f"{0.125:.2f}"), so the digits come from the float's exact decimal value."""
+    digits = Decimal(abs(score)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return ("+" if score >= 0 else "−") + f"{digits}"
+
+
+def card_figures(rows: list[dict], cl: dict, index: dict, as_of: str) -> dict:
+    """What the social card draws, read off the page's own board.
+
+    `rows` are person_rows() in the page's opening order and `cl` is
+    listed_corpus() for them. The rows are the first CARD_ROWS people with a
+    Score, numbered by their place in that order, with the Score and Came true
+    strings the board prints. The totals are the page's: people with a Score,
+    the "scored in all" figure, the Predictions figure in the strip, and the
+    scoring run's as-of date. build_og_card.py draws exactly this dict and
+    records it in og.meta.json, and check_og_card() compares that record with
+    this function's answer for the page being built."""
+    ranked = [r for r in rows if r["score"] is not None]
+    if len(ranked) != cl["leaders_ranked"]:
+        raise SystemExit(f"REFUSING: the board shows a Score on {len(ranked)} rows but listed_corpus "
+                         f"counts {cl['leaders_ranked']} people ranked")
+    top = [{"rank": i, "slug": r["slug"], "name": r["name"], "role": r["role"] or "",
+            "company": r["company"] or "", "sector": r["sector"] or "",
+            "score": score_text(r["score"]), "came_true": f"{r['score_hits']}/{r['n_scored']}"}
+           for i, r in enumerate(ranked[:CARD_ROWS], 1)]
+    return {"top": top, "people_ranked": len(ranked), "more": len(ranked) - len(top),
+            "scored": cl["scored"], "predictions": index["corpus"]["accepted"], "as_of": as_of}
+
+
+def card_figures_for(index: dict, roster: dict, scores_doc: dict, off_board: frozenset) -> dict:
+    """card_figures() from the inputs alone, for the card builder, which reads no
+    prediction records. The page's main() passes person_rows() a timeline,
+    buckets and sensitivity as well. None of those decides who is listed, their
+    order, or a figure the card draws, and test_predictions_og_card.py checks
+    that both calls give the same answer."""
+    scores = {l["slug"]: l for l in scores_doc["leaders"]}
+    rows = person_rows(index, roster, {}, scores, off_board=off_board)
+    return card_figures(rows, listed_corpus(scores_doc, {r["slug"] for r in rows}), index, scores_doc["as_of"])
+
+
 # Mirrors score_predictions.MIN_SCORED_TO_RANK. Imported rather than typed, so the
 # page and the aggregation can never disagree about who gets a number.
 MIN_SCORED = SP.MIN_SCORED_TO_RANK
@@ -2976,18 +3047,12 @@ def main(argv: list[str] | None = None) -> int:
     # Who is on the predictions board. The page LISTS by it and never writes by it;
     # an index slug missing from membership.json raises in MB.on_board, never
     # defaults to listed. This page publishes the leaders-study predictions only.
-    try:
-        board = MB.load(args.membership)
-        off_board = frozenset(l["slug"] for l in index.get("leaders", [])
-                              if not MB.on_board(board, l["slug"], "predictions"))
-    except RuntimeError as exc:
-        raise SystemExit(f"REFUSING: {exc}")
+    off_board = off_board_slugs(index, args.membership)
     for k in ("run_ids_seen", "contracts_seen", "leaders", "corpus", "coverage", "files_read", "records_read"):
         if k not in index:
             raise SystemExit(f"index.json lacks {k}; re-run aggregate_predictions.py")
     if any("transcripts_extracted_in_corpus" not in l for l in index["leaders"]):
         raise SystemExit("index.json predates transcripts_extracted_in_corpus; re-run aggregate_predictions.py")
-    check_og_card(index)
     roster = {r["slug"]: r for r in json.loads(Path(args.roster).read_text())["roster"]}
     loaded = load_records(Path(args.predictions))
     by_slug: dict[str, list[dict]] = {}
@@ -3061,6 +3126,9 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"REFUSING: for the people listed, scores.json's rows give {ok['n']} eligible "
                              f"unresolvable answers {ok['reasons']}, but the Predictions column counts "
                              f"{sum(couldnt_check.values())} Couldn't check {dict(couldnt_check)}")
+    # The social card draws the top of this board, so it is checked against the
+    # rows and totals this page is about to print, not against the index.
+    check_og_card(card_figures(rows, cl, index, scores_doc["as_of"]) if cl is not None else None)
     open_states = [states[r["prediction_id"]] for slug in listed for r in by_slug.get(slug, [])]
     open_unfit = sum(1 for s in open_states if s["state"] == "not_due" and s["reason"])
     trend_later = sum(1 for s in open_states if s["state"] == "no_deadline" and s["reason"] == "trend_later")

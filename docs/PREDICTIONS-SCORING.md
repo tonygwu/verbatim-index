@@ -154,8 +154,10 @@ eyebrow, the Score legend and its help panel) describes the LISTED people only.
 `listed_corpus()` sums them from scores.json's per-person rows, and it refuses
 the render if those rows do not add up to the file's corpus block. The strip's
 corpus totals (predictions, transcripts scanned, percent dated) still describe
-everything the pipeline read, which is also what the social card draws. The
-note under the table says the unlisted people's predictions still count there.
+everything the pipeline read. The note under the table says the unlisted
+people's predictions still count there. The social card draws the board's top
+three rows and the page's own totals, from `card_figures()`; see
+[docs/agents/SITES.md](agents/SITES.md).
 
 **Default sort.** With a scores file, Score, highest first. Unscored rows come
 after every scored row, in name order, whichever way the column is sorted.
