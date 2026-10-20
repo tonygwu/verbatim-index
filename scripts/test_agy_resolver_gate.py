@@ -46,7 +46,27 @@ def resolver_for(table: dict):
 
 
 DNS = resolver_for({"example.com": ["93.184.215.14"], "www.sec.gov": ["23.2.13.75", "2600:1408:ec00::1"],
-                    "intranet.example.org": ["10.1.2.3"], "rebind.example.net": ["93.184.215.14", "127.0.0.1"]})
+                    "intranet.example.org": ["10.1.2.3"], "rebind.example.net": ["93.184.215.14", "127.0.0.1"],
+                    "vertexaisearch.cloud.google.com": ["142.250.1.1"], "web.archive.org": ["207.241.224.2"],
+                    "www.google.com": ["142.250.1.2"], "t.co": ["104.244.42.1"]})
+GROUND = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
+#: Where each redirect link leads, as a Location header would say; None means "no redirect".
+HOPS = {GROUND + "toOwn": "https://verbatim-predictions.tonygwu.com/p/1", GROUND + "toSec": "https://www.sec.gov/x",
+        GROUND + "toLocal": "http://127.0.0.1:8765/", GROUND + "toT": "https://t.co/abc",
+        "https://t.co/abc": "https://example.com/doc", "https://example.com/doc": None,
+        "https://www.sec.gov/x": None, GROUND + "relative": "/elsewhere"}
+for i in range(7):
+    HOPS[GROUND + f"loop{i}"] = GROUND + f"loop{i + 1}"
+FOLLOWED: list = []
+
+
+def follow(url):
+    FOLLOWED.append(url)
+    if url == GROUND + "broken":
+        raise OSError("connection reset")
+    if url not in HOPS:
+        raise OSError(f"no fake hop for {url}")
+    return HOPS[url]
 
 
 HOME_TMP = tempfile.TemporaryDirectory()
@@ -64,11 +84,12 @@ def page_file(conv: str, step: str, name: str = "content.md") -> Path:
 
 def decide(name, args=None, payload=None, conv=CONV):
     p = payload if payload is not None else {"toolCall": {"name": name, "args": args or {}}, "conversationId": conv}
-    return GATE.decide(p, resolve=DNS, home=HOME)[:2]
+    return GATE.decide(p, resolve=DNS, home=HOME, follow=follow)[:2]
 
 
 def overrides(name, args):
-    return GATE.decide({"toolCall": {"name": name, "args": args}, "conversationId": CONV}, resolve=DNS, home=HOME)[2]
+    return GATE.decide({"toolCall": {"name": name, "args": args}, "conversationId": CONV}, resolve=DNS, home=HOME,
+                       follow=follow)[2]
 
 
 def url_call(url, key="Url"):
@@ -115,6 +136,43 @@ for args, label in [({"query": "acme", "domain": "verbatim-predictions.tonygwu.c
                     ({"query": ["a", "b"]}, "a query that is not a string")]:
     d, why = decide("search_web", args)
     check(f"search_web refuses {label}", d == "deny" and why, f"{d} {why!r}")
+
+# ---- links that lead somewhere else ----------------------------------------
+# Review of 2026-10-20: every search source comes as a Google redirect link, so a
+# host check alone would let a link to the project's own site through. A link on a
+# redirect host is followed, hop by hop, without fetching a page, and each hop is
+# checked like the first. A link whose text names the project's site anywhere
+# (an archive, a translation proxy, google.com/url?q=) is refused without a request.
+FOLLOWED.clear()
+d, why = url_call("https://example.com/report")
+check("a page on an ordinary host is never followed", d == "allow" and FOLLOWED == [], f"{d} {why} {FOLLOWED}")
+d, why = url_call(GROUND + "toSec")
+check("a search link that leads to a public page is allowed", d == "allow", f"{d} {why}")
+check("and the hop was looked up", FOLLOWED[-2:] == [GROUND + "toSec", "https://www.sec.gov/x"] or
+      FOLLOWED[-1:] == [GROUND + "toSec"], str(FOLLOWED))
+d, why = url_call(GROUND + "toT")
+check("a chain through a second redirect host is followed to its end", d == "allow"
+      and "https://t.co/abc" in FOLLOWED, f"{d} {why} {FOLLOWED}")
+for link, label in [(GROUND + "toOwn", "a search link that leads to the project's site"),
+                    (GROUND + "toLocal", "a search link that leads to a loopback address"),
+                    (GROUND + "loop0", "a chain of more than five redirects"),
+                    (GROUND + "broken", "a link whose target cannot be read (fail closed)"),
+                    (GROUND + "relative", "a relative Location on the redirect host, followed and not answered")]:
+    d, why = url_call(link)
+    check(f"read_url_content refuses {label}", d == "deny" and why, f"{d} {why!r}")
+FOLLOWED.clear()
+for url, label in [
+    ("https://web.archive.org/web/2026/https://verbatim-predictions.tonygwu.com/p/1", "an archive copy of the site"),
+    ("https://verbatim--predictions-tonygwu-com.translate.goog/p/1", "a translation proxy of the site"),
+    ("https://www.google.com/url?q=https%3A%2F%2Fverbatim-predictions.tonygwu.com%2Fp", "a google.com/url wrapper"),
+    ("https://example.com/?u=https%253A%252F%252Fpundits.tonygwu.com", "a twice-encoded mention in a query"),
+]:
+    d, why = url_call(url)
+    check(f"read_url_content refuses {label}, without a request", d == "deny" and why, f"{d} {why!r}")
+check("none of those was looked up", FOLLOWED == [], str(FOLLOWED))
+for q, label in [("verbatim-predictions%2Etonygwu%2Ecom", "an encoded mention"), ("tonygwu-com acme", "the proxy form")]:
+    d, why = decide("search_web", {"query": q})
+    check(f"search_web refuses {label} of the project's domain", d == "deny" and why, f"{d} {why!r}")
 
 # ---- refused page reads ---------------------------------------------------
 for url, label in [
@@ -195,7 +253,7 @@ for tool in ("run_command", "list_dir", "grep_search", "find_by_name", "write_to
 # ---- malformed payloads ---------------------------------------------------
 for payload, label in [({}, "no toolCall"), ({"toolCall": "search_web"}, "toolCall not an object"),
                        ({"toolCall": {"args": {}}}, "no tool name"), ([], "a list, not an object")]:
-    d, why, _grants = GATE.decide(payload, resolve=DNS, home=HOME)
+    d, why, _grants = GATE.decide(payload, resolve=DNS, home=HOME, follow=follow)
     check(f"a payload with {label} is refused", d == "deny", f"{d} {why}")
 
 # ---- the real script, under the interpreter the hook names ----------------
@@ -261,6 +319,8 @@ groups = cfg[GATE.HOOK_NAME]["PreToolUse"]
 check("hooks.json gates every tool (matcher *)", [g["matcher"] for g in groups] == ["*"], str(groups))
 check("hooks.json runs this script with /usr/bin/python3 -I", groups[0]["hooks"][0]["command"]
       == f"/usr/bin/python3 -I ./{GATE.SCRIPT_NAME}", str(groups))
+check("hooks.json gives the gate time to follow five redirects", groups[0]["hooks"][0]["timeout"]
+      >= 6 * GATE.HOP_TIMEOUT_S, str(groups))
 check("hooks.json runs the Stop copy with the same script", [h["command"] for h in cfg[GATE.HOOK_NAME]["Stop"]]
       == [f"/usr/bin/python3 -I ./{GATE.SCRIPT_NAME} --stop"], str(cfg))
 

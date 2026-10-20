@@ -17,8 +17,9 @@ configuration. Each call gets a jail under RESOLVER_JAIL_ROOT, which no grader
 jail sits under, holding three files (`write_jail`):
 
   .agents/agents/verbatim-resolver.md  a custom agent whose tool list is search_web,
-                                       read_url_content and read_file: the only
-                                       tools agy offers the model;
+                                       read_url_content and read_file. The model
+                                       reports these, and agy's own manage_task,
+                                       as its tools; the init event lists them all;
   .agents/hooks.json                   a PreToolUse hook on every tool and a Stop hook;
   .agents/agy_resolver_gate.py         the hook: it allows a search, a read of a
                                        public http(s) page that is not this
@@ -73,7 +74,7 @@ RESOLVER_ARGS = ("--agent", GATE.AGENT_NAME, "--dangerously-skip-permissions")
 #: The tools a resolver's stream may show finished. Anything else fails the call.
 DONE_TOOLS = frozenset(GATE.SEARCH_TOOLS + GATE.URL_TOOLS + GATE.PAGE_TOOLS)
 E_UNGATED = "ungated_tool_use"
-ERROR_TYPES = (E_UNGATED,)
+ERROR_TYPES = (E_UNGATED, G.E_NO_TRANSCRIPT)
 
 
 def _sha(data: bytes) -> str:
@@ -128,27 +129,33 @@ def resolver_profiles(rotation: "G.GeminiRotation", select: "str | None") -> lis
 
 
 def tool_audit(events: list[dict], gate_entries: list[dict]) -> list[str]:
-    """Problems with the tools this call ran, or [] when every one was the gate's to allow and was allowed.
+    """Problems with the tools this call ran, or [] when the gate decided every tool step.
 
-    The conversation is the init event's; gate entries for other conversations
-    (an earlier attempt of the same call) vouch for nothing here."""
+    A step that finished (DONE) needs the gate's allow and a tool in DONE_TOOLS. A
+    step that ended in an error needs a gate entry too, allow or deny: a tool can
+    return output and still end in an error, so a missing entry means the hook did
+    not run. The conversation is the init event's; gate entries for other
+    conversations (an earlier attempt of the same call) vouch for nothing here."""
     conv = next((e.get("conversation_id") for e in events if e.get("event") == "init"), None)
     if not conv:
         return ["the stream names no conversation, so its tool steps cannot be matched to the gate's log"]
-    allowed = {(g.get("step_idx"), g.get("tool")) for g in gate_entries
-               if g.get("conversation_id") == conv and g.get("decision") == "allow"}
+    decided = {(g.get("step_idx"), g.get("tool")): g.get("decision") for g in gate_entries
+               if g.get("conversation_id") == conv and g.get("decision") in ("allow", "deny")}
     problems, seen = [], set()
     for e in events:
         su = e.get("step_update") if e.get("event") == "step_update" else None
-        if not isinstance(su, dict) or su.get("step_type") != "tool" or su.get("state") != "DONE":
+        if not isinstance(su, dict) or su.get("step_type") != "tool" or su.get("state") not in ("DONE", "ERROR"):
             continue
-        idx, tool = su.get("step_index"), su.get("tool_name")
-        if (idx, tool) in seen:
+        idx, tool, state = su.get("step_index"), su.get("tool_name"), su.get("state")
+        if (idx, tool, state) in seen:
             continue
-        seen.add((idx, tool))
-        if tool not in DONE_TOOLS:
+        seen.add((idx, tool, state))
+        if state == "ERROR":
+            if (idx, tool) not in decided:
+                problems.append(f"step {idx} ran {tool} and ended in an error with no entry from the gate in its log")
+        elif tool not in DONE_TOOLS:
             problems.append(f"step {idx} ran {tool}, which the resolver may never run")
-        elif (idx, tool) not in allowed:
+        elif decided.get((idx, tool)) != "allow":
             problems.append(f"step {idx} ran {tool} with no allow from the gate in its log")
     return problems
 
@@ -207,7 +214,8 @@ def call(prompt: str, profile: str, timeout: int, *, jail_name: str, model: str,
     if not transcript_file.exists():
         # The Stop hook's copy is the one record of what the searches returned;
         # without it the own-site screen cannot run, so the answer is refused.
-        raise RuntimeError(f"{G.E_CLI}: no transcript was copied for conversation {conv}; the Stop hook did not run")
+        raise RuntimeError(f"{G.E_NO_TRANSCRIPT}: no transcript was copied for conversation {conv}; the Stop hook "
+                           f"did not run")
     transcript = [json.loads(x) for x in transcript_file.read_text().splitlines() if x.strip()]
     mine = [g for g in gate if g.get("conversation_id") == conv and "decision" in g]
     tel["resolver_jail"] = {"root": str(RESOLVER_JAIL_ROOT), "args": list(RESOLVER_ARGS), "files_sha256": hashes}

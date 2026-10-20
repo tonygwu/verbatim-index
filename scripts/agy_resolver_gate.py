@@ -17,8 +17,9 @@ resolver's own jail reaches only sessions that start in that jail.
 
 WHAT IT ALLOWS. `search_web` with a query, unless the query or its `domain`
 argument names this project's own domain, and `read_url_content` on an http or
-https URL with no credentials, whose host is not this project's own domain and
-resolves only to public addresses. An allowed page read also returns
+https URL with no credentials that does not name this project's domain anywhere,
+whose host resolves only to public addresses. A link on a redirect host (every
+search source is one) is followed to where it lands, and each hop is checked. An allowed page read also returns
 `permissionOverrides: ["read_url(<host>)"]`, a grant for that host and that call:
 MEASURED 2026-10-20 in the third live probe, the hook's allow alone did not open a
 page, because agy's own permission check still asked and a headless run cannot
@@ -50,7 +51,9 @@ import re
 import shutil
 import socket
 import sys
-from urllib.parse import urlsplit
+import urllib.error
+import urllib.request
+from urllib.parse import unquote, urljoin, urlsplit
 
 HOOK_NAME = "verbatim-resolver-gate"
 SCRIPT_NAME = "agy_resolver_gate.py"
@@ -71,6 +74,14 @@ CONVERSATION_ID = re.compile(r"[0-9a-f][0-9a-f-]{7,63}")
 URL_KEYS = ("Url", "url", "URL")
 #: This project's own domain. Its sites are public and publish resolutions.
 OWN_DOMAINS = ("tonygwu.com",)
+#: Hosts whose links only redirect. Every source a search returns is a
+#: vertexaisearch grounding-api-redirect link (measured 2026-10-20, probe 12), so a
+#: host check alone would pass a link to the project's own site. A link on one of
+#: these is followed hop by hop, up to MAX_HOPS, without fetching a page body.
+REDIRECT_HOSTS = ("vertexaisearch.cloud.google.com", "www.google.com", "google.com", "t.co", "bit.ly",
+                  "tinyurl.com", "lnkd.in", "ow.ly")
+MAX_HOPS = 5
+HOP_TIMEOUT_S = 8
 
 
 def hooks_config() -> dict:
@@ -78,7 +89,7 @@ def hooks_config() -> dict:
     and copies the transcript when the run stops."""
     return {HOOK_NAME: {
         "PreToolUse": [{"matcher": "*", "hooks": [
-            {"type": "command", "command": f"/usr/bin/python3 -I ./{SCRIPT_NAME}", "timeout": 20}]}],
+            {"type": "command", "command": f"/usr/bin/python3 -I ./{SCRIPT_NAME}", "timeout": 60}]}],
         "Stop": [{"type": "command", "command": f"/usr/bin/python3 -I ./{SCRIPT_NAME} --stop", "timeout": 30}]}}
 
 
@@ -96,10 +107,71 @@ def _brain(home: str, conversation: str) -> str:
     return os.path.join(home, ".gemini", "antigravity-cli", "brain", conversation)
 
 
-def _url_check(url, resolve) -> "tuple[str | None, str | None]":
-    """(why this URL may not be read, or None; its host, lower case, no final dot)."""
+def _names_own(text) -> bool:
+    """Whether text names this project's domain, after up to three rounds of
+    percent-decoding, in its dotted form or the dashed form translation proxies use."""
+    t = str(text)
+    for _ in range(3):
+        t = unquote(t)
+    t = t.lower()
+    return any(d in t or d.replace(".", "-") in t for d in OWN_DOMAINS)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def follow_redirect(url: str) -> "str | None":
+    """Where `url` redirects, from its Location header, or None when it does not.
+    HEAD first, then GET, and no body is read. An HTTP error that is not a redirect
+    ends the chain: the address it answered for is the one already checked. A
+    network error raises, so the caller refuses a link it could not see through."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    for method in ("HEAD", "GET"):
+        try:
+            with opener.open(urllib.request.Request(url, method=method, headers={"User-Agent": "Mozilla/5.0"}),
+                             timeout=HOP_TIMEOUT_S):
+                return None
+        except urllib.error.HTTPError as exc:
+            if 300 <= exc.code < 400:
+                loc = exc.headers.get("Location")
+                if not loc:
+                    raise OSError(f"HTTP {exc.code} with no Location") from None
+                return loc
+            if method == "GET" or exc.code not in (403, 405, 501):
+                return None
+    return None
+
+
+def _url_check(url, resolve, follow=follow_redirect) -> "tuple[str | None, str | None]":
+    """(why this URL may not be read, or None; its host, lower case, no final dot).
+    A link on a redirect host is followed to where it lands, and every hop is checked."""
+    why, host = _one_url(url, resolve)
+    if why or host not in REDIRECT_HOSTS:
+        return why, host
+    hop = url.strip()
+    for _ in range(MAX_HOPS):
+        try:
+            nxt = follow(hop)
+        except Exception as exc:  # noqa: BLE001 - a link that cannot be seen through is refused
+            return f"could not see where the {host} link leads ({type(exc).__name__}); refused", host
+        if nxt is None:
+            return None, host
+        nxt = urljoin(hop, nxt)
+        why, _ = _one_url(nxt, resolve)
+        if why:
+            return f"the {host} link leads to {nxt[:160]}, which is refused: {why}", host
+        hop = nxt
+    return f"the {host} link redirects more than {MAX_HOPS} times; refused", host
+
+
+def _one_url(url, resolve) -> "tuple[str | None, str | None]":
+    """The checks on one address, without following it."""
     if not isinstance(url, str) or not url.strip():
         return "read_url_content needs one URL string", None
+    if _names_own(url):
+        return "the URL names this project's own site, which publishes resolutions; use other sources", None
     try:
         parts = urlsplit(url.strip())
         host = parts.hostname
@@ -149,7 +221,7 @@ def _search_refusal(args: dict) -> "str | None":
         return "search_web needs a query string"
     for key in ("query", "domain"):
         value = args.get(key)
-        if isinstance(value, str) and any(own in value.lower() for own in OWN_DOMAINS):
+        if isinstance(value, str) and _names_own(value):
             return (f"search_web {key} names this project's own site, which publishes resolutions; "
                     f"search other sources")
     return None
@@ -175,7 +247,8 @@ def _page_file_refusal(args: dict, conversation, home: str) -> "str | None":
     return None
 
 
-def decide(payload, resolve=socket.getaddrinfo, home: "str | None" = None) -> "tuple[str, str, list[str]]":
+def decide(payload, resolve=socket.getaddrinfo, home: "str | None" = None,
+           follow=follow_redirect) -> "tuple[str, str, list[str]]":
     """(decision, reason, permission grants) for one PreToolUse payload. Only "allow"
     lets the step run, and only an allowed page read carries a grant. `home` is the
     home of the user the call runs as, whose agy brain holds the fetched pages."""
@@ -193,7 +266,7 @@ def decide(payload, resolve=socket.getaddrinfo, home: "str | None" = None) -> "t
         keys = [k for k in URL_KEYS if k in args]
         if len(keys) != 1:
             return "deny", f"read_url_content needs exactly one of {list(URL_KEYS)}; got keys {sorted(args)}", []
-        why, host = _url_check(args[keys[0]], resolve)
+        why, host = _url_check(args[keys[0]], resolve, follow)
         return ("deny", why, []) if why else ("allow", "public page", [f"read_url({host})"])
     if name in PAGE_TOOLS:
         why = _page_file_refusal(args, payload.get("conversationId"), str(home or os.path.expanduser("~")))

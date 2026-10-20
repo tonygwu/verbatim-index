@@ -48,7 +48,10 @@ def sidecar(run: Path, pid: str, slug: str, outcome: str, *, ap=None, harness="a
            "as_of": "2026-10-11", "prompt_sha256": prompt, "sources": sources or [{"what_it_shows": f"s {pid}",
            "where": f"https://e.com/{pid}", "date": "2025-01-01"}], "confidence": "high", "searched": ["a", "b", "c"],
            "unresolvable_reason": "no_public_evidence" if outcome == "unresolvable" else None,
-           "telemetry": {"web_search": {"queries": ["a", "b", "c"]}, "own_site_mentions": 0}}
+           "telemetry": {"web_search": {"queries": ["a", "b", "c"]}}}
+    if harness == "gemini":
+        # Only the Gemini harness records it (gemini_resolver.call); Astra's is read from its raw answer.
+        obj["telemetry"]["own_site_mentions"] = 0
     dest = R.sidecar_path(run, "resolve", slug, pid)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(obj))
@@ -78,20 +81,31 @@ with tempfile.TemporaryDirectory() as td:
                    "resolution_reasoning": None, "flags": {"eligible": True}})  # not resolved
     scores.append({"prediction_id": "lost", "leader_slug": "lead3", "outcome": "occurred",
                    "resolution_reasoning": "no sidecar says this", "flags": {"eligible": True}})
+    early = {"prediction_id": "early1", "leader_slug": "lead5", "stage": "early", "outcome": "occurred",
+             "harness": "astra", "reasoning": "settled before its deadline", "already_public": None}
+    ef = R.sidecar_path(r1, "early", "lead5", "early1")
+    ef.parent.mkdir(parents=True, exist_ok=True)
+    ef.write_text(json.dumps(early))
+    scores.append({"prediction_id": "early1", "leader_slug": "lead5", "outcome": "occurred",
+                   "resolution_reasoning": early["reasoning"], "flags": {"eligible": True}})
     o = board("dup", "lead4", "occurred")
     sidecar(r2, "dup", "lead4", "occurred", reasoning=o["reasoning"])         # matched in two runs
     sidecar(r2, "p00", "lead0", "not_occurred", reasoning="an older run's answer")  # not the board's
 
-    sel = C.select(scores, [r1, r2], exclude={"adj"}, per_outcome=2, already_public=1, per_leader=1, salt="T")
+    sel = C.select(scores, [r1, r2], exclude={"adj"}, per_outcome=2, already_public=1, per_leader=1, salt="T",
+                   root=td)
     chosen = sel["rows"]
     ids = [r["prediction_id"] for r in chosen]
     check("the board's resolution is the sidecar whose reasoning scores.json carries, not another run's",
-          next((r for r in chosen if r["prediction_id"] == "p00"), {"board_run": str(r1)})["board_run"] == str(r1),
+          next((r for r in chosen if r["prediction_id"] == "p00"), {"board_run": "run1"})["board_run"] == "run1",
           str(chosen))
+    check("a board run is recorded relative to the data root, so the selection reads on any machine",
+          all(not Path(r["board_run"]).is_absolute() for r in chosen), str([r["board_run"] for r in chosen]))
     ex = sel["excluded"]
     check("each left-out row is counted by its reason",
           ex == {"adjudicated": 1, "not_astra": 1, "not_eligible": 1, "not_resolved": 1, "no_matching_sidecar": 1,
-                 "several_matching_sidecars": 1}, str(ex))
+                 "several_matching_sidecars": 1, "early_stage": 1}, str(ex))
+    check("the rule names the early-stage exclusion", "early" in sel["rule"], sel["rule"])
     check("per_outcome rows of each outcome, when the pool allows", sorted(r["board_outcome"] for r in chosen)
           == ["not_occurred"] * 2 + ["occurred"] * 2 + ["unresolvable"] * 2, str(chosen))
     check("at most already_public rows with already_public set per outcome",
@@ -121,7 +135,8 @@ with tempfile.TemporaryDirectory() as td:
           sel["rule"])
 
     # ---- report -------------------------------------------------------------
-    sel2 = C.select(scores, [r1, r2], exclude={"adj"}, per_outcome=2, already_public=1, per_leader=2, salt="T")
+    sel2 = C.select(scores, [r1, r2], exclude={"adj"}, per_outcome=2, already_public=1, per_leader=2, salt="T",
+                    root=td)
     rows = sel2["rows"]
     a_run, g_run = td / "astra-new", td / "gemini"
     flip = rows[0]["prediction_id"]
@@ -133,7 +148,16 @@ with tempfile.TemporaryDirectory() as td:
         if pid != rows[-1]["prediction_id"]:                                   # Gemini failed on the last row
             sidecar(g_run, pid, slug, g_out, ap=None, harness="gemini", release="resolution-2026-10-19",
                     prompt=f"P{pid}", sources=[{"what_it_shows": "gem src", "where": "https://g.com", "date": None}])
-    rep = C.report(sel2, a_run, g_run)
+    # One row each arm saw the project's own site in: Astra in its raw answer, Gemini in its transcript count.
+    exp_a, exp_g = rows[1]["prediction_id"], rows[2]["prediction_id"]
+    raw = a_run / "_raw" / "resolve" / rows[1]["leader_slug"] / f"{exp_a}.txt"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text(json.dumps({"stdout": '{"type": "open_page", "url": "https://VERBATIM-PREDICTIONS.TONYGWU.COM/p"}'}))
+    gf = R.sidecar_path(g_run, "resolve", rows[2]["leader_slug"], exp_g)
+    gobj = json.loads(gf.read_text())
+    gobj["telemetry"]["own_site_mentions"] = 2
+    gf.write_text(json.dumps(gobj))
+    rep = C.report(sel2, a_run, g_run, root=td)
     n = len(rows)
     by = {x["prediction_id"]: x for x in rep["rows"]}
     check("every selected row appears once in the report", sorted(by) == sorted(r["prediction_id"] for r in rows), "")
@@ -155,7 +179,15 @@ with tempfile.TemporaryDirectory() as td:
     md = C.render_markdown(rep)
     check("the markdown table has one line per row", sum(1 for ln in md.splitlines() if ln.startswith("| ")
           and any(r["prediction_id"] in ln for r in rows)) == n, md[:500])
-    msg = raises(lambda: C.report(sel2, a_run, a_run))
+    by = {x["prediction_id"]: x for x in rep["rows"]}
+    check("Astra's exposure is read from its raw answer", by[exp_a]["astra_new"]["own_site_mentions"] == 1,
+          str(by[exp_a]["astra_new"]))
+    check("Gemini's exposure is read from its telemetry", by[exp_g]["gemini"]["own_site_mentions"] == 2,
+          str(by[exp_g]["gemini"]))
+    un = rep["agreement_without_own_site"]["gemini_vs_astra_new"]["outcome"]
+    check("agreement is also given without the rows either new arm saw the site in", un["of"] == n - 3, str(un))
+    check("and those rows are named", sorted(rep["own_site_rows"]) == sorted([exp_a, exp_g]), str(rep["own_site_rows"]))
+    msg = raises(lambda: C.report(sel2, a_run, a_run, root=td))
     check("the two arms must be two different runs", msg is not None, str(msg))
 
 print(f"\n{passed} passed, {failed} failed")

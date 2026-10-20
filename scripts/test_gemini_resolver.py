@@ -166,12 +166,16 @@ check("a finished tool step with no allow in the gate log is refused (the hook d
 probs = GR.tool_audit(events, [gate(2, "search_web"), gate(4, "read_url_content"), gate(6, "read_file", "deny"),
                                gate(8, "read_url_content", "deny")])
 check("a step the gate refused but the stream shows finished is refused", any("step 6" in p for p in probs), str(probs))
+probs = GR.tool_audit(events, entries[:3])
+check("a tool step that ended in an error with no gate entry at all is refused (the hook did not run)",
+      any("step 8" in p for p in probs), str(probs))
 ev2, _ = G.parse_jsonl_events(stream((2, "run_command", "DONE")))
 probs = GR.tool_audit(ev2, [gate(2, "run_command")])
 check("a finished tool outside the resolver's set is refused even if logged as allowed",
       any("run_command" in p for p in probs), str(probs))
 probs = GR.tool_audit(events, [dict(e, conversation_id="other") for e in entries])
-check("gate entries from another conversation do not vouch for this one", len(probs) == 3, str(probs))
+check("gate entries from another conversation do not vouch for this one (all four steps)", len(probs) == 4,
+      str(probs))
 check("a stream with no init conversation id cannot be audited",
       GR.tool_audit([e for e in events if e.get("event") != "init"], entries) != [], "")
 
@@ -181,6 +185,64 @@ transcript = [{"type": "GENERIC", "status": "DONE", "content": "results ... http
               {"type": "GENERIC", "status": "DONE", "content": "nothing here"}]
 check("a tool output naming the project's site is counted; refusals and the model's own words are not",
       GR.own_site_mentions(transcript) == 1, str(GR.own_site_mentions(transcript)))
+
+# ---- 3b. GR.call: its refusals, and evidence kept either way ---------------
+print("3b. gemini_resolver.call")
+
+
+def fake_call_gemini(stdout: str, gate_entries: list, transcript: "list | None", raise_with: "str | None" = None):
+    def run(prompt, profile, timeout, *, workdir, shared_root, prepare_jail, raw_response_path, **kw):
+        jail = G.gemini_jail(profile, workdir, shared_root=shared_root)
+        prepare_jail(jail)
+        (jail / "agy-cli.log").write_text("log")
+        (jail / ".agents" / GATE.LOG_NAME).write_text("".join(json.dumps(e) + "\n" for e in gate_entries))
+        if transcript is not None:
+            (jail / ".agents" / f"transcript_full.{CONV}.jsonl").write_text(
+                "".join(json.dumps(r) + "\n" for r in transcript))
+        raw_response_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_response_path.write_text(json.dumps({"returncode": 0, "stdout": stdout, "stderr": ""}))
+        if raise_with:
+            raise RuntimeError(raise_with)
+        return '{"ok": 1}', {"served_model": "gemini-4-argon-high", "web_search": {"queries": ["q2"]}}
+    return run
+
+
+good_stream = stream((2, "search_web", "DONE"), (4, "read_url_content", "DONE"))
+good_gate = [gate(2, "search_web"), gate(4, "read_url_content"), {"event": "Stop", "conversation_id": CONV}]
+own = [{"type": "GENERIC", "status": "DONE", "content": "[1] [verbatim-predictions.tonygwu.com](https://x)"}]
+real_cg, real_root = G.call_gemini, GR.RESOLVER_JAIL_ROOT
+with tempfile.TemporaryDirectory() as td:
+    td = Path(td)
+    GR.RESOLVER_JAIL_ROOT = td / "jails"
+    try:
+        def go(stem, **kw):
+            G.call_gemini = fake_call_gemini(**kw)
+            return lambda: GR.call("P", "user:someone", 60, jail_name=f"run-{stem}", model="gemini-4-argon-high",
+                                   expected_identity="b@x", raw_dir=td / "raw", stem=stem)
+        text, tel = go("ok", stdout=good_stream, gate_entries=good_gate, transcript=own)()
+        check("a gated call returns its text and the gate's count", text == '{"ok": 1}'
+              and tel["gate"] == {"allowed": 2, "refused": {}}, str(tel.get("gate")))
+        check("tool output naming the project's site is counted on the telemetry", tel["own_site_mentions"] == 1,
+              str(tel.get("own_site_mentions")))
+        check("the jail's file hashes are recorded", tel["resolver_jail"]["files_sha256"] == GR.jail_hashes(), "")
+        check("the evidence is kept beside the raw answer", sorted(tel["evidence"]["files"]) == sorted(
+              ["ok.agy-cli.log", "ok.gate_log.jsonl", f"ok.transcript_full.{CONV}.jsonl"]), str(tel["evidence"]))
+        check("and the jail is removed", tel["evidence"]["jail_removed"] and not (td / "jails" / "run-ok").exists(), "")
+        msg = raises(go("ungated", stdout=good_stream, gate_entries=good_gate[:1], transcript=own))
+        check("a finished step the gate did not allow fails the call as ungated_tool_use",
+              msg is not None and msg.startswith(GR.E_UNGATED), str(msg))
+        check("and its evidence is still kept", (td / "raw" / "ungated.gate_log.jsonl").exists()
+              and not (td / "jails" / "run-ungated").exists(), "")
+        msg = raises(go("nott", stdout=good_stream, gate_entries=good_gate, transcript=None))
+        check("a call with no copied transcript fails, labelled so", msg is not None
+              and msg.startswith(G.E_NO_TRANSCRIPT) and G.E_NO_TRANSCRIPT in GR.ERROR_TYPES, str(msg))
+        msg = raises(go("empty", stdout=good_stream, gate_entries=good_gate, transcript=own,
+                        raise_with=f"{G.E_EMPTY}: no answer"))
+        check("a failed agy call still leaves its evidence and removes its jail", msg is not None
+              and msg.startswith(G.E_EMPTY) and (td / "raw" / "empty.agy-cli.log").exists()
+              and not (td / "jails" / "run-empty").exists(), str(msg))
+    finally:
+        G.call_gemini, GR.RESOLVER_JAIL_ROOT = real_cg, real_root
 
 # ---- 4. profiles -----------------------------------------------------------
 print("4. only another macOS user may resolve")
@@ -229,6 +291,73 @@ check("Gemini options without --resolver gemini are refused, not ignored",
 for label in (G.E_EMPTY, G.E_TRANSIENT, GR.E_UNGATED):
     check(f"a Gemini failure labelled {label} is filed under its own label", RP.classify(f"{label}: x auth") == label,
           RP.classify(f"{label}: x auth"))
+
+# ---- 6. the gemini branch of run_one, through main --------------------------
+print("6. resolve_predictions main with --resolver gemini (GR.call stubbed)")
+import contextlib  # noqa: E402
+import io  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+import resolution_lib as R  # noqa: E402
+
+THREE = ["engine ship date", "Analytical engine release", "Analytical annual report"]
+REC = {"accepted": True, "leader_slug": "ada", "prediction_id": "g1", "transcript_id": "ada/t1",
+       "speaker": {"name": "Ada Lovelace", "role": "CEO", "company": "Analytical"},
+       "prediction": {"target_date": "2021-12-31", "target_date_text": "by 2021-12-31", "horizon_years_inferred": None,
+                      "specificity": "high", "subject_control": "external", "category": "technology_product",
+                      "prediction_type": "milestone", "horizon": "explicit", "normalized_claim": "claim g1",
+                      "resolution_criteria": "By 2021-12-31, g1 will have happened."},
+       "source": {"statement_date": "2020-01-01", "statement_date_basis": "stated_in_page", "quote": "quote g1",
+                  "venue": "", "title": "t", "context_before": "", "context_after": ""},
+       "confidence": {"probability": None}, "consensus": {"status": "no_match", "exact_match": None}}
+ANSWER = {"prediction_id": "g1", "outcome": "occurred", "confidence": "high", "unresolvable_reason": None,
+          "sources": [{"what_it_shows": "shipped", "where": "https://x.example.com/", "date": "2021-03-01"}],
+          "searched": THREE, "already_public": None, "reasoning": "It shipped in March 2021."}
+ROT = G.GeminiRotation(profiles=["user:agents"], identities={"user:agents": "b@x"}, benched=[], versions={},
+                       accounts={"user:agents": "antigravity_gemini_b"})
+
+
+def run_main(tel, raise_with=None, extra=()):
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        corpus = td / "predictions"
+        (corpus / "ada").mkdir(parents=True)
+        (corpus / "ada" / "t1.jsonl").write_text(json.dumps(REC) + "\n")
+        (corpus / "index.json").write_text(json.dumps({"leaders": [{"slug": "ada", "name": "Ada L"}]}))
+        out, errs = corpus / "_experiments" / "g", td / "errors.jsonl"
+        seen = []
+
+        def fake_call(prompt, profile, timeout, **kw):
+            seen.append((profile, kw))
+            if raise_with:
+                raise RuntimeError(raise_with)
+            return json.dumps(ANSWER), tel
+        with patch.object(GR, "call", fake_call), patch.object(G, "gemini_rotation_preflight", lambda *a, **k: ROT), \
+                contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            rc = RP.main(["--stage", "resolve", "--resolver", "gemini", "--predictions", str(corpus), "--out", str(out),
+                          "--as-of", "2026-09-28", "--errors", str(errs), "--workers", "1", *extra])
+        side = R.sidecar_path(out, "resolve", "ada", "g1")
+        obj = json.loads(side.read_text()) if side.exists() else None
+        summary = json.loads(next((out / "_runs").glob("*.json")).read_text())
+        lines = [json.loads(x) for x in errs.read_text().splitlines()] if errs.exists() else []
+        return rc, obj, summary, lines, seen
+
+
+rc, obj, summary, lines, seen = run_main({"served_model": "gemini-4-argon-high", "web_search": {"queries": THREE}})
+check("a Gemini resolution that meets every rule is written", rc == 0 and obj is not None, f"{rc} {lines}")
+check("its sidecar names the harness and the router account", obj and (obj["harness"], obj["account"])
+      == ("gemini", "antigravity_gemini_b"), str(obj and (obj["harness"], obj["account"])))
+check("the call ran on the other user's profile with its expected identity and a per-run jail",
+      seen and seen[0][0] == "user:agents" and seen[0][1]["expected_identity"] == "b@x"
+      and seen[0][1]["jail_name"].endswith("-g1") and seen[0][1]["model"] == "gemini-4-argon-high", str(seen))
+check("the run summary names the resolver", summary.get("resolver") == {"harness": "gemini", "model":
+      "gemini-4-argon-high", "accounts": ["antigravity_gemini_b"]}, str(summary.get("resolver")))
+rc, obj, summary, lines, _ = run_main({"served_model": "gemini-4-argon-high", "web_search": {"queries": THREE[:2]}})
+check("a Gemini answer whose own stream shows two searches is refused by the effort floor",
+      rc == 1 and obj is None and summary["error_taxonomy"] == {RP.E_RULES: 1}, f"{summary} {lines}")
+rc, obj, summary, lines, _ = run_main({}, raise_with=f"{GR.E_UNGATED}: step 6 ran read_file with no allow")
+check("an ungated call is filed as ungated_tool_use and writes nothing",
+      rc == 1 and obj is None and summary["error_taxonomy"] == {GR.E_UNGATED: 1}, f"{summary} {lines}")
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
