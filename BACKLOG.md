@@ -409,7 +409,7 @@ skips.
 
 ---
 
-### VI-49. The predictions build's summary line pairs the page's scored count with its past-due count, so it says "585 of 834" where the page says 546 of 834  `[capability: fast]`  `[priority: P3]`  `[filed: 2026-10-20]`
+### VI-49. The predictions build's summary line pairs the page's scored count with its past-due count, so it says "585 of 834" where the page says 546 of 834  `[capability: fast]`  `[priority: P3]`  `[filed: 2026-10-20]`  `[claimed by: #1]`
 
 **Background:** `scripts/build_predictions_site.py:3117` "the page prints {cl['scored']} of {cl['past_due']} past due" prints every scored prediction of the listed people against their past-due count. The page itself (`scripts/build_predictions_site.py:2587` "def score_legend(c: dict) -> str:") counts only the scored predictions that are past due, and names the early-called ones separately. On 2026-10-20 the deploy dry run printed "the page prints 585 of 834 past due scored", while the live page printed "546 of 834 past-due predictions could be checked and scored" and "(585 scored in all)": the 39 between them are predictions called early, scored before their deadline. The `scores:` line just above (`:3114`) pairs corpus `scored` with `past_due` the same way. Found by the review of the VI-45 deploy record on 2026-10-20.
 
