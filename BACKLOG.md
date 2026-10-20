@@ -108,26 +108,6 @@ skips.
 
 ---
 
-### VI-54. The board scores Sweeney `5c16324b2d6126ea` as a miss under an operator ruling that the operator has reversed  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-20]`  `[claimed by: #1]`
-
-**Background:** On 2026-10-20 the operator reversed their ruling of the same day that Tim Sweeney's prediction `5c16324b2d6126ea` is not already public (ledger VD-26; the decision is to be recorded as VD-27, Fix step 3). The Rule 8 re-check (VP-46) applied that ruling over Astra's answer under release `resolution-2026-10-20`, which cites Epic's own 2025-01-24 post as the earlier announcement: `apply_rulings.py` moved Astra's sidecar to `adjudicated/` and wrote a copy with `already_public` null in its place (`data/predictions/_experiments/rule8-recheck-20261020-repo1/apply_rulings.py:5` "Sweeney 5c16324b2d6126ea are NOT already public"). Since the deploy of VD-25 the row scores a miss at p 0.65, -1.15 points (`docs/LEDGER-predictions.md:97` "Reversing the ruling takes the row off the board").
-
-**Impact:** the published board scores a row that the operator now rules already public, so Tim Sweeney carries one scored miss too many and the board counts 606 scored rows where 605 is right.
-
-**Fix:**
-1. In the run folder, with no model calls: remove Sweeney from `RULINGS` in `apply_rulings.py`; move the operator-corrected copy out of `resolutions/` into a `reversed/` folder, and move Astra's sidecar back from `adjudicated/` byte for byte, refusing unless both hashes equal the ones in `corrections.jsonl`; append a reversal record to `corrections.jsonl` that names the reversal, quotes the operator's decision verbatim, and gives both hashes. Keep the docstring's account of the original rulings and add a line saying the Sweeney ruling was reversed. Nothing under `_raw/` changes.
-2. Score in scratch and check that this is the only row whose state changes: scored 606 -> 605, Sweeney's scored count down by one.
-3. Ledger: VD-26 says the Sweeney ruling is reversed; a decided VD-27 row quotes the decision and names the deployed revisions; VP-46 gets a note; VI-51's text says that its ruled-card note now covers Gelsinger's card only. The Rule 8 worked example about Sweeney stays as it is, because the operator is choosing its new wording separately.
-4. Run the gate, review, push with `data_sync.py push`, then deploy the predictions site from exactly origin/main and check the live `revision.json` and the Sweeney card.
-
-*Risks and edge cases:* a data commit after 2026-10-21T00:00Z moves the scoring as-of date and needs a new scoring pass, so the push and the deploy must both land before then. The five held rows of VD-26 and the Gelsinger ruling `1e869ff2affb0357` stay exactly as they are. Afterwards only Gelsinger's ruled card ends by saying the prediction was already public.
-
-*Why premium not standard:* it changes the published board and runs a production deploy against a deadline, and a wrong move scores the wrong row.
-
-**Touch points:** `data/predictions/_experiments/rule8-recheck-20261020-repo1/apply_rulings.py:5` "Sweeney 5c16324b2d6126ea are NOT already public" and the `RULINGS` entry at `:23`, that run's `corrections.jsonl`, `README.md` and `STATUS.md`; `docs/LEDGER-predictions.md:97` "Reversing the ruling takes the row off the board", the VP-46 row at `:91` and a new VD-27 row; VI-51 in this file.
-
----
-
 ### VI-1. `extract_predictions.py` takes no `--study`, so a pundits run can write into the leaders data repo  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-18]`
 
 **Background:** Filed by repo-3. `scripts/extract_predictions.py:747-781` declares every argument and none is `--study`; `--out` defaults to `data/predictions` (`:749`), `--transcripts` to `data/transcripts_open` (`:747`) and `--roster` to `data/roster/final.json` (`:748`), all leaders paths. The speaker script has the guard this needs: `scripts/pundits_speaker_infer.py:374` calls `study_profile.add_study_arg` and `:381` calls `SP.guard(args.study, str(root))` (`scripts/study_profile.py:95` and `:146`). The pundits prediction pilot of 2026-10-18 was written to the leaders `predictions/_experiments/` and moved by hand to the pundits data repo's `experiments/predictions-pilot-20261018/`. `docs/agents/PUNDITS.md:185` tells a pundits extraction to pass every path by hand for this reason. The run also records the wrong data revision: `input_data_revision` comes from the leaders checkout (`scripts/extract_predictions.py:896` "input_data_revision = data_git(L.data_root()"), so the pundits pilot's records name leaders data commits (`c553aed` in the runs of 2026-10-18, `6c64b2f` in the re-verify of 2026-10-19) that do not exist in the pundits data repo. `input_sha256` still pins each input.
