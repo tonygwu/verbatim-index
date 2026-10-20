@@ -56,6 +56,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
+import credit_run  # noqa: E402
 import grade as G  # noqa: E402
 import study_profile as SP  # noqa: E402
 
@@ -106,7 +107,10 @@ def parse_lines(stdout: str) -> list[dict]:
 
 def run_fable(prompt: str, jail: Path, profile: str, config_dir: str, timeout: int,
               tools_off: bool = False) -> dict:
-    env = dict(os.environ)
+    # The 128,000-token cap (VI-23, VI-42). No cut-answer check here yet: most cuts on this
+    # harness end while still thinking, which the token gap cannot tell from a cut answer;
+    # add credit_run.truncation_detail once VI-43 can pass a thinking-only cut.
+    env = credit_run.child_env()
     env["CLAUDE_CONFIG_DIR"] = config_dir
     extra = ["--tools", ""] if tools_off else []
     cmd = ["sandbox-exec", "-p", profile, *G.fable_command(prompt, "claude"), *extra]

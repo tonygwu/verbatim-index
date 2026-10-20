@@ -42,7 +42,6 @@ import argparse
 import concurrent.futures as cf
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -53,6 +52,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import credit_run  # noqa: E402
 import grade as G  # noqa: E402
 from atomicio import write_atomic  # noqa: E402
 from annotations_spans import quote_review, sidecar_path, token_kinds  # noqa: E402
@@ -94,7 +94,10 @@ def call_claude(prompt: str, model: str, config_dir: str, workdir: Path, raw: Pa
     cmd = G.fable_command(prompt, "claude")
     cmd[cmd.index("--model") + 1] = model
     cmd = [*G.sandbox_wrapper(DENIED_ROOT), *cmd, "--tools", ""]
-    env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir)
+    # The 128,000-token cap (VI-23, VI-42). No cut-answer check here yet: most cuts on this
+    # harness end while still thinking, which the token gap cannot tell from a cut answer;
+    # add credit_run.truncation_detail once VI-43 can pass a thinking-only cut.
+    env = dict(credit_run.child_env(), CLAUDE_CONFIG_DIR=config_dir)
     workdir.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT, env=env,
                           cwd=str(workdir), stdin=subprocess.DEVNULL)

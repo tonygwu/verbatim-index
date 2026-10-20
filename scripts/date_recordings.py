@@ -448,8 +448,12 @@ def call_fable_web(prompt: str, config_dir: str, timeout: int, binary: str = "cl
     tool but the two fails as judge_attempted_tool_use, and a missing transcript as
     tool_audit_unavailable, never as a clean answer.
     """
+    import credit_run  # noqa: PLC0415
     import grade as G  # noqa: PLC0415 -- the harness module is heavy and only a real run needs it
-    env = dict(os.environ)
+    # The 128,000-token cap (VI-23, VI-42). No cut-answer check here yet: most cuts on this
+    # harness end while still thinking, which the token gap cannot tell from a cut answer;
+    # add credit_run.truncation_detail once VI-43 can pass a thinking-only cut.
+    env = credit_run.child_env()
     if config_dir == "__DEFAULT__":
         env.pop("CLAUDE_CONFIG_DIR", None)
     else:

@@ -146,7 +146,11 @@ def draft_command(prompt: str, model_key: str) -> list[str]:
 
 
 def call_model(prompt: str, model_key: str, config_dir: str | None, timeout: int = 1800) -> tuple[str, dict]:
-    env = dict(os.environ)
+    import credit_run  # noqa: PLC0415
+    # The 128,000-token cap (VI-23, VI-42). No cut-answer check here yet: most cuts on this
+    # harness end while still thinking, which the token gap cannot tell from a cut answer;
+    # add credit_run.truncation_detail once VI-43 can pass a thinking-only cut.
+    env = credit_run.child_env()
     if config_dir:
         env["CLAUDE_CONFIG_DIR"] = config_dir
     else:

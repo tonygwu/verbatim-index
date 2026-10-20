@@ -222,11 +222,13 @@ the mix even.
   such an answer now fits one turn: `credit_run.run`, which every credit call
   uses, and `grade.call_fable`, the subscription judge harness that grades,
   extraction, priors, year summaries and the `fable` dater use. Both record
-  the cap they asked for as `telemetry.max_output_tokens_requested`. The other
-  Fable harnesses (`date_recordings.call_fable_web`, the subscription drafts in
-  `pundits_speaker_infer.call_model`, `speaker_segment_probe.py`,
-  `p3_judge_probe.py`) get neither the cap nor the
-  check: BACKLOG VI-42. The model is not told the cap today, so an answer under
+  the cap they asked for as `telemetry.max_output_tokens_requested`. Since
+  VI-42 (2026-10-20) the four other Fable harnesses (`date_recordings.call_fable_web`,
+  the subscription drafts in `pundits_speaker_infer.call_model`,
+  `speaker_segment_probe.py`, `p3_judge_probe.py`) get the cap too, through
+  `credit_run.child_env()`, but not the check: most cuts there end while still
+  thinking, which the gap cannot tell from a cut answer, so the check waits on
+  VI-43 (proof: `scripts/test_fable_child_env.py`). The model is not told the cap today, so an answer under
   64,000 tokens is unchanged; Claude Code 2.1.303 can add an
   `output_limit_note` that names the cap behind a server flag, and none was in
   any Fable transcript on 2026-10-19.
