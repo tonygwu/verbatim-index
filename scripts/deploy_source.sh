@@ -70,7 +70,9 @@ check_origin_before_publish() {
     --data-revision "$DATA_REVISION" --public-revision "$PUBLIC_REVISION" || return 1
   local first=()
   [ "$FIRST_REVISION" -eq 1 ] && first=(--first-revision-deploy)
+  # --public-revision: at the live page's own data revision the ancestor check
+  # always passes, so the live page's public code must be an ancestor of ours (VI-48).
   $PY scripts/data_clone_workflow.py live-revision --production-data "$PRODUCTION_DATA" \
-    --data-revision "$DATA_REVISION" ${first[@]+"${first[@]}"} || return 1
+    --data-revision "$DATA_REVISION" --public-revision "$PUBLIC_REVISION" ${first[@]+"${first[@]}"} || return 1
   echo "origin unmoved and the live page is not newer: data $DATA_REVISION, public $PUBLIC_REVISION"
 }

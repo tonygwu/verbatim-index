@@ -14,6 +14,8 @@ real data remote, with a stub renderer and a stub npx that records the deploy.
   LIVE      the live revision must be an ancestor of ours: a live page built from
             a commit we do not descend from refuses; an unreadable one refuses
             unless --first-revision-deploy is passed.
+  LIVE-CODE at our own data revision, the live page's public code must be an
+            ancestor of our public HEAD (VI-48).
   STALE     a pushed index that is behind its records refuses, whether the counts
             drifted or a record was rewritten in place with the counts equal; an
             index that predates a fingerprint refuses as unprovable.
@@ -190,6 +192,33 @@ def main() -> int:
               and not deployed.exists(), p.stderr[-500:])
         p = deploy("--first-revision-deploy")
         check("LIVE: --first-revision-deploy allows it once", p.returncode == 0 and deployed.exists(), p.stderr[-500:])
+
+        # -------------------------------------------------------- LIVE-CODE --
+        # VI-48: at our own data revision the ancestor check above always passes,
+        # so the live page's public code must be an ancestor of our public HEAD.
+        # A live page rendered from a pushed side commit main lacks (an origin
+        # rewrite, or a publish outside this script) must not be replaced.
+        here = git(c, "rev-parse", "HEAD")
+        git(pub, "switch", "-q", "-c", "live-code-elsewhere")
+        (pub / "side-code.txt").write_text("s")
+        git(pub, "add", "side-code.txt")
+        git(pub, "commit", "-q", "-m", "public code main does not contain")
+        side_code = git(pub, "rev-parse", "HEAD")
+        git(pub, "push", "-q", "origin", "live-code-elsewhere")
+        git(pub, "switch", "-q", "main")
+        live.write_text(json.dumps({"data_revision": here, "public_revision": side_code}))
+        p = deploy()
+        check("LIVE-CODE: a live page at our data revision rendered by code we do not descend from refuses",
+              p.returncode != 0 and "newer code" in p.stderr and not deployed.exists(), p.stderr[-500:])
+        older = git(pub, "rev-parse", "HEAD")
+        (pub / "newer-code.txt").write_text("n")
+        git(pub, "add", "newer-code.txt")
+        git(pub, "commit", "-q", "-m", "public code that descends from the live page's")
+        git(pub, "push", "-q", "origin", "main")
+        live.write_text(json.dumps({"data_revision": here, "public_revision": older}))
+        p = deploy()
+        check("LIVE-CODE: a live page at our data revision rendered by an ancestor of our code deploys",
+              p.returncode == 0 and deployed.exists(), p.stderr[-500:])
 
         # ------------------------------------------------------------ STALE --
         # Pushed raw, with no hook installed, to put a stale index on main the
