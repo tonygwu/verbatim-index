@@ -120,7 +120,10 @@ def scores_doc() -> dict:
     for slug, name, _acc, mean, n, hits, ranked, past_due in PEOPLE:
         leaders.append({"slug": slug, "name": name, "mean_points": mean, "n_scored": n,
                         "scored_occurred": hits, "hit_rate": round(hits / n, 4) if n else None,
-                        "ranked": ranked, "past_due": past_due, "eligible": n, "unresolvable": 0,
+                        # ann has two eligible predictions that were not scored, so
+                        # the card's "scored" cannot pass by reading "eligible".
+                        "ranked": ranked, "past_due": past_due, "eligible": n + (2 if slug == "ann" else 0),
+                        "unresolvable": 0,
                         "restated": 0})
     # One early call for a listed person: scored before its deadline, so the
     # page's "scored in all" figure is larger than its scored-of-past-due figure.
@@ -203,6 +206,8 @@ def card_matches_page() -> None:
         check("predictions scored is the page's 'scored in all' figure",
               fig["scored"] == cl["scored"] and f"({cl['scored']} scored in all)" in B.score_legend(cl),
               f"{fig['scored']} vs {cl['scored']}: {B.score_legend(cl)[:300]}")
+        check("the fixture tells scored from eligible, so the check above can fail",
+              cl["scored"] != cl["eligible"], f"scored {cl['scored']} eligible {cl['eligible']}")
         check("predictions extracted is the page's Predictions figure",
               fig["predictions"] == index["corpus"]["accepted"], str(fig["predictions"]))
         check("the as-of date is the scoring run's", fig["as_of"] == "2026-10-20", str(fig["as_of"]))
@@ -241,6 +246,12 @@ def card_matches_page() -> None:
                      f"<b>{index['corpus']['accepted']}</b> extracted",
                      "as of <b>2026-10-20</b>", "and 1 more"):
             check(f"the card's HTML draws {want!r}", want in (html if "<" in want else text))
+        check("a positive Score is drawn in the page's positive colour",
+              f'<b class="pos">+0.30</b>' in html, html[html.find('class="sc"'):][:120])
+        neg_fig = json.loads(json.dumps(fig))
+        neg_fig["top"][2]["score"] = "\u22120.50"
+        check("a negative Score is drawn in the page's negative colour",
+              '<b class="neg">\u22120.50</b>' in card.predictions_card_html(neg_fig))
         check("the card names nobody the page does not rank in its top three",
               not any(n in html for n in ("Dee Dunn", "Eve East", "Fay Ford", "Gus Gray")))
 
@@ -401,6 +412,31 @@ def main_wires_the_check() -> None:
               '<meta name="twitter:creator" content="@tonygwu">' in head, head[-800:])
 
 
+def fit_check() -> None:
+    """card_fits() reads the size the card's own script measured and refuses
+    anything larger than 1200x630, or no measurement at all. Chrome is stubbed:
+    the measurement itself was checked by hand with real long roles."""
+    check("the card's HTML measures itself once the fonts are in",
+          "document.body.dataset.fit" in card.PRED_CARD and "document.fonts.ready" in card.PRED_CARD)
+    real = card.subprocess
+    try:
+        for dom, ok in (('<body data-fit="1200x630">', True), ('<body data-fit="1200x653">', False),
+                        ('<body data-fit="1210x630">', False), ("<body>", False)):
+            card.subprocess = argparse.Namespace(run=lambda *a, _d=dom, **k: argparse.Namespace(stdout=_d))
+            code = None
+            try:
+                card.card_fits("chrome", Path("/tmp/card.html"))
+            except SystemExit as exc:
+                code = exc.code
+            check(f"a measured {dom!r} {'passes' if ok else 'refuses'}",
+                  (code is None) if ok else ("REFUSING" in str(code)), repr(code))
+    finally:
+        card.subprocess = real
+    src = Path(card.__file__).read_text()
+    check("the predictions card is measured before it is drawn",
+          src.index("card_fits(find_chrome(), src)") < src.index('f"--screenshot={out}"'))
+
+
 def head_tags() -> None:
     head = B.TEMPLATE[:B.TEMPLATE.index("</head>")]
     check("the template's head carries twitter:site @tonygwu",
@@ -412,6 +448,7 @@ def head_tags() -> None:
 section("the card's rows and totals are the page's", card_matches_page)
 section("the page warns when the card drifts from it", drift_warning)
 section("the page's main() runs the check on a real render", main_wires_the_check)
+section("the card refuses content that does not fit", fit_check)
 section("the page head carries both twitter tags", head_tags)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

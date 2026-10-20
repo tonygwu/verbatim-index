@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -300,6 +301,15 @@ PRED_CARD = """<!DOCTYPE html>
     <tbody>__ROWS__</tbody>
   </table>
   <div class="strip"><div>__STRIP__</div><div class="more">__MORE__</div></div>
+<script>
+  // How big the drawn content is once the fonts are in. card_fits() reads it
+  // back, so a card whose content overflows 1200x630 refuses instead of
+  // quietly losing its bottom rows or the strip of totals.
+  document.fonts.ready.then(() => {
+    const d = document.documentElement;
+    document.body.dataset.fit = d.scrollWidth + "x" + d.scrollHeight;
+  });
+</script>
 </body>
 </html>
 """
@@ -342,6 +352,28 @@ def short_role(role: str) -> str:
     """One clause. Full roles run to 80 characters and wrap to three lines here."""
     cut = role.split(";")[0].split(" (")[0].strip()
     return cut if len(cut) <= 44 else cut[:43].rstrip(" ,") + "\u2026"
+
+
+def card_fits(chrome: str, src: Path) -> None:
+    """Refuse a predictions card whose content does not fit 1200x630.
+
+    The card prints each role line in full, as the page does, so a top three
+    with long roles can push the strip of totals below the bottom edge. The
+    screenshot would still be written and og.meta.json would still record the
+    strip, so nothing downstream would notice. This renders the same HTML once
+    more and reads the size PRED_CARD's script measured."""
+    dom = subprocess.run(
+        [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+         "--force-device-scale-factor=1", "--window-size=1200,630",
+         "--virtual-time-budget=20000", "--dump-dom", src.as_uri()],
+        check=True, capture_output=True, text=True).stdout
+    m = re.search(r'data-fit="(\d+)x(\d+)"', dom)
+    if not m:
+        sys.exit("REFUSING: the card's size could not be measured, so it may not fit 1200x630")
+    w, h = int(m.group(1)), int(m.group(2))
+    if w > 1200 or h > 630:
+        sys.exit(f"REFUSING: the card's content is {w}x{h}, larger than 1200x630, so part of it "
+                 f"would be cut off; a role or organisation is probably too long")
 
 
 def esc(s: str) -> str:
@@ -538,6 +570,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / "card.html"
         src.write_text(html)
+        if args.site == "predictions":
+            card_fits(find_chrome(), src)
         subprocess.run(
             [find_chrome(), "--headless", "--disable-gpu", "--hide-scrollbars",
              "--force-device-scale-factor=1", "--window-size=1200,630",

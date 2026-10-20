@@ -100,9 +100,11 @@ def check_og_card(now: "dict | None") -> None:
     matches; every figure it drew is compared, rows included.
 
     The card is a committed image rather than something this renderer draws, so
-    nothing else would notice it going stale. This never blocks a render: a
-    stale social card is worth reporting, and it is not worth refusing to
-    publish a correct page over.
+    nothing else would notice it going stale. This comparison never blocks a
+    render: a stale social card is worth reporting, and it is not worth
+    refusing to publish a correct page over. card_figures(), which computes
+    `now`, does refuse a scores.json whose rows with a Score and whose
+    leaders_ranked disagree, because the page would then contradict itself.
     """
     if not OG_CARD.is_file():
         print("WARNING: site-predictions/og.png is missing; social cards will show no image",
