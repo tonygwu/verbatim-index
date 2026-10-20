@@ -409,7 +409,7 @@ skips.
 
 ---
 
-### VI-47. The predictions resolver runs only on Astra; there is no Gemini 4 Argon (`agy`) resolver to measure beside it  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-20]`  `[effort: xhigh]`
+### VI-47. The predictions resolver runs only on Astra; there is no Gemini 4 Argon (`agy`) resolver to measure beside it  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-20]`  `[effort: xhigh]`  `[claimed by: #0]`
 
 **Background:** Operator request of 2026-10-20, relayed by repo-1: add a Gemini 4 Argon resolver harness as an option and measure it, with Astra staying the default and the production resolver. The resolver has one harness today, `scripts/resolve_predictions.py:17` "The RESOLVER runs on Astra, through `codex exec`". The operator requires the Gemini resolver to open the pages it cites, and the Gemini judge harness cannot: agy ends a run on an auto-denied tool (`docs/agents/JUDGES.md:401` "The mechanism explains the result. agy ends a run when a tool is auto-denied,"), and page access was ruled out before because it would also reach the leaders board's blinded Gemini grader (`scripts/dating_lib.py:2153` "Granting it page access is not an"). The effort floor reads codex events only (`scripts/grade.py:705` "def web_search_actions(events: list[dict]) -> dict:"); the Gemini counter keeps 10 queries (`scripts/grade.py:2083` "def count_gemini_tool_events("), so `scripts/resolution_lib.py:901` "def validate_effort(obj: dict, telemetry: dict)" has nothing to check a Gemini answer against.
 
