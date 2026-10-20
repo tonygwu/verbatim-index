@@ -2601,6 +2601,30 @@ def score_legend(c: dict) -> str:
             f"below {MIN_SCORED} resolved predictions.")
 
 
+def scored_of_past_due(scored: int, past_due: int, early: int) -> str:
+    """Scored over past due as score_legend counts it: a prediction called early (VD-5) scores before
+    its deadline, so it is named apart, not paired with the past-due count (VI-49: the build log said
+    "585 of 834" where the page said 546 of 834)."""
+    return (f"{scored - early} of {past_due} past due scored"
+            + (f", {early} more called early ({scored} scored in all)" if early else ""))
+
+
+def summary_lines(scores_doc: dict, cl: dict, n_listed: int, n_outcomes: int, models: dict) -> list[str]:
+    """The build log's two score lines: the whole scores.json, then the people the page lists.
+
+    The corpus block has no early-call count, so the first line counts it over every row, the same
+    test listed_corpus applies to the listed people's rows."""
+    sc = scores_doc["corpus"]
+    early_all = sum(1 for r in scores_doc.get("predictions", [])
+                    if r.get("early_called") and r.get("not_due") and r.get("scored"))
+    return [f"scores: {scored_of_past_due(sc['scored'], sc['past_due'], early_all)}, "
+            f"{sc['leaders_ranked']} people ranked, {n_outcomes} outcomes attached to drawers, "
+            f"as of {scores_doc['as_of']}",
+            f"listed: {n_listed} people; the page prints {scored_of_past_due(cl['scored'], cl['past_due'], cl['early_before'])} "
+            f"and {cl['leaders_ranked']} people ranked; prior model "
+            f"{dict(models['prior'])}, resolver {dict(models['resolve'])}"]
+
+
 def score_info(c: dict, rule: dict) -> str:
     """The "?" panel. Every number in it comes from scores.json, never typed here.
 
@@ -3110,13 +3134,8 @@ def main(argv: list[str] | None = None) -> int:
     write_predictions(pred_dir, pred_bodies)
     write_atomic(args.out, html_out)
     if scores_doc:
-        sc = scores_doc["corpus"]
-        print(f"scores: {sc['scored']} of {sc['past_due']} past due scored, "
-              f"{sc['leaders_ranked']} people ranked, {n_outcomes} outcomes attached to drawers, "
-              f"as of {scores_doc['as_of']}")
-        print(f"listed: {len(rows)} people; the page prints {cl['scored']} of {cl['past_due']} past due "
-              f"scored and {cl['leaders_ranked']} people ranked; prior model "
-              f"{dict(models['prior'])}, resolver {dict(models['resolve'])}")
+        for line in summary_lines(scores_doc, cl, len(rows), n_outcomes, models):
+            print(line)
     else:
         print("scores: none supplied; the Score column renders empty")
     ctx = [len(r["context_before"]) + len(r["context_after"]) for rs in pred.values() for r in rs]
