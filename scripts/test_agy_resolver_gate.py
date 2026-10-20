@@ -60,6 +60,9 @@ for i in range(7):
 for i in range(5):  # exactly five redirects, then a page
     HOPS[GROUND + f"five{i}"] = GROUND + f"five{i + 1}"
 HOPS[GROUND + "five5"] = None
+for i in range(6):  # six redirects: one more than allowed
+    HOPS[GROUND + f"six{i}"] = GROUND + f"six{i + 1}"
+HOPS[GROUND + "six6"] = None
 HOPS[GROUND + "relative-ok"] = "/landing"            # a relative Location, resolved against the hop
 HOPS["https://vertexaisearch.cloud.google.com/landing"] = None
 FOLLOWED: list = []
@@ -160,6 +163,8 @@ check("a chain through a second redirect host is followed to its end", d == "all
       and "https://t.co/abc" in FOLLOWED, f"{d} {why} {FOLLOWED}")
 d, why = url_call(GROUND + "five0")
 check("a chain of exactly MAX_HOPS redirects is allowed", d == "allow", f"{d} {why}")
+d, why = url_call(GROUND + "six0")
+check("a chain of MAX_HOPS + 1 redirects is refused", d == "deny" and why, f"{d} {why}")
 d, why = url_call(GROUND + "relative-ok")
 check("a relative Location is resolved against the hop it came from", d == "allow"
       and "https://vertexaisearch.cloud.google.com/landing" in FOLLOWED, f"{d} {why} {FOLLOWED[-3:]}")
@@ -298,6 +303,8 @@ else:
               == ["allow", "deny", "deny", "deny"], str(lines)[:400])
         check("a logged decision names the tool", [x.get("tool") for x in lines][:3]
               == ["search_web", "read_url_content", "view_file"], str(lines)[:400])
+        check("each logged decision records how long the gate took, so a slow hook shows in the pilot",
+              all(isinstance(x.get("seconds"), (int, float)) and x["seconds"] >= 0 for x in lines), str(lines)[:400])
 
 # ---- the Stop hook copies this conversation's transcript into the jail ----
 # The transcript is the one record of what the judge's searches returned: the
@@ -373,12 +380,32 @@ for head, get, want, label in [(302, 302, "location", "a redirect answers its Lo
     srv, url = serve(head, get)
     try:
         try:
-            got = GATE.follow_redirect(url)
+            got = GATE.follow_redirect(url, redirect_hosts=())
         except OSError as exc:
             got = "raise"
         if got not in (None, "raise"):
             got = "location"
         check(f"follow_redirect: {label}", got == want, f"HEAD {head} GET {get}: {got}")
+    finally:
+        srv.shutdown()
+import inspect  # noqa: E402
+check("production follow_redirect applies the 401/403 rule to the real redirect hosts",
+      inspect.signature(GATE.follow_redirect).parameters["redirect_hosts"].default is GATE.REDIRECT_HOSTS,
+      str(inspect.signature(GATE.follow_redirect)))
+# Review round 3: a redirect host that answers 401 or 403 will not say where its
+# link leads, so the link is refused. A final page's 403 still ends the chain:
+# that page's own address is the one already checked.
+for head, get, hosts, want, label in [
+        (403, 403, ("127.0.0.1",), "raise", "a redirect host's 403 is a link the gate cannot see through"),
+        (401, 401, ("127.0.0.1",), "raise", "a redirect host's 401 is a link the gate cannot see through"),
+        (403, 403, (), None, "a final page's 403 ends the chain")]:
+    srv, url = serve(head, get)
+    try:
+        try:
+            got = GATE.follow_redirect(url, redirect_hosts=hosts)
+        except OSError:
+            got = "raise"
+        check(f"follow_redirect: {label}", got == want, f"HEAD {head} GET {get} hosts {hosts}: {got}")
     finally:
         srv.shutdown()
 check("hooks.json runs the Stop copy with the same script", [h["command"] for h in cfg[GATE.HOOK_NAME]["Stop"]]

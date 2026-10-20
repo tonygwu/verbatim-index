@@ -51,6 +51,7 @@ import re
 import shutil
 import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import unquote, urljoin, urlsplit
@@ -122,7 +123,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def follow_redirect(url: str) -> "str | None":
+def follow_redirect(url: str, redirect_hosts=REDIRECT_HOSTS) -> "str | None":
     """Where `url` redirects, from its Location header, or None when it does not.
 
     HEAD first, then GET, and no body is read. A page that answers, or a 4xx that
@@ -130,7 +131,10 @@ def follow_redirect(url: str) -> "str | None":
     for is the one already checked. A 429 or a 5xx, to GET as well as HEAD, and a
     network error raise: a host that will not say where a link leads is a link the
     gate cannot see through (review round 2: a HEAD 503 that ended the chain let a
-    link through that agy's own fetch could then follow)."""
+    link through that agy's own fetch could then follow). So is a 401 or 403 from a
+    host in `redirect_hosts` (review round 3); a final page's 403 still ends the
+    chain, since that page's own address is the one already checked."""
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
     opener = urllib.request.build_opener(_NoRedirect)
     for method in ("HEAD", "GET"):
         try:
@@ -143,10 +147,10 @@ def follow_redirect(url: str) -> "str | None":
                 if not loc:
                     raise OSError(f"HTTP {exc.code} with no Location") from None
                 return loc
-            unsure = exc.code == 429 or exc.code >= 500
+            unsure = exc.code == 429 or exc.code >= 500 or (exc.code in (401, 403) and host in redirect_hosts)
             if method == "GET":
                 if unsure:
-                    raise OSError(f"HTTP {exc.code} from {urlsplit(url).hostname}") from None
+                    raise OSError(f"HTTP {exc.code} from {host}") from None
                 return None
             if not unsure and exc.code not in (403, 405):
                 return None
@@ -328,13 +332,16 @@ def main() -> int:
         print(json.dumps(stop(sys.stdin.read())))
         return 0
     raw = sys.stdin.read()
+    started = time.monotonic()
     try:
         payload = json.loads(raw)
         decision, reason, grants = decide(payload)
     except Exception as exc:  # noqa: BLE001 - any error refuses the step
         payload, decision, reason, grants = None, "deny", f"the gate could not read the tool call: {type(exc).__name__}", []
     entry = {**_summary(payload), "decision": decision, "reason": reason, "grants": grants,
-             "step_idx": payload.get("stepIdx") if isinstance(payload, dict) else None}
+             "step_idx": payload.get("stepIdx") if isinstance(payload, dict) else None,
+             # A DNS lookup has no timeout, so a slow hook is visible here, not hidden.
+             "seconds": round(time.monotonic() - started, 3)}
     try:
         with open(LOG_NAME, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
