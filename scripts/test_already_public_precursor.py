@@ -16,7 +16,8 @@ The fix is text in both prompts, so it is a new resolution-policy release. Measu
 re-resolution on the gold set predictions/_eval/cases-20261011-already-public (the 11 precursor rows must come back
 null, the announced-plan rows must stay present). Offline here:
   RULE      both prompts carry the same precursor sentence, in the already-public rule
-  RELEASE   the release is resolution-2026-10-11, and the old one stays known so its sidecars still load
+  RELEASE   the current release keeps the rule (resolution-2026-10-20 since VI-50), and every older release stays
+            known so its sidecars still load
   PRIOR     the prior prompt is byte-identical to the one every existing prior was priced with, so no prior
             turns stale (score_predictions.prior_prompt_stale compares prompt hashes)
 

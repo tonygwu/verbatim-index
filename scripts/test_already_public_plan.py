@@ -121,10 +121,15 @@ check("every policy part but the resolver and early-call tasks is byte-identical
 prior = R.build_prior_prompt(R._policy_fixture(), dt.date(2020, 12, 31))
 check("the fixture's prior prompt is unchanged, so no existing prior turns stale",
       sha(prior) == PRIOR_PROMPT_SHA_BEFORE, sha(prior))
-fixture = R._policy_fixture()
-check("a prior built under the new release equals one built under resolution-2026-10-19",
-      R.build_prior_prompt(fixture, dt.date(2020, 12, 31), release="resolution-2026-10-20")
-      == R.build_prior_prompt(fixture, dt.date(2020, 12, 31), release="resolution-2026-10-19"))
+# A record that triggers the sequence rule, the one rule whose prior text depends on the release, so this check can
+# fail: under resolution-2026-10-11 the same record's prior prompt lacks the rule.
+seq = R._policy_fixture()
+seq["source"]["quote"] = "We will open the developer center before the first kits ship."
+d = dt.date(2020, 12, 31)
+new_prior = R.build_prior_prompt(seq, d, release="resolution-2026-10-20")
+check("a prior built under the new release equals one built under resolution-2026-10-19, sequence rule included",
+      "A STATED SEQUENCE" in new_prior and new_prior == R.build_prior_prompt(seq, d, release="resolution-2026-10-19")
+      and new_prior != R.build_prior_prompt(seq, d, release="resolution-2026-10-11"))
 check("the new text is not in the prior or lead-test prompt",
       "Same outcome" not in prior and "Two Popes" not in prior and "Two Popes" not in R.LEAD_TEST_TASK)
 
