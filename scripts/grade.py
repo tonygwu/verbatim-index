@@ -2115,10 +2115,57 @@ def count_gemini_tool_events(events: list[dict]) -> tuple[dict[str, int], list[s
     return counts, queries[:10]
 
 
+def gemini_web_search_actions(events: list[dict]) -> dict:
+    """What a Gemini judge searched, from its own agy stream-json events: the
+    Gemini counterpart of web_search_actions, with the same keys, so
+    resolution_lib.validate_effort reads both.
+
+    MEASURED 2026-10-20 in the live probes for the Gemini resolver (agy 1.3.5,
+    gemini-4-argon-high): a tool step emits an ACTIVE update and then a DONE or
+    ERROR update with the same step_index; a search carries one query, in
+    tool_info.parameters.query; a step a hook refused ends in ERROR and returned
+    nothing. So this keeps the query of every DONE search_web step, once per step,
+    in order, repeats included, uncapped (count_gemini_tool_events keeps 10). A
+    refused search is counted apart and never as run. Page reads
+    (read_url_content) and the opening of a fetched page's file (read_file,
+    view_file) are counted apart, as web_search_actions counts page opens. A
+    finished search that names no query is counted, never guessed at.
+    """
+    out = {"search_actions": 0, "other_actions": 0, "search_actions_without_queries": 0, "queries": [],
+           "refused_actions": 0, "page_file_reads": 0}
+    seen: set[tuple[str, object]] = set()
+    for e in events:
+        su = e.get("step_update") if e.get("event") == "step_update" else None
+        if not isinstance(su, dict) or su.get("step_type") != "tool" or su.get("state") not in ("DONE", "ERROR"):
+            continue
+        key = (str(su.get("conversation_id")), su.get("step_index"))
+        if su.get("step_index") is not None and key in seen:
+            continue
+        seen.add(key)
+        name = su.get("tool_name")
+        if su["state"] == "ERROR":
+            out["refused_actions"] += 1
+            continue
+        if name == "search_web":
+            out["search_actions"] += 1
+            query = ((su.get("tool_info") or {}).get("parameters") or {}).get("query")
+            if isinstance(query, str) and query.strip():
+                out["queries"].append(query)
+            else:
+                out["search_actions_without_queries"] += 1
+        elif name == "read_url_content":
+            out["other_actions"] += 1
+        elif name in ("read_file", "view_file"):
+            out["page_file_reads"] += 1
+    return out
+
+
 def call_gemini(prompt: str, profile_home: str, timeout: int,
                 workdir: str | None = None, model: str = GEMINI_MODEL,
                 binary: str = "agy", wrapper: list[str] | None = None,
-                expected_identity: str | None = None) -> tuple[str, dict]:
+                expected_identity: str | None = None, *, shared_root: Path | None = None,
+                extra_args: list[str] | None = None, prepare_jail=None,
+                raw_response_path: Path | None = None) -> tuple[str, dict]:
     """Run the Gemini 3.8 Flash judge via the Antigravity CLI. Returns (text, telemetry).
 
     The account is chosen here, per call, by setting HOME, because that is the
@@ -2131,6 +2178,12 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     With `expected_identity`, the account the router config declares for this
     profile, the reading is also CHECKED: a log naming another address, or no
     address, fails the call as E_IDENTITY instead of returning a grade.
+
+    The last four options exist for the Gemini resolver (gemini_resolver.py) and
+    change nothing when left unset, which every judge call does: `shared_root`
+    moves a user profile's jail, `prepare_jail(jail)` runs once on the jail before
+    agy starts, `extra_args` go at the end of agy's argv, and `raw_response_path`
+    keeps agy's last answer whole, as call_astra does.
     """
     env = dict(os.environ)
     # A stale value for either of these in the inherited shell would silently
@@ -2149,11 +2202,17 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
     # Run outside the repository, like the Fable arm: the judge should not stand
     # in a directory holding the roster it is blinded against. Reads outside the
     # working directory are refused by agy, so the jail is what makes that bite.
-    jail = gemini_jail(profile_home, workdir)
+    # shared_root is passed only when set, so a caller that replaces gemini_jail
+    # keeps its own default.
+    jail = gemini_jail(profile_home, workdir) if shared_root is None else \
+        gemini_jail(profile_home, workdir, shared_root=shared_root)
+    if prepare_jail is not None:
+        prepare_jail(jail)
 
     print_timeout = max(60, timeout - 60)
     log_path = jail / "agy-cli.log"
-    cmd, env = gemini_launch(profile_home, gemini_command(prompt, model, binary, print_timeout, log_path), env)
+    agy_argv = gemini_command(prompt, model, binary, print_timeout, log_path) + list(extra_args or [])
+    cmd, env = gemini_launch(profile_home, agy_argv, env)
     cmd = [*(wrapper or []), *cmd]
 
     # A transient is retried; an exhaustion or a bad model is not.
@@ -2202,6 +2261,7 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         kind, _detail = classify_agy_failure(proc.returncode, last)
         if kind != E_TRANSIENT:
             break
+    save_cli_response(raw_response_path, proc)
     if attempts > 1:
         log(f"    gemini: {attempts} attempts "
             f"({empty_retries} after an empty answer) "
@@ -2286,6 +2346,9 @@ def call_gemini(prompt: str, profile_home: str, timeout: int,
         "denied_actions": [d.get("action") for d in denied if isinstance(d, dict)],
         "tool_use_counts": counts,
         "web_search_queries": queries,
+        # Every query searched, uncapped, page reads apart: what the resolver's
+        # effort floor counts (resolution_lib.validate_effort), as for Astra.
+        "web_search": gemini_web_search_actions(events),
     }
     if unparsed:
         telemetry["unparsed_event_lines"] = unparsed

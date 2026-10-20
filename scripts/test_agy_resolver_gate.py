@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""The Gemini resolver's tool gate allows web search and public page reads, and nothing else.
+
+`agy_resolver_gate.py` is the PreToolUse hook the Gemini resolver's jail carries
+(`.agents/hooks.json`). agy asks it before every tool step; an answer other than
+allow refuses the step. It is the only thing that lets the resolver open a page,
+because agy asks before reading a URL and a headless run cannot answer, and it is
+what keeps the resolver from reading files or running commands.
+
+These cases are what the gate must decide. The DNS lookup is injected, so no
+network is touched; the last block runs the real script under the interpreter the
+hook names, `/usr/bin/python3 -I`, because the hook runs as another macOS user
+with no access to this repo's venv.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agy_resolver_gate as GATE  # noqa: E402
+
+passed = failed = 0
+
+
+def check(label: str, ok: bool, detail: str = "") -> None:
+    global passed, failed
+    if ok:
+        passed += 1
+        print(f"  PASS  {label}")
+    else:
+        failed += 1
+        print(f"  FAIL  {label}  -- {detail}")
+
+
+def resolver_for(table: dict):
+    """A getaddrinfo stand-in: host -> list of addresses; a missing host fails like DNS does."""
+    def fake(host, *_a, **_k):
+        if host not in table:
+            raise OSError(f"no such host {host}")
+        return [(2, 1, 6, "", (addr, 443)) for addr in table[host]]
+    return fake
+
+
+DNS = resolver_for({"example.com": ["93.184.215.14"], "www.sec.gov": ["23.2.13.75", "2600:1408:ec00::1"],
+                    "intranet.example.org": ["10.1.2.3"], "rebind.example.net": ["93.184.215.14", "127.0.0.1"]})
+
+
+HOME_TMP = tempfile.TemporaryDirectory()
+HOME = Path(HOME_TMP.name).resolve()
+CONV = "11111111-2222-3333-4444-555555555555"
+OTHER = "99999999-8888-7777-6666-555555555555"
+
+
+def page_file(conv: str, step: str, name: str = "content.md") -> Path:
+    f = HOME / ".gemini" / "antigravity-cli" / "brain" / conv / ".system_generated" / "steps" / step / name
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("<html>page</html>")
+    return f
+
+
+def decide(name, args=None, payload=None, conv=CONV):
+    p = payload if payload is not None else {"toolCall": {"name": name, "args": args or {}}, "conversationId": conv}
+    return GATE.decide(p, resolve=DNS, home=HOME)[:2]
+
+
+def overrides(name, args):
+    return GATE.decide({"toolCall": {"name": name, "args": args}, "conversationId": CONV}, resolve=DNS, home=HOME)[2]
+
+
+def url_call(url, key="Url"):
+    return decide("read_url_content", {key: url})
+
+
+# ---- allowed --------------------------------------------------------------
+d, why = decide("search_web", {"query": "acme q3 revenue"})
+check("search_web is allowed", d == "allow", f"{d} {why}")
+d, why = url_call("https://example.com/report")
+check("a public https page is allowed", d == "allow", f"{d} {why}")
+d, why = url_call("http://www.sec.gov/Archives/x.htm")
+check("a public http page whose names all resolve to public addresses is allowed", d == "allow", f"{d} {why}")
+d, why = url_call("https://example.com/", key="url")
+check("the URL argument is read under its lower-case key too", d == "allow", f"{d} {why}")
+d, why = decide("search_web", {"query": "acme q3 revenue", "domain": "sec.gov"})
+check("search_web restricted to another domain is allowed", d == "allow", f"{d} {why}")
+
+# MEASURED 2026-10-20 in the third live probe: the hook's allow alone does not
+# open a page. agy's own permission check still asks, a headless run cannot
+# answer, and the run ended with no output. The hook grants the one host for the
+# one call, through permissionOverrides, and grants nothing for anything else.
+check("an allowed page read grants read_url for exactly its host",
+      overrides("read_url_content", {"Url": "https://Example.COM./report"}) == ["read_url(example.com)"],
+      str(overrides("read_url_content", {"Url": "https://Example.COM./report"})))
+check("a search grants no permission", overrides("search_web", {"query": "q"}) == [],
+      str(overrides("search_web", {"query": "q"})))
+check("a refused page read grants no permission", overrides("read_url_content", {"Url": "http://127.0.0.1/"}) == [],
+      str(overrides("read_url_content", {"Url": "http://127.0.0.1/"})))
+check("a refused tool grants no permission", overrides("run_command", {"CommandLine": "ls"}) == [],
+      str(overrides("run_command", {"CommandLine": "ls"})))
+
+# ---- refused searches -----------------------------------------------------
+# MEASURED 2026-10-20 in the first live probe: asked to read the predictions site,
+# Gemini 4 Argon called search_web with domain "verbatim-predictions.tonygwu.com".
+# The stream carries no search results, so a search aimed at the project's own
+# sites is refused here, where it can be seen.
+for args, label in [({"query": "acme", "domain": "verbatim-predictions.tonygwu.com"}, "a domain on the project's site"),
+                    ({"query": "acme", "domain": "TonyGWu.com"}, "the project's domain in capitals"),
+                    ({"query": "https://verbatim-predictions.tonygwu.com/"}, "a query naming the project's site"),
+                    ({"query": "site:tonygwu.com acme"}, "a site: query on the project's domain"),
+                    ({"query": ""}, "an empty query"),
+                    ({"domain": "sec.gov"}, "no query"),
+                    ({"query": ["a", "b"]}, "a query that is not a string")]:
+    d, why = decide("search_web", args)
+    check(f"search_web refuses {label}", d == "deny" and why, f"{d} {why!r}")
+
+# ---- refused page reads ---------------------------------------------------
+for url, label in [
+    ("file:///Users/tonygwu/Code/misc/verbatim-index/data/predictions/scoring.json", "a file:// URL"),
+    ("http://localhost:8765/", "localhost"),
+    ("http://127.0.0.1:8765/", "a loopback address"),
+    ("http://[::1]:8765/", "an IPv6 loopback literal"),
+    ("http://169.254.169.254/latest/meta-data/", "a link-local metadata address"),
+    ("http://192.168.1.10/", "a private IPv4 literal"),
+    ("https://intranet.example.org/", "a name that resolves to a private address"),
+    ("https://rebind.example.net/", "a name with one public and one loopback address"),
+    ("https://nowhere.invalid/", "a name that does not resolve (fail closed)"),
+    ("https://verbatim-predictions.tonygwu.com/", "this project's public predictions site"),
+    ("https://verbatim-index.tonygwu.com/", "this project's public leaderboard"),
+    ("https://pundits.tonygwu.com/", "this project's public pundits site"),
+    ("https://TONYGWU.COM./x", "the project's domain written in capitals with a trailing dot"),
+    ("https://user:pw@example.com/", "a URL carrying credentials"),
+    ("ftp://example.com/x", "a non-web scheme"),
+    ("https:///nohost", "a URL with no host"),
+    ("not a url", "text that is not a URL"),
+]:
+    d, why = url_call(url)
+    check(f"read_url_content refuses {label}", d == "deny" and why, f"{d} {why!r}")
+d, why = decide("read_url_content", {"Other": "https://example.com/"})
+check("read_url_content with no URL argument is refused", d == "deny", f"{d} {why}")
+d, why = decide("read_url_content", {"Url": ["https://example.com/"]})
+check("a URL argument that is not a string is refused", d == "deny", f"{d} {why}")
+
+# ---- page files: view_file reads only a page this conversation fetched ----
+# MEASURED 2026-10-20 in the seventh and eighth live probes: read_url_content
+# returns no body text. It saves the page to
+# <home>/.gemini/antigravity-cli/brain/<conversation>/.system_generated/steps/<n>/content.md
+# and tells the model to open that file with view_file.
+mine = page_file(CONV, "4")
+d, why = decide("view_file", {"AbsolutePath": str(mine)})
+check("view_file may open a page this conversation fetched", d == "allow", f"{d} {why}")
+d, why = decide("read_file", {"Path": str(mine)})
+check("read_file, agy's model-facing name, may open it with Path", d == "allow", f"{d} {why}")
+d, why = decide("read_file", {"Path": "/etc/hosts"})
+check("read_file refuses any other file", d == "deny" and why, f"{d} {why}")
+d, why = decide("view_file", {"AbsolutePath": str(mine), "StartLine": 1, "EndLine": 80})
+check("view_file with a line range may open it too", d == "allow", f"{d} {why}")
+check("opening a fetched page grants no permission", overrides("view_file", {"AbsolutePath": str(mine)}) == [],
+      str(overrides("view_file", {"AbsolutePath": str(mine)})))
+theirs = page_file(OTHER, "4")
+transcript = page_file(CONV, "x", "transcript.jsonl").parent.parent.parent / "logs" / "transcript_full.jsonl"
+transcript.parent.mkdir(parents=True, exist_ok=True)
+transcript.write_text("{}")
+outside = HOME / "secret.md"
+outside.write_text("no")
+link = page_file(CONV, "6")
+link.unlink()
+link.symlink_to(outside)
+for args, label, conv in [
+    ({"AbsolutePath": str(theirs)}, "a page another conversation fetched", CONV),
+    ({"AbsolutePath": str(page_file(CONV, "4", "output.txt"))}, "a step file that is not content.md", CONV),
+    ({"AbsolutePath": str(page_file(CONV, "abc"))}, "a step folder that is not a step number", CONV),
+    ({"AbsolutePath": str(transcript)}, "this conversation's transcript", CONV),
+    ({"AbsolutePath": str(mine.parent / ".." / ".." / ".." / ".." / OTHER / ".system_generated" / "steps" / "4"
+                           / "content.md")}, "a path that climbs out with ..", CONV),
+    ({"AbsolutePath": str(link)}, "a content.md that is a symlink out", CONV),
+    ({"AbsolutePath": str(mine.parent / "9" / "content.md")}, "a page file that does not exist", CONV),
+    ({"AbsolutePath": "/Users/tonygwu/Code/misc/verbatim-index/data/predictions/scoring.json"}, "a data file", CONV),
+    ({"AbsolutePath": str(mine)}, "a page, when the payload names another conversation", OTHER),
+    ({"AbsolutePath": str(mine)}, "a page, when the payload names no conversation", None),
+    ({"AbsolutePath": "content.md"}, "a relative path", CONV),
+    ({"Other": str(mine)}, "no path argument", CONV),
+]:
+    d, why = decide("view_file", args, conv=conv)
+    check(f"view_file refuses {label}", d == "deny" and why, f"{d} {why!r}")
+
+# ---- refused tools --------------------------------------------------------
+for tool in ("run_command", "list_dir", "grep_search", "find_by_name", "write_to_file",
+             "browser_subagent", "open_browser_url", "mcp_tool", "manage_subagents", "codesearch", "", "SEARCH_WEB"):
+    d, why = decide(tool, {"AbsolutePath": "/Users/tonygwu/Code/misc/verbatim-index/data"})
+    check(f"tool {tool!r} is refused", d == "deny" and why, f"{d} {why!r}")
+
+# ---- malformed payloads ---------------------------------------------------
+for payload, label in [({}, "no toolCall"), ({"toolCall": "search_web"}, "toolCall not an object"),
+                       ({"toolCall": {"args": {}}}, "no tool name"), ([], "a list, not an object")]:
+    d, why, _grants = GATE.decide(payload, resolve=DNS, home=HOME)
+    check(f"a payload with {label} is refused", d == "deny", f"{d} {why}")
+
+# ---- the real script, under the interpreter the hook names ----------------
+script = Path(GATE.__file__).resolve()
+py = Path("/usr/bin/python3")
+if not py.exists():
+    check("/usr/bin/python3 exists, the interpreter hooks.json names", False, "missing")
+else:
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(stdin: str):
+            return subprocess.run([str(py), "-I", str(script)], input=stdin, capture_output=True, text=True,
+                                  cwd=tmp, timeout=60)
+        p = run(json.dumps({"toolCall": {"name": "search_web", "args": {"query": "q"}}}))
+        out = json.loads(p.stdout or "{}")
+        check("the script answers allow for search_web under /usr/bin/python3 -I", p.returncode == 0
+              and out.get("decision") == "allow", f"rc={p.returncode} out={p.stdout!r} err={p.stderr[-300:]!r}")
+        p = run(json.dumps({"toolCall": {"name": "read_url_content", "args": {"Url": "http://127.0.0.1:1/"}}}))
+        out = json.loads(p.stdout or "{}")
+        check("the script refuses a loopback page with no permission override", out.get("decision") == "deny"
+              and "permissionOverrides" not in out, p.stdout)
+        p = run(json.dumps({"toolCall": {"name": "view_file", "args": {"AbsolutePath": "/etc/hosts"}}}))
+        out = json.loads(p.stdout or "{}")
+        check("the script answers deny with a reason for view_file", out.get("decision") == "deny"
+              and out.get("reason"), p.stdout)
+        p = run("this is not json")
+        out = json.loads(p.stdout or "{}")
+        check("unreadable input is answered deny, never left unanswered", p.returncode == 0
+              and out.get("decision") == "deny", f"rc={p.returncode} out={p.stdout!r}")
+        log = Path(tmp) / GATE.LOG_NAME
+        lines = [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+        check("every decision is logged beside hooks.json, in order", [x.get("decision") for x in lines]
+              == ["allow", "deny", "deny", "deny"], str(lines)[:400])
+        check("a logged decision names the tool", [x.get("tool") for x in lines][:3]
+              == ["search_web", "read_url_content", "view_file"], str(lines)[:400])
+
+# ---- the Stop hook copies this conversation's transcript into the jail ----
+# The transcript is the one record of what the judge's searches returned: the
+# stream carries the queries only. It lives under the call's macOS user's home,
+# which this repo's user cannot read, so the Stop hook copies it beside hooks.json.
+with tempfile.TemporaryDirectory() as tmp:
+    page_file(CONV, "2")
+    full = HOME / ".gemini" / "antigravity-cli" / "brain" / CONV / ".system_generated" / "logs" / "transcript_full.jsonl"
+    full.write_text('{"step_index": 0}\n')
+    out = GATE.stop(json.dumps({"conversationId": CONV, "transcriptPath": str(full.parent / "transcript.jsonl")}),
+                    home=HOME, cwd=Path(tmp))
+    copied = Path(tmp) / f"transcript_full.{CONV}.jsonl"
+    check("the Stop hook copies this conversation's full transcript", copied.exists()
+          and copied.read_text() == full.read_text(), str(sorted(p.name for p in Path(tmp).iterdir())))
+    check("the Stop hook lets the run stop", out.get("decision") != "continue", str(out))
+    out = GATE.stop(json.dumps({"conversationId": "../" + OTHER}), home=HOME, cwd=Path(tmp))
+    check("a conversation id that is not a bare id copies nothing",
+          sorted(p.name for p in Path(tmp).glob("transcript_full.*")) == [copied.name]
+          and out.get("decision") != "continue", str(out))
+    stops = [json.loads(x) for x in (Path(tmp) / GATE.LOG_NAME).read_text().splitlines()]
+    check("each Stop is logged with what it copied", [x.get("copied") for x in stops] == [copied.name, None],
+          str(stops))
+    out = GATE.stop("not json", home=HOME, cwd=Path(tmp))
+    check("an unreadable Stop payload still lets the run stop", out.get("decision") != "continue", str(out))
+
+# ---- the hooks.json the jail carries --------------------------------------
+cfg = GATE.hooks_config()
+groups = cfg[GATE.HOOK_NAME]["PreToolUse"]
+check("hooks.json gates every tool (matcher *)", [g["matcher"] for g in groups] == ["*"], str(groups))
+check("hooks.json runs this script with /usr/bin/python3 -I", groups[0]["hooks"][0]["command"]
+      == f"/usr/bin/python3 -I ./{GATE.SCRIPT_NAME}", str(groups))
+check("hooks.json runs the Stop copy with the same script", [h["command"] for h in cfg[GATE.HOOK_NAME]["Stop"]]
+      == [f"/usr/bin/python3 -I ./{GATE.SCRIPT_NAME} --stop"], str(cfg))
+
+# ---- the agent the jail carries -------------------------------------------
+md = GATE.agent_markdown()
+front = md.split("---")[1]
+check("the agent names itself", f"name: {GATE.AGENT_NAME}" in front, front)
+check("the agent declares exactly the three tools the gate can allow",
+      [ln.strip()[2:] for ln in front.splitlines() if ln.strip().startswith("- ")]
+      == ["search_web", "read_url_content", "read_file"], front)
+
+print(f"\n{passed} passed, {failed} failed")
+sys.exit(1 if failed else 0)

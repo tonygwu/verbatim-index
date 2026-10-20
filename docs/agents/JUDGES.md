@@ -259,6 +259,21 @@ the mix even.
   Guarded by `scripts/test_continuation_truncated.py` and
   `scripts/test_credit_run.py`.
 
+- **`--dangerously-skip-permissions` reaches agy only through the Gemini
+  resolver's jail.** The judge's own call never carries it (`gemini_command`),
+  because it approves every tool the default agent offers. The Gemini resolver
+  (`gemini_resolver.py`, VI-47) needs it: on 2026-10-20 a page read was refused in
+  a headless run by every other route measured (a hook's allow, a hook's
+  `permissionOverrides`, `--mode auto`). It is safe there for three reasons. The
+  jail's custom agent offers only `search_web`, `read_url_content` and
+  `read_file`. The jail's hook (`agy_resolver_gate.py`) refuses every other tool,
+  URL and path. And only a profile that runs as another macOS user may resolve,
+  so the OS keeps the judge out of the operator's home. After every call
+  `tool_audit` matches each finished tool step in the stream to an allow in the
+  hook's log and fails the call when one is missing. Guarded by
+  `scripts/test_gemini_resolver.py` (the grader's argv is unchanged) and
+  `scripts/test_agy_resolver_gate.py`.
+
 ## Measurement decisions, and why
 
 - **A refusal is retried on the same model, three times, and that is all.**
@@ -335,6 +350,51 @@ the mix even.
   `scripts/test_fable_pool.py` and `scripts/test_credit_run.py`.
 
 ## Experiments run, and what they showed
+
+**Can a Gemini judge open web pages without the leaders grader gaining that
+ability too?** (2026-10-20, VI-47) Yes, from a jail of its own, with no change to
+any agy configuration. Twelve live probes, as the second macOS user, with
+`gemini-4-argon-high` on `/usr/local/bin/agy` 1.3.5. Each probe asked the judge to
+search, read pages, and try file reads and commands aimed at harmless or
+OS-blocked paths. Raw output of every probe is in the data repository,
+`predictions/_experiments/gemini-resolver-20261020-repo0/_probe/`.
+
+- agy keeps permission rules in three scopes: global (`settings.json` in the
+  profile's HOME), shared (`~/.gemini/config/config.json`) and project (a record
+  under `~/.gemini/config/projects/`). The grader reads the same scopes from the
+  same profiles, so a grant there would reach it. The grant vocabulary in 1.3.5
+  also names `read_url(<domain>)` and `execute_url(<domain>)`, which the
+  2026-09-07 entry below did not see. `search_web` is still not expressible.
+- A workspace hook works. `<jail>/.agents/hooks.json` loads only in sessions
+  that start in that jail: `agy -p /hooks` lists it there and lists nothing in a
+  grader jail, and `/permissions` is identical, all scopes empty, in both. A hook
+  refusal reaches the model as a tool error and the run goes on to a full answer.
+  It does not end the run with an empty answer, as an auto-denied tool does.
+- A hook's allow alone does not open a page: agy's own URL check still asks,
+  and a headless run cannot answer. A hook's `permissionOverrides:
+  ["read_url(<host>)"]` did not help, with decision allow or ask.
+  `--mode auto` is "not available for this account". With
+  `--dangerously-skip-permissions` the page read runs, and the hook still
+  refuses what it refuses.
+- The default agent never offered the model `read_url_content`, although the
+  `init` event lists it. A custom agent in `<jail>/.agents/agents/` whose `tools`
+  list names it does offer it, and lists nothing else that matters: the model
+  reported `search_web`, `read_url_content` and `manage_task` only.
+- `read_url_content` returns no page text. It saves the page as
+  `brain/<conversation>/.system_generated/steps/<n>/content.md` in the call's
+  macOS user's home and points the model at it. So the agent also lists
+  `read_file`, and the hook allows it on that file of that conversation only.
+  The model then quoted the first sentence of each test page correctly.
+- The conversation's `transcript_full.jsonl` holds every tool output, including
+  each search's result summary, which the stream does not carry. A `Stop` hook
+  copies it into the jail, since the operator's user cannot read the other
+  user's home.
+
+One method lesson. Probes 9 to 11 ran with the old two-tool agent, because a
+probe script defined the agent text after the line meant to replace it. A
+conclusion drawn from them, that agy drops `view_file` and `read_file` from an
+agent's list, was wrong and was retracted before anything relied on it. The
+probe now prints the agent's tool list from the file it wrote.
 
 **Do the judges have tools?** (2026-09-07) Asked each judge directly, with the
 production flags, for something it could not know from training. Fable is

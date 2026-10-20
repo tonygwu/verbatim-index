@@ -18,7 +18,10 @@ The RESOLVER runs on Astra, through `codex exec`, because that harness has live
 web search. A resolution has to cite something, and a harness that can only
 recall cannot cite. `docs/PREDICTIONS-SCORING.md` records that the pilot's
 outcomes came from recall with no source, which is the defect this stage exists
-to close.
+to close. `--resolver gemini` runs the same prompt on Gemini 4 Argon through
+`agy`, in a jail that may search and read public pages and nothing else
+(gemini_resolver.py). It is an option for measurement (VI-47): Astra stays the
+default, and a Gemini run is refused into any run scoring.json names.
 
 The PRIOR assessor runs on Fable, through `claude` with `--permission-prompts
 none`, because that harness is measured to have NO working tools: it is offered
@@ -50,6 +53,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gemini_resolver as GR  # noqa: E402
+import grade as G  # noqa: E402
 import predictions_lib as L  # noqa: E402
 import phase2_resolvability as P2  # noqa: E402
 import resolution_lib as R  # noqa: E402
@@ -66,11 +71,15 @@ E_SCHEMA = "schema_violation"
 E_RULES = "rule_violation"
 E_LEAK = "prior_prompt_leak"
 ERROR_TYPES = (E_CLI, E_TIMEOUT, E_NOJSON, E_SCHEMA, E_RULES, E_LEAK, "auth_or_quota",
-               E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY, E_TRUNCATED, "other")
+               E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY, E_TRUNCATED,
+               G.E_EMPTY, G.E_TRANSIENT, *GR.ERROR_TYPES, "other")
 # The labels call_fable_pool puts at the front of its message. Read before the
 # keyword rules below, whose "timeout" and "auth" would otherwise claim them.
 # E_TRUNCATED comes from call_fable too, the subscription prior (VI-23).
 POOL_LABELS = (E_POOL_EXHAUSTED, E_POOL_REFUSED, E_MODEL_MISMATCH, E_IDENTITY, E_TRUNCATED)
+# The labels the Gemini resolver puts at the front of its message (grade.call_gemini,
+# gemini_resolver.call), read before the keyword rules for the same reason.
+GEMINI_LABELS = (G.E_EMPTY, G.E_TRANSIENT, *GR.ERROR_TYPES)
 
 
 def log(msg: str) -> None:
@@ -351,7 +360,7 @@ def narrow(rows: list[dict], slugs: "list[str] | None", include_ineligible: bool
 # ---------------------------------------------------------------------------
 
 def classify(detail: str) -> str:
-    for e in POOL_LABELS:
+    for e in POOL_LABELS + GEMINI_LABELS:
         if detail.startswith(e):
             return e
     d = detail.lower()
@@ -377,7 +386,15 @@ def run_one(job: dict) -> dict:
     raw_path = raw_dir / f"{pid}.txt"
 
     try:
-        if stage in ("resolve", "early"):
+        if stage == "resolve" and args.resolver == "gemini":
+            prompt = R.build_resolver_prompt(rec, deadline, args.as_of)
+            leaks = []
+            profile = G.pick_gemini_profile(job["account"], args.gemini_profiles_used)
+            text, tel = GR.call(prompt, profile, args.timeout, jail_name=f"{args.run_id}-{pid}",
+                                model=args.gemini_model, expected_identity=args.gemini_rotation.identities[profile],
+                                raw_dir=raw_dir, stem=pid)
+            harness, account = "gemini", args.gemini_rotation.accounts[profile]
+        elif stage in ("resolve", "early"):
             prompt = (R.build_resolver_prompt(rec, deadline, args.as_of) if stage == "resolve"
                       else R.build_early_prompt(rec, deadline, args.as_of))
             leaks = []
@@ -546,6 +563,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="expected_cost_usd per credit-pool call (default 0.5; a production prior "
                          "cost $0.23)")
     ap.add_argument("--astra-model", default="gpt-6-astra")
+    ap.add_argument("--resolver", choices=["astra", "gemini"], default="astra",
+                    help="resolve only: the harness that resolves. astra (the default, and the production resolver) "
+                         "or gemini: Gemini 4 Argon through agy, in a jail that may search and read public pages "
+                         "only (gemini_resolver.py), for measurement in a new experiment run (VI-47)")
+    ap.add_argument("--gemini-model", default=GR.DEFAULT_MODEL,
+                    help=f"with --resolver gemini: the agy model id (default {GR.DEFAULT_MODEL})")
+    ap.add_argument("--gemini-profiles", default=None,
+                    help="with --resolver gemini: comma-separated router account ids or profiles to run on; default "
+                         "every Antigravity profile that runs as another macOS user")
     ap.add_argument("--workdir", default=None)
     ap.add_argument("--errors", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true", help="print the selection and one prompt, spend nothing")
@@ -619,6 +645,27 @@ def fable_pool_refusal(args, out_root: Path, scored_runs: list[Path]) -> "str | 
     return None
 
 
+def gemini_resolver_refusal(args, out_root: Path, scored_runs: list[Path]) -> "str | None":
+    """Why a --resolver gemini run must not start, or None.
+
+    The Gemini resolver is an option under measurement (VI-47), so its sidecars go
+    only into a new experiment run: never into a run the scores read, which would
+    change which model resolves a board row, and never outside _experiments."""
+    if args.resolver != "gemini":
+        if args.gemini_profiles is not None or args.gemini_model != GR.DEFAULT_MODEL:
+            return "--gemini-profiles and --gemini-model need --resolver gemini; without it Astra resolves"
+        return None
+    if args.stage != "resolve":
+        return f"--resolver gemini is for the resolve stage only, not {args.stage}"
+    if args.codex_homes or args.fable_pool:
+        return "--resolver gemini runs on Antigravity accounts; --codex-homes and --fable-pool do not apply"
+    if out_root.resolve() in {Path(r).resolve() for r in scored_runs}:
+        return f"--out {out_root} is a run the scores read; a Gemini resolution there would change a board row"
+    if "_experiments" not in out_root.resolve().parts:
+        return f"--out {out_root} is not under predictions/_experiments; a Gemini run is an experiment"
+    return None
+
+
 def implied_scale(args) -> "float | None":
     """The implied-window scale a run judges at, or None with the table off.
 
@@ -672,7 +719,7 @@ def main(argv: list[str] | None = None) -> int:
     # Trend windows freeze from the resolutions in EVERY run the scores read, not
     # only --out, so --ids into a new run judges a resolved record's first window.
     cfg_path, freeze_runs = scoring_runs_for(args.scoring_config, args.predictions)
-    why = fable_pool_refusal(args, out_root, freeze_runs)
+    why = fable_pool_refusal(args, out_root, freeze_runs) or gemini_resolver_refusal(args, out_root, freeze_runs)
     if why:
         raise SystemExit(f"REFUSING: {why}")
     resolutions, clash = resolutions_across(freeze_runs + [out_root], date_overrides if ov_path else None)
@@ -753,6 +800,13 @@ def main(argv: list[str] | None = None) -> int:
         accounts = [args.fable_pool]
         log(f"run_id={args.run_id}  credit pool={args.fable_pool} (quotapick run, expected "
             f"${args.fable_pool_expected_cost:.2f} per call)")
+    elif args.resolver == "gemini":
+        # The rotation and its identities come from the router config, checked by
+        # the same preflight every Gemini caller runs; only other-user profiles stay.
+        args.gemini_rotation = G.gemini_rotation_preflight(G.AGY_JUDGE_BIN, select=args.gemini_profiles)
+        accounts = args.gemini_profiles_used = GR.resolver_profiles(args.gemini_rotation, args.gemini_profiles)
+        log(f"run_id={args.run_id}  resolver=gemini model={args.gemini_model}  profiles="
+            f"{[(p, args.gemini_rotation.accounts[p]) for p in accounts]}")
     else:
         accounts = accounts_for(args)
         log(f"run_id={args.run_id}  accounts={[account_label(a) if a else 'ambient' for a in accounts]}")
@@ -797,6 +851,9 @@ def main(argv: list[str] | None = None) -> int:
                "left_out_ineligible": dict(sorted(left_out.items())),
                "ids_file": str(args.ids) if args.ids is not None else None,
                "ids_sha256": ids_sha,
+               "resolver": ({"harness": "gemini", "model": args.gemini_model,
+                             "accounts": [args.gemini_rotation.accounts[p] for p in args.gemini_profiles_used]}
+                            if args.stage == "resolve" and args.resolver == "gemini" else None),
                "credit_pool": ({"pool": args.fable_pool, "billed_calls": sum(1 for c in pool_spent if c > 0),
                                 "spent_usd": round(sum(pool_spent), 4),
                                 "stopped_exhausted_or_no_candidate": args.pool_state["exhausted"].is_set()}

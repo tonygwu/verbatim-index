@@ -58,6 +58,17 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   priced the original criterion. A new resolution also needs a prior pricing
   its new rules. Proof: `scripts/test_resolution_sequence.py`.
 
+- A second resolver for measurement (VI-47): `resolve_predictions.py --stage resolve
+  --resolver gemini` runs the resolver prompt on Gemini 4 Argon (`--gemini-model`, default
+  `gemini-4-argon-high`) through `agy`, in a jail that may search and read public pages and
+  nothing else (`gemini_resolver.py`; the permission design is in [JUDGES.md](JUDGES.md),
+  "Rules that exist because something broke"). It runs only on an Antigravity profile of
+  another macOS user, and refuses `--out` set to a run `scoring.json` names or a folder outside
+  `_experiments`. Astra stays the default and the production resolver. The effort floor reads
+  `telemetry.web_search`, which `grade.gemini_web_search_actions` fills from agy's events
+  exactly as `web_search_actions` does from codex's. `compare_resolvers.py select` picks board
+  rows by a stated rule, and `report` gives row-by-row agreement between two resolve runs.
+
 - Fable priors and lead tests on prepaid API credit: `resolve_predictions.py --stage prior
   --fable-pool POOL` (or `--stage lead_test`) runs each Fable call through `quotapick run --only
   POOL`. It is a different harness from the production prior, recorded as `harness:
