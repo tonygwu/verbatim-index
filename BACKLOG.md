@@ -409,18 +409,6 @@ skips.
 
 ---
 
-### VI-49. The predictions build's summary line pairs the page's scored count with its past-due count, so it says "585 of 834" where the page says 546 of 834  `[capability: fast]`  `[priority: P3]`  `[filed: 2026-10-20]`  `[claimed by: #1]`
-
-**Background:** `scripts/build_predictions_site.py:3117` "the page prints {cl['scored']} of {cl['past_due']} past due" prints every scored prediction of the listed people against their past-due count. The page itself (`scripts/build_predictions_site.py:2587` "def score_legend(c: dict) -> str:") counts only the scored predictions that are past due, and names the early-called ones separately. On 2026-10-20 the deploy dry run printed "the page prints 585 of 834 past due scored", while the live page printed "546 of 834 past-due predictions could be checked and scored" and "(585 scored in all)": the 39 between them are predictions called early, scored before their deadline. The `scores:` line just above (`:3114`) pairs corpus `scored` with `past_due` the same way. Found by the review of the VI-45 deploy record on 2026-10-20.
-
-**Impact:** an agent that reads the build log reports a scored share the page does not show. It has already happened: the ledger row VP-45 first quoted "585 of 834", and VD-23 first explained 587 against 862 without the early calls.
-
-**Fix:** test first: a test that builds the summary line and the legend from one fixture with an early-called prediction, and asserts that the line's past-due scored count equals the legend's; red today. Then print on the `listed:` line the counts `score_legend` uses, with the early calls named apart (`listed_corpus` already computes them for the listed people). The `scores:` line reads the `scores.json` corpus block, which has no early-call count, so take that count over all rows of `scores_doc["predictions"]`.
-
-**Touch points:** `scripts/build_predictions_site.py:3114` "past due scored, ", `scripts/build_predictions_site.py:3117` "the page prints {cl['scored']} of {cl['past_due']} past due", and the site test file the new test joins.
-
----
-
 ### VI-51. A scored card whose resolution carries an operator ruling shows no note of it, so two ruled cards end by saying the prediction was already public  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-20]`
 
 **Background:** When the operator rules on a row, the resolution sidecar keeps the resolver's outcome, sources and reasoning, sets `already_public`, and adds an `adjudication` block (VD-22 for Ellison; VD-24 and VP-46 for Gelsinger `1e869ff2affb0357` and Sweeney `5c16324b2d6126ea`). The scorer copies the resolver's reasoning and `already_public` into the row (`scripts/score_predictions.py:168` "Only a sidecar under a release carries the field") but nothing from `adjudication`, and the page notes `already_public` only on a scored row whose date is not exact (`scripts/build_predictions_site.py:2059` "Scored, with an open question"). Since the 2026-10-20 deploy (VD-25), Sweeney's card scores -1.15 and its reasoning ends "Epic separately announced the matching 2025 rollout plan on January 24, before Sweeney spoke"; Gelsinger's ends "already publicly reported by eWeek on August 28, 2006". Found by the pre-deploy review of VD-25.
