@@ -602,24 +602,6 @@ Where the code stands today: `scripts/speaker_turns.py:65-66` pins the segmenter
 
 ---
 
-### VI-28. The second source pass for the thin predictions people is not run  `[capability: frontier]`  `[priority: P2]`  `[filed: 2026-10-18]`  `[claimed by: #1]`
-
-The operator asked for the second pass on 2026-10-19, after VI-23 is fixed ("run a second source search for the thinnest people, but fix VI-23 first"). Start it only once VI-23 is on origin/main.
-
-**Background:** Any push-role clone can do this. Runners-up cut by the 6-source cap of the 2026-10-18 discovery are in each `findings/<slug>.json` of `data/predictions/_experiments/thin-supplement-20261018/` (reed-hastings 4 Netflix earnings calls, tim-cook 4, larry-ellison 4, tom-lee 2 plus about 30 CNBC episodes). The discovery sub-agents shared one web-search budget and ran out early, so most people were searched thinly; `BRIEF.md` lacks the generic User-Agent line that the run's README asks for. Credit at 2026-10-18T13:00Z (`quotapick credits --json`): pool a $169.08 (expires 2026-11-16), b $16.83 (2026-11-11), e $2.46 (2026-11-10); pool c's second grant, $93.71 at 05:51Z, expires 2026-11-20 and is NOT recorded in quotapick (`quotapick credits grant` adds it). `NOTES.md` in that folder is the worked example for every stage.
-
-**Impact:** 22 of the 25 thinnest people are still ranked on fewer than 10 scored predictions or unranked (clem-delangue and sergey-brin have no scored row; aravind-srinivas and tobi-lutke have one each, in `scores.json` at data `e4a68376`).
-
-**Fix:** the whole pipeline, as in `NOTES.md`: (1) discovery with `BRIEF.md` plus a generic User-Agent line, spread across sessions; (2) `_driver/pipeline.py <slug>` with `POOLS` set to a pool that has money (URL and text duplicate checks, fetch, place, Fable extraction on credit, Gemini verify); (3) dating with `scripts/date_recordings.py --ids` over the datable recordings (stated_in_page sources are skipped), `scripts/promote_dating_run.py --against` the production runs, re-extraction of the re-dated recordings; (4) `worklists.py` in a NEW run folder named in `scoring.json` with `as_of` moved to the carrying commit's UTC date, then lead_test, resolve (Astra), prior (Fable on credit), market consensus and year summaries; (5) `data_sync.py push`, then the deploy and the per-person diff.
-
-*Risks and edge cases:* every hazard the 2026-10-18 run met and VI-23 to VI-26 record; a run folder named in `scoring.json` moves the as_of bar with every commit into it.
-
-*Why frontier not premium:* five pipeline stages, three quota pools and a deploy, with judgment at each hand-off (the rating VI-15 carried).
-
-**Touch points:** `data/predictions/_experiments/thin-supplement-20261018/` (`BRIEF.md`, `_driver/pipeline.py`, `findings/`), a new `data/predictions/_experiments/<run>/`, `data/predictions/scoring.json`.
-
----
-
 ### VI-41. The pundits predictions pilot's `conversations-with-tyler-cusdy0` candidate has no verification: Gemini returned an empty answer on every pass that finished  `[capability: fast]`  `[priority: P3]`  `[filed: 2026-10-19]`  `[BLOCKED: the operator picks option (a), (b) or (c)]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish any option: each one changes the pilot's README or record, a pundits data path, which `data_sync.py push` refuses from any other clone. VI-16 verified again the three recordings whose Gemini verify failed in the pilot's scale-up (pundits data `2b529bc`, `experiments/predictions-pilot-20261018/README.md`, section "Re-verify, 2026-10-19"). `brett-cooper-fxe9zz` and `jordan-b-peterson-rkt9up` are now verified. `tyler-cowen/conversations-with-tyler-cusdy0` failed both passes on 2026-10-19. On 2026-10-18 it failed two completed passes, and three more runs that built its prompt stopped before an answer. Each 2026-10-19 pass made 3 Gemini calls and each call ended in `empty_response`; the last call's denied tool was `RunCommand` in pass 1 and `ReadUrlContent` in pass 2. Its one candidate is an AI-capability prediction with target date 2026-11-05, not political content. The pilot verifies with Gemini only because Astra declines political content (`docs/agents/PUNDITS.md:183` "because Astra refuses political content"). Astra's served model cannot be confirmed: the record always says `served_model_verified: false` for it (`scripts/predictions_lib.py:1531` "Astra's served_model is an echo of the request"). Carries from VI-16 (deleted): the verify of this recording; the evidence goes in that README section. The options:
@@ -633,5 +615,17 @@ Recommendation: (a). The pilot is an experiment, the recording is one of the sca
 **Fix:** (a): change the README's sentence "BACKLOG.md VI-41 of tonygwu/verbatim-index holds the options" to name the decision, push it with `data_sync.py push --data data-pundits --daemon`, change the VI-41 mention in `docs/agents/PUNDITS.md` the same way, and delete this item. (b) or (c): from repo-3, write the one line `data-pundits/transcripts_open/tyler-cowen/conversations-with-tyler-cusdy0.json` to `_driver/verify_vi41.txt` in the pilot folder, and run `.venv/bin/python scripts/extract_predictions.py --stage verify --verifier astra` (or `gemini`, one pass only) `--transcripts data-pundits/transcripts_open --roster data-pundits/roster/final.json --list <that file> --out data-pundits/experiments/predictions-pilot-20261018 >> <pilot folder>/verify_vi41.log 2>&1`. For Gemini, check that the record says `served_model_verified: true`; for Astra, check that `verification.harness` is `astra` and `requested_model` is the model asked for, and write in the README that the served model is not verified. Add the result to the README's re-verify section and to the VI-41 mention in `docs/agents/PUNDITS.md`, commit every file the run wrote by name, and push with `data_sync.py push --data data-pundits --daemon`.
 
 **Touch points:** for (b) or (c), in `data-pundits/experiments/predictions-pilot-20261018/`: `tyler-cowen/conversations-with-tyler-cusdy0.jsonl` and `.meta.json`, `README.md`, `_driver/verify_vi41.txt`, `verify_vi41.log`, and the run's new files under `_runs/`, `_inputs/verify/tyler-cowen/`, `_raw/verify/` and, for Astra, `_raw/responses/tyler-cowen/`; for (a), `README.md` only; for every option, the sentence in `docs/agents/PUNDITS.md` that names VI-41.
+
+---
+
+### VI-45. The predictions board with the VI-28 second source pass (586 scored) is pushed but not deployed  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-20]`  `[BLOCKED: the operator grants this deploy, and lead-missing17-20261019-repo8's two holds are resolved or the operator says to publish without them]`
+
+**Background:** any push-role clone at exactly origin/main can deploy the predictions site. VI-28 (ledger VP-44) pushed data `88fc2dd3`: scored 571 -> 586 and ranked 49 -> 49 against the live data `7e048231`, 13 of the 15 new scored rows from VI-28 and 2 from another clone's `lead-missing17-20261019-repo8` (data `82df2bc0`). The operator's deploy grant of 2026-10-19 (VD-20) covered one deploy and does not extend to this one. The dry run, `bash scripts/deploy_predictions.sh --dry-run ...` at data `88fc2dd3`, refuses at `scripts/deploy_predictions.sh:85` "REFUSING: scores.json carries rows it could not score": the implied_sensitivity half and double scales miss resolutions or priors for `94522ddc8049659a` (larry-ellison, owner-deferred adjudication) and `5582364cb29bd2eb` (tim-sweeney, a prior pending quota), the two holds that run's `RESULTS.md` names; it withheld deploy approval until they are resolved. Output: data `predictions/_experiments/thin-supplement2-20261019/deploy-dryrun.log`; per-person diffs `thin25_diff.md` and `diff_board.md` beside it.
+
+**Impact:** the live board stays at 571 scored (as of 2026-10-19); Tim Cook (7 -> 12 scored), Reed Hastings (8 -> 12), Larry Ellison (8 -> 10), Michael Dell (6 -> 7, rank 5 -> 1) and Palmer Luckey (7 -> 8) are not published.
+
+**Fix:** once both blocks lift: sync both repos, re-run the dry run (`--production-data "$(cd data && pwd -P)" --data-revision "$(git -C data rev-parse HEAD)"`), check its as_of against the newest predictions commit, deploy without `--dry-run`, and verify the live `revision.json` names the deployed revisions. The stale `og.png` warning is cosmetic (`scripts/build_og_card.py --site predictions` needs a browser and a public commit).
+
+**Touch points:** none in code; `docs/LEDGER-predictions.md` VP-44 and a new decided VD row record the deploy.
 
 ---
