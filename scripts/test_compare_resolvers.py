@@ -157,6 +157,17 @@ with tempfile.TemporaryDirectory() as td:
     gobj = json.loads(gf.read_text())
     gobj["telemetry"]["own_site_mentions"] = 2
     gf.write_text(json.dumps(gobj))
+    # The gate's log for one Gemini row: two refusals, one of them a PDF that read_url_content saved as media.
+    media_row = rows[0]
+    glog = g_run / "_raw" / "resolve" / media_row["leader_slug"] / f"{media_row['prediction_id']}.gate_log.jsonl"
+    glog.parent.mkdir(parents=True, exist_ok=True)
+    brain = "/Users/x/.gemini/antigravity-cli/brain/c1"
+    glog.write_text("".join(json.dumps(e) + "\n" for e in (
+        {"tool": "search_web", "decision": "allow", "args": {"query": "q"}},
+        {"tool": "read_file", "decision": "deny", "args": {"Path": f"{brain}/.tempmediaStorage/ab12.pdf"}},
+        {"tool": "read_file", "decision": "deny", "args": {"Path": f"{brain}/.system_generated/logs/t.jsonl"}},
+        {"tool": "read_file", "decision": "allow", "args": {"Path": f"{brain}/.system_generated/steps/3/content.md"}},
+        {"event": "Stop", "conversation_id": "c1"})))
     rep = C.report(sel2, a_run, g_run, root=td)
     n = len(rows)
     by = {x["prediction_id"]: x for x in rep["rows"]}
@@ -187,6 +198,15 @@ with tempfile.TemporaryDirectory() as td:
     un = rep["agreement_without_own_site"]["gemini_vs_astra_new"]["outcome"]
     check("agreement is also given without the rows either new arm saw the site in", un["of"] == n - 3, str(un))
     check("and those rows are named", sorted(rep["own_site_rows"]) == sorted([exp_a, exp_g]), str(rep["own_site_rows"]))
+    check("the gate's refusals are counted per Gemini row, saved PDFs apart",
+          by[media_row["prediction_id"]]["gemini"]["gate_refusals"] == {"total": 2, "saved_media": 1},
+          str(by[media_row["prediction_id"]]["gemini"]))
+    check("a Gemini row with no gate log reads as unknown, never as zero refusals",
+          by[rows[1]["prediction_id"]]["gemini"]["gate_refusals"] is None, str(by[rows[1]["prediction_id"]]["gemini"]))
+    check("the report names the rows whose gate log is missing",
+          media_row["prediction_id"] not in rep["gate_log_missing"] and rows[1]["prediction_id"] in rep["gate_log_missing"],
+          str(rep["gate_log_missing"]))
+    check("the markdown shows each row's refusals", "2 (1 saved PDF)" in md, md[:800])
     msg = raises(lambda: C.report(sel2, a_run, a_run, root=td))
     check("the two arms must be two different runs", msg is not None, str(msg))
 

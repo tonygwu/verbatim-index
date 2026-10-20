@@ -34,6 +34,12 @@ evidence names the site: Gemini's `own_site_mentions` (tool output in its
 transcript, gemini_resolver.py), Astra's count in its raw answer (the pages it
 opened and its own text; its search results are not in the stream). Agreement is
 given again without the rows either new arm saw the site in.
+
+Each Gemini row also counts its gate's refusals from the gate log the harness
+kept, and apart from them the refusals to open a PDF that read_url_content saved
+as media: the gate lets the resolver open only the text pages that tool saves, so
+a row that needed a PDF may have resolved without it. A row with no gate log is
+reported as unknown, never as zero.
 """
 from __future__ import annotations
 
@@ -166,6 +172,24 @@ def _raw_count(run: Path, pid: str, slug: str) -> "int | None":
     return own_site_count(f.read_text()) if f.exists() else None
 
 
+def gate_refusals(run: Path, pid: str, slug: str) -> "dict | None":
+    """The gate's refusals for a Gemini row: all of them, and those of a file read_url_content saved as media
+    (a PDF, which the gate does not let the resolver open). None when the run kept no gate log for the row."""
+    f = Path(run) / "_raw" / "resolve" / slug / f"{pid}.{GATE.LOG_NAME}"
+    if not f.exists():
+        return None
+    total = media = 0
+    for line in f.read_text().splitlines():
+        e = json.loads(line) if line.strip() else {}
+        if e.get("decision") != "deny":
+            continue
+        total += 1
+        args = e.get("args") or {}
+        path = next((str(args[k]) for k in GATE.PATH_KEYS if args.get(k)), "")
+        media += e.get("tool") in GATE.PAGE_TOOLS and "/.tempmediaStorage/" in path
+    return {"total": total, "saved_media": media}
+
+
 def _pair(rows: list[dict], a: str, b: str) -> dict:
     both = [r for r in rows if r[a] is not None and r[b] is not None]
     return {"outcome": {"agree": sum(r[a]["outcome"] == r[b]["outcome"] for r in both), "of": len(both)},
@@ -199,6 +223,8 @@ def report(selection: dict, astra_run: Path, gemini_run: Path, root: "Path | Non
                      "board": _brief(board, _raw_count(board_run, pid, slug)),
                      "astra_new": _brief(_arm(Path(astra_run), pid, slug), _raw_count(Path(astra_run), pid, slug)),
                      "gemini": _brief(_arm(Path(gemini_run), pid, slug))})
+        if rows[-1]["gemini"] is not None:
+            rows[-1]["gemini"]["gate_refusals"] = gate_refusals(Path(gemini_run), pid, slug)
 
     def pairs(rs):
         return {"gemini_vs_astra_new": _pair(rs, "gemini", "astra_new"), "gemini_vs_board": _pair(rs, "gemini", "board"),
@@ -221,6 +247,7 @@ def report(selection: dict, astra_run: Path, gemini_run: Path, root: "Path | Non
     return {"astra_run": str(astra_run), "gemini_run": str(gemini_run), "n_selected": len(rows),
             "missing": {arm: [r["prediction_id"] for r in rows if r[arm] is None] for arm in ("astra_new", "gemini")},
             "agreement": agreement, "own_site_rows": exposed, "own_site_unknown_rows": unknown,
+            "gate_log_missing": [r["prediction_id"] for r in rows if r["gemini"] and r["gemini"]["gate_refusals"] is None],
             "agreement_without_own_site": pairs([r for r in rows if r["prediction_id"] not in exposed]),
             "confusion_astra_new_by_gemini": [{"astra_new": a, "gemini": g, "n": n}
                                               for (a, g), n in sorted(confusion.items())],
@@ -248,13 +275,17 @@ def render_markdown(rep: dict) -> str:
               "| pair | outcome agrees | already_public set agrees |", "|---|---|---|"]
     for name, a in rep["agreement_without_own_site"].items():
         lines.append(f"| {name.replace('_', ' ')} | {rate(a['outcome'])} | {rate(a['already_public_set'])} |")
-    lines += ["", "| prediction | leader | board | Astra now | Gemini | already_public (board / Astra / Gemini) "
-              "| Gemini searches | own-site mentions (Astra / Gemini) |", "|---|---|---|---|---|---|---|---|"]
+    lines += ["", f"Gemini rows whose gate log is missing: {rep['gate_log_missing'] or 'none'}.", "",
+              "| prediction | leader | board | Astra now | Gemini | already_public (board / Astra / Gemini) "
+              "| Gemini searches | Gemini gate refusals | own-site mentions (Astra / Gemini) |",
+              "|---|---|---|---|---|---|---|---|---|"]
     for r in rep["rows"]:
         b, a, g = r["board"], r["astra_new"], r["gemini"]
+        gr = (g or {}).get("gate_refusals")
+        refused = "-" if g is None else "?" if gr is None else f"{gr['total']} ({gr['saved_media']} saved PDF)"
         lines.append(f"| {r['prediction_id']} | {r['leader_slug']} | {b['outcome']} | {a['outcome'] if a else '-'} "
                      f"| {g['outcome'] if g else '-'} | {_ap(b)} / {_ap(a)} / {_ap(g)} | {g['searches'] if g else '-'} "
-                     f"| {a['own_site_mentions'] if a else '-'} / {g['own_site_mentions'] if g else '-'} |")
+                     f"| {refused} | {a['own_site_mentions'] if a else '-'} / {g['own_site_mentions'] if g else '-'} |")
     if rep["prompt_mismatch"]:
         lines += ["", f"Pairs whose prompt or release differ: {rep['prompt_mismatch']}"]
     lines += ["", "## Disagreements", ""]
