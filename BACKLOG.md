@@ -76,7 +76,7 @@ skips.
 
 ## Open items
 
-### VI-46. Every predictions deploy refuses on lead-missing17-20261019-repo8's two holds: Larry Ellison `94522ddc8049659a` (operator ruled "not already public" on 2026-10-20) and Tim Sweeney `5582364cb29bd2eb`'s double-window prior  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-20]`
+### VI-46. Every predictions deploy refuses on lead-missing17-20261019-repo8's two holds: Larry Ellison `94522ddc8049659a` (operator ruled "not already public" on 2026-10-20) and Tim Sweeney `5582364cb29bd2eb`'s double-window prior  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-20]`  `[claimed by: #1]`
 
 **Background:** `scripts/deploy_predictions.sh:85` "REFUSING: scores.json carries rows it could not score" fired in the dry run at data `88fc2dd3` (data `predictions/_experiments/thin-supplement2-20261019/deploy-dryrun.log`), and data `26d66982` leaves `predictions/scores.json` and `predictions/scoring.json` unchanged since then. The implied-window half and double scales miss a resolution or a prior for `94522ddc8049659a` and the double scale misses a prior for `5582364cb29bd2eb`. The resolver excluded the Ellison prediction as `already_public`, citing Oracle's 2019-09-16 plan for 36 regions by the end of 2020, and two independent reviews in that run folder rejected the exclusion. On 2026-10-20 (UTC) the operator ruled: "I ajudicate that it should be #1 (not already public)". The reasons given were that the release announces a plan to reach 36 regions, not that Oracle has passed AWS, and that it does not mention AWS at all. This supersedes the run's `adjudication-decision.md` ("Leave Ellison pending adjudication"). The Sweeney double prior stopped before dispatch at that run's quota reserve (`quota-hold.json`).
 
