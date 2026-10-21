@@ -56,8 +56,8 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   or lead test turns stale. The five example rows (Ellison `94522ddc8049659a`, Cook
   `897e1fe74a77f88c`, Gelsinger `1e869ff2affb0357`, Sweeney `5c16324b2d6126ea`,
   Hastings `9df7d48a5a1e187a`) are operator-adjudicated: leave them out of any
-  measurement of the resolver's accuracy. Sweeney's row stays out too, because the
-  operator ruled on it twice (VD-24, then VD-27: already public).
+  measurement of the resolver's accuracy. The operator ruled on Sweeney's row twice
+  (VD-24, then VD-27: already public).
 
 - Resolution release `resolution-2026-10-19` preserves event order, quantities
   such as **all**, and the stated time window in resolver, prior and early-call
