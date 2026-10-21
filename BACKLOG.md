@@ -96,7 +96,7 @@ skips.
 
 ---
 
-### VI-56. Rule 8's Sweeney example in release `resolution-2026-10-20` teaches the ruling the operator reversed  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-21]`
+### VI-56. Rule 8's Sweeney example in release `resolution-2026-10-20` teaches the ruling the operator reversed  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-21]`  `[claimed by: #1]`
 
 **Background:** release `resolution-2026-10-20` (VI-50, ledger VD-24) closed `ALREADY_PUBLIC_NOT_A_PRECURSOR`, the block the resolver's rule 8 and the early call's rule 7 share, with five worked examples. The fourth says Tim Sweeney's 2025-04-02 prediction (`5c16324b2d6126ea`) is "Not already public ... That is a new date after a missed schedule" (`scripts/resolution_lib.py:386` "Epic said on 2024-03-20"). On 2026-10-20 the operator reversed that ruling (VD-27): Epic's own 2025-01-24 post already planned open self-publishing "later this year", so the row is already public. The operator's decision on the example: "REmove the Sweeney example". `scripts/test_already_public_plan.py` pins all five examples word for word.
 
