@@ -49,9 +49,10 @@ there. Add new material under the same headings.
   result. A person's predictions opened inside that row and were cut at the
   screen edge, and the fixed THEME button sat over the board's header. The fix
   is one `@media (max-width:940px)` block in `build_predictions_site.py`. It
-  holds every phone rule, so desktop widths never match it, and it changes no
-  markup or script. At 1280x800 and 1440x900 the top of the page, the board and
-  Michael Dell's opened view were pixel-identical before and after. On a phone:
+  holds every phone rule, so desktop widths never match it. The markup gains one
+  class, `sqlegend`, and no script changes. At 1280x800 and 1440x900 the top of
+  the page, the board and Michael Dell's opened view were pixel-identical before
+  and after. On a phone:
   each row is a three-column grid, with the person first, the role and
   organisation under the name, then Came true and Score. The Predictions
   breakdown, the When-it-was-said squares, the year axis, the paragraph under
@@ -64,17 +65,19 @@ there. Add new material under the same headings.
   768 to 834 px), which lose the breakdown and the squares too. Between 941 and
   about 1150 px the full table still scrolls sideways inside its card, as it
   always has. The Came true and Score columns are 70 px and 74 px wide on a
-  phone: room for "27/27", the widest value on 2026-10-21, but a three-digit
-  count such as "100/120" would run into Score.
+  phone. That is room for any count up to 27, the most predictions anyone had
+  scored on 2026-10-21, but a three-digit count such as "100/120" would run
+  into Score.
   `scripts/test_predictions_phone_layout.py` measures the fixture page at 390 px
   and 360 px in headless Chrome. Board rows, Came true, Score and the opened
   view must stay inside the viewport, no text may leave its own cell, both sort
   headers must be on screen and uncovered, the THEME button may cover no text,
-  and the squares' explanation shows only where the squares do. Headless Chrome will not open a window narrower than 500 px, so the page
-  is measured in an iframe of the exact width, and the test checks that width
-  first. No Chrome is a FAIL. `--site <dir> --person <slug>` runs the same
-  checks on a real render. Hiding a column on phones hides its words there, so
-  compare a change's visible text at desktop width, where it must not move.
+  and the squares' explanation shows only where the squares do. Headless Chrome
+  will not open a window narrower than 500 px, so the page is measured in an
+  iframe of the exact width, and the test checks that width first. No Chrome is
+  a FAIL. `--site <dir> --person <slug>` runs the same checks on a real render.
+  Hiding a column on phones hides its words there, so compare a change's
+  visible text at desktop width, where it must not move.
 
 ## Where things are
 
