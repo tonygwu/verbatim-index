@@ -39,6 +39,37 @@ there. Add new material under the same headings.
   never before. A refused render must leave the site's data as the last good
   render left it: files newer than the page that points at them is the stale
   pair this repo keeps finding in other forms.
+- **The predictions page has a phone layout at 940 px wide and narrower, and
+  every row must show its name, Came true and Score without sideways scrolling.**
+  FOUND 2026-10-21, before the page was announced on Twitter: on an iPhone 12
+  (390 px) the board was its 1100 px desktop table inside a 340 px card that
+  scrolled sideways with nothing saying so. Its columns ended at x = 423
+  (Person), 569 (Organisation), 923 (When it was said), 1018 (Came true) and
+  1125 (Score), so a reader saw names and half of each organisation, never a
+  result. A person's predictions opened inside that row and were cut at the
+  screen edge, and the fixed THEME button sat over the board's header. The fix
+  is one `@media (max-width:940px)` block in `build_predictions_site.py`. It
+  holds every phone rule, so desktop widths never match it, and it changes no
+  markup or script. At 1280x800 and 1440x900 the top of the page, the board and
+  Michael Dell's opened view were pixel-identical before and after. On a phone:
+  each row is a three-column grid, with the person first, the role and
+  organisation under the name, then Came true and Score. The Predictions
+  breakdown, the When-it-was-said squares, the year axis and the Organisation,
+  Predictions and When headers are hidden, so only Person, Came true and Score
+  sort there. The person view wraps every line (`overflow-wrap:anywhere`),
+  stacks each label over its value and puts the filters in one column. The
+  THEME button is `position:absolute`, so it scrolls away with the masthead.
+  940 px covers phones held either way up. Between 941 and about 1150 px the
+  full table still scrolls sideways inside its card, as it always has.
+  `scripts/test_predictions_phone_layout.py` measures the fixture page at 390 px
+  and 360 px in headless Chrome. Board rows, Came true, Score and the opened
+  view must stay inside the viewport, no text may leave its own cell, both sort
+  headers must be on screen and uncovered, and the THEME button may cover no
+  text. Headless Chrome will not open a window narrower than 500 px, so the page
+  is measured in an iframe of the exact width, and the test checks that width
+  first. No Chrome is a FAIL. `--site <dir> --person <slug>` runs the same
+  checks on a real render. Hiding a column on phones hides its words there, so
+  compare a change's visible text at desktop width, where it must not move.
 
 ## Where things are
 
@@ -53,3 +84,10 @@ there. Add new material under the same headings.
   after the card was drawn prints a warning on the next render; redraw with
   `build_og_card.py --site predictions --index ... --scores ... --roster ...`.
   `scripts/test_predictions_og_card.py` guards it.
+  The predictions page's `og:image:alt` and `twitter:image:alt` describe that
+  card in two sentences. Since 2026-10-21, `og_alt()` writes them from the figures
+  `og.meta.json` records the card was drawn with, never from typed numbers: the
+  people ranked, the predictions scored and extracted, the as-of date, and each
+  top row's name, organisation, Score and Came true. A text over the 420
+  characters `twitter:image:alt` allows refuses the render. A card with no
+  ranking on record keeps the old "Verbatim Predictions." and title text.

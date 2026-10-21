@@ -130,6 +130,40 @@ def check_og_card(now: "dict | None") -> None:
         print(f"WARNING: site-predictions/og.png is stale ({detail}); {rerun}", file=sys.stderr)
 
 
+# twitter:image:alt's documented maximum. A longer description is cut off.
+OG_ALT_MAX = 420
+OG_ALT_UNRANKED = "Verbatim Predictions. " + SOCIAL_TITLE
+
+
+def og_alt() -> str:
+    """The social card's alt text, for og:image:alt and twitter:image:alt.
+
+    It describes the picture, so it is written from the figures the card was
+    drawn with, which og.meta.json records beside og.png, and never from a
+    number typed here. check_og_card() warns when those figures differ from the
+    page being built, so on a page published without that warning they are the
+    page's own. A card with no ranking on record (no sidecar, or one from
+    before the card drew the board) keeps the old text, the site name and the
+    social title; check_og_card() already warns about a missing sidecar."""
+    drawn = json.loads(OG_CARD_META.read_text()).get("counts", {}) if OG_CARD_META.is_file() else {}
+    top = drawn.get("top")
+    if not top:
+        return OG_ALT_UNRANKED
+    rows = []
+    for t in top:
+        hits, n = t["came_true"].split("/")
+        who = f"{t['name']} of {t['company']}" if t["company"] else t["name"]
+        rows.append(f"{who}, Score {t['score']}, {hits} of {n} came true")
+    listed = rows[0] if len(rows) == 1 else "; ".join(rows[:-1]) + "; and " + rows[-1]
+    text = (f"Verbatim Predictions ranks {drawn['people_ranked']} people by Score, with {drawn['scored']} "
+            f"predictions scored and {drawn['predictions']} extracted as of {drawn['as_of']}. "
+            f"The top {len(rows)} {'is' if len(rows) == 1 else 'are'} {listed}.")
+    if len(text) > OG_ALT_MAX:
+        raise SystemExit(f"REFUSING: the social card's alt text is {len(text)} characters, over the "
+                         f"{OG_ALT_MAX} twitter:image:alt allows, so it would be cut off: {text}")
+    return text
+
+
 MODEL_LABELS = {
     "claude-fable-5-1": "Claude Fable 5.1",
     "gpt-6-astra": "OpenAI GPT-6 Astra",
@@ -155,14 +189,14 @@ TEMPLATE = r"""<!DOCTYPE html>
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Verbatim Predictions. __SOCIAL_TITLE__">
+<meta property="og:image:alt" content="__OG_ALT__">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:site" content="@tonygwu">
 <meta name="twitter:creator" content="@tonygwu">
 <meta name="twitter:title" content="__SOCIAL_TITLE__">
 <!-- score:start --><meta name="twitter:description" content="__SOCIAL_DESC__"><!-- score:end -->
 <meta name="twitter:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
-<meta name="twitter:image:alt" content="Verbatim Predictions. __SOCIAL_TITLE__">
+<meta name="twitter:image:alt" content="__OG_ALT__">
 __FONTS__
 <style>
 __THEME__
@@ -436,6 +470,49 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
   border-radius:2px; padding:6px 10px; cursor:pointer;
 }
 .toggle:hover{color:var(--ink)}
+
+/* ---------- phones: 940px wide and narrower ----------
+   The board is an 1100px table. On a 390px phone it scrolled sideways inside its
+   card with nothing saying so: a reader saw each name and never Came true or
+   Score, and a person's predictions opened inside that 1100px row, cut off at
+   the screen edge (operator request 2026-10-21). Here each row is a grid of
+   three columns: the person, with the organisation under the name, then Came
+   true, then Score. The Predictions breakdown and the When-it-was-said squares
+   are hidden, and the Organisation header with them, so that column does not
+   sort here. The markup is the desktop's, untouched, so the page says the same
+   words at every width; only this block moves or hides cells. 940px covers
+   phones held either way up; a wider screen keeps the full table.
+   scripts/test_predictions_phone_layout.py holds 390px and 360px to it. */
+@media (max-width:940px){
+  /* At the top of the page, not fixed over the board header as it scrolls. */
+  .toggle{position:absolute}
+  #board,#board thead,#board tbody,#board tr.audit,#board tr.audit>td{display:block; min-width:0}
+  #board colgroup,#board tr.axisrow{display:none}
+  #board thead tr:first-child,#board tr.row{display:grid; grid-template-columns:minmax(0,1fr) 70px 74px}
+  #board thead th,#board tr.row>td{display:block}
+  #board thead th:nth-child(2),#board thead th:nth-child(3),#board thead th:nth-child(4),
+  #board tr.row>td:nth-child(3),#board tr.row>td:nth-child(4){display:none}
+  #board thead tr:first-child th{position:static; height:auto; white-space:normal; padding:12px 6px 9px; align-self:end}
+  #board thead th:nth-child(1){grid-column:1; text-align:left; padding-left:16px}
+  #board thead th:nth-child(5){grid-column:2; text-align:right; padding-right:10px}
+  #board thead th:nth-child(6){grid-column:3; text-align:right; padding-right:14px}
+  #board tr.row>td.who{grid-column:1; grid-row:1; padding-bottom:2px}
+  #board tr.row>td.org{grid-column:1; grid-row:2; padding:0 7px 11px 16px; font-size:12.5px; overflow-wrap:anywhere}
+  #board tr.row>td:nth-child(5){grid-column:2; grid-row:1 / 3; align-self:center}
+  #board tr.row>td:nth-child(6){grid-column:3; grid-row:1 / 3; align-self:center}
+  .who .nm{overflow-wrap:anywhere}
+  /* The person view: every line wraps, a long URL or quote included. */
+  .drawer{padding:16px 12px 20px; overflow-wrap:anywhere}
+  .tcard{padding:12px}
+  .tcard .hdr .meta{margin-left:0; text-align:left}
+  .filters{gap:8px 14px}
+  .filters label{flex:1 1 100%; min-width:0}
+  .filters select{flex:1 1 auto; min-width:0; max-width:100%}
+  .filters .count{margin-left:0}
+  dl.kv{grid-template-columns:minmax(0,1fr); gap:0}
+  dl.kv dt{padding-top:7px}
+  dl.kv dd{min-width:0}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
 </style>
 </head>
@@ -3153,6 +3230,8 @@ def main(argv: list[str] | None = None) -> int:
         .replace("__FONTS__", FONT_LINKS)
         .replace("__THEME__", THEME_CSS)
         .replace("__SOCIAL_TITLE__", SOCIAL_TITLE)
+        # Before __N_PEOPLE__: the unranked text is the social title, which names it.
+        .replace("__OG_ALT__", html.escape(og_alt(), quote=True))
         .replace("__SOCIAL_DESC__", SOCIAL_DESC_SCORED if scores_doc else SOCIAL_DESC)
         .replace("__THESIS__", thesis(cl, len(rows)) if scores_doc else THESIS_EMPTY)
         .replace("__SORT_NOTE__", SORT_NOTE_SCORED if scores_doc else SORT_NOTE_EMPTY)

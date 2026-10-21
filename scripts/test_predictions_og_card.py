@@ -17,7 +17,11 @@ What this proves:
     does, an exact half and a negative included;
   - the page warns when the card's names, ranks, scores or counts drift from the
     page, and stays silent when they match;
-  - the page head carries twitter:site and twitter:creator.
+  - the page head carries twitter:site and twitter:creator;
+  - og:image:alt and twitter:image:alt describe the ranked card, written from
+    the figures og.meta.json records it was drawn with: every figure in the
+    card's order, no number that is not one of them, two sentences, at most
+    twitter:image:alt's 420 characters (operator request 2026-10-21).
 
 Drawing the PNG needs Chrome and is not done here. No data, no network, no quota.
 
@@ -27,6 +31,8 @@ Drawing the PNG needs Chrome and is not done here. No data, no network, no quota
 from __future__ import annotations
 
 import argparse
+import collections
+import html as H
 import importlib.util
 import io
 import json
@@ -398,14 +404,25 @@ def main_wires_the_check() -> None:
               [r["slug"] for r in T.embedded(html, "DATA") if r["score"] is not None]
               == [t["slug"] for t in expected["top"]])
 
+        head = html[:html.index("</head>")]
+        alt = H.escape(B.og_alt(), quote=True)
+        check("ALT: the rendered head's og:image:alt is the card's alt text",
+              f'<meta property="og:image:alt" content="{alt}">' in head, head[-1200:])
+        check("ALT: the rendered head's twitter:image:alt is the card's alt text",
+              f'<meta name="twitter:image:alt" content="{alt}">' in head, head[-1200:])
+        check("ALT: on the fixture it names the card's two rows with their figures",
+              "Ada L of Co, Score +0.13, 4 of 6 came true; and Alan T of Lab, Score \u22120.50, 1 of 2 came true."
+              in B.og_alt(), B.og_alt())
+
         moved = json.loads(json.dumps(expected))
         moved["top"][0]["score"] = "+0.12"
         meta.write_text(json.dumps(card.card_meta("predictions", moved)))
-        err, _ = render("moved")
+        err, moved_html = render("moved")
         check("a render whose board no longer matches the card warns", "og.png" in err and "stale" in err,
               err[-600:])
-
-        head = html[:html.index("</head>")]
+        moved_head = moved_html[:moved_html.index("</head>")]
+        check("ALT: the alt text describes the card as drawn, even when the board has moved on",
+              "Score +0.12" in moved_head and "Score +0.13" not in moved_head, moved_head[-1200:])
         check("the page head carries twitter:site @tonygwu",
               '<meta name="twitter:site" content="@tonygwu">' in head, head[-800:])
         check("the page head carries twitter:creator @tonygwu",
@@ -437,6 +454,93 @@ def fit_check() -> None:
           src.index("card_fits(find_chrome(), src)") < src.index('f"--screenshot={out}"'))
 
 
+def alt_text() -> None:
+    """og:image:alt and twitter:image:alt still read "Verbatim Predictions." and
+    the page title, which described the old card of three totals. They now
+    describe the ranked card, from the figures og.meta.json records it was
+    drawn with, so the text and the picture cannot disagree."""
+    check("ALT: both alt tags in the template take the generated text",
+          B.TEMPLATE.count('content="__OG_ALT__"') == 2
+          and '<meta property="og:image:alt" content="__OG_ALT__">' in B.TEMPLATE
+          and '<meta name="twitter:image:alt" content="__OG_ALT__">' in B.TEMPLATE)
+    saved = B.OG_CARD_META
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            index, roster = index_doc(), {r["slug"]: r for r in roster_doc()["roster"]}
+            fig, _rows, _cl = page_path_figures(index, roster, scores_doc(), frozenset({"dee"}))
+            meta = Path(td) / "og.meta.json"
+            B.OG_CARD_META = meta
+
+            def alt_for(drawn: dict) -> str:
+                meta.write_text(json.dumps(card.card_meta("predictions", drawn)))
+                return B.og_alt()
+
+            alt = alt_for(fig)
+            want = [f"ranks {fig['people_ranked']} people by Score", f"{fig['scored']} predictions scored",
+                    f"{fig['predictions']} extracted", f"as of {fig['as_of']}", f"The top {len(fig['top'])} are"]
+            for t in fig["top"]:
+                hits, n = t["came_true"].split("/")
+                want += [f"{t['name']} of {t['company']}", f"Score {t['score']}", f"{hits} of {n} came true"]
+            at, missing = 0, []
+            for w in want:
+                i = alt.find(w, at)
+                if i < 0:
+                    missing.append(w)
+                else:
+                    at = i + len(w)
+            check("ALT: every figure on the card is in the alt text, in the card's order", not missing,
+                  f"missing or out of order {missing}: {alt}")
+            figures = [str(fig["people_ranked"]), str(fig["scored"]), str(fig["predictions"]),
+                       *fig["as_of"].split("-"), str(len(fig["top"]))]
+            for t in fig["top"]:
+                figures += [t["score"].lstrip("+\u2212"), *t["came_true"].split("/")]
+            nums = collections.Counter(re.findall(r"\d+(?:\.\d+)?", alt))
+            check("ALT: every number in the alt text is one of the card's figures, none typed",
+                  nums == collections.Counter(figures), f"text {sorted(nums.elements())} card {sorted(figures)}")
+            check("ALT: it is two sentences", alt.endswith(".") and len(alt.split(". ")) == 2, alt)
+            check("ALT: it fits twitter:image:alt's 420 characters", len(alt) <= B.OG_ALT_MAX == 420, str(len(alt)))
+
+            moved = json.loads(json.dumps(fig))
+            moved["top"][0].update(score="+0.29", came_true="6/9")
+            moved.update(people_ranked=41, scored=777)
+            alt2 = alt_for(moved)
+            check("ALT: a figure that changes on the card changes in the alt text",
+                  "Score +0.29, 6 of 9 came true" in alt2 and "ranks 41 people" in alt2
+                  and "777 predictions scored" in alt2 and "+0.30" not in alt2, alt2)
+            neg = json.loads(json.dumps(fig))
+            neg["top"][2]["score"] = "\u22120.50"
+            check("ALT: a negative Score keeps the card's true minus sign",
+                  "Score \u22120.50" in alt_for(neg))
+
+            long = json.loads(json.dumps(fig))
+            long["top"][0]["company"] = "Co " * 140
+            code = None
+            try:
+                alt_for(long)
+            except SystemExit as exc:
+                code = exc.code
+            check("ALT: text over 420 characters refuses the render rather than being cut off",
+                  code is not None and "REFUSING" in str(code), repr(code)[:200])
+
+            meta.write_text(json.dumps({"counts": {"predictions": 1289, "transcripts_scanned": 1278}}))
+            check("ALT: a card with no ranking on record keeps the old text", B.og_alt() == B.OG_ALT_UNRANKED,
+                  B.og_alt())
+            meta.unlink()
+            check("ALT: a card with no sidecar keeps the old text", B.og_alt() == B.OG_ALT_UNRANKED, B.og_alt())
+
+        B.OG_CARD_META = REPO / "site-predictions" / "og.meta.json"
+        drawn = json.loads(B.OG_CARD_META.read_text())["counts"]
+        alt = B.og_alt()
+        rows = [f"{t['name']} of {t['company']}, Score {t['score']}, "
+                f"{t['came_true'].split('/')[0]} of {t['came_true'].split('/')[1]} came true" for t in drawn["top"]]
+        check("ALT: the committed card's alt text names its rows and totals",
+              all(r in alt for r in rows) and f"ranks {drawn['people_ranked']} people" in alt
+              and f"{drawn['scored']} predictions scored" in alt and f"{drawn['predictions']} extracted" in alt
+              and f"as of {drawn['as_of']}" in alt and len(alt) <= 420, alt)
+    finally:
+        B.OG_CARD_META = saved
+
+
 def head_tags() -> None:
     head = B.TEMPLATE[:B.TEMPLATE.index("</head>")]
     check("the template's head carries twitter:site @tonygwu",
@@ -450,6 +554,7 @@ section("the page warns when the card drifts from it", drift_warning)
 section("the page's main() runs the check on a real render", main_wires_the_check)
 section("the card refuses content that does not fit", fit_check)
 section("the page head carries both twitter tags", head_tags)
+section("the alt text describes the ranked card from its drawn figures", alt_text)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
