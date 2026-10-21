@@ -12,7 +12,8 @@ and the fixed THEME button sat over the board's header.
 What this proves, at 390 px and at 360 px wide, in headless Chrome:
   ROWS      no element or line of text in any board row extends past the
             viewport or out of its own cell, and every row shows its name,
-            Came true and Score on screen;
+            Came true and Score on screen; the paragraph explaining the year
+            squares shows only where the squares do;
   SORT      the Came true and Score headers are on screen, not covered by
             anything, and a click on each sorts the rows by it, both ways;
   THEME     the THEME button covers no text at the top of the page, with the
@@ -183,6 +184,13 @@ PROBE = r"""
         .filter(([, el]) => !el || !onScreen(el)).map(([what]) => `${tr.dataset.slug}: ${what} is not on screen`);
     });
 
+    // The paragraph that explains the year squares, found by its colour key so
+    // the check runs on any version of the page.
+    const shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+    const key = [...document.querySelectorAll(".legend")].find(l => l.querySelector("i.k"));
+    res.squares = {legendFound: !!key, legendShown: shown(key),
+                   squaresShown: [...document.querySelectorAll("#tb .sq")].some(shown)};
+
     window.scrollTo(0, 0); await frame();
     res.themeTop = covered();
     toY(document.querySelector("#board thead")); await frame();
@@ -304,6 +312,9 @@ def judge(res: dict, width: int, slug: str, long_url: str | None) -> None:
           f"{len(res['rowsSpill'])} lines, e.g. " + "; ".join(res["rowsSpill"][:6]))
     check(f"{at} ROWS: every row shows its name, Came true and Score on screen", not res["rowsHidden"],
           "; ".join(res["rowsHidden"][:6]))
+    sq = res["squares"]
+    check(f"{at} ROWS: the explanation of the year squares shows only where the squares do",
+          sq["legendFound"] and sq["legendShown"] == sq["squaresShown"], json.dumps(sq))
     for k, lab in (("score", "Score"), ("hit_rate", "Came true")):
         s = res["sort"][k]
         check(f"{at} SORT: the {lab} header is on screen and nothing covers it",

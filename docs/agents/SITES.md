@@ -54,18 +54,23 @@ there. Add new material under the same headings.
   Michael Dell's opened view were pixel-identical before and after. On a phone:
   each row is a three-column grid, with the person first, the role and
   organisation under the name, then Came true and Score. The Predictions
-  breakdown, the When-it-was-said squares, the year axis and the Organisation,
+  breakdown, the When-it-was-said squares, the year axis, the paragraph under
+  the board that explains the squares (`.sqlegend`), and the Organisation,
   Predictions and When headers are hidden, so only Person, Came true and Score
   sort there. The person view wraps every line (`overflow-wrap:anywhere`),
   stacks each label over its value and puts the filters in one column. The
   THEME button is `position:absolute`, so it scrolls away with the masthead.
-  940 px covers phones held either way up. Between 941 and about 1150 px the
-  full table still scrolls sideways inside its card, as it always has.
+  940 px covers phones held either way up, and tablets held upright (an iPad is
+  768 to 834 px), which lose the breakdown and the squares too. Between 941 and
+  about 1150 px the full table still scrolls sideways inside its card, as it
+  always has. The Came true and Score columns are 70 px and 74 px wide on a
+  phone: room for "27/27", the widest value on 2026-10-21, but a three-digit
+  count such as "100/120" would run into Score.
   `scripts/test_predictions_phone_layout.py` measures the fixture page at 390 px
   and 360 px in headless Chrome. Board rows, Came true, Score and the opened
   view must stay inside the viewport, no text may leave its own cell, both sort
-  headers must be on screen and uncovered, and the THEME button may cover no
-  text. Headless Chrome will not open a window narrower than 500 px, so the page
+  headers must be on screen and uncovered, the THEME button may cover no text,
+  and the squares' explanation shows only where the squares do. Headless Chrome will not open a window narrower than 500 px, so the page
   is measured in an iframe of the exact width, and the test checks that width
   first. No Chrome is a FAIL. `--site <dir> --person <slug>` runs the same
   checks on a real render. Hiding a column on phones hides its words there, so

@@ -479,16 +479,17 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
    each row is a grid of three columns: the person, with the organisation under
    the name, then the two result columns. The Predictions breakdown and the
    When-it-was-said squares are hidden, with the Organisation, Predictions and
-   When headers, so those columns do not sort here. The markup is the desktop's,
-   untouched, so the page says the same words at every width; only this block
-   moves or hides cells. 940px covers phones held either way up; a wider screen
-   keeps the full table. scripts/test_predictions_phone_layout.py holds 390px
-   and 360px to it. */
+   When headers, so those columns do not sort here, and so is the paragraph under
+   the board that explains the squares. The markup is the desktop's, so the
+   document holds the same words at every width; a phone shows fewer of them,
+   because this block hides cells. 940px covers phones held either way up, and
+   tablets held upright; a wider screen keeps the full table.
+   scripts/test_predictions_phone_layout.py holds 390px and 360px to it. */
 @media (max-width:940px){
   /* At the top of the page, not fixed over the board header as it scrolls. */
   .toggle{position:absolute}
   #board,#board thead,#board tbody,#board tr.audit,#board tr.audit>td{display:block; min-width:0}
-  #board colgroup,#board tr.axisrow{display:none}
+  #board colgroup,#board tr.axisrow,.sqlegend{display:none}
   #board thead tr:first-child,#board tr.row{display:grid; grid-template-columns:minmax(0,1fr) 70px 74px}
   #board thead th,#board tr.row>td{display:block}
   #board thead th:nth-child(2),#board thead th:nth-child(3),#board thead th:nth-child(4),
@@ -578,7 +579,7 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
   </table>
 </div>
 __OMITTED__
-<div class="legend">
+<div class="legend sqlegend">
   <span><b>When it was said</b> is one square per year, __Y0__ on the left to __Y1__ on the right, the
   same years on every row. Shading is how many predictions that person made that year, on a scale
   shared by all rows: <i class="k q1"></i>&nbsp;1 &nbsp; <i class="k q2"></i>&nbsp;2&ndash;3 &nbsp;
