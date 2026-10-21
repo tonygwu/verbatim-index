@@ -16,7 +16,7 @@ The fix is text in both prompts, so it is a new resolution-policy release. Measu
 re-resolution on the gold set predictions/_eval/cases-20261011-already-public (the 11 precursor rows must come back
 null, the announced-plan rows must stay present). Offline here:
   RULE      both prompts carry the same precursor sentence, in the already-public rule
-  RELEASE   the current release keeps the rule (resolution-2026-10-20 since VI-50), and every older release stays
+  RELEASE   the current release keeps the rule (resolution-2026-10-21 since VI-56), and every older release stays
             known so its sidecars still load
   PRIOR     the prior prompt is byte-identical to the one every existing prior was priced with, so no prior
             turns stale (score_predictions.prior_prompt_stale compares prompt hashes)
@@ -51,7 +51,8 @@ if isinstance(rule, str):
     for name in ("RESOLVER_TASK", "EARLY_TASK"):
         text = getattr(R, name)
         at = text.find("ALREADY PUBLIC BEFORE IT WAS SAID")
-        # The section's preface is about 600 characters; the rule grew to about 2,900 with resolution-2026-10-20.
+        # The section's preface is about 600 characters; the rule grew to about 2,900 with resolution-2026-10-20 and
+        # is about 2,550 since resolution-2026-10-21.
         check(f"{name} carries the rule inside its already-public section", at >= 0 and rule in text[at:at + 4000],
               text[at:at + 600])
     for words in ("earlier stage", "prototype", "experiment", "one case where it needs several",
@@ -60,13 +61,13 @@ if isinstance(rule, str):
 check("the early-call prompt says a forecast is not enough, as the resolver's does",
       "another person's forecast, is not" in R.EARLY_TASK, R.EARLY_TASK[R.EARLY_TASK.find("ALREADY PUBLIC"):][:500])
 
-check("the plan release (resolution-2026-10-20, VI-50) retains the precursor rule",
-      R.POLICY_RELEASE[0] == "resolution-2026-10-20", str(R.POLICY_RELEASE))
+check("the current release (resolution-2026-10-21, VI-56) retains the precursor rule",
+      R.POLICY_RELEASE[0] == "resolution-2026-10-21", str(R.POLICY_RELEASE))
 check("the release hash matches the texts", R.policy_release()[1] == R.POLICY_RELEASE[1],
       f"{R.policy_release()[1]} vs {R.POLICY_RELEASE[1]}")
 check("the 2026-09-30 release stays known, so its sidecars still load",
       R.KNOWN_RELEASES == ("resolution-2026-09-30", "resolution-2026-10-11", "resolution-2026-10-19",
-                           "resolution-2026-10-20"),
+                           "resolution-2026-10-20", "resolution-2026-10-21"),
       str(R.KNOWN_RELEASES))
 
 prior = R.build_prior_prompt(R._policy_fixture(), dt.date(2020, 12, 31))

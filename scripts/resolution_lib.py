@@ -352,6 +352,9 @@ The resolution criterion, as this pipeline recorded it:
 # announcement excludes a prediction only when it states everything the prediction claims; the last paragraph and its
 # five examples are the operator's approved text, word for word, and each example is a row they ruled on. Those five
 # rows are therefore left out of any measurement of the resolver's accuracy.
+# VI-56 (2026-10-21, release resolution-2026-10-21): the operator reversed the Sweeney ruling (VD-27) and decided
+# "REmove the Sweeney example", so four examples remain, every other word unchanged. Sweeney's row is still an
+# operator ruling, so all five rows stay out of any measurement of the resolver's accuracy.
 ALREADY_PUBLIC_NOT_A_PRECURSOR = (
     "   The report must be about the SAME event the prediction names. An announcement\n"
     "   that this event is agreed, decided or scheduled counts, including the speaker's\n"
@@ -383,11 +386,6 @@ ALREADY_PUBLIC_NOT_A_PRECURSOR = (
     "     reach laptops in 2007. On 2006-09-27 Pat Gelsinger said this would happen in\n"
     "     the first half of 2007. A narrower window than the announcement is a\n"
     "     forecast, even when the announcement makes it likely.\n"
-    "   - Not already public. Epic said on 2024-03-20 that its mobile store would\n"
-    "     launch later that year with self-publishing tools. That year ended without\n"
-    "     open self-publishing. On 2025-04-02 Tim Sweeney said developers could submit\n"
-    "     their games directly by the end of 2025. That is a new date after a missed\n"
-    "     schedule.\n"
     "   - Already public. Netflix announced on 2019-08-27 that The Two Popes would open\n"
     "     in theaters on November 27. On 2019-09-20 Reed Hastings said it was \"coming\n"
     "     out this fall\". The announcement states everything he claimed, at a more\n"
@@ -1285,11 +1283,16 @@ def apply_repairs(rows: list[dict], repairs: dict[str, dict]) -> tuple[int, int]
 # if it states everything the prediction claims; the operator's text and five examples, added to the resolver and
 # early-call prompts only. The prior and lead-test prompts are byte-identical to resolution-2026-10-19, so no prior or
 # lead test priced under it goes stale.
-POLICY_RELEASE = ("resolution-2026-10-20", "9f1fe156be814083db149be99fbd477867c27d8d425831096626d533d5cd29cc")
+# resolution-2026-10-21 (VI-56, ledger VD-28): the Sweeney example of resolution-2026-10-20 is removed, by the
+# operator's "REmove the Sweeney example" after they reversed that ruling (VD-27); the other four examples and the
+# rule's two sentences are unchanged. Resolver and early-call prompts only. The prior and lead-test prompts are
+# byte-identical to resolution-2026-10-20, so no prior or lead test priced under it goes stale.
+POLICY_RELEASE = ("resolution-2026-10-21", "a1e36c1f540049fe5ebe8d3a56400a6474313e61794dc6949aefe61ebfd2adb1")
 LEGACY_RELEASE = "legacy"
 # Every release ever cut, oldest first, so a board scored after the next release
 # can still name this one. A sidecar naming anything else is refused.
-KNOWN_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11", "resolution-2026-10-19", "resolution-2026-10-20")
+KNOWN_RELEASES = ("resolution-2026-09-30", "resolution-2026-10-11", "resolution-2026-10-19", "resolution-2026-10-20",
+                  "resolution-2026-10-21")
 
 
 def _policy_fixture() -> dict:
