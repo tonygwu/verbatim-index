@@ -189,14 +189,14 @@ TEMPLATE = r"""<!DOCTYPE html>
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="__OG_ALT__">
+<!-- score:start --><meta property="og:image:alt" content="__OG_ALT__"><!-- score:end -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:site" content="@tonygwu">
 <meta name="twitter:creator" content="@tonygwu">
 <meta name="twitter:title" content="__SOCIAL_TITLE__">
 <!-- score:start --><meta name="twitter:description" content="__SOCIAL_DESC__"><!-- score:end -->
 <meta name="twitter:image" content="__SITE_URL__og.png?v=__OG_VERSION__">
-<meta name="twitter:image:alt" content="__OG_ALT__">
+<!-- score:start --><meta name="twitter:image:alt" content="__OG_ALT__"><!-- score:end -->
 __FONTS__
 <style>
 __THEME__
@@ -473,16 +473,17 @@ footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--rule); colo
 
 /* ---------- phones: 940px wide and narrower ----------
    The board is an 1100px table. On a 390px phone it scrolled sideways inside its
-   card with nothing saying so: a reader saw each name and never Came true or
-   Score, and a person's predictions opened inside that 1100px row, cut off at
-   the screen edge (operator request 2026-10-21). Here each row is a grid of
-   three columns: the person, with the organisation under the name, then Came
-   true, then Score. The Predictions breakdown and the When-it-was-said squares
-   are hidden, and the Organisation header with them, so that column does not
-   sort here. The markup is the desktop's, untouched, so the page says the same
-   words at every width; only this block moves or hides cells. 940px covers
-   phones held either way up; a wider screen keeps the full table.
-   scripts/test_predictions_phone_layout.py holds 390px and 360px to it. */
+   card with nothing saying so: a reader saw each name and never the two result
+   columns at its right, and a person's predictions opened inside that 1100px
+   row, cut off at the right of the screen (operator request 2026-10-21). Here
+   each row is a grid of three columns: the person, with the organisation under
+   the name, then the two result columns. The Predictions breakdown and the
+   When-it-was-said squares are hidden, with the Organisation, Predictions and
+   When headers, so those columns do not sort here. The markup is the desktop's,
+   untouched, so the page says the same words at every width; only this block
+   moves or hides cells. 940px covers phones held either way up; a wider screen
+   keeps the full table. scripts/test_predictions_phone_layout.py holds 390px
+   and 360px to it. */
 @media (max-width:940px){
   /* At the top of the page, not fixed over the board header as it scrolls. */
   .toggle{position:absolute}
