@@ -40,7 +40,7 @@ board 51 and this file 59 entries. He is not one of the seven, so every assertio
 below already treats him as an ordinary leaders-board member. On 2026-10-18
 david-sacks and chamath-palihapitiya were promoted to BOTH boards on operator
 instruction (BACKLOG VI-14, docs/ROSTER-ADD-SACKS-PALIHAPITIYA-2026-10-18.md), so
-the leaders board holds 53 and PREDICTIONS_ONLY names the five investors still
+the leaders board holds 53 and PREDICTIONS_ONLY originally named the five investors still
 on the predictions board alone. Section [6] used to
 SIMULATE the change by appending the seven; it appended nothing once they were
 really there, which made it a silent duplicate of section [5]. It now guards the
@@ -61,10 +61,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-# The five of the seven investors appended on 2026-09-18 who are still on the
-# predictions board alone. chamath-palihapitiya and david-sacks left this tuple
-# on 2026-10-18, when they joined the leaders board.
-PREDICTIONS_ONLY = ("cathie-wood", "marc-andreessen", "bill-gurley", "vinod-khosla", "tom-lee")
+# Predictions-only members. Sacks and Palihapitiya joined leaders in October
+# 2026; Zitron, Burry and Eisman were requested for predictions alone.
+PREDICTIONS_ONLY = ("cathie-wood", "marc-andreessen", "bill-gurley", "vinod-khosla", "tom-lee",
+                    "ed-zitron", "michael-burry", "steve-eisman")
 
 passed = failed = 0
 
@@ -180,7 +180,7 @@ def main() -> int:
         print("\n[5] the shipped membership.json")
         shipped = M.load()
         check("it loads with no argument", isinstance(shipped, dict))
-        check("it holds 59 entries", len(shipped) == 59, f"got {len(shipped)}")
+        check("it holds 62 entries", len(shipped) == 62, f"got {len(shipped)}")
         check("DEFAULT_PATH is the repo root file",
               M.DEFAULT_PATH == ROOT / "membership.json", f"got {M.DEFAULT_PATH}")
 
@@ -193,7 +193,7 @@ def main() -> int:
         check("NOBODY is on the leaders board who is not on the roster", not extra,
               f"extra {extra}; verbatim-index must not move")
         want_leaders = [s for s in roster_slugs if s not in PREDICTIONS_ONLY]
-        check("the leaders board is exactly the roster MINUS the predictions-only five",
+        check("the leaders board is exactly the roster MINUS the predictions-only members",
               M.slugs_on(shipped, "leaders") == want_leaders,
               f"symmetric difference {set(M.slugs_on(shipped, 'leaders')) ^ set(want_leaders)}; "
               "a roster entry added or withdrawn is edited here in the same commit")
@@ -249,7 +249,7 @@ def main() -> int:
                          "PATH": "/usr/bin:/bin"},
             capture_output=True, text=True)
         check("load() from an unrelated working directory finds the real file",
-              proc.returncode == 0 and proc.stdout.strip() == "59",
+              proc.returncode == 0 and proc.stdout.strip() == "62",
               f"rc={proc.returncode} out={proc.stdout.strip()!r} err={proc.stderr.strip()[-300:]!r}")
 
     print(f"\n{passed} passed, {failed} failed")

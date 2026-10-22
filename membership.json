@@ -57,5 +57,8 @@
   "vinod-khosla": ["predictions"],
   "tom-lee": ["predictions"],
   "nate-silver": ["leaders", "predictions"],
+  "ed-zitron": ["predictions"],
+  "michael-burry": ["predictions"],
+  "steve-eisman": ["predictions"],
   "cc-wei": []
 }
