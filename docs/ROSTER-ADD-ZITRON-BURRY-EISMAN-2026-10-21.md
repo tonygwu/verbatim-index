@@ -7,6 +7,22 @@ All three belong to the predictions board only. Their slugs are `ed-zitron`,
 
 ## Integration status
 
+**Integrated into the production roster on 2026-10-22 at 04:14Z UTC** by the owner
+checkout (repo-0), after public membership landed at `b778026`. Data main was
+fast-forwarded onto the reviewed commit itself, `d36f3a85` (branch
+`codex/repo-7-predictions-roster-additions`), so its SHA is unchanged. It was
+re-checked before the merge: it changes only `roster/final.json`, appends ranks 59
+to 61 with `boards: ["predictions"]`, and leaves the 58 existing rows and every
+other field equal. `data_sync.py push --daemon` then regenerated the derived files
+as `ed4bb658`: `predictions/index.json` lists 61 people, and `predictions/scores.json`
+changed only its `inputs_sha256`, with all 917 prediction rows identical. With this
+roster, `test_agents_md_current_state.py` passes 14 of 14, `test_membership.py` 70 of
+70 and `test_membership_study_scope.py` 19 of 19. The leaders fetch loop keeps only
+leaders-board members, so these three are not fetched for the leaderboard. The live
+site has not changed: no deploy was made.
+
+The text below describes the state before integration.
+
 Public membership and a private roster branch are prepared for integration.
 The production roster and live site have not changed. Public membership has 62 entries,
 including 53 leaders-board members. The prepared private roster has 61 people,
