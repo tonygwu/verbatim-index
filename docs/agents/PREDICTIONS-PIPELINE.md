@@ -32,6 +32,31 @@ names (`redate-20261005n/make_lists.py`). Not yet done: the 107 recordings first
 Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
 `predictions/_experiments/redate-vd13b-20261005/compare.txt`.
 
+**Does a second resolver, Gemini 4 Argon, agree with Astra?** (2026-10-20, VI-47) On
+outcomes where both settle a row, yes; on whether a row can be settled, often not. 24
+board rows were chosen by a stated rule, 8 per outcome, and Astra and Gemini both resolved
+them again from one code revision (public `95f469c`), under release `resolution-2026-10-20`,
+as-of 2026-10-20,
+each pair reading the same prompt byte for byte. Gemini answered 23 (one row failed twice).
+Gemini agreed with the new Astra run on `outcome` in 16 of 23 rows and on whether
+`already_public` is set in 21 of 23; the new Astra run agreed with the board's own Astra
+answers on `outcome` in 20 of 24. Where both arms settled a row, they agreed on all 14. Six
+of the seven outcome disagreements are rows Astra called unresolvable and Gemini decided,
+often from adjacent figures or from search summaries. Three harness gaps limit this:
+- Gemini cannot open a PDF. agy saves a fetched PDF under `.tempmediaStorage/`, and the
+  resolver's gate refuses that open. Rows with a refused PDF disagreed with Astra in 4 of 7,
+  the others in 3 of 16. On one row Gemini answered `occurred` citing a report whose PDF
+  the gate had refused, and Astra cites a page of that report against it.
+- Gemini lists a search that agy's backend ended in `TOOL_ERROR` ("no summary returned from
+  GenerateContent"), and `validate_effort` refuses the answer as `rule_violation`: 4 of 27
+  Gemini attempts, 0 of 24 Astra attempts.
+- 35 of the 247 search-result redirect links Gemini tried to read gave it nothing: the gate
+  refused 11 it could not follow, and agy failed 24 after the gate allowed them, 23 with
+  HTTP 403. Whether the gate's own follow causes the 403 is not measured.
+Astra, unlike Gemini, has a shell that can read any file its macOS user can (VI-58).
+Follow-up is BACKLOG.md VI-57. Data `predictions/_experiments/gemini-resolver-20261020-repo0/`
+(`README.md`, `comparison.md`).
+
 ## Where things are
 
 - Resolution release `resolution-2026-10-21` (operator decision VD-28) removes the
@@ -80,6 +105,7 @@ Astra+Gemini still carry their 2026-10-03 Fable+Gemini records. Data
   `telemetry.web_search`, which `grade.gemini_web_search_actions` fills from agy's events
   exactly as `web_search_actions` does from codex's. `compare_resolvers.py select` picks board
   rows by a stated rule, and `report` gives row-by-row agreement between two resolve runs.
+  It cannot read PDFs yet; see "Experiments run" above and BACKLOG.md VI-57.
 
 - Fable priors and lead tests on prepaid API credit: `resolve_predictions.py --stage prior
   --fable-pool POOL` (or `--stage lead_test`) runs each Fable call through `quotapick run --only

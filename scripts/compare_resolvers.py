@@ -31,8 +31,8 @@ differs is listed, because then the two arms did not read the same prompt.
 THE PROJECT'S OWN SITE is public and shows the board's verdicts, so a resolver
 that saw it may have copied the board. Each row reports, per arm, how often its
 evidence names the site: Gemini's `own_site_mentions` (tool output in its
-transcript, gemini_resolver.py), Astra's count in its raw answer (the pages it
-opened and its own text; its search results are not in the stream). Agreement is
+transcript, gemini_resolver.py), Astra's count in its raw stream (each search
+result's URL, title and snippet, the pages it opened, and its own text). Agreement is
 given again without the rows either new arm saw the site in.
 
 Each Gemini row also counts its gate's refusals from the gate log the harness
