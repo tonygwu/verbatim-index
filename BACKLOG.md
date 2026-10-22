@@ -96,6 +96,26 @@ skips.
 
 ---
 
+### VI-58. The Astra resolver and the leaderboard's Astra grader can read any file the operator's macOS user can, including `data/` and the roster  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-22]`
+
+**Background:** Astra runs `codex exec -s read-only`. That mode blocks writes, not reads, and the docs describe it only as restricting "the filesystem" (`scripts/grade.py:658` "restricts the filesystem, not the network"). In the VI-47 comparison (data repo `predictions/_experiments/gemini-resolver-20261020-repo0/astra/_raw/`), 5 of 24 Astra resolver calls ran shell commands: all five read a skill file under `~/.agents/skills/` outside their working folder, with exit 0; on Gates `334eba45e46d9033` it ran `rg --files -g AGENTS.md -g '*334eba45e46d9033*'` in its working folder (nothing found) and a Python `urlopen`. No command touched this repository or `data/`, but nothing stops one: `data/predictions/` holds every row's earlier resolutions, and `data/` holds the roster the leaders grades are blinded against. The resolver passes only a `CODEX_HOME` wrapper (`scripts/resolve_predictions.py:409` "wrapper = [") and the leaders grader passes no wrapper. The pundits grader already solved this: every judge of a contract v2 study runs under a `sandbox-exec` profile that denies reads and writes under the whole `verbatim-index` folder, and a planted canary was refused (`scripts/grade.py:990` "A sandbox-exec profile that denies every read and write under"). `count_tool_events` records `command_execution` per call, so past exposure is countable.
+
+**Impact:** a resolver that reads the board's earlier answer for its row is no independent check, and a grader that reads the roster is not blind. How often either happened in stored grades and resolutions is not measured.
+
+**Fix:**
+1. Measure: count stored Astra grades and resolutions whose telemetry shows `command_execution` above 0, and for those with a raw stream, list every command and every path read; flag any that reached a `verbatim-index` checkout, `data/` or the roster.
+2. Resolver: test first, then run `call_astra` in `resolve_predictions.py` under `grade.sandbox_wrapper(<the verbatim-index folder>)`, as the pundits harness does, with a live canary probe. Message the policy owner (repo-1) first, because this changes the production resolver's harness.
+3. Leaders grader: the same change makes new Astra grades incomparable with the corpus (`scripts/grade.py:661` "deliberately left alone"), so the operator decides, with step 1's count in hand, as for VI-55.
+4. Correct the docs that say `-s read-only` restricts the filesystem (`docs/agents/JUDGES.md:405` "from flags: `-s read-only` restricts the filesystem", and again at line 533).
+
+*Risks and edge cases:* `sandbox-exec` must still let codex read its own `CODEX_HOME` and write its output file, which the pundits harness already handles; the work folder must sit outside the denied folder (`grade.py` refuses one inside it).
+
+*Why premium not standard:* a blinding boundary on the production grader and resolver, a live probe, and a decision about published scores.
+
+**Touch points:** `scripts/resolve_predictions.py`, `scripts/grade.py` (`call_astra`, `sandbox_wrapper`), their tests, `docs/agents/JUDGES.md`, `docs/agents/BLINDING.md` (Known limits).
+
+---
+
 ### VI-20. Four graded pundits recordings carry blinded grades of text the blinder no longer produces  `[capability: standard]`  `[priority: P2]`  `[filed: 2026-10-11]`
 
 **Background:** Only the pundits daemon clone, repo-3, can finish this: the grades are `data-pundits` owner paths, which `data_sync.py push` refuses from any other clone, so an agent on another clone skips it. It spends judge quota, about 8 calls. `blind_study()` (`scripts/normalize_transcripts.py:531`) was fixed on 2026-10-11 to leave another person's surname alone when a different given name stands before it (the archived entry "FIXED IN CODE 2026-10-11; repo-3 must re-grade 4 recordings", `docs/BACKLOG-RESOLVED.md`, Verbatim Pundits, holds the measurement: 14 of 367 blinded files change). Four of the 14 are graded, `ben-shapiro/ben-shapiro-ahi_t9`, `ben-shapiro/ben-shapiro-mtbfmw`, `matt-walsh/matt-walsh-9bcva6` and `matt-walsh/matt-walsh-7zhqm9`, two blinded grades each. Checked 2026-10-18 in repo-3's `data-pundits`: all eight blinded grades still date from 2026-09-15 to 2026-09-17, before the fix. The next pundits normalize rewrites the 14 blinded files, and `grade.py` will report those 8 as `stale_cache` and exit 1 until they are re-graded with `--force`. `docs/PUNDITS-RELEASE-PLAN.md:49-51` names this step.
