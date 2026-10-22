@@ -35,9 +35,9 @@
   ],
   "people_ranked": 49,
   "more": 46,
-  "scored": 603,
-  "predictions": 1289,
-  "as_of": "2026-10-20"
+  "scored": 608,
+  "predictions": 1304,
+  "as_of": "2026-10-22"
  },
  "drawn_by": "scripts/build_og_card.py",
  "note": "The site builder warns when these counts or this label drift from the page."
