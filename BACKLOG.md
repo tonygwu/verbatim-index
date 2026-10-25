@@ -76,6 +76,27 @@ skips.
 
 ## Open items
 
+### VI-59. The judge sandboxes do not deny the transcript labeling service's port or its home folder, so a jailed judge could read human labels once that service runs  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-25]`
+
+**Background:** The public transcript-labeling repository's service is about to run on this Mac as a launchd agent on 127.0.0.1, port 8790 unless its `config.json` names another, with its config, bearer token, local-only datasets and state under its home folder: `$TL_HOME` from the launchd plist, else `~/.local/share/transcript-labeling`. Its owner ruled that verbatim's judge sandboxes deny that port and that folder before the service first starts, and that service's deploy waits for this item. The three `sandbox-exec` profile builders deny only the verbatim-index container: `scripts/grade.py:990` "A sandbox-exec profile that denies every read and write under", `scripts/date_recordings.py:416` "(version 1)(allow default){rules}" and `scripts/p3_judge_probe.py:75` "(version 1)(allow default)". Contract v2 names the sandbox `sandbox_exec_deny_container` in `profiles/pundits.json` and hashes that name, not the profile text the builders generate (`docs/agents/JUDGES.md:341` "sandbox_exec_deny_container"). The leaders Astra grader and the resolver run with no `sandbox-exec` wrapper at all, and `codex exec -s read-only` does not restrict the network; that is VI-58's gap, and this item does not close it.
+
+**Impact:** once the service holds labels, a judge inside any of these profiles can read the service's token and fetch human labels from its port, or read its files directly, and graded output can carry ground truth. Until VI-58 is done, an unjailed Astra call can do the same, so no verbatim dataset is registered in the service before VI-58 lands.
+
+**Fix:**
+1. A small standard-library module, `scripts/labeling_service_jail.py`, so `date_recordings.py` stays free of a `grade` import, returns the extra rules: `network-outbound` and `network-bind` denies on `localhost` for port 8790 and for any port a found home's `config.json` names; `file-read*` and `file-write*` denies on every home it finds, each as a resolved real path. The homes are the default under the operator's home directory (read from the password database, not `$HOME`), the grading process's own non-empty `$TL_HOME` with `~` expanded, and `TL_HOME` in the service's launchd plist when the plist exists. A plist or `config.json` that exists but cannot be read stops the profile with an error, never a quieter profile.
+2. Append those rules in all three builders; `p3_judge_probe.py` calls `grade.sandbox_profile` instead of keeping a copy.
+3. Tests: the rules for each home source and an empty `$TL_HOME`; inside the jail a listener on 127.0.0.1:8790 and on [::1]:8790 is refused while the same connection outside succeeds, and a canary under a temporary `$TL_HOME` cannot be read; the contract ID is unchanged.
+4. Docs: `docs/agents/JUDGES.md`, `docs/agents/PUNDITS.md`, `docs/agents/DATING.md` and `docs/PUNDITS-P3-PROBES.md` say the profile also denies the service, and why the contract ID does not change.
+5. One live call of each judge (Fable, Astra, Gemini) under the new profile succeeds.
+
+*Risks and edge cases:* a git-private dataset or an export written with `--out` lives outside the service's home, so these rules do not cover it; verbatim's own datasets would sit in a data checkout inside the denied container. A service whose port changes after a profile is built is not covered until the next build. `sandbox-exec` matches real paths, so a home under `/tmp` resolves to `/private/tmp`. A judge that needs some other local service on port 8790 would lose it; none is known.
+
+*Why premium not standard:* a blinding boundary on production judges, a live probe of three judges, and a contract-hash question.
+
+**Touch points:** `scripts/grade.py:990` "A sandbox-exec profile that denies every read and write under", `scripts/date_recordings.py:416` "(version 1)(allow default){rules}", `scripts/p3_judge_probe.py:75` "(version 1)(allow default)", `scripts/test_judge_jail.py:73` "sandbox_wrapper(root)", `scripts/test_pundits_harness.py`, `scripts/test_dating_fable_web.py`, `docs/agents/JUDGES.md:341` "sandbox_exec_deny_container", `docs/agents/PUNDITS.md`, `docs/agents/DATING.md`, `docs/PUNDITS-P3-PROBES.md`.
+
+---
+
 ### VI-55. Every blinded judge is told the speaker's slug through its working folder's path, and the effect on scores is unmeasured  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-20]`
 
 **Background:** `scripts/grade.py:2963` "wd = workroot / f"{rec" names each job's folder `<leader_slug>-<source>__<judge>__<mode>__r<run>` under `scripts/grade.py:2919` "workroot = Path(os.environ.get("TMPDIR", "/tmp")) / (", and every harness tells its model its working folder. Measured 2026-10-20: Astra and Fable, in a folder named for a made-up leader and asked with no tool, both returned the path with that name in it; Gemini grader conversations from 2026-10-18 typed their own folder path, asked to run `ls -la .. | grep greg-brockman` and `| grep mark-zuckerberg` (refused), and ran `ls -la ../george-hotz*`. So since the first grading harness (2026-09-05) every blinded grade, from all three judges, had the speaker's slug in context. Found in the same work: the Gemini profile that runs as the operator's macOS user allowed `cat`, `ls`, `tail`, `sqlite3`, one `find` and `agy` without asking, and a canary test through the grader's exact call read a repo file with `cat`. The operator had those six rules removed on 2026-10-20 at 17:49Z; agy's shared scope still holds a file grant outside this repository, which the operator kept. Evidence, with raw output: data repo `experiments/judge-blinding-probe-20261020-repo0/` (README).
@@ -107,6 +128,8 @@ skips.
 2. Resolver: test first, then run `call_astra` in `resolve_predictions.py` under `grade.sandbox_wrapper(<the verbatim-index folder>)`, as the pundits harness does, with a live canary probe. Message the policy owner (repo-1) first, because this changes the production resolver's harness.
 3. Leaders grader: the same change makes new Astra grades incomparable with the corpus (`scripts/grade.py:661` "deliberately left alone"), so the operator decides, with step 1's count in hand, as for VI-55.
 4. Correct the docs that say `-s read-only` restricts the filesystem (`docs/agents/JUDGES.md:405` "from flags: `-s read-only` restricts the filesystem", and again at line 533).
+
+*Carries from VI-59:* the transcript labeling service's port and home are denied by every profile `grade.sandbox_wrapper` builds once VI-59 lands, so wrapping these calls in it covers the service too; until then no verbatim dataset is registered in that service.
 
 *Risks and edge cases:* `sandbox-exec` must still let codex read its own `CODEX_HOME` and write its output file, which the pundits harness already handles; the work folder must sit outside the denied folder (`grade.py` refuses one inside it).
 
