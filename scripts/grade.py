@@ -656,8 +656,10 @@ def count_tool_events(events: list[dict]) -> dict[str, int]:
     MEASURED 2026-09-07: `codex exec` with these exact production flags answers
     "YES - web.run" when asked whether it has web search, and the judge was
     observed running web_search and citing a page that named the blinded
-    subject. `-s read-only` restricts the filesystem, not the network, and none
-    of five candidate config keys switched it off.
+    subject. `-s read-only` does not stop this provider-side search, and none
+    of five candidate config keys switched it off. (Measured on 2026-10-26,
+    VI-58: the same mode blocks writes and the shell's own network access,
+    and still lets a shell command read every file.)
 
     The behaviour is deliberately left alone, because changing it now would make
     new grades incomparable with the corpus already graded. What is not

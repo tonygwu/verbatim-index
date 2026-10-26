@@ -298,8 +298,9 @@ def test_subject_share_cutoff():
 #
 # MEASURED 2026-09-07: `codex exec` with the production flags reports
 # "YES - web.run", and the judge was observed issuing web_search calls and
-# citing a page that named the subject. -s read-only restricts the filesystem,
-# not the network, and none of five candidate config keys disabled it.
+# citing a page that named the subject. -s read-only does not stop that
+# provider-side search, and none of five candidate config keys disabled it.
+# (Measured on 2026-10-26, VI-58: the mode blocks the shell's own network.)
 #
 # The decision is to leave the behaviour alone, because changing it now would
 # make new grades incomparable with the 999 already in the corpus. But it must

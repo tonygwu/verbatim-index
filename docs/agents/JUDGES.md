@@ -351,7 +351,7 @@ the mix even.
   `scripts/test_fable_pool.py` and `scripts/test_credit_run.py`.
 
 - **The judge sandbox also denies the transcript labeling service, and no
-  contract ID changes (VI-59, 2026-10-25).** Every profile that
+  contract ID changes (VI-59, 2026-10-26 UTC).** Every profile that
   `grade.sandbox_profile` and `date_recordings.sandbox_profile` build appends
   `labeling_service_jail.rules()`. It denies outbound connections to, and binds
   on, port 8790 and any port the service's `config.json` names, on every address:
@@ -364,11 +364,15 @@ the mix even.
   sandbox's name, `sandbox_exec_deny_container`, through `judge_requests` in
   `profiles/pundits.json`, never the profile text, so the name now covers more
   than the container and every pundits contract ID and stored grade stays
-  valid. The leaders Astra grader and the resolver run outside `sandbox-exec`,
-  and `codex exec -s read-only` does not restrict the network, so they can still
-  reach the service until VI-58 lands; no verbatim dataset is registered in the
-  service before then. Proof: `scripts/test_labeling_service_jail.py`, which also
-  pins that the contract ID does not depend on the profile text, and the SERVICE
+  valid. Five Astra callers run outside `sandbox-exec`: the leaders grader,
+  the resolver, the extractor, the Astra dater and the market matcher. Codex's
+  read-only policy refuses their shell commands every network connection, so
+  they cannot reach the service's port, but it lets them read every file,
+  including the service's token and its local-only datasets (measured on
+  2026-10-26 UTC; VI-58 step 1 has the counts). Until VI-58 is resolved, no
+  verbatim dataset is registered in the service. Proof:
+  `scripts/test_labeling_service_jail.py`, which also pins that the contract
+  ID does not depend on the profile text, and the SERVICE
   checks in `scripts/test_judge_jail.py`. They try 127.0.0.1, ::1 and
   ::ffff:127.0.0.1 on 8790 inside the jail only, so a gate run never binds the
   live service's port, and on a scratch config port both inside and outside. A
@@ -434,8 +438,10 @@ production flags, for something it could not know from training. Fable is
 offered `WebFetch`, `WebSearch` and `Bash`, tries all three, and every one is
 denied; `web_search_requests: 0`. Astra answers "YES — web.run" and was observed
 searching and citing a page that named the blinded subject. Do not infer this
-from flags: `-s read-only` restricts the filesystem, not the network, and five
-candidate config keys failed to disable it.
+from flags: `-s read-only` does not stop this provider-side search, and five
+candidate config keys failed to disable it. Measured later, on 2026-10-26 (UTC,
+VI-58): the same mode blocks writes and every network connection from the
+judge's own shell commands, and allows every file read.
 
 **Are the content refusals deterministic?** (2026-09-07) Re-ran three refusing
 transcripts under `gpt-6-astra` at production settings, verifying that the
@@ -562,9 +568,11 @@ they are not exchangeable, which is all a hybrid needed them to be.
 
 - **The Astra judge has live web search and keeps it.** `codex exec` with the
   production flags answers "YES - web.run", and the judge was observed searching
-  and citing a page naming the blinded subject. `-s read-only` restricts the
-  filesystem, not the network, and five candidate config keys failed to disable
-  it. Left on so new grades stay comparable with the ~1000 already collected.
+  and citing a page naming the blinded subject. `-s read-only` does not stop
+  this provider-side search (it blocks writes and the judge's own shell network
+  access, measured on 2026-10-26, VI-58), and five candidate config keys failed
+  to disable the search. Left on so new grades stay comparable with the ~1000
+  already collected.
   `count_tool_events()` now records `tool_use_counts` and `web_search_queries`
   on every Astra grade, so the exposure is measurable instead of merely accepted.
   Fable is genuinely sandboxed: it is offered the tools, tries all three, and

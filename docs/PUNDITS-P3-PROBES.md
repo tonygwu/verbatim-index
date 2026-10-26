@@ -93,7 +93,7 @@ The pundits harness therefore does this:
 - **Sandbox for all three judges.** Every judge runs under the `sandbox-exec`
   profile, in a jail outside the container, so the repo, the roster and the
   private lean labels stay unreadable, and Gemini's shell cannot read them
-  either. Since 2026-10-25 the profile also denies the transcript labeling
+  either. Since 2026-10-26 (UTC) the profile also denies the transcript labeling
   service's port and home folder (VI-59), so a judge cannot fetch human labels.
 - **Fable without tools.** Fable runs with `--tools ""`, pending the P4
   invalid-answer rate on grading-size prompts. Leaders keeps its flags

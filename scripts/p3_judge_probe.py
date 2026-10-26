@@ -4,7 +4,7 @@
 Pundits plan, P3, option A (chosen 2026-09-14): every judge runs as this same
 macOS user, in a jail directory outside the repository, wrapped in a
 `sandbox-exec` profile that denies reads and writes under the verbatim-index
-container, which holds every clone and every data checkout. Since VI-59 (2026-10-25)
+container, which holds every clone and every data checkout. Since VI-59 (2026-10-26 UTC)
 the profile is grade.sandbox_profile, which also denies the transcript labeling
 service's port and home. Nothing else is changed on the machine.
 
