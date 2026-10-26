@@ -169,6 +169,25 @@ def main() -> int:
         row, rec, _ = run_one(root, [], router=Router(fail=True))
         check("a router that refuses every account writes nothing either",
               rec is None and row["label"] == "router_unavailable")
+        # VI-59: the sandbox profile reads the labeling service's plist and config, and refuses
+        # when one is unreadable. That refusal is not a model failure: no judge was called, so
+        # it must stop the step before any record is written, never mark the recording failed.
+        saved_wrapper = T.G.sandbox_wrapper
+
+        def refusing_wrapper(root_):
+            raise RuntimeError("REFUSING: cannot read the labeling service's config /x/config.json")
+        T.G.sandbox_wrapper = refusing_wrapper
+        seen_calls: list = []
+        try:
+            T.segment_one(root, "jane-roe/talk-1", {"name": "Jane Roe", "role": "CEO"}, Router(),
+                          root / "work", fake_call([GOOD, GOOD], seen_calls))
+            raised = False
+        except RuntimeError as exc:
+            raised = "REFUSING" in str(exc)
+        finally:
+            T.G.sandbox_wrapper = saved_wrapper
+        check("a sandbox that cannot be built stops the step: no judge call, no failed record",
+              raised and not seen_calls and not T.turns_path(root, "jane-roe/talk-1").exists())
 
         print("\n[CHECK]")
         run_one(root, [GOOD])

@@ -11,7 +11,8 @@ three profile builders carry them. test_judge_jail.py runs the rules live.
             denied for read and write, as resolved real paths; `~` expands to the
             operator's home directory from the password database, never $HOME
   PORTS     port 8790 and any port a found home's config.json names are denied for
-            outbound connections and for binding, on localhost
+            outbound connections and for binding, on any address ("*", because a
+            localhost filter misses the IPv4-mapped [::ffff:127.0.0.1])
   REFUSALS  a plist or config.json that exists but cannot be read, a port that is
             not an integer, and a path that would break the profile's quoting
             raise instead of returning a quieter profile
@@ -45,8 +46,8 @@ def denies_path(rules: str, path: Path) -> bool:
 
 
 def denies_port(rules: str, port: int) -> bool:
-    return (f'(deny network-outbound (remote ip "localhost:{port}"))' in rules
-            and f'(deny network-bind (local ip "localhost:{port}"))' in rules)
+    return (f'(deny network-outbound (remote ip "*:{port}"))' in rules
+            and f'(deny network-bind (local ip "*:{port}"))' in rules)
 
 
 class Homes(unittest.TestCase):
@@ -82,8 +83,12 @@ class Homes(unittest.TestCase):
         self.assertTrue(denies_path(rules, home), rules)
 
     def test_a_tilde_expands_to_the_operators_home_not_to_HOME(self):
-        homes = LSJ.homes(env={"TL_HOME": "~/tl-elsewhere", "HOME": "/nonexistent-profile"}, plist=self.no_plist)
+        # HOME is changed on this process, where an expansion through $HOME would read it.
+        with mock.patch.dict(os.environ, {"HOME": "/nonexistent-profile"}):
+            homes = LSJ.homes(env={"TL_HOME": "~/tl-elsewhere"}, plist=self.no_plist)
+            default = LSJ.homes(env={}, plist=self.no_plist)
         self.assertIn((USER_HOME / "tl-elsewhere").resolve(), homes)
+        self.assertEqual(default, [DEFAULT_HOME])
 
     def test_the_plists_tl_home_is_denied(self):
         home = self.dir / "plist-home"
@@ -160,7 +165,7 @@ class Refusals(unittest.TestCase):
 
 
 class Builders(unittest.TestCase):
-    MARK = '(deny network-outbound (remote ip "localhost:8790"))'
+    MARK = '(deny network-outbound (remote ip "*:8790"))'
 
     def test_every_profile_builder_appends_the_rules(self):
         import date_recordings as DR  # noqa: PLC0415

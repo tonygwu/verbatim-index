@@ -372,8 +372,9 @@ def codex_homes(args) -> list[str]:
 # repository), with exactly two built-in tools, WebSearch and WebFetch, both named in
 # --tools (what exists) and --allowedTools (what runs unasked), and --permission-prompts
 # none for anything else. It runs under sandbox-exec, which denies every read and write
-# under the verbatim-index container, the data checkout and this checkout, in a
-# working directory outside all three. The judge harness, and the outcome-blind Fable
+# under the verbatim-index container, the data checkout and this checkout, and the
+# transcript labeling service's port and home (VI-59), in a working directory outside
+# all three. The judge harness, and the outcome-blind Fable
 # prior and lead-test stages, are untouched.
 FABLE_WEB_TOOLS = ("WebSearch", "WebFetch")
 # A backstop, not the budget: the prompt asks for at most 20 searches and 20 page opens.

@@ -248,10 +248,16 @@ def failure_label(exc: Exception) -> str:
     return msg.split(":", 1)[0].strip() if ":" in msg else type(exc).__name__
 
 
-def segment_one(data: Path, key: str, person: dict, router, work_root: Path, call=None) -> dict:
+def segment_one(data: Path, key: str, person: dict, router, work_root: Path, call=None,
+                wrapper: list[str] | None = None) -> dict:
     """Segment one recording. Returns the report row; writes the turns record unless the
-    last failure was infrastructure, which the next cycle retries."""
+    last failure was infrastructure, which the next cycle retries.
+
+    The sandbox wrapper is built before the first attempt, outside the attempt loop: a
+    profile that cannot be built (VI-59: the labeling service's plist or config is
+    unreadable) raises out of here, so no judge is called and no failed record is written."""
     call = call or G.call_astra
+    wrapper = G.sandbox_wrapper(DENIED_ROOT) if wrapper is None else wrapper
     rec = json.loads((data / "transcripts_open" / f"{key}.json").read_text())
     tokens = rec["text"].split()
     prompt = build_prompt(rec, person, tokens)
@@ -265,7 +271,7 @@ def segment_one(data: Path, key: str, person: dict, router, work_root: Path, cal
         try:
             route = router.pick("astra", None)
             text, tel = call(prompt, TIMEOUT, work, model=SEGMENTER_MODEL, raw_response_path=raw,
-                             wrapper=G.sandbox_wrapper(DENIED_ROOT), config_dir=route["config_dir"])
+                             wrapper=wrapper, config_dir=route["config_dir"])
             turns = parse_turns(text)
             ranges, how = resolve(turns, tokens)
             break
@@ -326,13 +332,15 @@ def segment(args, router=None, call=None) -> int:
     if work_root.is_relative_to(DENIED_ROOT):
         raise SystemExit(f"REFUSING: working directory {work_root} is inside the sandboxed container")
     roster = {p["slug"]: p for p in json.loads((data / "roster" / "final.json").read_text())["roster"]}
+    # Once per run, before any recording: a refusal stops the step, and grade_loop names it.
+    wrapper = G.sandbox_wrapper(DENIED_ROOT)
     if router is None:
         from extract_predictions import Router
         router = Router(**DEFAULT_ROUTER_KWARGS)
     lock = threading.Lock()
 
     def one(key):
-        row = segment_one(data, key, roster[key.split("/")[0]], router, work_root, call)
+        row = segment_one(data, key, roster[key.split("/")[0]], router, work_root, call, wrapper)
         with lock:
             report["attempted"] += 1
             report["rows"].append(row)

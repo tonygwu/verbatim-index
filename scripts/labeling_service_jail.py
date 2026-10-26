@@ -6,7 +6,7 @@ port 8790 unless its config.json names another, and keeps its config, bearer
 token, local-only datasets and state under its home folder. A judge that reached
 either could read human labels, so every judge profile appends rules() after its
 own: grade.sandbox_profile, date_recordings.sandbox_profile, and through
-grade.sandbox_profile the pundits harness and the probes.
+grade.sandbox_profile the pundits harness, speaker_turns and the probes.
 
 Every home found is denied, because a home missed is a hole nobody sees:
   - the default, ~/.local/share/transcript-labeling under the operator's home
@@ -96,8 +96,10 @@ def rules(env=None, plist: Path | None = None) -> str:
     found = homes(env, plist)
     parts = []
     for port in ports(found):
-        parts.append(f'(deny network-outbound (remote ip "localhost:{port}"))')
-        parts.append(f'(deny network-bind (local ip "localhost:{port}"))')
+        # "*", not "localhost": a localhost filter misses the IPv4-mapped form
+        # [::ffff:127.0.0.1], which reaches a service listening on 127.0.0.1.
+        parts.append(f'(deny network-outbound (remote ip "*:{port}"))')
+        parts.append(f'(deny network-bind (local ip "*:{port}"))')
     for h in found:
         if '"' in str(h) or "\\" in str(h):
             raise RuntimeError(f"REFUSING: the labeling service home {h} cannot be written into a sandbox profile")

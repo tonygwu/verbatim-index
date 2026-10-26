@@ -354,8 +354,10 @@ the mix even.
   contract ID changes (VI-59, 2026-10-25).** Every profile that
   `grade.sandbox_profile` and `date_recordings.sandbox_profile` build appends
   `labeling_service_jail.rules()`. It denies outbound connections to, and binds
-  on, `localhost` port 8790 and any port the service's `config.json` names, and
-  reads and writes under every home the service may use: the default
+  on, port 8790 and any port the service's `config.json` names, on every address:
+  a `localhost` filter misses the IPv4-mapped `[::ffff:127.0.0.1]`, which reaches
+  a service listening on 127.0.0.1. It also denies reads and writes under every
+  home the service may use: the default
   `~/.local/share/transcript-labeling`, this process's non-empty `TL_HOME`, and
   `TL_HOME` in the service's launchd plist. That service keeps human labels, so a
   jailed judge must reach neither its port nor its files. Contract v2 hashes the
@@ -367,8 +369,11 @@ the mix even.
   reach the service until VI-58 lands; no verbatim dataset is registered in the
   service before then. Proof: `scripts/test_labeling_service_jail.py`, which also
   pins that the contract ID does not depend on the profile text, and the SERVICE
-  checks in `scripts/test_judge_jail.py`, which connect to 127.0.0.1:8790 and
-  [::1]:8790 inside and outside the jail.
+  checks in `scripts/test_judge_jail.py`, which try 127.0.0.1, ::1 and
+  ::ffff:127.0.0.1 inside and outside the jail without ever binding 8790. A
+  profile that cannot be built (an unreadable plist or `config.json`) raises:
+  `grade.py` refuses at start, and `speaker_turns.py` builds it once before any
+  recording, so the refusal never becomes a failed turns record.
 
 ## Experiments run, and what they showed
 

@@ -4,7 +4,7 @@
 Pundits plan, P3, as decided on 2026-09-14. All three judges run under a
 `sandbox-exec` profile that denies reads and writes under the verbatim-index
 container, so no judge can read the repository, the roster or the private lean
-labels. Fable also runs with `--tools ""` and must show zero tool calls in its
+labels, and denies the transcript labeling service's port and home (VI-59). Fable also runs with `--tools ""` and must show zero tool calls in its
 own session transcript. Provider-side web search by Astra and Gemini is accepted
 and measured, not blocked.
 
@@ -135,7 +135,7 @@ def main() -> int:
         check("a read outside the root is allowed", free.returncode == 0 and free.stdout == "fine", free.stderr)
         check("no wrapper at all when no root is given", G.sandbox_wrapper(None) == [])
         check("the profile denies the transcript labeling service's port (VI-59)",
-              '(deny network-outbound (remote ip "localhost:8790"))' in wrapper[2], wrapper[2][-200:])
+              '(deny network-outbound (remote ip "*:8790"))' in wrapper[2], wrapper[2][-200:])
 
         print("\n[FABLE]")
         cfg = tmp / "claude-config"

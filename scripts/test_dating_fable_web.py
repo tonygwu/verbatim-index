@@ -97,7 +97,7 @@ class Sandbox(unittest.TestCase):
 
     def test_the_profile_denies_the_labeling_service_too(self):
         # VI-59: the transcript labeling service keeps human labels; a dater must not reach it.
-        self.assertIn('(deny network-outbound (remote ip "localhost:8790"))', DR.sandbox_profile([Path("/a")]))
+        self.assertIn('(deny network-outbound (remote ip "*:8790"))', DR.sandbox_profile([Path("/a")]))
 
 
 class Audit(unittest.TestCase):
