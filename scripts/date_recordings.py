@@ -90,6 +90,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dating_lib as DL  # noqa: E402
+import labeling_service_jail  # noqa: E402
 import predictions_lib as L  # noqa: E402
 
 GEMINI_MODEL = "gemini-3.8-flash-high"
@@ -412,8 +413,9 @@ def sandbox_roots(repo: Path | None = None, data: Path | None = None) -> list[Pa
 
 
 def sandbox_profile(roots: list[Path]) -> str:
+    """Deny every root, then the transcript labeling service's port and home (VI-59)."""
     rules = "".join(f'(deny file-read* (subpath "{r}"))(deny file-write* (subpath "{r}"))' for r in roots)
-    return f"(version 1)(allow default){rules}"
+    return f"(version 1)(allow default){rules}{labeling_service_jail.rules()}"
 
 
 _INPUT_FIELD = {"WebSearch": re.compile(r'"query":\s*"((?:[^"\\]|\\.)*)'),

@@ -72,9 +72,8 @@ def utc() -> str:
 
 
 def sandbox_profile(root: Path) -> str:
-    return (f'(version 1)(allow default)'
-            f'(deny file-read* (subpath "{root}"))'
-            f'(deny file-write* (subpath "{root}"))')
+    """The pundits harness's own profile, so the probe measures what grading runs under (VI-59)."""
+    return G.sandbox_profile(root)
 
 
 def prompts(roster_canary: Path, lean_canary: Path) -> dict[str, str]:

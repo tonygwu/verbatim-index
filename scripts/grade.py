@@ -49,6 +49,7 @@ REPO = Path(__file__).resolve().parent.parent
 # importlib by a test it may not be, so make the sibling import work in both cases.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import credit_run  # noqa: E402
+import labeling_service_jail  # noqa: E402
 
 SKILL = REPO / ".claude" / "skills" / "leader-transcript-grader"
 RUBRIC_PATH = SKILL / "RUBRIC.md"
@@ -995,10 +996,16 @@ def sandbox_profile(root: Path) -> str:
     that tried to read a planted canary there, by its own file tool or by a
     shell `cat`, got "Operation not permitted". Provider-side web search is not
     affected and is accepted; see docs/PUNDITS-P3-PROBES.md.
+
+    It also denies the transcript labeling service's port and home folder
+    (VI-59, labeling_service_jail.py), so a judge cannot read human labels.
+    The contract hashes the sandbox's name, `sandbox_exec_deny_container`, not
+    this text, so adding rules here changes no contract ID.
     """
     return (f'(version 1)(allow default)'
             f'(deny file-read* (subpath "{root}"))'
-            f'(deny file-write* (subpath "{root}"))')
+            f'(deny file-write* (subpath "{root}"))'
+            f'{labeling_service_jail.rules()}')
 
 
 def sandbox_wrapper(root: Path | None) -> list[str]:

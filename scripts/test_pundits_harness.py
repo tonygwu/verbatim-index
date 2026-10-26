@@ -134,6 +134,8 @@ def main() -> int:
         free = subprocess.run([*wrapper, "/bin/cat", str(outside / "ok.txt")], capture_output=True, text=True)
         check("a read outside the root is allowed", free.returncode == 0 and free.stdout == "fine", free.stderr)
         check("no wrapper at all when no root is given", G.sandbox_wrapper(None) == [])
+        check("the profile denies the transcript labeling service's port (VI-59)",
+              '(deny network-outbound (remote ip "localhost:8790"))' in wrapper[2], wrapper[2][-200:])
 
         print("\n[FABLE]")
         cfg = tmp / "claude-config"

@@ -350,6 +350,26 @@ the mix even.
   board (docs/agents/PREDICTIONS-PIPELINE.md). Guarded by
   `scripts/test_fable_pool.py` and `scripts/test_credit_run.py`.
 
+- **The judge sandbox also denies the transcript labeling service, and no
+  contract ID changes (VI-59, 2026-10-25).** Every profile that
+  `grade.sandbox_profile` and `date_recordings.sandbox_profile` build appends
+  `labeling_service_jail.rules()`. It denies outbound connections to, and binds
+  on, `localhost` port 8790 and any port the service's `config.json` names, and
+  reads and writes under every home the service may use: the default
+  `~/.local/share/transcript-labeling`, this process's non-empty `TL_HOME`, and
+  `TL_HOME` in the service's launchd plist. That service keeps human labels, so a
+  jailed judge must reach neither its port nor its files. Contract v2 hashes the
+  sandbox's name, `sandbox_exec_deny_container`, through `judge_requests` in
+  `profiles/pundits.json`, never the profile text, so the name now covers more
+  than the container and every pundits contract ID and stored grade stays
+  valid. The leaders Astra grader and the resolver run outside `sandbox-exec`,
+  and `codex exec -s read-only` does not restrict the network, so they can still
+  reach the service until VI-58 lands; no verbatim dataset is registered in the
+  service before then. Proof: `scripts/test_labeling_service_jail.py`, which also
+  pins that the contract ID does not depend on the profile text, and the SERVICE
+  checks in `scripts/test_judge_jail.py`, which connect to 127.0.0.1:8790 and
+  [::1]:8790 inside and outside the jail.
+
 ## Experiments run, and what they showed
 
 **Can a Gemini judge open web pages without the leaders grader gaining that

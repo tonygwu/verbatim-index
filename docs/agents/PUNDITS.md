@@ -80,7 +80,8 @@ there. Add new material under the same headings.
 
 - P3 judge probe (pundits, SPENDS QUOTA with `--run`): `scripts/p3_judge_probe.py`.
   It runs each judge's real argv under `sandbox-exec`, in a jail outside the
-  verbatim-index container, with reads and writes denied under that container. It
+  verbatim-index container, with reads and writes denied under that container and
+  under the transcript labeling service's home, and that service's port denied (VI-59). It
   asks the judge to search the web, read planted canaries, run a shell command and
   fetch a URL. Each call gets PASS, FAIL or INCONCLUSIVE, and the judge's
   served-model identity is marked VERIFIED or UNVERIFIED. Raw responses go to
@@ -90,7 +91,8 @@ there. Add new material under the same headings.
 
 - Pundits judge harness (P3, decided 2026-09-14, `docs/PUNDITS-P3-PROBES.md`): every judge
   of a contract v2 study runs under `sandbox-exec`, which denies reads and writes under
-  the verbatim-index container. Fable also gets `--tools ""`, and its session transcript
+  the verbatim-index container and the transcript labeling service's port and home
+  (VI-59). Fable also gets `--tools ""`, and its session transcript
   must show zero tool calls, or the grade fails as `tool_attempt` or
   `tool_audit_unavailable`. Astra and Gemini keep provider-side web search by the user's
   decision; searched grades are kept and measured, never discarded. Under the sandbox,
@@ -242,7 +244,7 @@ there. Add new material under the same headings.
   `pundits_roster.py` and the P3 probe name the private lean files; adding a reader fails it.
   `scripts/test_judge_jail.py` runs a fake judge under the real sandbox wrapper and proves
   read, list, write and child-shell access to the container are denied (network is not
-  denied, by the P3 decision). Leaders byte identity:
+  denied, by the P3 decision, except the transcript labeling service's port, VI-59). Leaders byte identity:
   `.venv/bin/python scripts/leaders_identity_compare.py --a RUN1 --b RUNN` over two
   `leaders_baseline.py` runs, tolerating only `normalization.normalized_at_utc` and
   `summary.generated_at_utc`; a raw hash

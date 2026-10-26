@@ -9,7 +9,8 @@ dating-only harness. These tests pin what it may and may not do:
             exactly WebSearch and WebFetch in --tools and --allowedTools;
             --permission-prompts none; the judge harness is unchanged
   SANDBOX   sandbox-exec denies reads and writes under the verbatim-index
-            container, the data checkout and this checkout; the call runs in a
+            container, the data checkout and this checkout, and the transcript
+            labeling service's port and home (VI-59); the call runs in a
             working directory outside them, or not at all
   AUDIT     the session transcript is the evidence: web searches and fetches are
             counted with their queries and URLs; any other tool fails the call as
@@ -93,6 +94,10 @@ class Sandbox(unittest.TestCase):
         for r in ("/a", "/b"):
             self.assertIn(f'(deny file-read* (subpath "{r}"))', prof)
             self.assertIn(f'(deny file-write* (subpath "{r}"))', prof)
+
+    def test_the_profile_denies_the_labeling_service_too(self):
+        # VI-59: the transcript labeling service keeps human labels; a dater must not reach it.
+        self.assertIn('(deny network-outbound (remote ip "localhost:8790"))', DR.sandbox_profile([Path("/a")]))
 
 
 class Audit(unittest.TestCase):

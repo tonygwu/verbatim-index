@@ -182,7 +182,8 @@ other case. Recordings, logs and the table (`logs/live-table.txt`) are in
   merge-3 equals the old merge on 482 of 482, and merge-4 changes no confirmed date
   and confirms 11 queued ones. Five of the 11 are not among the operator's seven and
   are not audited. `--harness fable_web` is Fable with exactly WebSearch and
-  WebFetch under `sandbox-exec`, through `date_recordings.call_fable_web`. It is for
+  WebFetch under `sandbox-exec`, through `date_recordings.call_fable_web`; the profile
+  also denies the transcript labeling service's port and home (VI-59). It is for
   dating only, and since 2026-10-05 it is one of the two production daters. The judge
   harness and the outcome-blind prior and lead-test stages keep their tools off. Proof:
   `scripts/test_dating_operator_rules.py`, `scripts/test_dating_fable_web.py`,
