@@ -369,11 +369,18 @@ the mix even.
   reach the service until VI-58 lands; no verbatim dataset is registered in the
   service before then. Proof: `scripts/test_labeling_service_jail.py`, which also
   pins that the contract ID does not depend on the profile text, and the SERVICE
-  checks in `scripts/test_judge_jail.py`, which try 127.0.0.1, ::1 and
-  ::ffff:127.0.0.1 inside and outside the jail without ever binding 8790. A
+  checks in `scripts/test_judge_jail.py`. They try 127.0.0.1, ::1 and
+  ::ffff:127.0.0.1 on 8790 inside the jail only, so a gate run never binds the
+  live service's port, and on a scratch config port both inside and outside. A
   profile that cannot be built (an unreadable plist or `config.json`) raises:
   `grade.py` refuses at start, and `speaker_turns.py` builds it once before any
-  recording, so the refusal never becomes a failed turns record.
+  recording, so the refusal never becomes a failed turns record. Known limits:
+  the port rules use `*`, so they deny that port on every host, and a service
+  config naming a port a judge needs (443, say) would cut every judge off from
+  its provider; the service is expected on a high local port. A home that does
+  not exist when a profile is built and is later made a symlink is followed to
+  its target. The dating record's `sandbox_denied_roots` lists only the folders
+  `sandbox_roots` returns, not the service's homes.
 
 ## Experiments run, and what they showed
 
