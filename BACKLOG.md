@@ -76,7 +76,7 @@ skips.
 
 ## Open items
 
-### VI-59. The judge sandboxes do not deny the transcript labeling service's port or its home folder, so a jailed judge could read human labels once that service runs  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-25]`
+### VI-59. The judge sandboxes do not deny the transcript labeling service's port or its home folder, so a jailed judge could read human labels once that service runs  `[capability: premium]`  `[priority: P1]`  `[filed: 2026-10-25]`  `[claimed by: #10]`
 
 **Background:** The public transcript-labeling repository's service is about to run on this Mac as a launchd agent on 127.0.0.1, port 8790 unless its `config.json` names another, with its config, bearer token, local-only datasets and state under its home folder: `$TL_HOME` from the launchd plist, else `~/.local/share/transcript-labeling`. Its owner ruled that verbatim's judge sandboxes deny that port and that folder before the service first starts, and that service's deploy waits for this item. The three `sandbox-exec` profile builders deny only the verbatim-index container: `scripts/grade.py:990` "A sandbox-exec profile that denies every read and write under", `scripts/date_recordings.py:416` "(version 1)(allow default){rules}" and `scripts/p3_judge_probe.py:75` "(version 1)(allow default)". Contract v2 names the sandbox `sandbox_exec_deny_container` in `profiles/pundits.json` and hashes that name, not the profile text the builders generate (`docs/agents/JUDGES.md:341` "sandbox_exec_deny_container"). The leaders Astra grader and the resolver run with no `sandbox-exec` wrapper at all, and `codex exec -s read-only` does not restrict the network; that is VI-58's gap, and this item does not close it.
 
