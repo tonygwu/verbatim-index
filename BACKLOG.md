@@ -503,6 +503,25 @@ skips.
 
 ---
 
+### VI-60. A jailed judge that can run a shell command can rename a folder above a denied path and then read what the sandbox denies  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-25]`
+
+**Background:** Every judge profile denies files with `subpath` rules on the denied folders themselves: the verbatim-index container (`scripts/grade.py:1006` "deny file-read* (subpath") and the transcript labeling service's homes (`scripts/labeling_service_jail.py:106` "deny file-read* (subpath"). A `subpath` rule covers paths under the folder, not a rename of a folder above it. Reproduced on 2026-10-25 under such a profile: `cat` of a canary inside the denied folder got "Operation not permitted", while `mv` of its parent folder followed by `cat` at the new path printed the canary. Adding `(deny file-write* (literal "<folder>"))` for each folder above the denied one made the same `mv` fail with "Operation not permitted" and still let a write inside those folders succeed. The jail test checks reads, lists, writes and a child shell inside the container, never a rename above it (`scripts/test_judge_jail.py:185` "a write into the container creates nothing").
+
+**Impact:** a judge whose harness runs shell commands under the profile (Astra through `codex exec`, Gemini through `agy`) can defeat every file deny with one `mv`, read the roster, the private lean labels or the labeling service's token, and leave the moved folder broken for every other process until someone moves it back. Fable runs with `--tools ""` and is not exposed. Whether shell-capable judges are in the threat model is the operator's call.
+
+**Fix:**
+1. In each profile builder, and in `labeling_service_jail.rules()`, add a `file-write*` deny with a `literal` filter for every folder above each denied path, up to `/`.
+2. Tests in `scripts/test_judge_jail.py`: inside the jail, renaming each folder above the container and above a scratch service home fails, a write inside each of those folders still succeeds, and the denied reads still fail.
+3. Run one live call of each judge under the new profile.
+
+*Risks and edge cases:* a literal deny on the operator's home folder and `~/Code` also stops a judge renaming those folders, which no judge needs; a judge working folder must not sit on one of the ancestors' own paths; `sandbox-exec` rules interact, so test the final profile live for every form, as VI-59 found.
+
+*Why premium not standard:* a blinding boundary on production judges, a live probe, and a threat-model decision.
+
+**Touch points:** `scripts/grade.py:1006` "deny file-read* (subpath", `scripts/labeling_service_jail.py:106` "deny file-read* (subpath", `scripts/date_recordings.py` (`sandbox_profile`), `scripts/test_judge_jail.py:185` "a write into the container creates nothing".
+
+---
+
 ### VI-10. Every `grade_loop.sh` cycle retries Gemini up to three times on six transcripts it has never graded  `[capability: premium]`  `[priority: P2]`  `[filed: 2026-10-11]`  `[BLOCKED: operator picks option (a), (b) or (c)]`
 
 **Background:** The ledger entry, verbatim:
